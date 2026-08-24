@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 
+import { AcsmError } from "../src/acsm/client.js"
 import { assertDisposable, isDisposableHost } from "../src/acsm/disposable.js"
 import { AcsmAuthError, AcsmSession, AcsmWriteError, CookieJar } from "../src/acsm/session.js"
 import { parseForm } from "../src/acsm/form.js"
@@ -164,6 +165,18 @@ describe("login", () => {
     await expect(s.login({ username: "admin", password: "servermanager" })).rejects.toThrow(
       /must set a new password/,
     )
+    // The session cannot write until that is dealt with, so it must not look
+    // logged in to a caller that catches the error and carries on.
+    expect(s.isLoggedIn).toBe(false)
+    expect(s.username).toBeUndefined()
+  })
+
+  it("is not logged in after the no-session-cookie failure either", async () => {
+    const { s } = session(() => new Response("", { status: 302, headers: { location: "/" } }))
+    await expect(s.login({ username: "admin", password: "x" })).rejects.toThrow(
+      /set no session cookie/,
+    )
+    expect(s.isLoggedIn).toBe(false)
   })
 
   it("clears a previous identity when a later login fails", async () => {
@@ -535,6 +548,93 @@ describe("import safety rules", () => {
       Events: [raceEvent({ Sessions: { Race: { StartedTime: "2026-07-01T19:05:00-07:00" } } })],
     })
     expect(isSafeToImport(c)).toBe(false)
+  })
+
+  const IMPORTED_ID = "99999999-8888-7777-6666-555555555555"
+
+  /**
+   * A session where the import itself always succeeds, so the only thing that
+   * can refuse is the ID check. GETs must serve the import page — that is how
+   * detectImportMechanism works out where to put the JSON.
+   */
+  const importSession = async () => {
+    const { fn } = scriptedFetch((url, init) => {
+      if (url.endsWith("/login")) {
+        return new Response("", {
+          status: 302,
+          headers: { "set-cookie": sessionCookie, location: "/" },
+        })
+      }
+      if (init.method === "POST") {
+        return new Response("", {
+          status: 302,
+          headers: { location: `/championship/${IMPORTED_ID}` },
+        })
+      }
+      return new Response(fakeImportPage("textarea"), { status: 200 })
+    })
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    await s.login({ username: "admin", password: "x" })
+    return s
+  }
+
+  const readerThat = (over: Partial<Record<string, unknown>>) =>
+    ({
+      listChampionships: async () => {
+        throw new AcsmError("no list endpoint on this build")
+      },
+      exportChampionship: async () => ({}),
+      standings: async () => ({}),
+      healthcheck: async () => ({}),
+      ...over,
+    }) as never
+
+  it("treats a 404 from the export as 'that ID is free'", async () => {
+    const s = await importSession()
+    const reader = readerThat({
+      exportChampionship: async () => {
+        throw new AcsmError("404 Not Found", 404)
+      },
+    })
+    await expect(
+      importChampionship(s, championship({ ID: "11111111-2222-3333-4444-555555555555" }), {
+        freshIds: false,
+        reader,
+      }),
+    ).resolves.toMatchObject({ championshipId: IMPORTED_ID })
+  })
+
+  it("refuses rather than guessing when the check can't be answered", async () => {
+    // A 500, a timeout or a DNS failure must not read as "that ID is free" —
+    // the next thing that happens is an import that overwrites a live
+    // championship.
+    const s = await importSession()
+    for (const failure of [
+      new AcsmError("500 Internal Server Error", 500),
+      new AcsmError("Request timed out"),
+      new Error("getaddrinfo ENOTFOUND"),
+    ]) {
+      const reader = readerThat({
+        exportChampionship: async () => {
+          throw failure
+        },
+      })
+      await expect(
+        importChampionship(s, championship({ ID: "11111111-2222-3333-4444-555555555555" }), {
+          freshIds: false,
+          reader,
+        }),
+      ).rejects.toThrow(/Couldn't determine whether championship/)
+    }
+  })
+
+  it("skips the check entirely when no reader is given", async () => {
+    const s = await importSession()
+    await expect(
+      importChampionship(s, championship({ ID: "11111111-2222-3333-4444-555555555555" }), {
+        freshIds: false,
+      }),
+    ).resolves.toMatchObject({ championshipId: IMPORTED_ID })
   })
 
   it("refuses an ID that already exists on the server", async () => {

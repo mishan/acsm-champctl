@@ -9,7 +9,7 @@
 
 import { randomUUID } from "node:crypto"
 
-import type { AcsmReader } from "./client.js"
+import { AcsmError, type AcsmReader } from "./client.js"
 import { findFormByAction } from "./form.js"
 import { AcsmWriteError, type AcsmSession } from "./session.js"
 import type { Championship } from "./types.js"
@@ -241,10 +241,20 @@ export async function importChampionship(
 
   if (payload.ID && options.allowOverwrite !== true && options.reader) {
     const existing = await idExists(options.reader, payload.ID)
-    if (existing) {
+    if (existing === "yes") {
       throw new AcsmWriteError(
         `Championship ${payload.ID} already exists on this server. Importing would overwrite it; ` +
           `generate fresh IDs or pass allowOverwrite.`,
+      )
+    }
+    if (existing === "unknown") {
+      // Fail closed. The check exists to stop an overwrite, so an inconclusive
+      // answer has to block — treating it as "free" would let a network blip
+      // authorise the thing the check is here to prevent.
+      throw new AcsmWriteError(
+        `Couldn't determine whether championship ${payload.ID} already exists, so the import is ` +
+          `refused rather than risk overwriting it. Retry, or pass allowOverwrite if you're sure. ` +
+          `(Leaving freshIds on — the default — sidesteps this entirely.)`,
       )
     }
   }
@@ -292,19 +302,34 @@ export function assertNoResults(championship: Championship): void {
   )
 }
 
-async function idExists(reader: AcsmReader, id: string): Promise<boolean> {
+/**
+ * Whether a championship ID is already on the server.
+ *
+ * Deliberately three-valued. Swallowing errors and returning false would turn
+ * a network blip into "that ID is free", and the caller's next move is an
+ * import that overwrites a live championship — the exact outcome the plan calls
+ * the worst thing this tool can do. So "couldn't tell" is its own answer and
+ * the caller refuses on it.
+ */
+type Existence = "yes" | "no" | "unknown"
+
+async function idExists(reader: AcsmReader, id: string): Promise<Existence> {
   try {
     const list = await reader.listChampionships()
-    return list.some((c) => c.ID === id)
+    return list.some((c) => c.ID === id) ? "yes" : "no"
   } catch {
-    // A build without the list endpoint (see docs/acsm-write-path.md §6) can't
-    // answer this. Fall back to asking for the export directly.
-    try {
-      await reader.exportChampionship(id)
-      return true
-    } catch {
-      return false
-    }
+    // A build without the list endpoint (docs/acsm-write-path.md §6) can't
+    // answer that way. Ask for the export instead.
+  }
+
+  try {
+    await reader.exportChampionship(id)
+    return "yes"
+  } catch (e) {
+    // Only a 404 means the championship isn't there. A 401, a 500, a timeout
+    // or a DNS failure all mean we don't know, and must not read as "free".
+    const status = e instanceof AcsmError ? e.status : undefined
+    return status === 404 ? "no" : "unknown"
   }
 }
 

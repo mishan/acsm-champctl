@@ -1,9 +1,10 @@
 /**
  * "Is this host a throwaway test container?"
  *
- * The recon scripts and the live test suite create, modify and delete
- * championships. Pointing one at a league's production manager would be the
- * worst thing in this repo, so both ask here first.
+ * The recon scripts and the live test suite write to the manager they point
+ * at — recon imports championships and does not clean up after itself; the
+ * live tests import and then delete. Pointing either at a league's production
+ * manager would be the worst thing in this repo, so both ask here first.
  *
  * The rule is *private network reachability*, not certainty. A league could in
  * principle run ACSM on a private address, so this is a speed bump against the
@@ -70,7 +71,8 @@ export class NotDisposableError extends Error {
   ) {
     super(
       `Refusing to run ${what} against ${hostname}: it doesn't look like a local test container. ` +
-        `These create and delete championships. If you really mean it, set ${OVERRIDE_ENV}=yes.`,
+        `They write to it: recon imports championships, and the live tests import and ` +
+        `delete them. If you really mean it, set ${OVERRIDE_ENV}=yes.`,
     )
     this.name = "NotDisposableError"
   }

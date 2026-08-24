@@ -263,10 +263,14 @@ export class AcsmSession {
 
     const location = res.headers.get("location") ?? ""
 
+    // #loggedInAs is set only on the fully-successful path below. Every other
+    // branch throws and leaves isLoggedIn false: a caller that catches an
+    // AcsmAuthError and carries on must not find a session that looks usable
+    // when it isn't.
+
     // A first login, or one after an admin password reset, lands here and no
     // write will work until it's dealt with in the browser.
     if (isRedirect(res) && location.includes("new-password")) {
-      this.#loggedInAs = username
       throw new AcsmAuthError(
         `${username} must set a new password in ACSM before champctl can use this account. ` +
           `Log in at ${this.#baseUrl} in a browser, set one, and put it in CHAMPCTL_LIVE_PASSWORD.`,
@@ -274,16 +278,16 @@ export class AcsmSession {
     }
 
     if (isRedirect(res)) {
-      this.#loggedInAs = username
       if (this.jar.names.length <= 1) {
-        // Only `current-server`, which we set ourselves. The redirect says the
-        // login took, so this is worth flagging rather than failing on.
+        // Only `current-server`, which we set ourselves. ACSM said yes but gave
+        // us nothing to authenticate with, so the session is not usable.
         throw new AcsmAuthError(
           `ACSM accepted the login for ${username} but set no session cookie, so nothing else will work. ` +
             `Check that config.yml's http.session_key is set.`,
           res.status,
         )
       }
+      this.#loggedInAs = username
       return
     }
 
