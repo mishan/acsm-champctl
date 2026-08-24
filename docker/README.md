@@ -92,33 +92,53 @@ ERROR! Failed to install app '302550' (No subscription)
 So the account has to **own Assetto Corsa**. The dedicated server is a free
 download, but only to owners.
 
-Put the credentials in `docker/.env`:
+### QR sign-in — no password anywhere
+
+```sh
+npm run harness:steam-login-qr
+```
+
+Scan the QR code with the Steam mobile app. No password typed, no password in
+`.env`, and nothing for Steam Guard to prompt about.
+
+steamcmd can't do this — it only takes a username and password, and asks for a
+Steam Guard code it has no way to receive when Server Manager runs it in the
+background, which is what `exit status 4` usually is. So this route uses
+[DepotDownloader](https://github.com/SteamRE/DepotDownloader), which speaks the
+newer Steam auth protocol the QR sign-in is built on. It's installed in the
+image alongside steamcmd.
+
+It downloads appid 302550 straight into the volume Server Manager reads, so
+afterwards Server Manager finds `acServer` already there and never runs
+steamcmd. Then `npm run harness:up` comes straight up with no credentials
+configured at all.
+
+`-remember-password` persists the session in the `acsm-depotdownloader` volume,
+so re-running it later to update the server won't need another scan.
+
+### Or: username and password
 
 ```
 STEAM_USERNAME=your-steam-account
 STEAM_PASSWORD=...
 ```
 
-The entrypoint checks them before starting Server Manager, so a bad login is a
-sentence in the logs rather than a number in the UI.
+in `docker/.env`. The entrypoint checks them before starting Server Manager, so
+a bad login is a sentence in the logs rather than a number in the UI.
 
-### Steam Guard
-
-steamcmd can't prompt for a Steam Guard code when Server Manager runs it in the
-background — that's what `exit status 4` usually means. Rather than turning
-Steam Guard off, log in once with a terminal attached:
+If the account has Steam Guard on, this needs one interactive login first, so
+steamcmd can cache the credentials:
 
 ```sh
 npm run harness:steam-login
 ```
 
-That does the login *and* the `app_update 302550` download in one go, into the
-same volume Server Manager reads, so afterwards the container comes straight
-up. The credential cache lives in `/home/assetto/steamcmd`, a named volume, so
-later non-interactive logins succeed too.
+That does the login and the `app_update 302550` download together. The cache
+lives in `/home/assetto/steamcmd`, a named volume, so later non-interactive
+logins succeed.
 
-`npm run harness:reset` wipes that volume and you'll need to run it again.
-`harness:down` + `harness:up` keeps it.
+Either way, `npm run harness:reset` wipes those volumes and you'll need to
+authenticate again. `harness:down` + `harness:up` keeps them.
 
 ### What you get
 

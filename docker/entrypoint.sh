@@ -72,14 +72,21 @@ if [[ -x "$AC_SERVER" ]]; then
   say "Assetto Corsa server already installed; skipping the download"
 else
   if [[ -z "${STEAM_USERNAME:-}" || -z "${STEAM_PASSWORD:-}" ]]; then
-    say "STEAM_USERNAME and STEAM_PASSWORD are required."
+    say "There is no Assetto Corsa server in $ASSETTO_DIR, and no Steam"
+    say "credentials to install one with. Two ways forward:"
     say ""
-    say "There is no Assetto Corsa server in $ASSETTO_DIR, so Server Manager will"
-    say "try to install one with steamcmd. That needs a Steam account which owns"
-    say "Assetto Corsa — the dedicated server is free, but not anonymous:"
-    say "appid 302550 answers 'No subscription' to an anonymous login."
+    say "  1. QR sign-in, no password anywhere (recommended):"
     say ""
-    say "Set both in docker/.env and restart. See docker/README.md."
+    say "         npm run harness:steam-login-qr"
+    say ""
+    say "     Scan the code with the Steam mobile app. It downloads the server"
+    say "     into this same volume, and then this container starts clean."
+    say ""
+    say "  2. Set STEAM_USERNAME and STEAM_PASSWORD in docker/.env and restart."
+    say ""
+    say "Either way the account must OWN Assetto Corsa. The dedicated server is"
+    say "a free download, but not an anonymous one — appid 302550 answers"
+    say "'No subscription' to an anonymous login."
     exit 1
   fi
 

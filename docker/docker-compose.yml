@@ -47,6 +47,8 @@ services:
       - acsm-data:/home/assetto/server-manager/assetto
       - acsm-db:/home/assetto/server-manager/db
       - acsm-steam:/home/assetto/steamcmd
+      # DepotDownloader's remembered session, for the QR login path.
+      - acsm-depotdownloader:/home/assetto/depotdownloader
     healthcheck:
       # /healthcheck.json is unauthenticated in every build, which makes it the
       # right readiness probe.
@@ -84,5 +86,6 @@ volumes:
   acsm-data:
   acsm-db:
   acsm-steam:
+  acsm-depotdownloader:
   acsm-oss-data:
   acsm-oss-db:

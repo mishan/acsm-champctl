@@ -53,6 +53,36 @@ RUN mkdir -p "$STEAMCMD_DIR" \
 RUN printf '#!/bin/sh\nexec "%s/steamcmd.sh" "$@"\n' "$STEAMCMD_DIR" > /usr/local/bin/steamcmd \
  && chmod +x /usr/local/bin/steamcmd
 
+# DepotDownloader, for QR-code login (docker/steam-login-qr.sh).
+#
+# steamcmd has no QR sign-in — it only takes a username and password, and
+# prompts for a Steam Guard code it can't ask for when Server Manager runs it
+# in the background. DepotDownloader speaks the newer auth protocol and has a
+# -qr flag, so the password never has to be typed or stored at all.
+#
+# It fetches the same appid into the same directory Server Manager reads, so
+# afterwards Server Manager finds acServer already there.
+ARG DEPOTDOWNLOADER_VERSION=3.4.0
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) dd_arch=linux-x64 ;; \
+      arm64) dd_arch=linux-arm64 ;; \
+      armhf) dd_arch=linux-arm ;; \
+      *) echo "No DepotDownloader build for $arch; QR login will be unavailable" >&2; exit 0 ;; \
+    esac; \
+    url="https://github.com/SteamRE/DepotDownloader/releases/download/DepotDownloader_${DEPOTDOWNLOADER_VERSION}/DepotDownloader-${dd_arch}.zip"; \
+    curl -fsSL "$url" -o /tmp/dd.zip; \
+    mkdir -p /opt/depotdownloader; \
+    unzip -q /tmp/dd.zip -d /opt/depotdownloader; \
+    chmod +x /opt/depotdownloader/DepotDownloader; \
+    rm -f /tmp/dd.zip; \
+    # The self-contained build wants ICU unless told otherwise. Invariant mode
+    # is fine for a downloader and saves pulling in libicu.
+    printf '#!/bin/sh\nexport DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1\nexec /opt/depotdownloader/DepotDownloader "$@"\n' \
+      > /usr/local/bin/depotdownloader; \
+    chmod +x /usr/local/bin/depotdownloader
+
 WORKDIR /home/assetto/server-manager
 
 # Unpack whichever release zip is present. The wildcard keeps the Dockerfile
