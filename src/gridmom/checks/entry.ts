@@ -437,14 +437,26 @@ export const duplicateRaceNumbers: Check = {
   },
 }
 
-/** Applies the league's skin-naming convention. Undefined when it doesn't match. */
+/**
+ * Applies the league's skin-naming convention. Undefined when it doesn't match.
+ *
+ * A capture that isn't a number means the pattern matched something else, not
+ * that the entrant races as "NaN" — and since every such entrant would produce
+ * the same value, treating it as a number would collapse the whole entry list
+ * into one bogus duplicate group.
+ */
 function raceNumber(s: Slot, re: RegExp): string | undefined {
   const skin = (s.entrant.Skin ?? "").trim()
   if (!skin) return undefined
   const m = re.exec(skin)
   // Prefer the capture group; fall back to the whole match for a bare pattern.
-  const raw = m?.[1] ?? m?.[0]
-  return raw ? String(Number(raw)) : undefined
+  const raw = (m?.[1] ?? m?.[0])?.trim()
+  if (!raw) return undefined
+
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return undefined
+  // Normalise so "07" and "7" are the same number, which is the point.
+  return String(n)
 }
 
 export const entryListLengthVaries: Check = {

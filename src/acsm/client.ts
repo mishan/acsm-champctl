@@ -96,8 +96,17 @@ export class HttpAcsmReader implements AcsmReader {
   async #getJson<T>(path: string): Promise<T> {
     const url = `${this.#baseUrl}${path}`
 
+    // Cache reads fail open. A truncated or corrupt entry is a cache miss, not
+    // an error — otherwise one bad write leaves the CLI permanently broken for
+    // that URL with no obvious way out.
     const cached = await this.#cache?.get(url)
-    if (cached !== undefined) return JSON.parse(cached) as T
+    if (cached !== undefined) {
+      try {
+        return JSON.parse(cached) as T
+      } catch {
+        // Fall through and refetch.
+      }
+    }
 
     await this.#limiter?.acquire()
 

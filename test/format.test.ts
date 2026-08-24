@@ -65,6 +65,14 @@ describe("mandatory pit window", () => {
     const f = run(c).findings.find((x) => x.code === "format.pit-window-missing")
     expect(f?.severity).toBe("WARN")
     expect(f?.message).toContain("no mandatory stop")
+    // Hyphenated: it's an adjective before "single race".
+    expect(f?.message).toContain("a 40-lap single race")
+  })
+
+  it("hyphenates a minutes-based length too", () => {
+    const c = withRace({ Time: 45, Laps: 0 }, { RacePitWindowStart: 0, ReversedGridRacePositions: 0 })
+    const f = run(c).findings.find((x) => x.code === "format.pit-window-missing")
+    expect(f?.message).toContain("a 45-minute single race")
   })
 
   it("accepts a 1x40 with the window opening at lap 1", () => {
@@ -109,6 +117,45 @@ describe("reversed grid", () => {
       ],
     })
     expect(codes(c)).not.toContain("format.reversed-grid-multiplier")
+  })
+
+  it("stays quiet when any class scores the second race", () => {
+    // Falling back to Classes[0] alone would warn here, even though the GT4
+    // field scores normally.
+    const c = championship({
+      Classes: [
+        championshipClass({ Name: "GT3", Points: { Places: [25], SecondRaceMultiplier: 0 } }),
+        championshipClass({ Name: "GT4", Points: { Places: [25], SecondRaceMultiplier: 1 } }),
+      ],
+      Events: [raceEvent({ RaceSetup: { ReversedGridRacePositions: 5 } })],
+    })
+    delete c.Events![0]!.RaceSetup!.SecondRaceMultiplier
+    expect(codes(c)).not.toContain("format.reversed-grid-multiplier")
+  })
+
+  it("warns when no class scores the second race, and says so", () => {
+    const c = championship({
+      Classes: [
+        championshipClass({ Name: "GT3", Points: { Places: [25], SecondRaceMultiplier: 0 } }),
+        championshipClass({ Name: "GT4", Points: { Places: [25], SecondRaceMultiplier: 0 } }),
+      ],
+      Events: [raceEvent({ RaceSetup: { ReversedGridRacePositions: 5 } })],
+    })
+    delete c.Events![0]!.RaceSetup!.SecondRaceMultiplier
+    const f = run(c).findings.find((x) => x.code === "format.reversed-grid-multiplier")
+    expect(f?.severity).toBe("WARN")
+    expect(f?.message).toContain("any of the 2 classes")
+    expect(f?.data).toMatchObject({ classMultipliers: [0, 0] })
+  })
+
+  it("lets the event-level value override the classes", () => {
+    const c = championship({
+      Classes: [championshipClass({ Points: { Places: [25], SecondRaceMultiplier: 1 } })],
+      Events: [
+        raceEvent({ RaceSetup: { ReversedGridRacePositions: 5, SecondRaceMultiplier: 0 } }),
+      ],
+    })
+    expect(codes(c)).toContain("format.reversed-grid-multiplier")
   })
 })
 

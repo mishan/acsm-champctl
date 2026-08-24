@@ -8,7 +8,7 @@
  */
 
 import type { ChampionshipEvent } from "../../acsm/types.js"
-import { eventHasStarted, eventLabel, events, session } from "../../acsm/view.js"
+import { classes, eventHasStarted, eventLabel, events, session } from "../../acsm/view.js"
 import type { Check } from "../context.js"
 import { pluralize } from "../finding.js"
 
@@ -104,9 +104,13 @@ export const pitWindowDisagreesWithFormat: Check = {
   },
 }
 
+/**
+ * Length as an adjective, for use before a noun: "a 40-lap single race".
+ * Hyphenated, because "a 40 lap single race" reads as a typo.
+ */
 function describeLength(laps: number, minutes: number): string {
-  if (laps > 0) return `${laps} lap`
-  if (minutes > 0) return `${minutes} minute`
+  if (laps > 0) return `${laps}-lap`
+  if (minutes > 0) return `${minutes}-minute`
   return "long"
 }
 
@@ -117,19 +121,37 @@ export const reversedGridWithoutMultiplier: Check = {
     events(ctx.championship).forEach((ev, i) => {
       const reversed = ev.RaceSetup?.ReversedGridRacePositions ?? 0
       if (reversed === 0) return
+
+      const eventMultiplier = ev.RaceSetup?.SecondRaceMultiplier
+      // The event-level value wins when it is set. Otherwise fall back to the
+      // classes — but to *all* of them, not just the first: in a multi-class
+      // championship one class scoring the second race means the format is
+      // doing its job, even if another doesn't.
+      const classMultipliers = classes(ctx.championship).map(
+        (cls) => cls.Points?.SecondRaceMultiplier ?? 0,
+      )
       const multiplier =
-        ev.RaceSetup?.SecondRaceMultiplier ??
-        ctx.championship.Classes?.[0]?.Points?.SecondRaceMultiplier ??
-        0
+        eventMultiplier ?? (classMultipliers.length > 0 ? Math.max(...classMultipliers) : 0)
       if (multiplier !== 0) return
 
       const label = eventLabel(ev, i + 1)
+      // Say which classes when there is more than one, since "the second race
+      // is worth no points" is otherwise ambiguous about who it applies to.
+      const scope =
+        eventMultiplier === undefined && classMultipliers.length > 1
+          ? ` for any of the ${classMultipliers.length} classes`
+          : ""
       emit(
         "WARN",
         "format.reversed-grid-multiplier",
-        `${cap(label)} runs a second race with a reversed grid, but the second race is worth no points.`,
+        `${cap(label)} runs a second race with a reversed grid, but the second race is worth no points${scope}.`,
         { round: i + 1, event: label, path: `Events[${i}].RaceSetup.SecondRaceMultiplier` },
-        { reversedGridRacePositions: reversed, secondRaceMultiplier: multiplier },
+        {
+          reversedGridRacePositions: reversed,
+          secondRaceMultiplier: multiplier,
+          eventMultiplier,
+          classMultipliers,
+        },
       )
     })
   },

@@ -124,7 +124,22 @@ export function parseArgs(argv: readonly string[]): Args {
   return args
 }
 
-class UsageError extends Error {}
+/**
+ * A mistake the person can fix by retyping the command, as opposed to
+ * something going wrong with ACSM. These always print the usage block, so the
+ * CLI explains itself rather than just saying no.
+ */
+export class UsageError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "UsageError"
+  }
+}
+
+function reportUsageError(e: UsageError): number {
+  process.stderr.write(`${e.message}\n\n${USAGE}`)
+  return 3
+}
 
 function parseFormat(v: string): ReportFormat {
   if (v === "text" || v === "json" || v === "discord") return v
@@ -157,14 +172,22 @@ async function loadPits(path: string | undefined): Promise<PitTable> {
   }
 }
 
+/**
+ * Runs a command and turns every usage mistake into the usage block, wherever
+ * it was raised — argument parsing and "no base URL configured" deserve the
+ * same treatment, and only one of them happens during parsing.
+ */
 export async function main(argv: readonly string[]): Promise<number> {
-  let args: Args
   try {
-    args = parseArgs(argv)
+    return await runCommand(argv)
   } catch (e) {
-    process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n\n${USAGE}`)
-    return 3
+    if (e instanceof UsageError) return reportUsageError(e)
+    throw e
   }
+}
+
+async function runCommand(argv: readonly string[]): Promise<number> {
+  const args = parseArgs(argv)
 
   if (args.help || !args.command) {
     process.stdout.write(USAGE)
@@ -183,8 +206,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
 
   if (args.command !== "check") {
-    process.stderr.write(`Unknown command ${args.command}\n\n${USAGE}`)
-    return 3
+    throw new UsageError(`Unknown command ${args.command}`)
   }
 
   let championship: Championship
@@ -195,8 +217,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     const reader = await readerFor(args, baseUrl)
     championship = await reader.exportChampionship(args.target)
   } else {
-    process.stderr.write(`check needs a championship id or --file\n\n${USAGE}`)
-    return 3
+    throw new UsageError(`check needs a championship id or --file`)
   }
 
   const report = check(championship, profile, {
@@ -222,6 +243,12 @@ export async function run(argv: readonly string[]): Promise<void> {
   try {
     process.exitCode = await main(argv)
   } catch (e) {
+    // main() already turns UsageError into the usage block; anything reaching
+    // here is ACSM or the filesystem misbehaving, which usage text won't fix.
+    if (e instanceof UsageError) {
+      process.exitCode = reportUsageError(e)
+      return
+    }
     const msg = e instanceof AcsmError || e instanceof Error ? e.message : String(e)
     process.stderr.write(`gridmom couldn't run: ${msg}\n`)
     process.exitCode = 3

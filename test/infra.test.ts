@@ -5,7 +5,7 @@ import { RateLimiter } from "../src/acsm/rate-limit.js"
 import { InMemoryPitTable } from "../src/pits/table.js"
 import { validateProfile } from "../src/profile/load.js"
 import { isZeroTime, slots } from "../src/acsm/view.js"
-import { parseArgs } from "../src/cli/gridmom.js"
+import { main, parseArgs } from "../src/cli/gridmom.js"
 import { championship } from "./support/build.js"
 
 describe("rate limiter", () => {
@@ -78,6 +78,55 @@ describe("HTTP reader", () => {
   it("unwraps a list that arrives inside an envelope", async () => {
     const r = reader(async () => new Response(JSON.stringify({ championships: [{ ID: "a" }] })))
     await expect(r.listChampionships()).resolves.toEqual([{ ID: "a" }])
+  })
+
+  it("treats a corrupt cache entry as a miss rather than failing forever", async () => {
+    // One bad write must not leave the CLI permanently broken for that URL.
+    let fetches = 0
+    const stored = new Map<string, string>([["https://acsm.example/healthcheck.json", "{trunca"]])
+    const r = new HttpAcsmReader({
+      baseUrl: "https://acsm.example",
+      rateLimit: false,
+      fetch: async () => {
+        fetches++
+        return new Response(JSON.stringify({ ok: true }))
+      },
+      cache: {
+        async get(key) {
+          return stored.get(key)
+        },
+        async set(key, value) {
+          stored.set(key, value)
+        },
+      },
+    })
+
+    await expect(r.healthcheck()).resolves.toEqual({ ok: true })
+    expect(fetches).toBe(1)
+    // ...and the good response replaced the corrupt entry.
+    expect(stored.get("https://acsm.example/healthcheck.json")).toBe('{"ok":true}')
+  })
+
+  it("serves a valid cache entry without hitting the network", async () => {
+    let fetches = 0
+    const r = new HttpAcsmReader({
+      baseUrl: "https://acsm.example",
+      rateLimit: false,
+      fetch: async () => {
+        fetches++
+        return new Response("{}")
+      },
+      cache: {
+        async get() {
+          return '{"ok":true}'
+        },
+        async set() {
+          /* no-op */
+        },
+      },
+    })
+    await expect(r.healthcheck()).resolves.toEqual({ ok: true })
+    expect(fetches).toBe(0)
   })
 
   it("hits the export endpoint that works logged out", async () => {
@@ -189,5 +238,53 @@ describe("CLI argument parsing", () => {
 
   it("rejects a bad format", () => {
     expect(() => parseArgs(["check", "x", "--format", "yaml"])).toThrow(/--format/)
+  })
+})
+
+describe("CLI usage errors", () => {
+  /** Captures stderr for the duration of a call. */
+  async function stderrOf(fn: () => Promise<number>): Promise<{ code: number; err: string }> {
+    const original = process.stderr.write.bind(process.stderr)
+    let err = ""
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      err += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk)
+      return true
+    }) as typeof process.stderr.write
+    try {
+      return { code: await fn(), err }
+    } finally {
+      process.stderr.write = original
+    }
+  }
+
+  it("prints usage for a bad option", async () => {
+    const { code, err } = await stderrOf(() => main(["check", "--wat"]))
+    expect(code).toBe(3)
+    expect(err).toContain("Unknown option --wat")
+    expect(err).toContain("Usage:")
+  })
+
+  it("prints usage for an unknown command", async () => {
+    const { code, err } = await stderrOf(() => main(["frobnicate"]))
+    expect(code).toBe(3)
+    expect(err).toContain("Unknown command frobnicate")
+    expect(err).toContain("Usage:")
+  })
+
+  it("prints usage when check has no target", async () => {
+    const { code, err } = await stderrOf(() => main(["check", "--profile", "./test/support/profile-no-url.json"]))
+    expect(code).toBe(3)
+    expect(err).toContain("championship id or --file")
+    expect(err).toContain("Usage:")
+  })
+
+  it("prints usage when there is no base URL, not a bare failure", async () => {
+    // This one is raised well after argument parsing, which is why it used to
+    // surface as "gridmom couldn't run" with no hint about --base-url.
+    const { code, err } = await stderrOf(() => main(["list", "--profile", "./test/support/profile-no-url.json"]))
+    expect(code).toBe(3)
+    expect(err).toContain("No ACSM base URL")
+    expect(err).toContain("--base-url")
+    expect(err).toContain("Usage:")
   })
 })

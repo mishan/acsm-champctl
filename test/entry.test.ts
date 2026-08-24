@@ -330,6 +330,64 @@ describe("sign-ups", () => {
   })
 })
 
+describe("race numbers", () => {
+  const withPattern = (pattern: string | undefined, skins: string[]) => {
+    const profile = testProfile()
+    if (pattern) profile.entryList.raceNumberFromSkin = pattern
+    const c = championship({
+      Classes: [championshipClass({ Entrants: entryList(emptySlots(2)) })],
+      Events: [
+        raceEvent({
+          EntryList: entryList(skins.map((skin, i) => driver(`d${i}`, { Skin: skin }))),
+        }),
+      ],
+    })
+    return check(c, profile, { pits: pitTable([suzukaPits]), now: NOW, checks: entryChecks })
+  }
+
+  it("doesn't run without a league pattern", () => {
+    // ACSM has no race number field, so guessing finds a duplicate every time.
+    const codes = withPattern(undefined, ["batl_07", "batl_07"]).findings.map((f) => f.code)
+    expect(codes).not.toContain("entry.duplicate-race-number")
+  })
+
+  it("finds real duplicates when the league says how to read them", () => {
+    const f = withPattern("_(\\d{1,3})$", ["batl_07", "other_07", "batl_12"]).findings.find(
+      (x) => x.code === "entry.duplicate-race-number",
+    )
+    expect(f?.severity).toBe("WARN")
+    expect(f?.message).toContain("race number 7")
+  })
+
+  it("treats 07 and 7 as the same number", () => {
+    const codes = withPattern("_(\\d{1,3})$", ["batl_07", "other_7"]).findings.map((f) => f.code)
+    expect(codes).toContain("entry.duplicate-race-number")
+  })
+
+  it("ignores a non-numeric capture rather than calling everyone NaN", () => {
+    // String(Number("red")) is "NaN", and every entrant matching would collapse
+    // into one bogus duplicate group.
+    const codes = withPattern("_(\\w+)$", ["batl_red", "other_blue", "third_green"]).findings.map(
+      (f) => f.code,
+    )
+    expect(codes).not.toContain("entry.duplicate-race-number")
+  })
+
+  it("still finds duplicates among the numeric ones when others don't parse", () => {
+    const f = withPattern("_(\\w+)$", ["batl_red", "other_9", "third_9"]).findings.find(
+      (x) => x.code === "entry.duplicate-race-number",
+    )
+    expect(f?.message).toContain("race number 9")
+  })
+
+  it("warns rather than crashing on an invalid pattern", () => {
+    const f = withPattern("_(\\d{1,3}$", ["batl_07"]).findings.find(
+      (x) => x.code === "entry.race-number-pattern",
+    )
+    expect(f?.severity).toBe("WARN")
+  })
+})
+
 describe("unclaimed slots in a multi-model class", () => {
   it("warns when an empty slot is pinned to a specific model", () => {
     const c = championship({
