@@ -74,9 +74,17 @@ function allLists(ctx: CheckContext): NamedList[] {
  * The check that already has a real bug to catch: the Suzuka event has
  * duplicate pit boxes at 3, 16 and 27, and the class list at 9 and 10.
  *
- * Note the pit box lives in `PitBox` in the export but arrives as
- * `EntryList.EntrantID` in the edit form (plan §3.2) — same number, and the
- * fix is reassigning the duplicates into the list's gaps.
+ * The pit box lives in `PitBox` in the export but arrives as
+ * `EntryList.EntrantID` in the edit form (plan §3.2) — same number, and the fix
+ * is reassigning the duplicates into the list's gaps.
+ *
+ * Group by the `PitBox` field, never the `CAR_n` key. ACSM's `AddInPitBox`
+ * keys the map by pit box and *overwrites* on collision, so a form-built list
+ * can't contain duplicates at all; an imported one can, and then the key and
+ * the field disagree (docs/acsm-write-path.md §3).
+ *
+ * That same overwrite is why this is an ERROR rather than a warning: the next
+ * time anyone saves the event form, the losers of each collision are deleted.
  */
 export const duplicatePitBox: Check = {
   id: "entry.duplicate-pit-box",
@@ -95,14 +103,21 @@ export const duplicatePitBox: Check = {
         ? ` There ${pluralize(gaps.length, "is a gap", "are gaps")} at ${humanList(gaps.slice(0, boxes.length))} to move them into.`
         : ""
 
+      // The consequence, not just the fact. Whoever reads this in Discord needs
+      // to know it gets worse on its own.
+      const atRisk = [...dupes.values()].reduce((n, ss) => n + ss.length - 1, 0)
+      const what = location.round != null ? "this event" : "the championship"
+      const stakes = ` Saving ${what} will drop ${atRisk} ${pluralize(atRisk, "driver")} from the list.`
+
       emit(
         "ERROR",
         "entry.duplicate-pit-box",
-        `${cap(label)} has duplicate pit ${pluralize(boxes.length, "box", "boxes")} at ${humanList(boxes)}.${fix}`,
+        `${cap(label)} has duplicate pit ${pluralize(boxes.length, "box", "boxes")} at ${humanList(boxes)}.${fix}${stakes}`,
         location,
         {
           pitBoxes: boxes,
           gaps,
+          entrantsAtRisk: atRisk,
           slots: Object.fromEntries(
             [...dupes].map(([box, ss]) => [box, ss.map((s) => s.key)]),
           ),

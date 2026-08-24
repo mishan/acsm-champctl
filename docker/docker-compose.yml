@@ -1,0 +1,72 @@
+# Local ACSM for development and recon.
+#
+# This exists so the plan's §3.4 recon list stops being manual devtools work.
+# Nothing here should ever point at a league's real manager — see SAFETY in
+# docker/README.md.
+#
+#   cd docker && cp .env.example .env && docker compose up -d
+#
+# Default profile runs the premium build from an image you supply, because
+# that is what BATL runs. The `oss` profile runs the public image instead;
+# see docker/README.md for what it can and can't tell you.
+
+name: champctl-acsm
+
+services:
+  acsm:
+    # Set ACSM_IMAGE in .env. Build one from a premium release zip with:
+    #   docker build -f Dockerfile.premium -t champctl/acsm-premium .
+    # No `profiles` key, so this is what `docker compose up` starts.
+    image: ${ACSM_IMAGE:-champctl/acsm-premium:local}
+    container_name: champctl-acsm
+    restart: unless-stopped
+    ports:
+      # Server Manager web UI. Bound to loopback by default: this container
+      # holds an admin account with a known password and must not be exposed
+      # to a network you don't control.
+      - "${BIND_ADDR:-127.0.0.1}:${ACSM_PORT:-8772}:8772"
+      # The Assetto Corsa server itself. Only needed if you actually start a
+      # session, which the recon and round-trip work does not.
+      - "${BIND_ADDR:-127.0.0.1}:9600:9600"
+      - "${BIND_ADDR:-127.0.0.1}:9600:9600/udp"
+      - "${BIND_ADDR:-127.0.0.1}:8081:8081"
+    volumes:
+      - ./config.yml:/home/assetto/server-manager/config.yml:ro
+      # Named volume rather than a bind mount so a `docker compose down -v`
+      # genuinely resets the manager to a clean slate between recon runs.
+      - acsm-data:/home/assetto/server-manager/assetto
+      - acsm-db:/home/assetto/server-manager/db
+    healthcheck:
+      # /healthcheck.json is unauthenticated in every build, which makes it the
+      # right readiness probe.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8772/healthcheck.json || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  # Public build. Useful for checking that champctl degrades sanely on the
+  # version most other leagues run.
+  acsm-oss:
+    image: seejy/assetto-server-manager:latest
+    profiles: ["oss"]
+    container_name: champctl-acsm-oss
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${ACSM_OSS_PORT:-8773}:8772"
+    volumes:
+      - ./config.yml:/home/assetto/server-manager/config.yml:ro
+      - acsm-oss-data:/home/assetto/server-manager/assetto
+      - acsm-oss-db:/home/assetto/server-manager/db
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8772/healthcheck.json || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+volumes:
+  acsm-data:
+  acsm-db:
+  acsm-oss-data:
+  acsm-oss-db:

@@ -16,3 +16,9 @@ data/*
 
 # Unsanitized exports pulled from a live manager.
 fixtures/live/
+
+# Test harness. The premium release zip is licensed software, and .env holds
+# the harness admin password.
+docker/.env
+docker/premium/*
+!docker/premium/.gitkeep

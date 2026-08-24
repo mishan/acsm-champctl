@@ -1,0 +1,214 @@
+import { describe, expect, it } from "vitest"
+
+import {
+  FormParseError,
+  checkEntryListShape,
+  count,
+  getAll,
+  getOne,
+  parseForm,
+  removeAll,
+  setAt,
+  setOne,
+  shape,
+  toBody,
+  type FormField,
+} from "../src/acsm/form.js"
+import { entrant, fakeEventForm, fakeImportPage } from "./support/acsm-html.js"
+
+const threeEntrants = [entrant("alice"), entrant("bob"), entrant("carol")]
+
+describe("parsing an ACSM event form", () => {
+  const form = () => parseForm(fakeEventForm({ entrants: threeEntrants }))
+
+  it("reads the action, method and enctype", () => {
+    const f = form()
+    expect(f.method).toBe("POST")
+    expect(f.action).toBe("/championship/abc/event/submit")
+  })
+
+  it("keeps repeated keys in document order", () => {
+    // Order is everything: ACSM indexes EntryList.* as parallel arrays.
+    expect(getAll(form().fields, "EntryList.Name")).toEqual(["alice", "bob", "carol"])
+    expect(getAll(form().fields, "EntryList.GUID")).toHaveLength(3)
+  })
+
+  it("submits readonly fields", () => {
+    // Championship entrant rows are readonly, and a browser still sends them.
+    // Treating readonly like disabled would blank every name on save.
+    expect(getAll(form().fields, "EntryList.Name")).toContain("alice")
+  })
+
+  it("omits disabled and unnamed controls", () => {
+    const names = form().fields.map((f) => f.name)
+    expect(names).not.toContain("Disabled")
+    expect(names.filter((n) => !n)).toHaveLength(0)
+  })
+
+  it("omits unchecked checkboxes and keeps checked ones", () => {
+    const fields = form().fields
+    expect(getOne(fields, "RaceExtraLap")).toBeUndefined()
+    expect(getOne(fields, "AllowDuplicateSkinChoices")).toBe("on")
+  })
+
+  it("omits buttons and file inputs", () => {
+    const names = form().fields.map((f) => f.name)
+    expect(names).not.toContain("submitButton")
+    expect(names).not.toContain("championshipFile")
+  })
+
+  it("reads textarea content", () => {
+    expect(getOne(form().fields, "Description")).toBe("A description")
+  })
+
+  it("takes only selected options from a multiple select", () => {
+    expect(getAll(form().fields, "Cars")).toEqual(["rss_formula_hybrid_2021"])
+  })
+
+  it("falls back to the first option when a single select has no selection", () => {
+    // ACSM renders EntryList.FixedSetup with an unselected placeholder.
+    expect(getAll(form().fields, "EntryList.FixedSetup")).toEqual(["", "", ""])
+  })
+
+  it("resolves a relative action against the page URL", () => {
+    const f = parseForm(fakeEventForm({ entrants: threeEntrants }), {
+      pageUrl: "https://acsm.example/championship/abc/event/e1/edit",
+    })
+    expect(f.action).toBe("https://acsm.example/championship/abc/event/submit")
+  })
+
+  it("throws rather than guessing when there is no form", () => {
+    expect(() => parseForm("<html><body>nothing</body></html>")).toThrow(FormParseError)
+  })
+})
+
+describe("EntryList.EntrantID", () => {
+  it("is absent when ACSM doesn't render it", () => {
+    // The public build omits it for championship events, and ACSM then sets
+    // PitBox to the list index — renumbering everyone. See write-path §2.
+    const f = parseForm(fakeEventForm({ entrants: threeEntrants, renderEntrantId: false }))
+    expect(count(f.fields, "EntryList.EntrantID")).toBe(0)
+  })
+
+  it("carries the pit box when it is rendered", () => {
+    const f = parseForm(
+      fakeEventForm({
+        entrants: [
+          entrant("alice", { pitBox: 3 }),
+          entrant("bob", { pitBox: 16 }),
+          entrant("carol", { pitBox: 27 }),
+        ],
+        renderEntrantId: true,
+      }),
+    )
+    expect(getAll(f.fields, "EntryList.EntrantID")).toEqual(["3", "16", "27"])
+  })
+})
+
+describe("entry list shape checking", () => {
+  it("passes a well-formed form", () => {
+    const f = parseForm(fakeEventForm({ entrants: threeEntrants, renderEntrantId: true }))
+    expect(checkEntryListShape(f.fields)).toEqual([])
+  })
+
+  it("ignores the unpaired checkboxes ACSM renders", () => {
+    // Only the middle entrant has it ticked, so exactly one value is submitted
+    // for three entrants. That's ACSM's bug, not a payload we built wrong.
+    const f = parseForm(
+      fakeEventForm({
+        entrants: [
+          entrant("alice"),
+          entrant("bob", { overwriteAllEvents: true }),
+          entrant("carol"),
+        ],
+      }),
+    )
+    expect(count(f.fields, "EntryList.OverwriteAllEvents")).toBe(1)
+    expect(checkEntryListShape(f.fields)).toEqual([])
+  })
+
+  it("catches a dropped value, which would scramble the entry list", () => {
+    const f = parseForm(fakeEventForm({ entrants: threeEntrants }))
+    const fields = f.fields.filter(
+      (x, i) => !(x.name === "EntryList.GUID" && i === f.fields.findIndex((y) => y.name === "EntryList.GUID")),
+    )
+    const problems = checkEntryListShape(fields)
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toMatchObject({ key: "EntryList.GUID", count: 2, expected: 3 })
+  })
+
+  it("says nothing about a form with no entry list", () => {
+    expect(checkEntryListShape([{ name: "Track", value: "suzuka" }])).toEqual([])
+  })
+})
+
+describe("mutating fields", () => {
+  const fields = (): FormField[] => parseForm(fakeEventForm({ entrants: threeEntrants })).fields
+
+  it("replaces a single-valued key in place", () => {
+    const f = fields()
+    const before = f.findIndex((x) => x.name === "Sessions.Race.Laps")
+    setOne(f, "Sessions.Race.Laps", "22")
+    expect(f.findIndex((x) => x.name === "Sessions.Race.Laps")).toBe(before)
+    expect(getOne(f, "Sessions.Race.Laps")).toBe("22")
+  })
+
+  it("appends a key that isn't there yet", () => {
+    const f = fields()
+    setOne(f, "RaceExtraLap", "on")
+    expect(getOne(f, "RaceExtraLap")).toBe("on")
+  })
+
+  it("refuses to blind-set a repeated key", () => {
+    // Setting one of three EntryList.Name values without saying which is how
+    // an entry list gets scrambled.
+    expect(() => setOne(fields(), "EntryList.Name", "mallory")).toThrow(/positional array/)
+  })
+
+  it("sets the nth value of a repeated key, preserving position", () => {
+    const f = fields()
+    setAt(f, "EntryList.Name", 1, "roberta")
+    expect(getAll(f, "EntryList.Name")).toEqual(["alice", "roberta", "carol"])
+  })
+
+  it("refuses an index past the end", () => {
+    expect(() => setAt(fields(), "EntryList.Name", 7, "x")).toThrow(/only 3 values/)
+  })
+
+  it("removes every occurrence", () => {
+    const f = fields()
+    removeAll(f, "EntryList.Name")
+    expect(count(f, "EntryList.Name")).toBe(0)
+  })
+})
+
+describe("encoding", () => {
+  it("preserves repetition and order in the body", () => {
+    const body = toBody([
+      { name: "EntryList.Name", value: "alice" },
+      { name: "EntryList.Name", value: "bob" },
+      { name: "Track", value: "suzuka" },
+    ])
+    expect(body.toString()).toBe("EntryList.Name=alice&EntryList.Name=bob&Track=suzuka")
+    expect(body.getAll("EntryList.Name")).toEqual(["alice", "bob"])
+  })
+
+  it("summarises a form as a shape", () => {
+    const s = shape(parseForm(fakeEventForm({ entrants: threeEntrants })).fields)
+    expect(s["EntryList.Name"]).toBe(3)
+    expect(s["Track"]).toBe(1)
+  })
+})
+
+describe("import page", () => {
+  it("exposes the file field name recon needs", () => {
+    // parseForm omits file inputs from the submission, so recon reads the name
+    // off the HTML. Assert both halves of that contract.
+    const html = fakeImportPage("championshipFile")
+    expect(parseForm(html).fields.map((f) => f.name)).not.toContain("championshipFile")
+    expect(parseForm(html).enctype).toBe("multipart/form-data")
+    expect(/name=["']([^"']+)["']/.exec(/<input[^>]*type=["']file["'][^>]*>/i.exec(html)![0])![1]).toBe(
+      "championshipFile",
+    )
+  })
+})

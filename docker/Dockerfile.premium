@@ -1,0 +1,49 @@
+# Builds a runnable image from a premium Server Manager release zip.
+#
+# The premium build isn't published as a Docker image, so drop the release zip
+# you downloaded into docker/premium/ and build:
+#
+#   cd docker
+#   docker build -f Dockerfile.premium -t champctl/acsm-premium:local .
+#
+# The zip is gitignored. Do not commit it — it is licensed software.
+
+FROM debian:bookworm-slim
+
+# ca-certificates for ACSR/Discord calls, unzip to unpack the release, wget for
+# the compose healthcheck. No steamcmd: the harness runs with no AC content.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates unzip wget \
+ && rm -rf /var/lib/apt/lists/*
+
+# Match the paths the upstream image uses, so docker-compose.yml and the
+# published docs stay interchangeable between the premium and OSS services.
+RUN useradd --create-home --home-dir /home/assetto --shell /bin/bash assetto
+
+WORKDIR /home/assetto/server-manager
+
+# Unpack whichever release zip is present. The wildcard keeps the Dockerfile
+# from pinning a version you then have to edit on every ACSM upgrade.
+COPY premium/*.zip /tmp/acsm/
+RUN set -eux; \
+    zip="$(find /tmp/acsm -name '*.zip' | head -n1)"; \
+    test -n "$zip"; \
+    unzip -q "$zip" -d /tmp/acsm/extracted; \
+    bin="$(find /tmp/acsm/extracted -type f -name 'server-manager' | head -n1)"; \
+    test -n "$bin" || { echo "No linux 'server-manager' binary in $zip"; exit 1; }; \
+    cp "$bin" /home/assetto/server-manager/server-manager; \
+    chmod +x /home/assetto/server-manager/server-manager; \
+    # Keep anything shipped alongside the binary (plugins, static assets on
+    # builds that don't embed them) rather than guessing what's needed.
+    src="$(dirname "$bin")"; \
+    find "$src" -mindepth 1 -maxdepth 1 ! -name 'server-manager' \
+        -exec cp -r {} /home/assetto/server-manager/ \; ; \
+    mkdir -p /home/assetto/server-manager/db /home/assetto/server-manager/assetto; \
+    chown -R assetto:assetto /home/assetto; \
+    rm -rf /tmp/acsm
+
+USER assetto
+EXPOSE 8772 9600 9600/udp 8081
+
+# config.yml is bind-mounted by compose; the binary reads it from the cwd.
+CMD ["./server-manager"]
