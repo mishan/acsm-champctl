@@ -8,18 +8,27 @@ README covers what exists today.
 
 ## Status
 
-**Phase 1 — gridmom** (the sanity checker) is implemented, plus the read-only
-ACSM client it needs. Nothing here can write to a championship; the write path
-is Phase 2 and lives in a separate client so that stays true.
+**Phase 1 — gridmom** (the sanity checker) is done, plus the read-only client it
+needs. **Phase 2** has its foundations in: an authenticated session, an
+ordered-multimap form parser, the import safety rules, and a Docker test harness
+so the write path can be verified against a throwaway ACSM rather than by hand.
+
+The read client and the write session are separate types on purpose. The bot and
+the archive import only `AcsmReader`, which has no way to authenticate — that
+makes "the bot never holds write credentials" a property of the code.
 
 ```
 src/
-  acsm/        types, read-only client, rate limiter, response cache
+  acsm/        types, read client, session (write), form parser, diff,
+               rate limiter, response cache, import safety rules
   content/     installed-content index (interface + snapshot impl)
   pits/        track pit table, acsm | scan | manual precedence
   profile/     league profile schema + loader
   gridmom/     the checker: findings model, check registry, formatters
   cli/         gridmom CLI
+docker/        throwaway ACSM for recon and live tests
+scripts/recon/ form and round-trip recon against the harness
+docs/          what the ACSM source actually says about the write path
 profiles/      league baselines — batl.json ships here
 ```
 
@@ -46,6 +55,25 @@ Against a live manager (no credentials needed — Public Access is enabled):
 npm run gridmom -- list
 npm run gridmom -- check <championship-id>
 ```
+
+## Test harness
+
+`docker/` runs a throwaway ACSM so the write path can be verified without
+touching a league's server. See [`docker/README.md`](docker/README.md) — read the
+safety note first, because the recon scripts create and delete championships.
+
+```sh
+npm run harness:up
+set -a && . docker/.env && set +a
+
+npm run recon:forms        # snapshot every form champctl drives
+npm run recon:roundtrip    # import, export, diff
+npm run test:live          # assertions those answers should hold to
+npm run harness:reset      # back to an empty manager
+```
+
+`npm test` never needs the container; the live suite has its own config and
+skips without `CHAMPCTL_LIVE_URL`.
 
 ## gridmom
 
@@ -132,8 +160,20 @@ degrade to a warning that the pit count is unknown rather than guessing.
 
 ## Design notes worth keeping in mind
 
+Fuller treatment in [`docs/acsm-write-path.md`](docs/acsm-write-path.md), read
+off the ACSM source rather than guessed.
+
 - **The export is the read source of truth.** One unauthenticated request per
   championship yields config, entry list, results, laps and incidents.
+- **`EntryList.*` form keys are parallel arrays indexed by position.** Drop one
+  value and every entrant after it takes on someone else's data. Build the POST
+  by round-tripping the rendered form, never from the JSON export; `postForm`
+  refuses a ragged payload rather than sending it.
+- **Omitting `EntryList.EntrantID` renumbers every pit box** to its list index.
+  Not "leaves it alone" — reassigns it.
+- **Duplicate pit boxes delete entrants.** `AddInPitBox` overwrites on
+  collision, so the next form save drops the losers. That's why the finding is
+  an ERROR and why its message says what happens next.
 - **`Scheduled` is practice start, not quali start.** `Scheduled = qualiStart −
   practiceDuration`. All schedule maths happens in league wall-clock time and
   is converted, because November crosses a DST boundary.
@@ -153,5 +193,9 @@ degrade to a warning that the pit count is unknown rather than guessing.
   fixtures. `fixtures/import-roundtrip/` (plan §4.1) needs a real BATL export
   before the round-trip regression test can exist.
 - **Content checks need a source.** `ContentIndex` is defined and wired in, but
-  nothing populates it yet — that's the event form's track XHR (recon item 6).
-- Phases 1b onward: archive ingest, write client, UI, bot.
+  nothing populates it. `/content/tracks/{track}/ui/ui_track.json` is the
+  endpoint; the harness needs AC content installed to exercise it.
+- **The read-modify-write flow itself.** `session.ts` and `form.ts` are the
+  pieces; the finalize-a-race operation that uses them is next, and the live
+  suite is where it gets proven.
+- Phases 1b onward: archive ingest, UI, bot.
