@@ -6,10 +6,13 @@
 #  blanks. It exists because the upstream public image ships its own
 #  entrypoint, so nothing renders the template for that service.
 #
-#  Steam credentials are blank on purpose. The OSS profile is for checking that
-#  champctl degrades sanely on the build most other leagues run, which needs no
-#  Assetto Corsa content. If you change something here, change it in
-#  config.template.yml too.
+#  Steam credentials are blank here, which means this profile will fail the
+#  same way the premium one does without them — Server Manager runs steamcmd
+#  whenever install_path is empty. Fill them in if you actually need the OSS
+#  container to boot; it exists only as an occasional cross-check that champctl
+#  degrades sanely on the build most other leagues run.
+#
+#  If you change something here, change it in config.template.yml too.
 #
 ################################################################################
 

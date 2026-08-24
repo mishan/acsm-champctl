@@ -74,42 +74,73 @@ docker compose --profile oss up -d   # http://127.0.0.1:8773
 It's worth having around — champctl should degrade sanely on the version most
 other leagues run — but see the caveats below.
 
-## Assetto Corsa content
+## Steam credentials are required
 
-steamcmd is installed in the image, because Server Manager looks for it on
-`$PATH` at boot and complains when it's missing even with no credentials set.
+There is no content-free mode. Server Manager runs steamcmd whenever
+`install_path` has no executable in it, and blank credentials don't prevent
+that — they just make it fail with `exit status 4`. An earlier version of this
+harness tried a placeholder `acServer` to satisfy the check; Server Manager ran
+steamcmd anyway.
 
-Whether it actually downloads anything is up to `docker/.env`:
+Anonymous doesn't help either. Tested directly:
 
-- **`STEAM_USERNAME` blank** (the default) — no content. The container boots in
-  seconds. Import, export, the round trip and every form recon target work
-  fine; only track pit counts don't, because
-  `/content/tracks/{track}/ui/ui_track.json` has nothing to serve.
-- **`STEAM_USERNAME` / `STEAM_PASSWORD` set** — Server Manager installs the
-  Assetto Corsa dedicated server on first boot. It's free but needs an account
-  that **owns Assetto Corsa**, and SteamGuard has to be off, since steamcmd
-  can't prompt for a code from inside the container. Expect a few minutes;
-  watch it with `npm run harness:logs`.
+```
+$ steamcmd +login anonymous +app_update 302550 +quit
+ERROR! Failed to install app '302550' (No subscription)
+```
 
-That gets you stock tracks only. BATL's mod tracks still need the `scan`
-pit-count source (plan §4.5).
+So the account has to **own Assetto Corsa**. The dedicated server is a free
+download, but only to owners.
 
-Note that `npm run harness:reset` removes the steamcmd volume too, so the next
-boot re-downloads. Use `harness:down` + `harness:up` to keep the content and
-just restart.
+Put the credentials in `docker/.env`:
 
-### Why there's a placeholder acServer
+```
+STEAM_USERNAME=your-steam-account
+STEAM_PASSWORD=...
+```
 
-Server Manager runs steamcmd whenever `install_path` has no executable in it.
-Blank credentials don't stop that — they just make the install fail. So on the
-content-free path the entrypoint writes a placeholder `assetto/acServer`, and
-Server Manager stops trying.
+The entrypoint checks them before starting Server Manager, so a bad login is a
+sentence in the logs rather than a number in the UI.
 
-It's marked with a `.champctl-placeholder` sentinel, so the moment you add
-`STEAM_USERNAME` it gets removed and a real install runs. Running the
-placeholder prints an explanation and exits 1 rather than failing silently.
+### Steam Guard
+
+steamcmd can't prompt for a Steam Guard code when Server Manager runs it in the
+background — that's what `exit status 4` usually means. Rather than turning
+Steam Guard off, log in once with a terminal attached:
+
+```sh
+npm run harness:steam-login
+```
+
+That does the login *and* the `app_update 302550` download in one go, into the
+same volume Server Manager reads, so afterwards the container comes straight
+up. The credential cache lives in `/home/assetto/steamcmd`, a named volume, so
+later non-interactive logins succeed too.
+
+`npm run harness:reset` wipes that volume and you'll need to run it again.
+`harness:down` + `harness:up` keeps it.
+
+### What you get
+
+Stock content only. BATL's mod tracks still need the `scan` pit-count source
+(plan §4.5), so `/content/tracks/{track}/ui/ui_track.json` will answer for
+Spa and Silverstone but not for whatever mod track is on the schedule.
+
+Expect a few minutes on the first download; the compose healthcheck allows for
+it. `npm run harness:logs` to watch.
 
 ### Troubleshooting
+
+**steamcmd exit codes**, as reported by Server Manager. Verified by running
+them:
+
+| | |
+|---|---|
+| `0` | success |
+| `4` | login failed — blank credentials, or a Steam Guard prompt it couldn't answer. See "Steam Guard" above. |
+| `5` | invalid password, or no such account |
+| `8` | install failed. `No subscription` means the account doesn't own Assetto Corsa. |
+| `127` | steamcmd itself wasn't found or couldn't run — see below |
 
 **"Likely you do not have steamcmd installed correctly", exit status 127.**
 

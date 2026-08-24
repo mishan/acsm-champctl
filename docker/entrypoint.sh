@@ -1,6 +1,6 @@
 #!/bin/bash
-# Renders config.yml from the committed template plus environment, then starts
-# Server Manager.
+# Renders config.yml from the committed template plus environment, checks the
+# Steam credentials, then starts Server Manager.
 #
 # Why a template: ACSM's config.yml is the only place Steam credentials can go,
 # and config.yml would be a tracked file. Substituting at boot keeps the
@@ -18,6 +18,8 @@ shopt -u patsub_replacement 2>/dev/null || true
 
 TEMPLATE=${CHAMPCTL_CONFIG_TEMPLATE:-/home/assetto/server-manager/config.template.yml}
 OUTPUT=${CHAMPCTL_CONFIG:-/home/assetto/server-manager/config.yml}
+ASSETTO_DIR=${CHAMPCTL_ASSETTO_DIR:-/home/assetto/server-manager/assetto}
+AC_SERVER="$ASSETTO_DIR/acServer"
 
 say() { printf 'champctl-harness: %s\n' "$1" >&2; }
 
@@ -25,6 +27,9 @@ say() { printf 'champctl-harness: %s\n' "$1" >&2; }
 # character that needs handling once the value is quoted in the template.
 yaml_single_quote() { printf '%s' "${1//\'/\'\'}"; }
 
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
 if [[ -f "$TEMPLATE" ]]; then
   steam_username=$(yaml_single_quote "${STEAM_USERNAME:-}")
   steam_password=$(yaml_single_quote "${STEAM_PASSWORD:-}")
@@ -43,65 +48,67 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Assetto Corsa server
+# Steam credentials
 #
-# Server Manager tries to install via steamcmd whenever install_path has no
-# executable in it — blank credentials don't stop it, they just make the
-# install fail. So the content-free path needs something at assetto/acServer,
-# not a working steamcmd.
+# Server Manager runs steamcmd whenever install_path has no executable in it.
+# Blank credentials don't prevent that, they just make it fail with an opaque
+# "exit status 4" — so there is no content-free mode to fall back on, and the
+# harness refuses to start rather than reproducing that error for you.
 #
-# The placeholder is marked with a sentinel so we can tell ours from a real
-# install and replace it the moment credentials appear.
+# Anonymous doesn't help: appid 302550 answers "No subscription" to an
+# anonymous login. The account has to own Assetto Corsa.
 # ---------------------------------------------------------------------------
-ASSETTO_DIR=/home/assetto/server-manager/assetto
-AC_SERVER="$ASSETTO_DIR/acServer"
-PLACEHOLDER_MARKER="$ASSETTO_DIR/.champctl-placeholder"
-
-install_placeholder_server() {
-  mkdir -p "$ASSETTO_DIR"/{cfg,content/cars,content/tracks,results,logs}
-  cat >"$AC_SERVER" <<'STUB'
-#!/bin/sh
-# Placeholder installed by the champctl test harness.
-#
-# There is no Assetto Corsa server here. The harness runs content-free by
-# default so it boots in seconds — that is enough for championship import,
-# export, form recon and the round-trip diff, none of which start a session.
-#
-# To get a real server, set STEAM_USERNAME and STEAM_PASSWORD in docker/.env
-# and restart. See docker/README.md.
-echo "champctl harness: no Assetto Corsa server installed; cannot start a session." >&2
-exit 1
-STUB
-  chmod +x "$AC_SERVER"
-  date -u +%FT%TZ >"$PLACEHOLDER_MARKER"
+explain_steamcmd_exit() {
+  case "$1" in
+    0) printf 'success' ;;
+    4) printf 'login failed — usually blank credentials, or a Steam Guard prompt it could not answer' ;;
+    5) printf 'invalid password, or no such account' ;;
+    8) printf "install failed — commonly 'No subscription', meaning this account does not own Assetto Corsa" ;;
+    *) printf 'exit status %s' "$1" ;;
+  esac
 }
 
-if [[ -n "${STEAM_USERNAME:-}" ]]; then
-  if [[ -f "$PLACEHOLDER_MARKER" ]]; then
-    say "steam credentials appeared — removing the placeholder so a real install can run"
-    rm -f "$AC_SERVER" "$PLACEHOLDER_MARKER"
-  fi
-  if [[ -x "$AC_SERVER" ]]; then
-    say "Assetto Corsa server already installed; skipping the download"
-  else
-    say "steam credentials present — Server Manager will install the AC server on first boot."
-    say "This takes a few minutes and needs an account that owns Assetto Corsa."
-    say "Watch progress with: npm run harness:logs"
-    # Surface a broken steamcmd here rather than as an opaque exit 127 from
-    # inside Server Manager.
-    if ! steamcmd +quit >/dev/null 2>&1; then
-      say "WARNING: 'steamcmd +quit' failed. Server Manager's install will fail too."
-      say "Check it inside the container with: docker compose exec acsm steamcmd +quit"
-    fi
-  fi
-elif [[ -x "$AC_SERVER" && ! -f "$PLACEHOLDER_MARKER" ]]; then
-  say "Assetto Corsa server already installed; leaving it alone"
+if [[ -x "$AC_SERVER" ]]; then
+  say "Assetto Corsa server already installed; skipping the download"
 else
-  install_placeholder_server
-  say "no steam credentials — installed a placeholder acServer so Server Manager"
-  say "doesn't try to download one. Import, export and form recon all work."
-  say "Track pit counts do not: /content/tracks/.../ui_track.json has nothing to serve,"
-  say "and starting a session will fail. Set STEAM_USERNAME in docker/.env for a real one."
+  if [[ -z "${STEAM_USERNAME:-}" || -z "${STEAM_PASSWORD:-}" ]]; then
+    say "STEAM_USERNAME and STEAM_PASSWORD are required."
+    say ""
+    say "There is no Assetto Corsa server in $ASSETTO_DIR, so Server Manager will"
+    say "try to install one with steamcmd. That needs a Steam account which owns"
+    say "Assetto Corsa — the dedicated server is free, but not anonymous:"
+    say "appid 302550 answers 'No subscription' to an anonymous login."
+    say ""
+    say "Set both in docker/.env and restart. See docker/README.md."
+    exit 1
+  fi
+
+  # Server Manager is about to do this login anyway; doing it here first turns
+  # a numeric failure buried in the UI into a sentence in the logs.
+  say "checking Steam credentials for '${STEAM_USERNAME}'..."
+  set +e
+  steamcmd +login "$STEAM_USERNAME" "$STEAM_PASSWORD" +quit </dev/null >/tmp/steam-preflight.log 2>&1
+  preflight=$?
+  set -e
+
+  if [[ $preflight -ne 0 ]]; then
+    say "steamcmd login failed: $(explain_steamcmd_exit "$preflight")"
+    say ""
+    if [[ $preflight -eq 4 ]]; then
+      say "If this account has Steam Guard on, steamcmd cannot prompt for a code"
+      say "from inside the container. Do an interactive login once:"
+      say ""
+      say "    npm run harness:steam-login"
+      say ""
+      say "That caches the credentials in the acsm-steam volume, and later"
+      say "non-interactive logins work. Note 'npm run harness:reset' wipes it."
+    fi
+    tail -5 /tmp/steam-preflight.log >&2 || true
+    exit 1
+  fi
+
+  say "Steam credentials accepted. Server Manager will install the AC server now;"
+  say "this takes a few minutes. Watch it with: npm run harness:logs"
 fi
 
 exec "$@"

@@ -16,13 +16,11 @@
 ################################################################################
 
 steam:
-  # Filled from STEAM_USERNAME / STEAM_PASSWORD in docker/.env. Leave them
-  # unset for a content-free container: import, export and form recon all work
-  # without the Assetto Corsa server, and it boots in seconds rather than
-  # minutes. Set them when you need track pit counts.
-  #
-  # steamcmd is installed in the image either way, because Server Manager looks
-  # for it on $PATH at boot and complains when it isn't there.
+  # Filled from STEAM_USERNAME / STEAM_PASSWORD in docker/.env, which are
+  # required: Server Manager runs steamcmd whenever install_path has no
+  # executable in it, and blank credentials only change how it fails. The
+  # account must own Assetto Corsa — appid 302550 refuses an anonymous login
+  # with "No subscription".
   username: '__STEAM_USERNAME__'
   password: '__STEAM_PASSWORD__'
   install_path: assetto
