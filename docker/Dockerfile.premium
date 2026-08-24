@@ -114,7 +114,14 @@ RUN set -eux; \
     src="$(dirname "$bin")"; \
     find "$src" -mindepth 1 -maxdepth 1 ! -name 'server-manager' \
         -exec cp -r {} /home/assetto/server-manager/ \; ; \
-    mkdir -p /home/assetto/server-manager/db /home/assetto/server-manager/assetto; \
+    # Every path compose mounts a named volume at must exist here first, so
+    # it inherits the chown below. Docker creates a missing mountpoint as
+    # root, and the assetto user then can't write to it — for
+    # /home/assetto/depotdownloader that means DepotDownloader silently
+    # failing to remember the QR session under --workdir.
+    mkdir -p /home/assetto/server-manager/db \
+             /home/assetto/server-manager/assetto \
+             /home/assetto/depotdownloader; \
     rm -rf /tmp/acsm
 
 COPY entrypoint.sh /usr/local/bin/champctl-entrypoint

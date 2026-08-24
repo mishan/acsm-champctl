@@ -73,7 +73,11 @@ services:
   # Public build. Useful for checking that champctl degrades sanely on the
   # version most other leagues run.
   acsm-oss:
-    image: seejy/assetto-server-manager:latest
+    # Pinned, not :latest. This profile exists to produce comparable recon
+    # captures, and a floating tag means an answer can change with no commit
+    # to point at. v1.7.9 is the last public release (Feb 2021) and is what
+    # :latest resolves to today; override ACSM_OSS_IMAGE to move deliberately.
+    image: ${ACSM_OSS_IMAGE:-seejy/assetto-server-manager:v1.7.9}
     profiles: ["oss"]
     container_name: champctl-acsm-oss
     restart: unless-stopped
