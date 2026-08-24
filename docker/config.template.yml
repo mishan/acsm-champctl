@@ -1,10 +1,13 @@
 ################################################################################
 #
-#  ACSM configuration for the champctl test harness.
+#  ACSM configuration TEMPLATE for the champctl test harness.
+#
+#  Not read directly. docker/entrypoint.sh renders this into config.yml at
+#  boot, substituting the __STEAM_*__ placeholders from docker/.env — so
+#  credentials never live in a tracked file.
 #
 #  Tuned for a throwaway container, NOT for anything a league can reach:
 #   - monitoring off, so recon runs don't ship telemetry to a third party
-#   - steam credentials blank, so it never tries to install the AC server
 #   - boltdb, matching a normal production install
 #
 #  Log in the first time with admin / servermanager; ACSM will immediately
@@ -13,15 +16,24 @@
 ################################################################################
 
 steam:
-  # Deliberately blank. With no credentials ACSM skips the steamcmd install and
-  # comes up with no content, which is all the recon and round-trip work needs.
-  # To install the free AC dedicated server instead, fill these in and set
-  # force_update: true for one boot.
-  username:
-  password:
+  # Filled from STEAM_USERNAME / STEAM_PASSWORD in docker/.env. Leave them
+  # unset for a content-free container: import, export and form recon all work
+  # without the Assetto Corsa server, and it boots in seconds rather than
+  # minutes. Set them when you need track pit counts.
+  #
+  # steamcmd is installed in the image either way, because Server Manager looks
+  # for it on $PATH at boot and complains when it isn't there.
+  username: '__STEAM_USERNAME__'
+  password: '__STEAM_PASSWORD__'
   install_path: assetto
   executable_path: acServer
-  force_update: false
+  # Reinstalls the AC server on every boot. Leave false.
+  #
+  # Note what this does and doesn't update: steamcmd keeps the *Assetto Corsa
+  # dedicated server* current. Server Manager itself never self-updates — that
+  # is always a manual binary swap — so a harness built from a 1.7.x zip stays
+  # 1.7.x no matter how long it runs.
+  force_update: __STEAM_FORCE_UPDATE__
 
 http:
   hostname: 0.0.0.0:8772

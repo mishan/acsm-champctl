@@ -7,18 +7,40 @@
 #   docker build -f Dockerfile.premium -t champctl/acsm-premium:local .
 #
 # The zip is gitignored. Do not commit it — it is licensed software.
+#
+# steamcmd is installed because Server Manager looks for it on $PATH at boot
+# and complains when it's missing, even with no credentials configured. Whether
+# it actually downloads the Assetto Corsa server depends on the credentials in
+# docker/.env; without them the container still comes up, just with no content.
 
 FROM debian:bookworm-slim
 
-# ca-certificates for ACSR/Discord calls, unzip to unpack the release, wget for
-# the compose healthcheck. No steamcmd: the harness runs with no AC content.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates unzip wget \
+# steamcmd is a 32-bit binary, hence the i386 architecture and lib32gcc-s1.
+# ca-certificates for ACSR/Discord calls, unzip to unpack the release,
+# wget/curl for the compose healthcheck and the steamcmd download.
+RUN dpkg --add-architecture i386 \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      lib32gcc-s1 \
+      lib32stdc++6 \
+      unzip \
+      wget \
  && rm -rf /var/lib/apt/lists/*
 
 # Match the paths the upstream image uses, so docker-compose.yml and the
 # published docs stay interchangeable between the premium and OSS services.
 RUN useradd --create-home --home-dir /home/assetto --shell /bin/bash assetto
+
+# steamcmd bootstraps itself into its own directory on first run, so it has to
+# live somewhere the runtime user can write.
+ENV STEAMCMD_DIR=/home/assetto/steamcmd
+RUN mkdir -p "$STEAMCMD_DIR" \
+ && curl -fsSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz \
+    | tar -xz -C "$STEAMCMD_DIR" \
+ && ln -s "$STEAMCMD_DIR/steamcmd.sh" /usr/local/bin/steamcmd \
+ && chown -R assetto:assetto "$STEAMCMD_DIR"
 
 WORKDIR /home/assetto/server-manager
 
@@ -39,11 +61,16 @@ RUN set -eux; \
     find "$src" -mindepth 1 -maxdepth 1 ! -name 'server-manager' \
         -exec cp -r {} /home/assetto/server-manager/ \; ; \
     mkdir -p /home/assetto/server-manager/db /home/assetto/server-manager/assetto; \
-    chown -R assetto:assetto /home/assetto; \
     rm -rf /tmp/acsm
+
+COPY entrypoint.sh /usr/local/bin/champctl-entrypoint
+RUN chmod +x /usr/local/bin/champctl-entrypoint \
+ && chown -R assetto:assetto /home/assetto
 
 USER assetto
 EXPOSE 8772 9600 9600/udp 8081
 
-# config.yml is bind-mounted by compose; the binary reads it from the cwd.
+# The entrypoint renders config.yml from the committed template plus whatever
+# is in docker/.env, so credentials never end up in a tracked file.
+ENTRYPOINT ["/usr/local/bin/champctl-entrypoint"]
 CMD ["./server-manager"]

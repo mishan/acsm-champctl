@@ -16,6 +16,7 @@ import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
 import { parseForm, shape } from "../../src/acsm/form.js"
+import type { AcsmSession } from "../../src/acsm/session.js"
 import type { Championship } from "../../src/acsm/types.js"
 import { events } from "../../src/acsm/view.js"
 import {
@@ -52,9 +53,40 @@ function snapshot(path: string, html: string, pageUrl: string, selector?: string
   }
 }
 
+/**
+ * Server Manager's version, so a capture from a 1.7.x harness is never
+ * mistaken for one from the 2.4.5 BATL runs. See docs/acsm-write-path.md §0 —
+ * some of these answers are version-specific and some aren't.
+ */
+async function serverVersion(session: AcsmSession): Promise<string | undefined> {
+  try {
+    const health = await session.getJson<Record<string, unknown>>("/healthcheck.json")
+    for (const key of ["Version", "version", "ServerManagerVersion"]) {
+      const v = health[key]
+      if (typeof v === "string" && v) return v
+    }
+  } catch {
+    // Fall through to scraping the page footer.
+  }
+  try {
+    const html = await session.getText("/")
+    const m = /v?(\d+\.\d+\.\d+)/.exec(html.slice(html.lastIndexOf("<footer")))
+    return m?.[1]
+  } catch {
+    return undefined
+  }
+}
+
 async function main(): Promise<void> {
   const session = await connect()
   log(`Logged in to ${session.baseUrl} as ${session.username}`)
+
+  const version = await serverVersion(session)
+  log(`Server Manager version: ${version ?? "unknown"}`)
+  if (version && version.startsWith("1.")) {
+    log(`  Note: BATL runs 2.4.5. Treat the EntrantID and premium-endpoint`)
+    log(`  answers below as provisional — see docs/acsm-write-path.md §0.`)
+  }
 
   // ---------------------------------------------------------------- import
   // The import page itself tells us the file input's name, which was the last
@@ -166,8 +198,9 @@ async function main(): Promise<void> {
     }`)
   }
 
-  await writeArtefact("forms.json", {
+  await writeArtefact(version ? `forms-${version}.json` : "forms.json", {
     capturedAt: new Date().toISOString(),
+    serverManagerVersion: version ?? "unknown",
     baseUrl: session.baseUrl,
     importFileField: fileFieldName,
     importEnctype: importForm.enctype,
@@ -179,7 +212,7 @@ async function main(): Promise<void> {
   })
 
   log("")
-  log(`Wrote fixtures/recon/forms.json`)
+  log(`Wrote fixtures/recon/${version ? `forms-${version}.json` : "forms.json"}`)
   log(`Clean up with: delete championship ${championshipId} in the UI, or docker compose down -v`)
 }
 

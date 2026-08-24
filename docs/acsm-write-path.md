@@ -9,6 +9,49 @@ Re-check all of this after any ACSM upgrade.
 
 ---
 
+## 0. Which version answers which question
+
+BATL runs **2.4.5**. The public source above is **1.7.9**. Those are far enough
+apart that a harness built from a 1.7.x zip settles some questions and not
+others, so it's worth being explicit about which.
+
+**Server Manager does not update itself.** Its own release notes describe
+upgrading as: back up the database, download the release, replace the binary.
+The auto-update in the config is `steam.force_update`, and that updates the
+*Assetto Corsa dedicated server* via steamcmd — a different program. A harness
+built from a 1.7.8 zip stays 1.7.8 however long it runs.
+
+A 1.7.x harness **does** settle:
+
+- Whether champctl's own machinery works end to end — login, cookie jar, form
+  parse, mutate, POST, re-export, diff. This is most of the risk in the client,
+  and none of it is version-specific.
+- The shape of the round-trip: which fields ACSM rewrites on import, whether
+  UUIDs are preserved, whether `PracticeEntryListType` really gets rewritten.
+- Whether duplicate pit boxes lose entrants on import (§3). `AddInPitBox` is
+  old, load-bearing code; a change there between 1.7 and 2.4 would be
+  surprising.
+- That the safety rails fire — ragged payloads refused, results-bearing imports
+  refused.
+
+A 1.7.x harness **cannot** settle, because the answer is what changed:
+
+- **Whether `EntryList.EntrantID` is rendered on the championship event form**
+  (§2). This is the headline question, and 1.7.9 is exactly the version where
+  the answer is "no". Getting "no" from a 1.7.8 harness tells you nothing about
+  2.4.5 — it just reproduces what the source already says.
+- Whether the three premium read endpoints exist and what they return (§6).
+  1.7.x predates them.
+- Any field added to the event form between 1.7 and 2.4, which is the main way
+  a hand-built payload would silently drop settings.
+
+So: run 1.7.8 now to prove the tooling, and treat every §2 and §6 answer it
+gives as provisional until 2.4.5 is in the harness. `npm run recon:forms`
+records the version it captured against, so a 2.4.5 run produces a diff rather
+than a replacement.
+
+---
+
 ## 1. The entry list is parsed strictly by position
 
 `RaceManager.BuildEntryList` (`race_manager.go`) walks a single index `i` across

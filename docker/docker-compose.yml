@@ -6,20 +6,27 @@
 #
 #   cd docker && cp .env.example .env && docker compose up -d
 #
-# Default profile runs the premium build from an image you supply, because
-# that is what BATL runs. The `oss` profile runs the public image instead;
-# see docker/README.md for what it can and can't tell you.
+# Default service runs the premium build from an image you supply, because that
+# is what BATL runs. The `oss` profile runs the public image instead; see
+# docker/README.md for what it can and can't tell you.
 
 name: champctl-acsm
 
 services:
   acsm:
-    # Set ACSM_IMAGE in .env. Build one from a premium release zip with:
-    #   docker build -f Dockerfile.premium -t champctl/acsm-premium .
     # No `profiles` key, so this is what `docker compose up` starts.
+    # Build it with: docker build -f Dockerfile.premium -t champctl/acsm-premium:local .
     image: ${ACSM_IMAGE:-champctl/acsm-premium:local}
     container_name: champctl-acsm
     restart: unless-stopped
+    environment:
+      # Read by entrypoint.sh, which renders config.template.yml into
+      # config.yml at boot. Leave blank for a content-free container that boots
+      # in seconds; set them to have Server Manager install the AC dedicated
+      # server via steamcmd, which is what track pit counts need.
+      STEAM_USERNAME: ${STEAM_USERNAME:-}
+      STEAM_PASSWORD: ${STEAM_PASSWORD:-}
+      STEAM_FORCE_UPDATE: ${STEAM_FORCE_UPDATE:-false}
     ports:
       # Server Manager web UI. Bound to loopback by default: this container
       # holds an admin account with a known password and must not be exposed
@@ -31,19 +38,25 @@ services:
       - "${BIND_ADDR:-127.0.0.1}:9600:9600/udp"
       - "${BIND_ADDR:-127.0.0.1}:8081:8081"
     volumes:
-      - ./config.yml:/home/assetto/server-manager/config.yml:ro
-      # Named volume rather than a bind mount so a `docker compose down -v`
-      # genuinely resets the manager to a clean slate between recon runs.
+      # The template, not config.yml — the entrypoint renders the real one.
+      - ./config.template.yml:/home/assetto/server-manager/config.template.yml:ro
+      # Named volumes rather than bind mounts so `docker compose down -v`
+      # genuinely resets the manager to a clean slate between recon runs. Note
+      # that also throws away a steamcmd install, so if you have credentials
+      # configured the next boot re-downloads the AC server.
       - acsm-data:/home/assetto/server-manager/assetto
       - acsm-db:/home/assetto/server-manager/db
+      - acsm-steam:/home/assetto/steamcmd
     healthcheck:
       # /healthcheck.json is unauthenticated in every build, which makes it the
       # right readiness probe.
       test: ["CMD-SHELL", "wget -qO- http://localhost:8772/healthcheck.json || exit 1"]
       interval: 5s
       timeout: 3s
-      retries: 30
-      start_period: 20s
+      retries: 60
+      # Generous: a first boot with steam credentials downloads the AC server
+      # before the UI comes up.
+      start_period: 60s
 
   # Public build. Useful for checking that champctl degrades sanely on the
   # version most other leagues run.
@@ -55,7 +68,9 @@ services:
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${ACSM_OSS_PORT:-8773}:8772"
     volumes:
-      - ./config.yml:/home/assetto/server-manager/config.yml:ro
+      # Its own plain config: the upstream image has its own entrypoint, so
+      # nothing would render the template for this service.
+      - ./config.oss.yml:/home/assetto/server-manager/config.yml:ro
       - acsm-oss-data:/home/assetto/server-manager/assetto
       - acsm-oss-db:/home/assetto/server-manager/db
     healthcheck:
@@ -68,5 +83,6 @@ services:
 volumes:
   acsm-data:
   acsm-db:
+  acsm-steam:
   acsm-oss-data:
   acsm-oss-db:

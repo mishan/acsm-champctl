@@ -18,6 +18,30 @@ Never put a league's real credentials in `docker/.env`. Never point
 `127.0.0.1` by default, because it holds an admin account whose password is
 written down in a file next to it.
 
+## Which version to run
+
+BATL runs **2.4.5**. Any older zip is still worth running, but be clear about
+what it settles. `docs/acsm-write-path.md` §0 has the full breakdown; the short
+version:
+
+- A 1.7.x harness proves **champctl's own machinery** — login, form parse,
+  mutate, POST, re-export, diff — and the round-trip and safety-rail behaviour.
+  That's most of the risk in the client, and none of it is version-specific.
+- It **cannot** answer whether `EntryList.EntrantID` is rendered on the
+  championship event form, or what the premium read endpoints return. 1.7.9 is
+  the version the source says "no" for, so getting "no" from it tells you
+  nothing about 2.4.5.
+
+**Server Manager never updates itself.** Upgrading is: back up the database,
+download the release, swap the binary. The auto-update in the config is
+`steam.force_update`, which keeps the *Assetto Corsa dedicated server* current
+via steamcmd — a different program. A container built from a 1.7.8 zip stays
+1.7.8 however long it runs.
+
+`npm run recon:forms` records the version it captured against and writes
+`fixtures/recon/forms-<version>.json`, so a 2.4.5 run later produces a diff
+rather than silently replacing a 1.7.x answer.
+
 ## Setup
 
 The premium build isn't published as a Docker image, so build one from the
@@ -43,6 +67,42 @@ docker compose --profile oss up -d   # http://127.0.0.1:8773
 
 It's worth having around — champctl should degrade sanely on the version most
 other leagues run — but see the caveats below.
+
+## Assetto Corsa content
+
+steamcmd is installed in the image, because Server Manager looks for it on
+`$PATH` at boot and complains when it's missing even with no credentials set.
+
+Whether it actually downloads anything is up to `docker/.env`:
+
+- **`STEAM_USERNAME` blank** (the default) — no content. The container boots in
+  seconds. Import, export, the round trip and every form recon target work
+  fine; only track pit counts don't, because
+  `/content/tracks/{track}/ui/ui_track.json` has nothing to serve.
+- **`STEAM_USERNAME` / `STEAM_PASSWORD` set** — Server Manager installs the
+  Assetto Corsa dedicated server on first boot. It's free but needs an account
+  that **owns Assetto Corsa**, and SteamGuard has to be off, since steamcmd
+  can't prompt for a code from inside the container. Expect a few minutes;
+  watch it with `npm run harness:logs`.
+
+That gets you stock tracks only. BATL's mod tracks still need the `scan`
+pit-count source (plan §4.5).
+
+Note that `npm run harness:reset` removes the steamcmd volume too, so the next
+boot re-downloads. Use `harness:down` + `harness:up` to keep the content and
+just restart.
+
+### Config templating
+
+`config.template.yml` is committed with `__STEAM_*__` placeholders;
+`entrypoint.sh` renders it into `config.yml` at boot from the environment. That
+keeps Steam credentials in the gitignored `.env` rather than in a tracked file.
+Values are quoted as YAML single-quoted scalars, so passwords containing `&`,
+`$`, `\` or `'` survive intact.
+
+The `oss` profile mounts `config.oss.yml` instead — a plain copy with blanks —
+because the upstream image ships its own entrypoint and would never render the
+template. Change one, change the other.
 
 ## Using it
 
@@ -85,9 +145,10 @@ Answers you get:
 
 Answers you don't get:
 
-- **Pit counts.** `/content/tracks/{track}/ui/ui_track.json` exists but has
-  nothing to serve without content installed. To exercise it, fill in the steam
-  credentials in `config.yml` for one boot, or bind-mount a real content folder.
+- **Pit counts, unless you configure Steam credentials.** See the content
+  section above.
+- **Anything version-specific, if you're running an older zip than BATL.** See
+  "Which version to run".
 - **Anything about BATL's actual data.** This is an empty manager.
 - **On the OSS profile: `/api/championships/list.json`, `standings.json` and
   `penalties-log.json`.** They aren't in the public build's router at all, which
