@@ -31,6 +31,26 @@ if [[ -f "$here/.env" ]]; then
   set +a
 fi
 
+# The image is prebuilt rather than built by compose on demand, so it is easy
+# to be running one from before DepotDownloader was added. Docker's own error
+# for that is "executable file not found in $PATH", which doesn't suggest a
+# rebuild. Check first and say so plainly.
+if ! docker compose --project-directory "$here" run --rm --no-deps \
+      --entrypoint sh acsm -c 'command -v depotdownloader' >/dev/null 2>&1; then
+  cat >&2 <<'MSG'
+This image doesn't have DepotDownloader in it, so it predates QR sign-in.
+
+Rebuild it:
+
+    npm run harness:build
+
+Then run this again. (If the build itself fails, the Dockerfile checks for
+both steamcmd and depotdownloader at the end, so it will say which is
+missing rather than leaving it for run time.)
+MSG
+  exit 1
+fi
+
 cat <<'MSG'
 Downloading the Assetto Corsa dedicated server via QR sign-in.
 

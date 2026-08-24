@@ -19,6 +19,7 @@
     "test:live": "vitest run --config vitest.live.config.ts",
     "recon:forms": "tsx scripts/recon/forms.ts",
     "recon:roundtrip": "tsx scripts/recon/roundtrip.ts",
+    "harness:build": "docker compose --project-directory docker build",
     "harness:up": "docker compose --project-directory docker up -d",
     "harness:down": "docker compose --project-directory docker down",
     "harness:reset": "docker compose --project-directory docker down -v && docker compose --project-directory docker up -d",

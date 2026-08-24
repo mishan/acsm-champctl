@@ -69,19 +69,28 @@ RUN set -eux; \
       amd64) dd_arch=linux-x64 ;; \
       arm64) dd_arch=linux-arm64 ;; \
       armhf) dd_arch=linux-arm ;; \
-      *) echo "No DepotDownloader build for $arch; QR login will be unavailable" >&2; exit 0 ;; \
+      *) echo "No DepotDownloader build for $arch" >&2; exit 1 ;; \
     esac; \
     url="https://github.com/SteamRE/DepotDownloader/releases/download/DepotDownloader_${DEPOTDOWNLOADER_VERSION}/DepotDownloader-${dd_arch}.zip"; \
     curl -fsSL "$url" -o /tmp/dd.zip; \
     mkdir -p /opt/depotdownloader; \
     unzip -q /tmp/dd.zip -d /opt/depotdownloader; \
     chmod +x /opt/depotdownloader/DepotDownloader; \
-    rm -f /tmp/dd.zip; \
-    # The self-contained build wants ICU unless told otherwise. Invariant mode
-    # is fine for a downloader and saves pulling in libicu.
-    printf '#!/bin/sh\nexport DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1\nexec /opt/depotdownloader/DepotDownloader "$@"\n' \
-      > /usr/local/bin/depotdownloader; \
-    chmod +x /usr/local/bin/depotdownloader
+    rm -f /tmp/dd.zip
+
+# The self-contained build wants ICU unless told otherwise. Invariant mode is
+# fine for a downloader and saves pulling in libicu.
+RUN printf '#!/bin/sh\nexport DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1\nexec /opt/depotdownloader/DepotDownloader "$@"\n' \
+      > /usr/local/bin/depotdownloader \
+ && chmod 0755 /usr/local/bin/depotdownloader
+
+# Fail the build here rather than at `docker compose run` time. Without this,
+# a missing tool surfaces as an OCI "executable file not found in $PATH",
+# which says nothing about which step went wrong.
+RUN set -eux; \
+    command -v steamcmd; \
+    command -v depotdownloader; \
+    depotdownloader --version
 
 WORKDIR /home/assetto/server-manager
 

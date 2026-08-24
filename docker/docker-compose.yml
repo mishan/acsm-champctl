@@ -15,8 +15,14 @@ name: champctl-acsm
 services:
   acsm:
     # No `profiles` key, so this is what `docker compose up` starts.
-    # Build it with: docker build -f Dockerfile.premium -t champctl/acsm-premium:local .
     image: ${ACSM_IMAGE:-champctl/acsm-premium:local}
+    # A build section, so `docker compose build` (npm run harness:build) and
+    # `up --build` work. Without it compose silently reuses a stale image, and
+    # a tool added to the Dockerfile shows up as "executable file not found in
+    # $PATH" at run time with no hint that a rebuild was needed.
+    build:
+      context: .
+      dockerfile: Dockerfile.premium
     container_name: champctl-acsm
     restart: unless-stopped
     environment:

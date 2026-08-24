@@ -54,12 +54,15 @@ The premium build isn't published as a Docker image, so build one from the
 release zip you already have:
 
 ```sh
-cd docker
-cp .env.example .env
-cp /path/to/server-manager-premium-*.zip premium/
-docker build -f Dockerfile.premium -t champctl/acsm-premium:local .
-docker compose up -d
+cp /path/to/server-manager-premium-*.zip docker/premium/
+cp docker/.env.example docker/.env
+npm run harness:build
+npm run harness:up
 ```
+
+`harness:build` is `docker compose build`, so re-run it after pulling changes
+to `docker/` — compose won't rebuild on its own, and a stale image shows up as
+a missing executable at run time rather than anything about the image.
 
 Then open <http://127.0.0.1:8772>, log in with **admin / servermanager**, and set
 a real password when ACSM insists. Put that password in `docker/.env` as
@@ -150,6 +153,10 @@ Expect a few minutes on the first download; the compose healthcheck allows for
 it. `npm run harness:logs` to watch.
 
 ### Troubleshooting
+
+**`executable file not found in $PATH`** when running `harness:steam-login-qr`
+or `harness:steam-login`. The image is older than the tool being invoked.
+`npm run harness:build`, then try again. Compose only rebuilds when asked.
 
 **steamcmd exit codes**, as reported by Server Manager. Verified by running
 them:
