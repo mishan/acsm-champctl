@@ -1,0 +1,34 @@
+{
+  "name": "acsm-champctl",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Championship creation, validation and stats for Assetto Corsa Server Manager",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "gridmom": "./bin/gridmom.js"
+  },
+  "scripts": {
+    "gridmom": "tsx src/cli/gridmom.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "luxon": "^3.5.0"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.4.2",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "esbuild@0.21.5": true
+  }
+}

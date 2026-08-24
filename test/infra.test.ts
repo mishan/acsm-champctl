@@ -1,0 +1,290 @@
+import { describe, expect, it } from "vitest"
+
+import { HttpAcsmReader, AcsmError, StaticAcsmReader } from "../src/acsm/client.js"
+import { RateLimiter } from "../src/acsm/rate-limit.js"
+import { InMemoryPitTable } from "../src/pits/table.js"
+import { validateProfile } from "../src/profile/load.js"
+import { isZeroTime, slots } from "../src/acsm/view.js"
+import { main, parseArgs } from "../src/cli/gridmom.js"
+import { championship } from "./support/build.js"
+
+describe("rate limiter", () => {
+  it("lets the first burst through and then waits", async () => {
+    let clock = 0
+    const sleeps: number[] = []
+    const limiter = new RateLimiter({
+      limit: 5,
+      windowMs: 20_000,
+      now: () => clock,
+      sleep: async (ms) => {
+        sleeps.push(ms)
+        clock += ms
+      },
+    })
+
+    for (let i = 0; i < 5; i++) await limiter.acquire()
+    expect(sleeps).toHaveLength(0)
+
+    await limiter.acquire()
+    expect(sleeps).toEqual([20_000])
+  })
+
+  it("keeps the window sliding rather than resetting in blocks", async () => {
+    let clock = 0
+    const limiter = new RateLimiter({
+      limit: 2,
+      windowMs: 1000,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms
+      },
+    })
+    await limiter.acquire()
+    clock += 600
+    await limiter.acquire()
+    await limiter.acquire()
+    // The first slot expires 1000ms after it was taken, i.e. 400ms from now.
+    expect(clock).toBe(1000)
+  })
+})
+
+describe("HTTP reader", () => {
+  const reader = (fetchImpl: typeof globalThis.fetch) =>
+    new HttpAcsmReader({ baseUrl: "https://acsm.example/", fetch: fetchImpl, rateLimit: false })
+
+  it("sends no credentials, ever", async () => {
+    let seen: RequestInit | undefined
+    const r = reader(async (_url, init) => {
+      seen = init
+      return new Response("[]", { status: 200 })
+    })
+    await r.listChampionships()
+    const headers = new Headers(seen?.headers)
+    expect(headers.has("authorization")).toBe(false)
+    expect(headers.has("cookie")).toBe(false)
+    expect(seen?.credentials).toBeUndefined()
+  })
+
+  it("explains an HTML response as Public Access being off", async () => {
+    const r = reader(async () => new Response("<html>login</html>", { status: 200 }))
+    await expect(r.exportChampionship("x")).rejects.toThrow(/Public Access/)
+  })
+
+  it("reports a non-2xx with its status", async () => {
+    const r = reader(async () => new Response("nope", { status: 503, statusText: "Unavailable" }))
+    await expect(r.healthcheck()).rejects.toBeInstanceOf(AcsmError)
+  })
+
+  it("unwraps a list that arrives inside an envelope", async () => {
+    const r = reader(async () => new Response(JSON.stringify({ championships: [{ ID: "a" }] })))
+    await expect(r.listChampionships()).resolves.toEqual([{ ID: "a" }])
+  })
+
+  it("treats a corrupt cache entry as a miss rather than failing forever", async () => {
+    // One bad write must not leave the CLI permanently broken for that URL.
+    let fetches = 0
+    const stored = new Map<string, string>([["https://acsm.example/healthcheck.json", "{trunca"]])
+    const r = new HttpAcsmReader({
+      baseUrl: "https://acsm.example",
+      rateLimit: false,
+      fetch: async () => {
+        fetches++
+        return new Response(JSON.stringify({ ok: true }))
+      },
+      cache: {
+        async get(key) {
+          return stored.get(key)
+        },
+        async set(key, value) {
+          stored.set(key, value)
+        },
+      },
+    })
+
+    await expect(r.healthcheck()).resolves.toEqual({ ok: true })
+    expect(fetches).toBe(1)
+    // ...and the good response replaced the corrupt entry.
+    expect(stored.get("https://acsm.example/healthcheck.json")).toBe('{"ok":true}')
+  })
+
+  it("serves a valid cache entry without hitting the network", async () => {
+    let fetches = 0
+    const r = new HttpAcsmReader({
+      baseUrl: "https://acsm.example",
+      rateLimit: false,
+      fetch: async () => {
+        fetches++
+        return new Response("{}")
+      },
+      cache: {
+        async get() {
+          return '{"ok":true}'
+        },
+        async set() {
+          /* no-op */
+        },
+      },
+    })
+    await expect(r.healthcheck()).resolves.toEqual({ ok: true })
+    expect(fetches).toBe(0)
+  })
+
+  it("hits the export endpoint that works logged out", async () => {
+    let url = ""
+    const r = reader(async (u) => {
+      url = String(u)
+      return new Response("{}")
+    })
+    await r.exportChampionship("abc def")
+    expect(url).toBe("https://acsm.example/championship/abc%20def/export")
+  })
+})
+
+describe("static reader", () => {
+  it("serves exports already on disk", async () => {
+    const r = new StaticAcsmReader([championship({ ID: "a", Name: "A" })])
+    await expect(r.exportChampionship("a")).resolves.toMatchObject({ Name: "A" })
+    await expect(r.exportChampionship("b")).rejects.toThrow(/No championship b/)
+  })
+})
+
+describe("pit table precedence", () => {
+  it("lets manual beat scan beat acsm", () => {
+    const t = new InMemoryPitTable()
+    t.add({ track: "spa", layout: "", pitboxes: 20, source: "acsm" })
+    t.add({ track: "spa", layout: "", pitboxes: 24, source: "scan" })
+    expect(t.get("spa")?.pitboxes).toBe(24)
+    t.add({ track: "spa", layout: "", pitboxes: 26, source: "manual" })
+    expect(t.get("spa")?.pitboxes).toBe(26)
+    // A weaker source must not overwrite a stronger one.
+    t.add({ track: "spa", layout: "", pitboxes: 2, source: "acsm" })
+    expect(t.get("spa")?.pitboxes).toBe(26)
+  })
+
+  it("falls back from a layout to the whole track", () => {
+    const t = new InMemoryPitTable([
+      { track: "silverstone", layout: "", pitboxes: 24, source: "manual" },
+    ])
+    expect(t.get("silverstone", "international")?.pitboxes).toBe(24)
+    expect(t.get("brands")).toBeUndefined()
+  })
+})
+
+describe("profile validation", () => {
+  it("rejects a weekday outside 1..7", () => {
+    expect(() =>
+      validateProfile({
+        id: "x",
+        name: "X",
+        schedule: { weekday: 8, qualiStart: "20:00", timezone: "UTC", practiceMinutes: 60, qualiMinutes: 20 },
+        entryList: { targetSlots: 10 },
+      }),
+    ).toThrow(/weekday/)
+  })
+
+  it("rejects a malformed quali time", () => {
+    expect(() =>
+      validateProfile({
+        id: "x",
+        name: "X",
+        schedule: { weekday: 3, qualiStart: "8pm", timezone: "UTC", practiceMinutes: 60, qualiMinutes: 20 },
+        entryList: { targetSlots: 10 },
+      }),
+    ).toThrow(/qualiStart/)
+  })
+})
+
+describe("view helpers", () => {
+  it("treats Go's zero time as unset", () => {
+    expect(isZeroTime("0001-01-01T00:00:00Z")).toBe(true)
+    expect(isZeroTime("0001-01-01T00:00:00-07:52")).toBe(true)
+    expect(isZeroTime("")).toBe(true)
+    expect(isZeroTime(undefined)).toBe(true)
+    expect(isZeroTime("2026-09-02T19:00:00-07:00")).toBe(false)
+  })
+
+  it("orders entry list slots numerically, not lexically", () => {
+    const ordered = slots({
+      CAR_10: { Name: "ten" },
+      CAR_2: { Name: "two" },
+      CAR_1: { Name: "one" },
+    })
+    expect(ordered.map((s) => s.entrant.Name)).toEqual(["one", "two", "ten"])
+  })
+})
+
+describe("CLI argument parsing", () => {
+  it("reads a championship id", () => {
+    const a = parseArgs(["check", "abc"])
+    expect(a).toMatchObject({ command: "check", target: "abc", format: "text", profile: "batl" })
+  })
+
+  it("reads the discord flags a cron job would use", () => {
+    const a = parseArgs(["check", "abc", "--format", "discord", "--min", "warn"])
+    expect(a.format).toBe("discord")
+    expect(a.min).toBe("WARN")
+  })
+
+  it("splits a suppression list", () => {
+    expect(parseArgs(["check", "--file", "x.json", "--suppress", "format,entry.x"]).suppress).toEqual([
+      "format",
+      "entry.x",
+    ])
+  })
+
+  it("rejects an unknown option rather than ignoring it", () => {
+    expect(() => parseArgs(["check", "--wat"])).toThrow(/Unknown option/)
+  })
+
+  it("rejects a bad format", () => {
+    expect(() => parseArgs(["check", "x", "--format", "yaml"])).toThrow(/--format/)
+  })
+})
+
+describe("CLI usage errors", () => {
+  /** Captures stderr for the duration of a call. */
+  async function stderrOf(fn: () => Promise<number>): Promise<{ code: number; err: string }> {
+    const original = process.stderr.write.bind(process.stderr)
+    let err = ""
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      err += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk)
+      return true
+    }) as typeof process.stderr.write
+    try {
+      return { code: await fn(), err }
+    } finally {
+      process.stderr.write = original
+    }
+  }
+
+  it("prints usage for a bad option", async () => {
+    const { code, err } = await stderrOf(() => main(["check", "--wat"]))
+    expect(code).toBe(3)
+    expect(err).toContain("Unknown option --wat")
+    expect(err).toContain("Usage:")
+  })
+
+  it("prints usage for an unknown command", async () => {
+    const { code, err } = await stderrOf(() => main(["frobnicate"]))
+    expect(code).toBe(3)
+    expect(err).toContain("Unknown command frobnicate")
+    expect(err).toContain("Usage:")
+  })
+
+  it("prints usage when check has no target", async () => {
+    const { code, err } = await stderrOf(() => main(["check", "--profile", "./test/support/profile-no-url.json"]))
+    expect(code).toBe(3)
+    expect(err).toContain("championship id or --file")
+    expect(err).toContain("Usage:")
+  })
+
+  it("prints usage when there is no base URL, not a bare failure", async () => {
+    // This one is raised well after argument parsing, which is why it used to
+    // surface as "gridmom couldn't run" with no hint about --base-url.
+    const { code, err } = await stderrOf(() => main(["list", "--profile", "./test/support/profile-no-url.json"]))
+    expect(code).toBe(3)
+    expect(err).toContain("No ACSM base URL")
+    expect(err).toContain("--base-url")
+    expect(err).toContain("Usage:")
+  })
+})

@@ -1,0 +1,15 @@
+{
+  "id": "test-no-url",
+  "name": "League With No Configured ACSM",
+  "schedule": {
+    "weekday": 3,
+    "qualiStart": "20:00",
+    "timezone": "America/Los_Angeles",
+    "practiceMinutes": 60,
+    "qualiMinutes": 20
+  },
+  "entryList": {
+    "targetSlots": 30
+  },
+  "baseline": {}
+}
