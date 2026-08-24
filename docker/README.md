@@ -98,6 +98,58 @@ Note that `npm run harness:reset` removes the steamcmd volume too, so the next
 boot re-downloads. Use `harness:down` + `harness:up` to keep the content and
 just restart.
 
+### Why there's a placeholder acServer
+
+Server Manager runs steamcmd whenever `install_path` has no executable in it.
+Blank credentials don't stop that — they just make the install fail. So on the
+content-free path the entrypoint writes a placeholder `assetto/acServer`, and
+Server Manager stops trying.
+
+It's marked with a `.champctl-placeholder` sentinel, so the moment you add
+`STEAM_USERNAME` it gets removed and a real install runs. Running the
+placeholder prints an explanation and exits 1 rather than failing silently.
+
+### Troubleshooting
+
+**"Likely you do not have steamcmd installed correctly", exit status 127.**
+
+127 is "command not found", and it usually isn't steamcmd that's missing.
+`steamcmd.sh` computes its own install root from `$0`:
+
+```sh
+STEAMROOT="$(cd "${0%/*}" && echo $PWD)"
+STEAMEXE="${STEAMROOT}/linux32/${STEAMCMD}"
+```
+
+Invoke it through a *symlink* in `/usr/local/bin` and `$0` is the symlink's
+path, so it looks for `/usr/local/bin/linux32/steamcmd`, doesn't find it, and
+exits 127. The image installs a wrapper that `exec`s the absolute path instead,
+which keeps `$0` pointing at the real script. If you hit this after changing
+the Dockerfile, that's the first thing to check:
+
+```sh
+docker compose exec acsm steamcmd +quit          # should exit 0
+docker compose exec acsm cat /usr/local/bin/steamcmd
+```
+
+If you're seeing it on an image built before this fix, rebuild:
+
+```sh
+docker compose down
+docker build -f Dockerfile.premium -t champctl/acsm-premium:local .
+docker compose up -d
+```
+
+**The UI never comes up.** `npm run harness:logs`. With Steam credentials set,
+first boot downloads the AC server and can take several minutes; the compose
+healthcheck allows for that.
+
+**Login says the password is wrong.** The first login is
+`admin` / `servermanager`, and ACSM immediately makes you change it. Whatever
+you set then is what belongs in `CHAMPCTL_LIVE_PASSWORD`. If it's lost, put a
+value in `accounts.admin_password_override` in `config.template.yml`, restart,
+log in with it, and blank it again.
+
 ### Config templating
 
 `config.template.yml` is committed with `__STEAM_*__` placeholders;

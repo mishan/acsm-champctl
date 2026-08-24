@@ -39,8 +39,19 @@ ENV STEAMCMD_DIR=/home/assetto/steamcmd
 RUN mkdir -p "$STEAMCMD_DIR" \
  && curl -fsSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz \
     | tar -xz -C "$STEAMCMD_DIR" \
- && ln -s "$STEAMCMD_DIR/steamcmd.sh" /usr/local/bin/steamcmd \
  && chown -R assetto:assetto "$STEAMCMD_DIR"
+
+# A wrapper, NOT a symlink. steamcmd.sh computes its own root from "$0":
+#
+#   STEAMROOT="$(cd "${0%/*}" && echo $PWD)"
+#   STEAMEXE="${STEAMROOT}/linux32/${STEAMCMD}"
+#
+# Invoked through a symlink in /usr/local/bin, "$0" is the symlink's path, so
+# it looks for /usr/local/bin/linux32/steamcmd, doesn't find it, and exits 127
+# — which Server Manager reports as "you do not have steamcmd installed
+# correctly". Exec'ing the real path keeps "$0" pointing at the script.
+RUN printf '#!/bin/sh\nexec "%s/steamcmd.sh" "$@"\n' "$STEAMCMD_DIR" > /usr/local/bin/steamcmd \
+ && chmod +x /usr/local/bin/steamcmd
 
 WORKDIR /home/assetto/server-manager
 
