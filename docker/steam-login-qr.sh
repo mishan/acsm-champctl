@@ -65,15 +65,50 @@ MSG
 # --entrypoint bypasses the harness entrypoint, which refuses to start without
 # credentials — the thing this command exists to make unnecessary.
 #
+# -os windows is not a mistake. Appid 302550 publishes exactly one depot,
+# 302551, tagged `oslist: windows` — there is no Linux depot. The Linux
+# `acServer` binary ships inside that Windows depot, which is why Server
+# Manager's own installer passes `+@sSteamCmdForcePlatformType windows`
+# (server_install.go). Asking for linux finds nothing:
+#
+#   Couldn't find any depots to download for app 302550
+#
 # -remember-password persists the session under CONFIG_DIR (a named volume),
 # so re-running this later to update the server won't need another scan.
-exec docker compose --project-directory "$here" run --rm -it \
+docker compose --project-directory "$here" run --rm -it \
   --entrypoint depotdownloader \
   --workdir "$CONFIG_DIR" \
   acsm \
   -app "$AC_APPID" \
-  -os linux \
-  -osarch 64 \
+  -os windows \
+  -all-archs \
   -dir "$INSTALL_DIR" \
   -qr \
   -remember-password
+
+# DepotDownloader writes files with default permissions, so the Linux binary
+# arrives without its executable bit and Server Manager would decide nothing
+# is installed. Set it, and report what we ended up with.
+docker compose --project-directory "$here" run --rm --no-deps \
+  --entrypoint sh acsm -c '
+    set -e
+    dir="'"$INSTALL_DIR"'"
+    if [ ! -f "$dir/acServer" ]; then
+      echo "No acServer in $dir after the download." >&2
+      echo "Contents:" >&2
+      ls -la "$dir" >&2 || true
+      exit 1
+    fi
+    chmod +x "$dir/acServer"
+    echo "Installed $(du -sh "$dir" | cut -f1) into $dir"
+  '
+
+cat <<'MSG'
+
+Done. Start the harness with:
+
+    npm run harness:up
+
+No Steam credentials are needed in docker/.env — Server Manager will find the
+server already installed and won't run steamcmd.
+MSG

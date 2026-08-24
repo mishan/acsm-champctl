@@ -188,7 +188,41 @@ premium build, and it means:
   by ID but can't discover them. `gridmom list` should fail with something
   better than a JSON parse error there.
 
-## 7. Odds and ends
+## 7. The Assetto Corsa server is a Windows-only depot
+
+Worth writing down because it's counter-intuitive and cost an afternoon.
+
+Appid 302550 ("Assetto Corsa Dedicated Server", type `Tool`) publishes exactly
+one depot, 302551, and its config says `oslist: windows`. There is no Linux
+depot. The Linux `acServer` binary ships *inside* the Windows one.
+
+So anything downloading it on Linux has to ask for the Windows platform.
+Server Manager's own installer does exactly that (`server_install.go`):
+
+```go
+"+@sSteamCmdForcePlatformType windows",
+fmt.Sprintf("+login %s %s", login, password),
+"+app_update " + assettoServerSteamID,   // 302550
+```
+
+Ask for Linux instead and you get `Couldn't find any depots to download for app
+302550`, which reads like a permissions problem and isn't.
+
+Two consequences for the harness:
+
+- `docker/steam-login.sh` passes the same `@sSteamCmdForcePlatformType windows`.
+- `docker/steam-login-qr.sh` passes `-os windows` to DepotDownloader, and
+  `chmod +x` afterwards — DepotDownloader writes default permissions, so the
+  Linux binary arrives without its executable bit and Server Manager would
+  conclude nothing is installed.
+
+Also note the account needs to own Assetto Corsa. Anonymous gets:
+
+```
+ERROR! Failed to install app '302550' (No subscription)
+```
+
+## 8. Odds and ends
 
 - `formValueAsInt` maps the string `"on"` to `1`, so checkbox values arrive as
   `"on"` and anything unparseable becomes `0` rather than an error.

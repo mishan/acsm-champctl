@@ -40,9 +40,15 @@ echo
 # without working credentials — which is the thing we're here to establish.
 # The AC server appid is 302550; requesting it here means this one command both
 # proves the login and does the download, so Server Manager finds it in place.
+#
+# @sSteamCmdForcePlatformType windows matches what Server Manager's own
+# installer does (server_install.go). Appid 302550 has a single depot tagged
+# windows-only; the Linux acServer binary lives inside it. Without the override
+# steamcmd on Linux finds no depot to download.
 exec docker compose --project-directory "$here" run --rm -it \
   --entrypoint steamcmd \
   acsm \
+  +@sSteamCmdForcePlatformType windows \
   +force_install_dir /home/assetto/server-manager/assetto \
   +login "$STEAM_USERNAME" \
   +app_update 302550 \

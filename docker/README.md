@@ -158,6 +158,13 @@ it. `npm run harness:logs` to watch.
 or `harness:steam-login`. The image is older than the tool being invoked.
 `npm run harness:build`, then try again. Compose only rebuilds when asked.
 
+**`Couldn't find any depots to download for app 302550`** — the login worked,
+the platform filter didn't. Appid 302550 publishes one depot, tagged
+`oslist: windows`; there is no Linux depot, and the Linux `acServer` binary
+ships inside the Windows one. Both scripts here ask for Windows for that
+reason, which is also what Server Manager's own installer does. See
+`docs/acsm-write-path.md` §7.
+
 **steamcmd exit codes**, as reported by Server Manager. Verified by running
 them:
 
