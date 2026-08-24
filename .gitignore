@@ -16,3 +16,30 @@ data/*
 
 # Unsanitized exports pulled from a live manager.
 fixtures/live/
+
+# Test harness. The premium release zip is licensed software, and .env holds
+# the harness admin password.
+docker/.env
+docker/premium/*
+!docker/premium/.gitkeep
+
+# An unpacked Server Manager release. Licensed software — never commit it,
+# whichever directory you unzip it into.
+/acsm/
+/server-manager
+/server-manager.exe
+
+# What Server Manager drops in its working directory when run natively from
+# the repo root. server_manager.db is a live database: it holds the admin
+# password hash and any Discord API token configured in Server Options, so it
+# must never be committed. Runtime state belongs in a Docker volume.
+/db/
+/assetto/
+/logs/
+/config.yml
+*.db
+*.db.bak
+
+# Belt and braces: a Server Manager release zip, wherever it is copied.
+docker/premium/*.zip
+*.zip
