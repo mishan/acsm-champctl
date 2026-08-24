@@ -121,6 +121,103 @@ describe("login", () => {
   })
 })
 
+describe("single origin", () => {
+  // The jar has no host scoping, so every request carries the session cookie.
+  // That is only safe if the session can't be pointed at another host.
+  const session = () => {
+    const { fn, calls } = scriptedFetch((url) =>
+      url.endsWith("/login")
+        ? new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
+        : new Response("{}", { status: 200 }),
+    )
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    return { s, calls, ready: s.login({ username: "admin", password: "x" }) }
+  }
+
+  it("resolves a path against the base URL", () => {
+    const { s } = session()
+    expect(s.url("/championship/abc")).toBe("https://acsm.example/championship/abc")
+  })
+
+  it("accepts an absolute URL on its own origin", () => {
+    const { s } = session()
+    expect(s.url("https://acsm.example/championship/abc")).toBe(
+      "https://acsm.example/championship/abc",
+    )
+  })
+
+  it("refuses an absolute URL on another origin", () => {
+    const { s } = session()
+    expect(() => s.url("https://ac.batlracing.com/championship/abc")).toThrow(
+      /Refusing to request https:\/\/ac\.batlracing\.com/,
+    )
+  })
+
+  it("refuses a different scheme or port on the same host", () => {
+    const { s } = session()
+    expect(() => s.url("http://acsm.example/x")).toThrow(/Refusing to request/)
+    expect(() => s.url("https://acsm.example:8772/x")).toThrow(/Refusing to request/)
+  })
+
+  it("follows a same-origin redirect, carrying the cookie", async () => {
+    const { fn, calls } = scriptedFetch((url) => {
+      if (url.endsWith("/login")) {
+        return new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
+      }
+      if (url.endsWith("/old")) {
+        return new Response("", { status: 302, headers: { location: "/new" } })
+      }
+      return new Response('{"ok":true}', { status: 200 })
+    })
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    await s.login({ username: "admin", password: "x" })
+
+    await expect(s.getJson("/old")).resolves.toEqual({ ok: true })
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://acsm.example/login",
+      "https://acsm.example/old",
+      "https://acsm.example/new",
+    ])
+    expect(new Headers(calls[2]!.init.headers).get("Cookie")).toContain("_acsm_data")
+  })
+
+  it("refuses to follow a redirect off the origin", async () => {
+    const { fn, calls } = scriptedFetch((url) => {
+      if (url.endsWith("/login")) {
+        return new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
+      }
+      return new Response("", { status: 302, headers: { location: "https://evil.example/steal" } })
+    })
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    await s.login({ username: "admin", password: "x" })
+
+    await expect(s.getText("/championship/abc")).rejects.toThrow(/Refusing to request/)
+    // The off-origin request was never made.
+    expect(calls.map((c) => c.url)).not.toContain("https://evil.example/steal")
+  })
+
+  it("gives up rather than looping forever", async () => {
+    const { fn, calls } = scriptedFetch((url) =>
+      url.endsWith("/login")
+        ? new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
+        : new Response("", { status: 302, headers: { location: "/loop" } }),
+    )
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    await s.login({ username: "admin", password: "x" })
+
+    await expect(s.getText("/loop")).rejects.toThrow()
+    expect(calls.length).toBeLessThan(10)
+  })
+
+  it("leaves an explicit manual redirect alone for the caller to read", async () => {
+    const { s, calls, ready } = session()
+    await ready
+    // login() asked for the raw 302 and read Location off it.
+    expect(calls).toHaveLength(1)
+    expect(s.isLoggedIn).toBe(true)
+  })
+})
+
 describe("fetching pages", () => {
   const loggedIn = (handler: (url: string, init: RequestInit) => Response) => {
     const { fn, calls } = scriptedFetch((url, init) => {

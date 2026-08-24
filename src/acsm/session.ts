@@ -43,10 +43,16 @@ export class AcsmWriteError extends Error {
 }
 
 /**
- * Minimal cookie jar. ACSM needs exactly two cookies — `_acsm_data` (the signed
- * session) and `current-server` (the selected server index) — so this handles
- * name/value pairs per host and ignores paths, domains and expiry. That is
- * enough for a single-origin client and small enough to audit.
+ * Minimal cookie jar for a **single origin**.
+ *
+ * ACSM needs exactly two cookies — `_acsm_data` (the signed session) and
+ * `current-server` (the selected server index) — so this is one flat map of
+ * name to value. There is deliberately no host, path, domain or expiry
+ * handling: it is small enough to audit, and `AcsmSession` refuses to request
+ * anything off its base origin, which is what makes the omission safe.
+ *
+ * If champctl ever needs to talk to two managers at once, that's two sessions
+ * with two jars, not a jar that learned about hosts.
  */
 export class CookieJar {
   readonly #cookies = new Map<string, string>()
@@ -95,6 +101,13 @@ function readSetCookie(headers: Headers): string[] {
   return single ? [single] : []
 }
 
+/** Enough for ACSM's own hops; a loop is a bug worth surfacing, not chasing. */
+const MAX_REDIRECTS = 5
+
+function isRedirect(res: Response): boolean {
+  return res.status >= 300 && res.status < 400
+}
+
 export interface AcsmSessionOptions {
   baseUrl: string
   fetch?: typeof globalThis.fetch
@@ -137,8 +150,30 @@ export class AcsmSession {
     return this.jar.get("_acsm_data") !== undefined
   }
 
+  /**
+   * Resolves a path against the base URL.
+   *
+   * Absolute URLs are allowed only when they land on the base origin. The jar
+   * has no host scoping, so every request carries the session cookie — and a
+   * request to another host would hand ACSM admin credentials to whoever runs
+   * it. Cheap to enforce here, and it keeps the jar honest.
+   */
   url(path: string): string {
-    return path.startsWith("http") ? path : `${this.#baseUrl}${path}`
+    if (!/^https?:\/\//i.test(path)) return `${this.#baseUrl}${path}`
+
+    let target: URL
+    try {
+      target = new URL(path)
+    } catch {
+      throw new AcsmWriteError(`Not a usable URL: ${path}`)
+    }
+    if (target.origin !== new URL(this.#baseUrl).origin) {
+      throw new AcsmWriteError(
+        `Refusing to request ${target.origin} from a session logged in to ` +
+          `${new URL(this.#baseUrl).origin} — this session's cookies belong to that origin only.`,
+      )
+    }
+    return target.toString()
   }
 
   /**
@@ -275,7 +310,38 @@ export class AcsmSession {
     return res
   }
 
+  /**
+   * Every request goes out with `redirect: "manual"`.
+   *
+   * Letting fetch follow redirects would mean trusting it not to carry a
+   * hand-set `Cookie` header across an origin boundary. Following them here
+   * instead makes the same-origin rule ours to enforce, and it's four lines.
+   *
+   * Callers that pass `redirect: "manual"` want the 3xx itself — the login
+   * POST and the form POSTs read the `Location` header.
+   */
   async #request(path: string, init: RequestInit): Promise<Response> {
+    const wantsRawRedirect = init.redirect === "manual"
+    let res = await this.#fetchOnce(path, init)
+
+    for (let hop = 0; !wantsRawRedirect && isRedirect(res) && hop < MAX_REDIRECTS; hop++) {
+      const location = res.headers.get("location")
+      if (!location) break
+      // `this.url()` throws on an off-origin target, so an ACSM that redirects
+      // somewhere else fails loudly rather than leaking the session cookie.
+      const next = this.url(new URL(location, this.url(path)).toString())
+      // 303, and 301/302 on a POST, become a GET without a body.
+      res = await this.#fetchOnce(next, { ...init, method: "GET", body: null })
+    }
+
+    return res
+  }
+
+  async #fetchOnce(path: string, init: RequestInit): Promise<Response> {
+    // Resolve before opening the timer, so an off-origin URL fails loudly
+    // rather than being reported as a request failure.
+    const url = this.url(path)
+
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.#timeoutMs)
     try {
@@ -284,7 +350,12 @@ export class AcsmSession {
       const cookie = this.jar.header()
       if (cookie) headers.set("Cookie", cookie)
 
-      const res = await this.#fetch(this.url(path), { ...init, headers, signal: controller.signal })
+      const res = await this.#fetch(url, {
+        ...init,
+        headers,
+        redirect: "manual",
+        signal: controller.signal,
+      })
       this.jar.storeFromResponse(res)
       return res
     } catch (e) {

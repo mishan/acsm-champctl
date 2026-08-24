@@ -34,6 +34,9 @@ profiles/      league baselines — batl.json ships here
 
 ## Quick start
 
+Needs Node 20.18.1 or newer — cheerio's undici dependency won't install below
+that.
+
 ```sh
 npm install
 npm test
