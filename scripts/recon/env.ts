@@ -3,7 +3,14 @@
  *
  * Every one of these talks to a *throwaway* ACSM. There is a guard below that
  * refuses to run against anything that isn't obviously local unless you say so
- * out loud, because the scripts create and delete championships.
+ * out loud, because these scripts write to the server they point at: each run
+ * imports a new championship, and `seedChampionship` reads an existing one to
+ * copy.
+ *
+ * They do NOT clean up after themselves. Each run leaves its imported
+ * championship behind and prints how to remove it, because the usual reason to
+ * run recon is to go and look at what it made. `npm run harness:reset` is the
+ * blunt way to clear them out.
  */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises"
@@ -84,6 +91,22 @@ export async function writeArtefact(relativePath: string, data: unknown): Promis
 
 export function log(message: string): void {
   process.stdout.write(`${message}\n`)
+}
+
+/**
+ * A base URL with the host removed, for writing into a committed artefact.
+ *
+ * The scheme and port are the parts worth keeping — they say whether the
+ * capture came from the premium service or the oss profile. The host is
+ * somebody's LAN address or internal hostname, and these files are public.
+ */
+export function redactBaseUrl(baseUrl: string): string {
+  try {
+    const u = new URL(baseUrl)
+    return `${u.protocol}//<redacted>${u.port ? `:${u.port}` : ""}`
+  } catch {
+    return "<redacted>"
+  }
 }
 
 /**

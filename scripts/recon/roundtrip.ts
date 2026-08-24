@@ -23,24 +23,43 @@ import { connect, log, runRecon, seedChampionship, writeArtefact } from "./env.j
 
 const DEFAULT_FIXTURE = "fixtures/synthetic/recon-seed.json"
 
-function fileArg(): string {
+/**
+ * Path given to `--file`, or undefined when the flag wasn't used.
+ *
+ * Throws rather than falling back when the flag is present but has no usable
+ * value. Quietly substituting the default would mean diffing a different
+ * championship than the one asked for, and the output looks perfectly normal.
+ */
+function fileArg(): string | undefined {
   const i = process.argv.indexOf("--file")
-  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1]! : DEFAULT_FIXTURE
+  if (i === -1) return undefined
+
+  const value = process.argv[i + 1]
+  if (!value || value.startsWith("-")) {
+    throw new Error(
+      `--file needs a path. Got ${value ? `the next flag, ${value}` : "nothing after it"}. ` +
+        `Omit --file entirely to copy a championship from the server instead.`,
+    )
+  }
+  return value
 }
 
 async function main(): Promise<void> {
+  // Parsed before connecting, so a malformed flag is reported straight away
+  // rather than after a login round trip.
+  const explicitFile = fileArg()
+
   const session = await connect()
 
   // An explicit --file wins; otherwise copy something already on the server.
   // A real export is the right shape for this build by definition, which a
   // hand-written fixture can only approximate — see seedChampionship.
-  const explicit = process.argv.includes("--file")
-  const { championship: source, source: seedSource } = explicit
+  const { championship: source, source: seedSource } = explicitFile
     ? {
         championship: JSON.parse(
-          await readFile(resolve(process.cwd(), fileArg()), "utf8"),
+          await readFile(resolve(process.cwd(), explicitFile), "utf8"),
         ) as Championship,
-        source: fileArg(),
+        source: explicitFile,
       }
     : await seedChampionship(session, DEFAULT_FIXTURE, "champctl round trip — safe to delete")
 

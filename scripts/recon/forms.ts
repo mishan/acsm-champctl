@@ -26,7 +26,14 @@ import {
   exportPath,
   importChampionship,
 } from "../../src/acsm/write.js"
-import { connect, log, runRecon, seedChampionship, writeArtefact } from "./env.js"
+import {
+  connect,
+  log,
+  redactBaseUrl,
+  runRecon,
+  seedChampionship,
+  writeArtefact,
+} from "./env.js"
 
 const FIXTURE = resolve(process.cwd(), "fixtures/synthetic/recon-seed.json")
 
@@ -217,7 +224,10 @@ async function main(): Promise<void> {
   await writeArtefact(version ? `forms-${version}.json` : "forms.json", {
     capturedAt: new Date().toISOString(),
     serverManagerVersion: version ?? "unknown",
-    baseUrl: session.baseUrl,
+    // Host stripped: this file is committed and public (see
+    // fixtures/recon/README.md). The scheme and port still say which
+    // service the capture came from.
+    baseUrl: redactBaseUrl(session.baseUrl),
     // How this build takes a championship. 1.7.9 pastes JSON into a textarea;
     // 2.4.5 uploads a file. Recorded because it changed between them.
     seedSource: source,

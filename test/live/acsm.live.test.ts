@@ -230,6 +230,10 @@ describe.skipIf(!LIVE)("ACSM harness", () => {
 
       const fields = [...form.fields]
       const i = fields.findIndex((f) => f.name === "EntryList.GUID")
+      // splice(-1, 1) drops the *last* field, which would still be a ragged
+      // payload and would still be refused — so the test would pass while
+      // testing something other than what it says.
+      expect(i, "the event form should render EntryList.GUID").toBeGreaterThanOrEqual(0)
       fields.splice(i, 1)
 
       await expect(session.postForm(eventSubmitPath(id), fields)).rejects.toThrow(
