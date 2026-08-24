@@ -1,0 +1,32 @@
+{
+  "id": "batl",
+  "name": "BATL Racing",
+  "acsmBaseUrl": "https://ac.batlracing.com",
+
+  "schedule": {
+    "weekday": 3,
+    "qualiStart": "20:00",
+    "timezone": "America/Los_Angeles",
+    "practiceMinutes": 60,
+    "qualiMinutes": 20
+  },
+
+  "entryList": {
+    "targetSlots": 30,
+    "reservedPitBoxes": []
+  },
+
+  "baseline": {
+    "raceSetup": {
+      "EntryListType": 1,
+      "PracticeEntryListType": 2,
+      "RaceExtraLap": false,
+      "AllowDuplicateSkinChoices": false
+    },
+    "championship": {
+      "StartNextPracticeOnEventComplete": true
+    }
+  },
+
+  "excludedCarModels": ["ford_transit"]
+}

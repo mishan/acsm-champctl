@@ -1,0 +1,18 @@
+node_modules/
+dist/
+*.log
+.env
+.env.*
+!.env.example
+
+# Local archive + HTTP cache. Never committed.
+.cache/
+data/*
+!data/*.example.json
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Unsanitized exports pulled from a live manager.
+fixtures/live/

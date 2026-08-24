@@ -1,0 +1,16 @@
+[
+  {
+    "track": "ks_silverstone",
+    "layout": "international",
+    "pitboxes": 24,
+    "source": "manual",
+    "verifiedAt": "2026-08-24T00:00:00Z"
+  },
+  {
+    "track": "suzuka",
+    "layout": "",
+    "pitboxes": 30,
+    "source": "scan",
+    "verifiedAt": "2026-08-24T00:00:00Z"
+  }
+]
