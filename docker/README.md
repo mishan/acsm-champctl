@@ -14,9 +14,15 @@ refuse to run against a non-loopback host unless you set
 `CHAMPCTL_I_KNOW_THIS_ISNT_LOCAL=yes`.
 
 Never put a league's real credentials in `docker/.env`. Never point
-`CHAMPCTL_LIVE_URL` at `ac.batlracing.com`. The container also binds to
-`127.0.0.1` by default, because it holds an admin account whose password is
-written down in a file next to it.
+`CHAMPCTL_LIVE_URL` at `ac.batlracing.com`. The container binds to `127.0.0.1`
+by default, because it holds an admin account whose password is written down in
+a file next to it.
+
+The guard allows loopback and RFC1918 private addresses, so
+`BIND_ADDR=0.0.0.0` plus a LAN IP works without ceremony. That is a speed bump
+against pasting a public hostname, not a guarantee — a league could run ACSM on
+a private address too. If you bind beyond loopback, check what else can reach
+port 8772.
 
 ## Which version to run
 

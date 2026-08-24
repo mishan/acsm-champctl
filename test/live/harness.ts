@@ -10,10 +10,9 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
+import { assertDisposable } from "../../src/acsm/disposable.js"
 import { AcsmSession } from "../../src/acsm/session.js"
 import type { Championship } from "../../src/acsm/types.js"
-
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"])
 
 export interface LiveConfig {
   baseUrl: string
@@ -26,13 +25,7 @@ export function liveConfig(): LiveConfig | undefined {
   const password = process.env["CHAMPCTL_LIVE_PASSWORD"]
   if (!baseUrl || !password) return undefined
 
-  const host = new URL(baseUrl).hostname
-  if (!LOCAL_HOSTS.has(host) && process.env["CHAMPCTL_I_KNOW_THIS_ISNT_LOCAL"] !== "yes") {
-    throw new Error(
-      `Refusing to run live tests against ${host}: it doesn't look like a test container. ` +
-        `These tests create and delete championships.`,
-    )
-  }
+  assertDisposable(baseUrl, "live tests")
 
   return {
     baseUrl,

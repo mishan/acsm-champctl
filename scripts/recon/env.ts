@@ -9,6 +9,7 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 
+import { assertDisposable as assertDisposableHost } from "../../src/acsm/disposable.js"
 import { AcsmSession } from "../../src/acsm/session.js"
 
 export interface ReconEnv {
@@ -16,8 +17,6 @@ export interface ReconEnv {
   username: string
   password: string
 }
-
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"])
 
 export function readEnv(): ReconEnv {
   const baseUrl = process.env["CHAMPCTL_LIVE_URL"]
@@ -40,17 +39,10 @@ export function readEnv(): ReconEnv {
 /**
  * These scripts write to and delete from the manager they point at. Pointing
  * one at a league's production server would be the worst thing this repo can
- * do, so a non-local host requires CHAMPCTL_I_KNOW_THIS_ISNT_LOCAL=yes.
+ * do, so anything outside a private network needs the explicit override.
  */
 export function assertDisposable(baseUrl: string): void {
-  const host = new URL(baseUrl).hostname
-  if (LOCAL_HOSTS.has(host)) return
-  if (process.env["CHAMPCTL_I_KNOW_THIS_ISNT_LOCAL"] === "yes") return
-  throw new Error(
-    `Refusing to run recon against ${host}: it doesn't look like a local test container. ` +
-      `These scripts create and delete championships. If you really mean it, set ` +
-      `CHAMPCTL_I_KNOW_THIS_ISNT_LOCAL=yes.`,
-  )
+  assertDisposableHost(baseUrl, "recon")
 }
 
 export async function connect(): Promise<AcsmSession> {

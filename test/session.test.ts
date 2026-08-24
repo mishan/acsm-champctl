@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 
+import { assertDisposable, isDisposableHost } from "../src/acsm/disposable.js"
 import { AcsmAuthError, AcsmSession, AcsmWriteError, CookieJar } from "../src/acsm/session.js"
 import { parseForm } from "../src/acsm/form.js"
 import {
@@ -118,6 +119,59 @@ describe("login", () => {
     await s.login({ username: "admin", password: "x" })
     await s.logout()
     expect(s.isLoggedIn).toBe(false)
+  })
+})
+
+describe("disposable host guard", () => {
+  it("accepts loopback in every spelling", () => {
+    for (const h of ["localhost", "127.0.0.1", "127.1.2.3", "::1", "0.0.0.0"]) {
+      expect(isDisposableHost(h), h).toBe(true)
+    }
+  })
+
+  it("accepts private ranges, so the harness can bind to a LAN address", () => {
+    for (const h of ["192.168.1.50", "10.0.0.7", "172.16.4.2", "172.31.255.254", "169.254.1.1"]) {
+      expect(isDisposableHost(h), h).toBe(true)
+    }
+  })
+
+  it("rejects public addresses that merely look private", () => {
+    // 172.15 and 172.32 are outside 172.16/12, and both are easy to fat-finger.
+    for (const h of ["172.15.0.1", "172.32.0.1", "8.8.8.8", "192.169.1.1"]) {
+      expect(isDisposableHost(h), h).toBe(false)
+    }
+  })
+
+  it("rejects a league's actual manager", () => {
+    expect(isDisposableHost("ac.batlracing.com")).toBe(false)
+  })
+
+  it("accepts container and mDNS names", () => {
+    for (const h of ["acsm", "champctl-acsm", "mishas-mac.local", "db.internal"]) {
+      expect(isDisposableHost(h), h).toBe(true)
+    }
+  })
+
+  it("throws for a public host, naming the override", () => {
+    expect(() => assertDisposable("https://ac.batlracing.com", "recon", {})).toThrow(
+      /CHAMPCTL_I_KNOW_THIS_ISNT_LOCAL=yes/,
+    )
+  })
+
+  it("lets the override through", () => {
+    expect(() =>
+      assertDisposable("https://ac.batlracing.com", "recon", {
+        CHAMPCTL_I_KNOW_THIS_ISNT_LOCAL: "yes",
+      }),
+    ).not.toThrow()
+  })
+
+  it("does not accept a truthy-but-wrong override value", () => {
+    expect(() =>
+      assertDisposable("https://ac.batlracing.com", "recon", {
+        CHAMPCTL_I_KNOW_THIS_ISNT_LOCAL: "true",
+      }),
+    ).toThrow()
   })
 })
 
