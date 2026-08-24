@@ -4,7 +4,7 @@ import { HttpAcsmReader, AcsmError, StaticAcsmReader } from "../src/acsm/client.
 import { RateLimiter } from "../src/acsm/rate-limit.js"
 import { InMemoryPitTable } from "../src/pits/table.js"
 import { validateProfile } from "../src/profile/load.js"
-import { isZeroTime, slots } from "../src/acsm/view.js"
+import { isZeroTime, session, sessionKeysUsed, slots } from "../src/acsm/view.js"
 import { main, parseArgs } from "../src/cli/gridmom.js"
 import { championship } from "./support/build.js"
 
@@ -201,6 +201,43 @@ describe("view helpers", () => {
     expect(isZeroTime("")).toBe(true)
     expect(isZeroTime(undefined)).toBe(true)
     expect(isZeroTime("2026-09-02T19:00:00-07:00")).toBe(false)
+  })
+
+  it("finds a session however this ACSM version spells the key", () => {
+    // SessionType's constants are "PRACTICE"/"QUALIFY"/"RACE"; exports have
+    // also carried the friendly spellings. Sessions is a map, so the wrong key
+    // isn't an error — the lookup just finds nothing and every format check
+    // silently passes.
+    const upper = { RaceSetup: { Sessions: { PRACTICE: { Time: 60 }, QUALIFY: { Time: 20 }, RACE: { Laps: 20 } } } }
+    expect(session(upper, "Practice")?.Time).toBe(60)
+    expect(session(upper, "Qualifying")?.Time).toBe(20)
+    expect(session(upper, "Race")?.Laps).toBe(20)
+
+    const friendly = { RaceSetup: { Sessions: { Practice: { Time: 60 }, Qualifying: { Time: 20 }, Race: { Laps: 20 } } } }
+    expect(session(friendly, "Practice")?.Time).toBe(60)
+    expect(session(friendly, "Qualifying")?.Time).toBe(20)
+    expect(session(friendly, "Race")?.Laps).toBe(20)
+  })
+
+  it("prefers an exact key over an alias", () => {
+    const both = { RaceSetup: { Sessions: { Race: { Laps: 20 }, RACE: { Laps: 99 } } } }
+    expect(session(both, "Race")?.Laps).toBe(20)
+  })
+
+  it("returns undefined for a session that isn't there", () => {
+    expect(session({ RaceSetup: { Sessions: { RACE: { Laps: 20 } } } }, "Booking")).toBeUndefined()
+    expect(session({}, "Race")).toBeUndefined()
+  })
+
+  it("reports the literal session keys an export used", () => {
+    expect(
+      sessionKeysUsed({
+        Events: [
+          { RaceSetup: { Sessions: { PRACTICE: {}, RACE: {} } }, Sessions: { RACE: {} } },
+          { RaceSetup: { Sessions: { QUALIFY: {} } } },
+        ],
+      }),
+    ).toEqual(["PRACTICE", "QUALIFY", "RACE"])
   })
 
   it("orders entry list slots numerically, not lexically", () => {
