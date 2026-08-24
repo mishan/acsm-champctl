@@ -1,0 +1,7 @@
+Drop your premium Server Manager release zip in this directory, then build the
+image from docker/:
+
+    docker build -f Dockerfile.premium -t champctl/acsm-premium:local .
+
+The zip itself is gitignored — it is licensed software and must not be
+committed.

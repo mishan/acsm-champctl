@@ -19,7 +19,15 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "harness:build": "docker compose --project-directory docker build",
+    "harness:up": "docker compose --project-directory docker up -d",
+    "harness:down": "docker compose --project-directory docker down",
+    "harness:reset": "docker compose --project-directory docker down -v && docker compose --project-directory docker up -d",
+    "harness:logs": "docker compose --project-directory docker logs -f",
+    "harness:steam-login-qr": "bash docker/steam-login-qr.sh",
+    "harness:steam-login": "bash docker/steam-login.sh",
+    "harness:steam-check": "docker compose --project-directory docker run --rm --entrypoint steamcmd acsm +quit"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

@@ -1,0 +1,87 @@
+################################################################################
+#
+#  ACSM configuration TEMPLATE for the champctl test harness.
+#
+#  Not read directly. docker/entrypoint.sh renders this into config.yml at
+#  boot, substituting the __STEAM_*__ placeholders from docker/.env — so
+#  credentials never live in a tracked file.
+#
+#  Tuned for a throwaway container, NOT for anything a league can reach:
+#   - monitoring off, so recon runs don't ship telemetry to a third party
+#   - boltdb, matching a normal production install
+#
+#  Log in the first time with admin / servermanager; ACSM will immediately
+#  make you set a real password. Put that password in docker/.env.
+#
+################################################################################
+
+steam:
+  # Filled from STEAM_USERNAME / STEAM_PASSWORD in docker/.env, which are
+  # required: Server Manager runs steamcmd whenever install_path has no
+  # executable in it, and blank credentials only change how it fails. The
+  # account must own Assetto Corsa — appid 302550 refuses an anonymous login
+  # with "No subscription".
+  username: '__STEAM_USERNAME__'
+  password: '__STEAM_PASSWORD__'
+  install_path: assetto
+  executable_path: acServer
+  # Reinstalls the AC server on every boot. Leave false.
+  #
+  # Note what this does and doesn't update: steamcmd keeps the *Assetto Corsa
+  # dedicated server* current. Server Manager itself never self-updates — that
+  # is always a manual binary swap — so a harness built from a 1.7.x zip stays
+  # 1.7.x no matter how long it runs.
+  force_update: __STEAM_FORCE_UPDATE__
+
+http:
+  hostname: 0.0.0.0:8772
+  # Fixed so sessions survive a container restart mid-recon. This is a
+  # throwaway local key and must never be reused anywhere real.
+  session_key: champctl-local-harness-not-a-secret
+  server_manager_base_URL:
+  session_store_type: cookie
+  session_store_path: ""
+  tls:
+    enabled: false
+    cert_path: ""
+    key_path: ""
+
+# Off. A test harness should not be sending analytics or error reports about
+# synthetic championships to anyone.
+monitoring:
+  enabled: false
+
+store:
+  type: boltdb
+  path: db/server_manager.db
+  shared_data_path:
+  scheduled_event_check_loop: 0s
+
+accounts:
+  # Leave blank for a normal first-run login (admin / servermanager). Set this
+  # to recover a container whose admin password you've lost, then blank it again.
+  admin_password_override:
+
+live_map:
+  # Nothing to map without a running session, and it's the noisiest thing in
+  # the logs while doing recon.
+  refresh_interval_ms: 0
+
+server:
+  audit_logging: true
+  performance_mode: false
+  dont_open_browser: true
+  scan_content_folder_for_changes: false
+  use_car_name_cache: true
+  persist_mid_session_results: false
+  plugins:
+
+championships:
+  # No reCAPTCHA keys: sign-up forms stay usable locally without a Google
+  # round trip, which is what makes §5.3 recon possible at all.
+  recaptcha:
+    site_key:
+    secret_key:
+
+lua:
+  enabled: false
