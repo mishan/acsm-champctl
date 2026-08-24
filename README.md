@@ -25,6 +25,9 @@ profiles/      league baselines — batl.json ships here
 
 ## Quick start
 
+Needs Node `^20.19.0 || >=22.12.0` — that's Vite 8's floor, and Vite comes in
+via Vitest.
+
 ```sh
 npm install
 npm test
