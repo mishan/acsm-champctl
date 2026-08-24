@@ -5,7 +5,7 @@
   "description": "Championship creation, validation and stats for Assetto Corsa Server Manager",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.18.1"
   },
   "bin": {
     "gridmom": "./bin/gridmom.js"
@@ -18,6 +18,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "cheerio": "^1.2.0",
     "luxon": "^3.5.0"
   },
   "devDependencies": {
