@@ -15,6 +15,9 @@ function acsm(): AcsmSession {
   const s = new AcsmSession({
     baseUrl: "https://acsm.example",
     fetch: async () => new Response("", { status: 200 }),
+    // Nothing here is a server, and a test that quietly waits out a rate-limit
+    // window looks like a hang rather than a failure.
+    rateLimit: false,
   })
   s.jar.set("_acsm_data", "secret-cookie-value")
   return s

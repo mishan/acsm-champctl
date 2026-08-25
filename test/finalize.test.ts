@@ -554,7 +554,16 @@ async function harness(options: HarnessOptions = {}) {
     return new Response(page, { status: 200 })
   }
 
-  const session = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fetchImpl })
+  // No rate limiting: fetchImpl is a script, not a server, and a finalize is
+  // six requests — login, the plan's read, the re-read, the event save, then
+  // the schedule form and its save. That is past the real limiter's 5 per 20s,
+  // so the sixth would park for the rest of the window and the test would time
+  // out having proved nothing about finalize.
+  const session = new AcsmSession({
+    baseUrl: "https://acsm.example",
+    fetch: fetchImpl,
+    rateLimit: false,
+  })
   await session.login({ username: "admin", password: "x" })
   return { session, posts, eventGets: () => eventGets }
 }
