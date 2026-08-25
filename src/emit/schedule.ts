@@ -14,11 +14,7 @@
 
 import { DateTime } from "luxon"
 
-import {
-  qualiStartFrom,
-  scheduledFromQuali,
-  ScheduleError,
-} from "../finalize/schedule.js"
+import { qualiStartFrom, scheduledFromQuali, ScheduleError } from "../finalize/schedule.js"
 import type { LeagueProfile } from "../profile/types.js"
 
 export interface RoundSchedule {

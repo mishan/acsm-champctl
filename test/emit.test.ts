@@ -16,6 +16,7 @@ import {
   type MonthSpec,
 } from "../src/emit/month.js"
 import { cloneMonth, specFromChampionship } from "../src/emit/clone.js"
+import type { PitTable } from "../src/pits/table.js"
 import { monthSchedule, nextWeekday } from "../src/emit/schedule.js"
 import { ScheduleError } from "../src/finalize/schedule.js"
 import {
@@ -128,7 +129,13 @@ describe("deep merge", () => {
 
 describe("grid cap", () => {
   const pits = pitTable([
-    { track: "spa", layout: "", pitboxes: 30, source: "manual", verifiedAt: "2026-01-01T00:00:00Z" },
+    {
+      track: "spa",
+      layout: "",
+      pitboxes: 30,
+      source: "manual",
+      verifiedAt: "2026-01-01T00:00:00Z",
+    },
     {
       track: "brands_hatch",
       layout: "indy",
@@ -136,7 +143,13 @@ describe("grid cap", () => {
       source: "manual",
       verifiedAt: "2026-01-01T00:00:00Z",
     },
-    { track: "suzuka", layout: "", pitboxes: 30, source: "manual", verifiedAt: "2026-01-01T00:00:00Z" },
+    {
+      track: "suzuka",
+      layout: "",
+      pitboxes: 30,
+      source: "manual",
+      verifiedAt: "2026-01-01T00:00:00Z",
+    },
   ])
 
   it("names the track that binds the cap", () => {
@@ -198,7 +211,11 @@ describe("month schedule", () => {
     const [first] = monthSchedule([{}], profile, "2026-09-02")
     const scheduled = DateTime.fromISO(first?.scheduled ?? "").setZone(ZONE)
     expect(scheduled.toFormat("HH:mm")).toBe("19:00")
-    expect(DateTime.fromISO(first?.qualiStart ?? "").setZone(ZONE).toFormat("HH:mm")).toBe("20:00")
+    expect(
+      DateTime.fromISO(first?.qualiStart ?? "")
+        .setZone(ZONE)
+        .toFormat("HH:mm"),
+    ).toBe("20:00")
   })
 
   it("keeps the wall clock across the November DST boundary", () => {
@@ -214,7 +231,9 @@ describe("month schedule", () => {
     // A race moving a week is a one-off; dragging the rest of the month along
     // would be a surprise nobody asked for.
     const rounds = monthSchedule([{}, { date: "2026-09-12" }, {}], profile, "2026-09-02")
-    const dates = rounds.map((r) => DateTime.fromISO(r.qualiStart).setZone(ZONE).toFormat("yyyy-MM-dd"))
+    const dates = rounds.map((r) =>
+      DateTime.fromISO(r.qualiStart).setZone(ZONE).toFormat("yyyy-MM-dd"),
+    )
     expect(dates).toEqual(["2026-09-02", "2026-09-12", "2026-09-16"])
     expect(rounds[1]?.overridden).toBe(true)
     expect(rounds[2]?.overridden).toBe(false)
@@ -321,16 +340,34 @@ describe("emitting a month", () => {
   })
 
   const pits = pitTable([
-    { track: "spa", layout: "", pitboxes: 30, source: "manual", verifiedAt: "2026-01-01T00:00:00Z" },
-    { track: "suzuka", layout: "", pitboxes: 24, source: "manual", verifiedAt: "2026-01-01T00:00:00Z" },
+    {
+      track: "spa",
+      layout: "",
+      pitboxes: 30,
+      source: "manual",
+      verifiedAt: "2026-01-01T00:00:00Z",
+    },
+    {
+      track: "suzuka",
+      layout: "",
+      pitboxes: 24,
+      source: "manual",
+      verifiedAt: "2026-01-01T00:00:00Z",
+    },
   ])
 
-  const emit = (o: { template?: Championship; spec?: MonthSpec } = {}) =>
+  const emit = (
+    o: { template?: Championship; spec?: MonthSpec; pits?: PitTable | undefined } = {},
+  ) =>
     emitMonth({
       template: o.template ?? template(),
       spec: o.spec ?? spec(),
       profile: testProfile(),
-      pits,
+      // `pits` present in o at all means "use this", including undefined — the
+      // no-pit-table case is exactly what one of these tests is about. Spread
+      // rather than assigned, because exactOptionalPropertyTypes distinguishes
+      // an absent property from one set to undefined.
+      ...("pits" in o ? (o.pits ? { pits: o.pits } : {}) : { pits }),
       now: NOW,
     })
 
@@ -447,11 +484,72 @@ describe("emitting a month", () => {
     expect(future.LinkedID).toMatch(/^[0-9a-f-]{36}$/)
   })
 
+  it("keeps a reference to the class ID pointing at the class", () => {
+    // Minting the class ID before the sweep broke this. The sweep maps each
+    // distinct old UUID to one new one, so a fresh class ID and the template
+    // class ID an unmodelled field still held were two different inputs and
+    // came out as two different values — a reference that matched in the
+    // template silently stopped matching in the emitted month.
+    const templateClassId = "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
+    const t = template({
+      Classes: [championshipClass({ ID: templateClassId, AvailableCars: ["old_car"] })],
+    }) as Championship & { SomeFutureAcsmField?: unknown }
+    t.SomeFutureAcsmField = { ClassRef: templateClassId }
+
+    const { championship: c } = emit({ template: t })
+    const ref = (c as Record<string, unknown>)["SomeFutureAcsmField"] as { ClassRef: string }
+
+    expect(c.Classes?.[0]?.ID).toBe(ref.ClassRef)
+    // Still regenerated — the point is that it moved consistently, not that it
+    // stayed put.
+    expect(c.Classes?.[0]?.ID).not.toBe(templateClassId)
+  })
+
+  it("mints a class ID the sweep would not have rewritten", () => {
+    // The sweep only rewrites UUID-shaped strings that aren't the nil UUID, so
+    // carrying the template's ID through is only safe when it is one. The
+    // shared fixture uses "class-1", which is exactly this case.
+    const t = template()
+    expect(t.Classes?.[0]?.ID).toBe("class-1")
+
+    const { championship: c } = emit({ template: t })
+    expect(c.Classes?.[0]?.ID).toMatch(/^[0-9a-f-]{36}$/)
+  })
+
+  it("gives each round its own event ID", () => {
+    // The class can be carried through the sweep; the event cannot. Every round
+    // is built from the same template event, and the sweep maps one old ID to
+    // one new ID, so leaving it to the sweep would give every round the same
+    // event ID.
+    const { championship: c } = emit()
+    const ids = events(c).map((e) => e.ID)
+    expect(ids).toHaveLength(2)
+    expect(new Set(ids).size).toBe(2)
+    for (const id of ids) expect(id).toMatch(/^[0-9a-f-]{36}$/)
+  })
+
   it("writes MaxClients from the binding track, and says which", () => {
-    const { championship: c, grid } = emit()
+    const { championship: c, grid, derived } = emit()
     expect(grid.maxClients).toBe(24)
     expect(grid.summary).toContain("suzuka")
     for (const ev of events(c)) expect(ev.RaceSetup?.MaxClients).toBe(24)
+    expect(derived.join(" ")).toMatch(/MaxClients 24 from .*suzuka/)
+  })
+
+  it("leaves MaxClients alone when no track has a pit count", () => {
+    // gridCap returns its fallback of 0 to mean "no cap", and writing that
+    // through gave every round MaxClients: 0 — a grid nobody can join, from a
+    // number no track supplied, clobbering whatever the template said. gridmom
+    // cannot catch it either: grid.max-clients returns early with no pit
+    // record, and 0 <= pitboxes passes when there is one.
+    const t = template()
+    for (const ev of events(t)) ev.RaceSetup = { ...ev.RaceSetup, MaxClients: 12 }
+
+    const { championship: c, grid, derived } = emit({ template: t, pits: undefined })
+
+    expect(grid.bindingTrack).toBeUndefined()
+    for (const ev of events(c)) expect(ev.RaceSetup?.MaxClients).toBe(12)
+    expect(derived.join(" ")).toMatch(/MaxClients left as the template had it/)
   })
 
   it("does not size the entry list down to the grid cap", () => {
@@ -528,10 +626,20 @@ describe("emitting a month", () => {
     // so a blank track is a plausible typo. Left alone it emits Track: "",
     // which imports cleanly and then fails to load on race night.
     for (const track of ["", "   "]) {
-      expect(() =>
-        emit({ spec: spec({ rounds: [{ track: "spa" }, { track }] }) }),
-      ).toThrow(/Round 2 has no track/)
+      expect(() => emit({ spec: spec({ rounds: [{ track: "spa" }, { track }] }) })).toThrow(
+        /Round 2 has no track/,
+      )
     }
+  })
+
+  it("refuses a blank car model, naming it, not just an empty car list", () => {
+    // Same argument one field over. A list of blanks is as reachable from a
+    // hand-edited spec as an empty one: ["", "bmw"] joins to ";bmw" for
+    // RaceSetup.Cars and leaves "" in the class AvailableCars — a model nobody
+    // can drive, in the field that decides what people may enter.
+    expect(() => emit({ spec: spec({ cars: ["bmw", "   "] }) })).toThrow(/Car model 2 is blank/)
+    expect(() => emit({ spec: spec({ cars: ["", ""] }) })).toThrow(/Car models 1, 2 are blank/)
+    expect(() => emit({ spec: spec({ cars: ["", "bmw"] }) })).toThrow(EmitError)
   })
 
   it("uses the one ANY_CAR_MODEL, not a second copy of the string", () => {

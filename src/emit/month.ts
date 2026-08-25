@@ -144,6 +144,22 @@ export function emitMonth(options: EmitOptions): EmitResult {
     )
   }
 
+  // A list of blanks is the same mistake as an empty list, and just as
+  // reachable from a hand-edited spec. `["", "bmw"]` joins to ";bmw" for
+  // RaceSetup.Cars and leaves "" in the class AvailableCars — a model that
+  // cannot load, in the field that decides what people are allowed to enter.
+  // Refused by index for the same reason blank tracks are, below.
+  const blankCars = spec.cars
+    .map((c, i) => (c?.trim() ? undefined : i + 1))
+    .filter((n): n is number => n !== undefined)
+  if (blankCars.length > 0) {
+    throw new EmitError(
+      `Car model${blankCars.length === 1 ? "" : "s"} ${blankCars.join(", ")} ` +
+        `${blankCars.length === 1 ? "is" : "are"} blank. RaceSetup.Cars is a semicolon-joined ` +
+        `list, so a blank entry becomes an empty model nobody can drive.`,
+    )
+  }
+
   // A spec is usually parsed JSON — champctl-month reads one from a file — so
   // a blank track is a plausible typo rather than a programming error. Left
   // alone it emits an event with `Track: ""`, which ACSM accepts and then
@@ -191,11 +207,21 @@ export function emitMonth(options: EmitOptions): EmitResult {
 
   const spectatorEnabled = base.SpectatorCarEnabled === true
   const cars = derivedCars(spec.cars, spectatorEnabled ? base.SpectatorCar?.Model : undefined)
-  derived.push(`RaceSetup.Cars from the class car list${spectatorEnabled ? " plus the spectator car" : ""}`)
+  derived.push(
+    `RaceSetup.Cars from the class car list${spectatorEnabled ? " plus the spectator car" : ""}`,
+  )
 
   const championshipClass: ChampionshipClass = {
     ...(templateClass ?? {}),
-    ID: randomUUID(),
+    // Keep the template's class ID and let the sweep at the end rename it —
+    // the same reasoning `out.ID` gets, for the same reason. Minting here
+    // instead breaks referential integrity: an unmodelled field still holding
+    // the *template's* class ID gets mapped to one fresh value while the class
+    // itself carries another, so a reference that matched in the template
+    // silently stops matching. There is exactly one class built from exactly
+    // one template class, so the sweep can carry it. Only a missing, non-UUID
+    // or nil ID needs minting, because the sweep leaves those alone.
+    ID: isFreshlyGeneratedId(templateClass?.ID) ? (templateClass?.ID as string) : randomUUID(),
     // The template's own class name before a car model: a template is a real
     // championship, so "GT3" or "RSS Formula Hybrid" is already the label a
     // league uses. Falling straight to `cars[0]` renamed an inherited class to
@@ -216,13 +242,41 @@ export function emitMonth(options: EmitOptions): EmitResult {
     derived.push("league baseline applied to every round's RaceSetup")
   }
 
+  // Only when a real pit count set it. gridCap returns its fallback (0) to
+  // mean "no cap", and writing that through as MaxClients: 0 is a grid nobody
+  // can join — the "number derived from nothing" the module says it refuses to
+  // emit, and it would clobber the template's value and the baseline's on the
+  // way. bindingTrack is set exactly when a track supplied the number.
+  const capped = grid.bindingTrack !== undefined
+  if (capped) {
+    derived.push(`RaceSetup.MaxClients ${grid.maxClients} from ${grid.bindingTrack}'s pit boxes`)
+  } else {
+    derived.push(`RaceSetup.MaxClients left as the template had it — ${lower(grid.summary)}`)
+  }
+
+  // monthSchedule returns one entry per round, and `as RoundSchedule` asserted
+  // that rather than checking it — the one cast in this function that
+  // noUncheckedIndexedAccess was trying to prevent. If the two ever disagree,
+  // an undefined lands in `scheduled` and surfaces later as an event with no
+  // date, which reads as an ACSM problem. Fail here, naming the round.
+  const scheduleFor = (i: number): RoundSchedule => {
+    const s = schedule[i]
+    if (!s) {
+      throw new EmitError(
+        `Internal: the schedule has ${schedule.length} entries for ${spec.rounds.length} rounds, ` +
+          `so round ${i + 1} has no date. This is a champctl bug, not a problem with the spec.`,
+      )
+    }
+    return s
+  }
+
   const eventList: ChampionshipEvent[] = spec.rounds.map((round, i) =>
     buildEvent({
       templateEvent,
       round,
-      scheduled: schedule[i] as RoundSchedule,
+      scheduled: scheduleFor(i),
       cars,
-      maxClients: grid.maxClients,
+      ...(capped ? { maxClients: grid.maxClients } : {}),
       entryList: unclaimedEntryList(slots),
       baselineRaceSetup,
       format: round.format ?? spec.format,
@@ -341,12 +395,18 @@ function signUpForm(template: SignUpForm | undefined, enabled: boolean): SignUpF
   return enabled ? base : { ...base, ExtraFields: [] }
 }
 
+/** Joins a sentence onto a clause without a capital in the middle of it. */
+function lower(sentence: string): string {
+  return sentence.charAt(0).toLowerCase() + sentence.slice(1)
+}
+
 interface BuildEventOptions {
   templateEvent: ChampionshipEvent
   round: RoundSpec
   scheduled: RoundSchedule
   cars: string
-  maxClients: number
+  /** Omitted when no track supplied a pit count; see the caller. */
+  maxClients?: number
   entryList: EntryList
   baselineRaceSetup: Partial<RaceSetup>
   format?: RaceFormat | undefined
@@ -355,6 +415,12 @@ interface BuildEventOptions {
 function buildEvent(o: BuildEventOptions): ChampionshipEvent {
   const ev: ChampionshipEvent = {
     ...o.templateEvent,
+    // Minted here rather than left to the sweep, unlike the class and the
+    // championship. Every round is built from the *same* template event, so
+    // keeping its ID would give all of them one value — and the sweep maps one
+    // old ID to one new ID, so they would stay identical afterwards. Distinct
+    // rounds need distinct IDs, and no reference to the template event could
+    // have meant "all of them" anyway.
     ID: randomUUID(),
     Scheduled: o.scheduled.scheduled,
     EntryList: o.entryList,
@@ -371,7 +437,10 @@ function buildEvent(o: BuildEventOptions): ChampionshipEvent {
       Track: o.round.track,
       TrackLayout: o.round.layout ?? "",
       Cars: o.cars,
-      MaxClients: o.maxClients,
+      // Absent rather than 0 when the grid cap is unknown, so the template's
+      // value (or the baseline's) survives instead of being overwritten with a
+      // number no track supplied.
+      ...(o.maxClients === undefined ? {} : { MaxClients: o.maxClients }),
     },
   }
   return o.format ? applyFormat(ev, o.format) : ev
