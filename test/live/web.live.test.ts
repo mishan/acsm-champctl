@@ -37,7 +37,16 @@ import { readFormat } from "../../src/finalize/format.js"
 import type { ApplyResponse, PlanResponse, PlanView } from "../../src/web/wire.js"
 import { buildServer } from "../../src/web/server.js"
 import { testProfile } from "../support/build.js"
-import { LIVE, SEED, deleteChampionship, liveConfig, liveSession, loadFixture } from "./harness.js"
+import {
+  assertWouldChange,
+  deleteChampionship,
+  lapsUnlikeSeed,
+  LIVE,
+  liveConfig,
+  liveSession,
+  loadFixture,
+  SEED,
+} from "./harness.js"
 
 describe.skipIf(!LIVE)("the champctl API against a real ACSM", () => {
   let admin: AcsmSession | undefined
@@ -128,6 +137,12 @@ describe.skipIf(!LIVE)("the champctl API against a real ACSM", () => {
    * assertion that happened to touch the plan rather than at the request that
    * actually failed — and against a live manager, "which request" is most of
    * the diagnosis.
+   *
+   * Also refuses a plan with nothing to do. Every caller here is asking for a
+   * change — to push it, or to prove it was refused — and a request that
+   * happens to match what the seed already races produces a plan that writes
+   * nothing and assertions that pass for the absence of the write. Checked
+   * once, here, because remembering it per test is exactly what failed.
    */
   const planFor = async (
     id: string,
@@ -141,7 +156,9 @@ describe.skipIf(!LIVE)("the champctl API against a real ACSM", () => {
       payload,
     })
     expect(res.statusCode, res.body).toBe(200)
-    return (res.json() as PlanResponse).plan
+    const plan = (res.json() as PlanResponse).plan
+    assertWouldChange(plan, `a plan for ${JSON.stringify(payload)}`)
+    return plan
   }
 
   /**
@@ -159,11 +176,21 @@ describe.skipIf(!LIVE)("the champctl API against a real ACSM", () => {
       payload: { acknowledgeWarnings: true },
     })
 
-  /** A push that is meant to land, and a failure that says so at the push. */
+  /**
+   * A push that is meant to land, and a failure that says so at the push.
+   *
+   * `eventSaved` is checked here rather than in each caller because a 200 does
+   * not mean a write. Apply returns early and reports `eventSaved: false` when
+   * the plan had nothing to do, which is precisely the case that makes the
+   * assertions after a push pass for the wrong reason — see `assertWouldChange`
+   * in the harness.
+   */
   const pushed = async (planId: string, cookie: string): Promise<ApplyResponse> => {
     const res = await push(planId, cookie)
     expect(res.statusCode, res.body).toBe(200)
-    return res.json() as ApplyResponse
+    const body = res.json() as ApplyResponse
+    expect(body.eventSaved, `the push reported no write: ${res.body}`).toBe(true)
+    return body
   }
 
   // -------------------------------------------------------------------------
@@ -245,11 +272,15 @@ describe.skipIf(!LIVE)("the champctl API against a real ACSM", () => {
         method: "POST",
         url: `/api/championships/${id}/rounds/1/plan`,
         headers: { cookie },
-        payload: { laps: 17 },
+        // Derived, not a literal: asking for what the seed already races makes
+        // this a plan with no changes, and "the preview listed Race length"
+        // then fails for the fixture rather than for the endpoint.
+        payload: { laps: await lapsUnlikeSeed() },
       })
       expect(res.statusCode, res.body).toBe(200)
 
       const body = res.json() as PlanResponse
+      assertWouldChange(body.plan, "the preview under test")
       expect(body.plan.planId).toBeTruthy()
       expect(body.plan.changes.map((c) => c.label)).toContain("Race length")
       expect(body.plan.formChanges.length).toBeGreaterThan(0)
@@ -269,7 +300,7 @@ describe.skipIf(!LIVE)("the champctl API against a real ACSM", () => {
         reversedGridPositions: 4,
         mandatoryPit: false,
       })
-      expect((await pushed(plan.planId, cookie)).eventSaved).toBe(true)
+      await pushed(plan.planId, cookie)
 
       // Read back out of ACSM rather than trusting the response. What champctl
       // reports and what the manager stored are two different claims, and only
@@ -305,13 +336,12 @@ describe.skipIf(!LIVE)("the champctl API against a real ACSM", () => {
       const before = entrants(await exported(id))
       expect(before.length).toBeGreaterThan(1)
 
-      // Not 12: that is what the seed already races, so the plan was a no-op
-      // and the push below was skipped entirely — this test spent its life
-      // proving that a write which never happened left the entry list alone.
-      // Both assertions exist so that can't come back quietly.
-      const plan = await planFor(id, cookie, { laps: 23 })
-      expect(plan.noop, "the plan must actually change something").toBe(false)
-      expect((await pushed(plan.planId, cookie)).eventSaved).toBe(true)
+      // Derived from the fixture rather than written as a literal. This asked
+      // for 12 once, which is what the seed already races — so the plan was a
+      // no-op, the push was skipped, and the test spent its life proving that a
+      // write which never happened left the entry list alone.
+      const plan = await planFor(id, cookie, { laps: await lapsUnlikeSeed() })
+      await pushed(plan.planId, cookie)
 
       expect(entrants(await exported(id))).toEqual(before)
     })
