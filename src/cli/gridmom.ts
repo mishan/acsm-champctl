@@ -11,7 +11,7 @@ import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
-import { FileCache } from "../acsm/cache.js"
+import { SqliteCache } from "../acsm/cache.js"
 import { HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { loadProfile } from "../profile/load.js"
@@ -143,7 +143,9 @@ function parseSeverity(v: string): Severity {
 async function readerFor(args: Args, baseUrl: string): Promise<AcsmReader> {
   return new HttpAcsmReader({
     baseUrl,
-    ...(args.cache ? { cache: new FileCache({ dir: resolve(process.cwd(), ".cache/acsm") }) } : {}),
+    ...(args.cache
+      ? { cache: await SqliteCache.open({ path: resolve(process.cwd(), ".cache/acsm/cache.db") }) }
+      : {}),
   })
 }
 

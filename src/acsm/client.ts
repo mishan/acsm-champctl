@@ -58,7 +58,7 @@ export interface HttpReaderOptions {
   /** Per-request timeout. */
   timeoutMs?: number
   userAgent?: string
-  /** Optional response cache; see `FileCache`. */
+  /** Optional response cache; see `SqliteCache`. */
   cache?: ResponseCache
 }
 
