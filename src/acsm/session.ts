@@ -127,8 +127,13 @@ const MAX_REDIRECTS = 5
  */
 const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308])
 
+/** Exported so the write path judges "did ACSM redirect?" by the same rule. */
+export function isRedirectStatus(status: number): boolean {
+  return REDIRECT_STATUSES.has(status)
+}
+
 function isRedirect(res: Response): boolean {
-  return REDIRECT_STATUSES.has(res.status)
+  return isRedirectStatus(res.status)
 }
 
 function describeLoginFailure(status: number): string {

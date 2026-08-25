@@ -137,7 +137,10 @@ export function championshipClass(
 
 export function championship(over: Partial<Championship> = {}): Championship {
   return {
-    ID: "champ-1",
+    // A UUID, because that is what ACSM issues — and because `regenerateIds`
+    // only rewrites UUID-shaped strings, so a non-UUID default would quietly
+    // make every fixture behave like an import that keeps its own ID.
+    ID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
     Name: "Test Championship",
     Description: "",
     Created: "2026-08-01T00:00:00-07:00",

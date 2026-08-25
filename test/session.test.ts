@@ -180,13 +180,21 @@ describe("login", () => {
     // the response it stands in for — so a `status >= 300 && < 400` test made
     // it indistinguishable from ACSM's own 302-to-/, and handed back a session
     // that was never authenticated.
+    //
+    // The body must be null. 304 is a null-body status, so `new Response("")`
+    // throws `Invalid response status code 304` inside the fetch stub, before
+    // login() ever sees a response. That message happens to contain "304", so
+    // an earlier version of this test matched its own constructor error and
+    // passed green without exercising the branch at all.
     const { s } = session(() =>
-      new Response("", {
+      new Response(null, {
         status: 304,
         headers: { "set-cookie": sessionCookie, location: "/" },
       }),
     )
-    await expect(s.login({ username: "admin", password: "x" })).rejects.toThrow(/304/)
+    await expect(s.login({ username: "admin", password: "x" })).rejects.toThrow(
+      /Not Modified, which is a cache talking/,
+    )
     expect(s.isLoggedIn).toBe(false)
   })
 
@@ -486,7 +494,8 @@ describe("single origin", () => {
     const { fn, calls } = scriptedFetch((url) =>
       url.endsWith("/login")
         ? new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
-        : new Response("", { status: 304, headers: { location: "/somewhere-else" } }),
+        : // null body: 304 is a null-body status and Response rejects any other.
+          new Response(null, { status: 304, headers: { location: "/somewhere-else" } }),
     )
     const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
     await s.login({ username: "admin", password: "x" })
@@ -825,6 +834,36 @@ describe("import safety rules", () => {
     ).resolves.toMatchObject({ championshipId: IMPORTED_ID })
   })
 
+  it("checks the target when a non-UUID ID survives regeneration", async () => {
+    // regenerateIds only rewrites UUID-shaped strings, on purpose. So an ID
+    // like "champ-1" comes through untouched even with freshIds on, and the
+    // import can still land on an existing championship. Keying the collision
+    // check off `freshIds` skipped exactly that case.
+    const s = await importSession(
+      championship({
+        ID: "champ-1",
+        Events: [raceEvent({ StartedTime: "2026-07-01T19:00:00-07:00" })],
+      }),
+    )
+    await expect(importChampionship(s, championship({ ID: "champ-1" }))).rejects.toThrow(
+      /has results for round 1/,
+    )
+  })
+
+  it("still skips the check when a UUID really was regenerated", async () => {
+    // The other half: a UUID does get rewritten, so there is nothing on the
+    // server it can collide with and no reason to spend a request.
+    const s = await importSession(
+      championship({
+        ID: EXISTING_ID,
+        Events: [raceEvent({ StartedTime: "2026-07-01T19:00:00-07:00" })],
+      }),
+    )
+    await expect(
+      importChampionship(s, championship({ ID: EXISTING_ID })),
+    ).resolves.toMatchObject({ championshipId: IMPORTED_ID })
+  })
+
   it("matches the target ID case-insensitively", async () => {
     // ACSM writes UUIDs lower-case, but the ID may have been typed or pasted.
     // A case difference is not a mismatch, and treating it as one would look
@@ -901,6 +940,37 @@ describe("redirect parsing", () => {
 
   it("returns undefined when there's no redirect", () => {
     expect(championshipIdFromRedirect(new Response("", { status: 200 }))).toBeUndefined()
+  })
+
+  it("ignores a Location on a non-redirect status", () => {
+    // A rejected import is a 200 carrying the re-rendered page — there is no
+    // error status to go on, so "did it redirect?" is the whole success
+    // signal. A 200 or 304 that happens to carry a Location (a proxy, a
+    // framework, a build that sets one on error) must not read as success.
+    for (const status of [200, 404, 500]) {
+      const res = new Response("", {
+        status,
+        headers: { location: "/championship/11111111-2222-3333-4444-555555555555" },
+      })
+      expect(championshipIdFromRedirect(res), `status ${status}`).toBeUndefined()
+    }
+    const notModified = new Response(null, {
+      status: 304,
+      headers: { location: "/championship/11111111-2222-3333-4444-555555555555" },
+    })
+    expect(championshipIdFromRedirect(notModified)).toBeUndefined()
+  })
+
+  it("accepts every status that really is a redirect", () => {
+    for (const status of [301, 302, 303, 307, 308]) {
+      const res = new Response("", {
+        status,
+        headers: { location: "/championship/11111111-2222-3333-4444-555555555555" },
+      })
+      expect(championshipIdFromRedirect(res), `status ${status}`).toBe(
+        "11111111-2222-3333-4444-555555555555",
+      )
+    }
   })
 })
 

@@ -10,7 +10,7 @@
 import { randomUUID } from "node:crypto"
 
 import { findFormByAction } from "./form.js"
-import { AcsmWriteError, type AcsmSession } from "./session.js"
+import { AcsmWriteError, isRedirectStatus, type AcsmSession } from "./session.js"
 import type { Championship } from "./types.js"
 import { GO_ZERO_TIME, eventHasStarted, events, isZeroTime } from "./view.js"
 
@@ -238,11 +238,20 @@ export async function importChampionship(
     payload = { ...payload, Created: now, Updated: now }
   }
 
-  // With fresh IDs there is nothing on the server to collide with, so there is
-  // nothing to check. Keeping the payload's own ID means it may land on top of
-  // a real championship, and then the target has to be inspected — checking
-  // only the payload's results says nothing about what is already there.
-  if (options.freshIds === false && payload.ID) {
+  // The question is not "did we ask for fresh IDs?" but "can this payload land
+  // on something that already exists?" — and those differ.
+  //
+  // `regenerateIds` only rewrites UUID-shaped strings, deliberately, so that it
+  // can't mangle a field that merely looks like an ID. An ID that isn't a UUID
+  // therefore survives regeneration untouched, and asking for fresh IDs
+  // silently gets you the original one. Keying off `options.freshIds` skipped
+  // the collision check for exactly those payloads, which is the case where it
+  // was needed most: a non-UUID ID is far more likely to be a hand-written or
+  // templated value that several imports share.
+  //
+  // So compare what came out against what went in. If the root ID survived,
+  // this import can overwrite whatever holds that ID, however it got there.
+  if (payload.ID && payload.ID === championship.ID) {
     await assertTargetSafeToOverwrite(session, payload.ID, options.allowOverwrite === true)
   }
 
@@ -390,8 +399,19 @@ export function assertNoResults(championship: Championship): void {
 }
 
 
-/** ACSM redirects to `/championship/{id}` after a successful import. */
+/**
+ * ACSM redirects to `/championship/{id}` after a successful import.
+ *
+ * The status check is the load-bearing part. A *rejected* import is a 200
+ * carrying the import page re-rendered with an error flash — there is no error
+ * status to go on — so "did it redirect?" is the entire success signal. Reading
+ * the header without checking the status means any 200 that happens to carry a
+ * `Location` (a proxy, a framework, an ACSM build that sets one on error) gets
+ * reported as a successful import, which is precisely the failure this function
+ * exists to detect.
+ */
 export function championshipIdFromRedirect(res: Response): string | undefined {
+  if (!isRedirectStatus(res.status)) return undefined
   const location = res.headers.get("location")
   if (!location) return undefined
   const m = /\/championship\/([0-9a-f-]{36})/i.exec(location)
