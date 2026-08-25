@@ -630,6 +630,65 @@ describe("emitting a month", () => {
     expect(c.ID).toMatch(/^[0-9a-f-]{36}$/)
   })
 
+  it("gives a fresh ID when the template's was the nil UUID", () => {
+    // regenerateIds deliberately leaves the nil UUID alone, so counting it as
+    // already-fresh would let every month emitted from an all-zeroes template
+    // keep it — and then collide with every other one.
+    const { championship: c } = emit({
+      template: template({ ID: "00000000-0000-0000-0000-000000000000" }),
+    })
+    expect(c.ID).not.toBe("00000000-0000-0000-0000-000000000000")
+    expect(c.ID).toMatch(/^[0-9a-f-]{36}$/)
+  })
+
+  it("keeps the template's class name rather than renaming it to a car model", () => {
+    // A template is a real championship, so its class name is already the
+    // label a league uses. Falling straight to cars[0] renamed "GT3" to a
+    // model string, which reads like an id.
+    const { championship: c } = emit({
+      template: template({
+        Classes: [championshipClass({ Name: "GT3", AvailableCars: ["old_car"] })],
+      }),
+    })
+    expect(c.Classes?.[0]?.Name).toBe("GT3")
+  })
+
+  it("still prefers an explicit className, and falls back to a car last", () => {
+    expect(
+      emit({ spec: spec({ className: "Formula Hybrid" }) }).championship.Classes?.[0]?.Name,
+    ).toBe("Formula Hybrid")
+
+    const noClass = emitMonth({
+      template: template({ Classes: [] }),
+      spec: spec(),
+      profile: testProfile(),
+      pits,
+      now: NOW,
+    })
+    expect(noClass.championship.Classes?.[0]?.Name).toBe("rss_formula_hybrid_2021")
+  })
+
+  it("anchors a generated schedule to `now`, not to the wall clock", () => {
+    // Without startDate the schedule used DateTime.now() while Created came
+    // from `now`, so one championship could straddle two timeframes — and a
+    // test could pin Created and still get a schedule that moved.
+    // Omitted rather than set to undefined: exactOptionalPropertyTypes means
+    // those are different things, and it's the absent case being tested.
+    const { startDate: _omitted, ...noStartDate } = spec()
+    const { schedule } = emitMonth({
+      template: template(),
+      spec: noStartDate,
+      profile: testProfile(),
+      pits,
+      now: new Date("2027-03-01T12:00:00-08:00"), // a Monday
+    })
+
+    // The profile races on Wednesday, so the first round is 2027-03-03.
+    const first = DateTime.fromISO(schedule[0]?.qualiStart ?? "").setZone(ZONE)
+    expect(first.toFormat("yyyy-MM-dd")).toBe("2027-03-03")
+    expect(first.weekday).toBe(3)
+  })
+
   it("refuses a template with no events to take a shape from", () => {
     expect(() => emit({ template: template({ Events: [] }) })).toThrow(/no events/)
   })

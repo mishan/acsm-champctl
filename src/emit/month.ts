@@ -22,6 +22,8 @@
 
 import { randomUUID } from "node:crypto"
 
+import { DateTime } from "luxon"
+
 import {
   ANY_CAR_MODEL,
   type Championship,
@@ -158,7 +160,17 @@ export function emitMonth(options: EmitOptions): EmitResult {
     )
   }
 
-  const schedule = monthSchedule(spec.rounds, profile, spec.startDate)
+  // Anchored to the same `now` that stamps Created/Updated. Without this,
+  // omitting startDate made the schedule depend on wall-clock time while every
+  // other date in the same championship came from `now` — so a test could pin
+  // Created and still get a schedule that moved, and a caller passing `now`
+  // deliberately would get a month half in one timeframe and half in another.
+  const schedule = monthSchedule(
+    spec.rounds,
+    profile,
+    spec.startDate,
+    DateTime.fromJSDate(now).setZone(profile.schedule.timezone),
+  )
   const grid = gridCap(spec.rounds, options.pits)
 
   // Start from the template, then the league baseline. Both are whole-object
@@ -184,7 +196,11 @@ export function emitMonth(options: EmitOptions): EmitResult {
   const championshipClass: ChampionshipClass = {
     ...(templateClass ?? {}),
     ID: randomUUID(),
-    Name: spec.className ?? spec.cars[0] ?? "Class",
+    // The template's own class name before a car model: a template is a real
+    // championship, so "GT3" or "RSS Formula Hybrid" is already the label a
+    // league uses. Falling straight to `cars[0]` renamed an inherited class to
+    // a model string, which reads like an id rather than a class.
+    Name: spec.className ?? templateClass?.Name ?? spec.cars[0] ?? "Class",
     AvailableCars: [...spec.cars],
     Entrants: entryList,
   }
@@ -254,11 +270,11 @@ export function emitMonth(options: EmitOptions): EmitResult {
   // reference to it another.
   out = regenerateIds(out)
 
-  // The sweep only rewrites UUID-shaped strings, deliberately, so a template
-  // with a non-UUID ID would come through unchanged and could still collide.
-  // Only that case needs a fresh one, and by then there is nothing left
-  // pointing at the old value for it to disagree with.
-  if (!isUuid(out.ID)) out.ID = randomUUID()
+  // The sweep only rewrites UUID-shaped strings that aren't the nil UUID, so
+  // a template with a non-UUID or all-zeroes ID comes through unchanged and
+  // could still collide. Only those cases need a fresh one, and by then there
+  // is nothing left pointing at the old value for it to disagree with.
+  if (!isFreshlyGeneratedId(out.ID)) out.ID = randomUUID()
 
   derived.push("every UUID regenerated, so importing creates rather than overwrites")
 
@@ -303,9 +319,19 @@ export function unclaimedEntryList(slots: number): EntryList {
   return out
 }
 
-/** Matches what `regenerateIds` considers rewritable, so the two agree. */
-function isUuid(value: string | undefined): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value ?? "")
+/** Go's zero UUID. `regenerateIds` deliberately leaves this one alone. */
+const NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
+/**
+ * Whether `regenerateIds` would have given this ID a fresh value.
+ *
+ * The nil UUID is excluded precisely *because* the sweep skips it. Counting it
+ * as already-fresh would let a template whose ID is all zeroes emit a month
+ * that keeps it — and then every such month collides with every other one.
+ */
+function isFreshlyGeneratedId(value: string | undefined): boolean {
+  if (!value || value === NIL_UUID) return false
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 }
 
 function signUpForm(template: SignUpForm | undefined, enabled: boolean): SignUpForm {
