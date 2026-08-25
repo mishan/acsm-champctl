@@ -657,3 +657,94 @@ button.link:hover {
     opacity: 0.7;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Creating a championship (plan §5.1)
+ * ------------------------------------------------------------------------ */
+
+/* The one action on the home screen that isn't picking a championship. */
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+/*
+ * The track list: a number, two text fields and the buttons that move it.
+ *
+ * Grid rather than flex so the fields line up down the column while the
+ * controls stay put — a list whose inputs jog left and right as track names
+ * get longer is hard to read as an *ordered* thing, which is the only thing
+ * this list is expressing.
+ */
+.tracks {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.tracks li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 2fr) minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.tracks input {
+  margin: 0;
+  min-width: 0;
+}
+
+/*
+ * Square, so three of them in a row still leave the fields most of the width,
+ * and 2.25rem because a touch target smaller than that is one people miss.
+ */
+.icon {
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.icon:disabled {
+  opacity: 0.35;
+}
+
+/* The sentence that names the track that bound the cap. Worth reading. */
+.grid-cap {
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0.75rem;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  border-left: 3px solid var(--accent);
+}
+
+/*
+ * Folded away by default: "what did it decide for me?" is worth answering and
+ * not worth reading every time, and every line in it is a settled question.
+ */
+.derived {
+  margin-top: 0.75rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.derived summary {
+  cursor: pointer;
+}
+
+.derived ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+}
