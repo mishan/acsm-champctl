@@ -61,33 +61,62 @@ export function sha256(body: string): string {
 }
 
 /**
- * A championship ID comes off the wire, and it is about to become a path
- * segment. `../../..` or an absolute path would put an attacker-chosen file
- * anywhere the process can write, so IDs are checked against what ACSM
- * actually issues — UUIDs — rather than escaped and hoped for.
+ * One safe path segment: no separator, no traversal, no leading dot.
  *
- * Deliberately a whitelist. Being handed an ID shape we don't recognise should
- * stop the run and get looked at, not get sanitised into something plausible.
+ * Championship IDs arrive off the wire and become directory names, so this is
+ * a containment check — it exists to keep a hostile or malformed value from
+ * writing outside the archive root, and that is the whole of its contract.
+ *
+ * Deliberately **not** a UUID check, even though UUIDs are what ACSM issues
+ * today. Two reasons.
+ *
+ * The security property doesn't need it. `../../etc`, `/etc/passwd` and `a/b`
+ * are already refused by the pattern below; a UUID check would reject strictly
+ * more, none of which is more dangerous.
+ *
+ * And the cost of over-strictness runs the wrong way here. This is an archive
+ * whose entire justification is that history gets lost if it isn't captured
+ * (plan §8.1). If a future ACSM issues an ID in some other shape, a
+ * UUID-strict check would refuse to store that championship at all — turning
+ * an unrecognised ID into exactly the data loss the archive exists to prevent.
+ * Failing closed is right when the risk is corrupting data, as with
+ * `checkEntryListShape`; it is wrong when the risk is not keeping it.
+ *
+ * The same rule covers snapshot filenames, which are timestamps rather than
+ * UUIDs — another reason a UUID check would be wrong here.
  */
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+const SAFE_PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
-export class UnsafeChampionshipId extends Error {
-  constructor(readonly championshipId: string) {
+export class UnsafeArchivePath extends Error {
+  constructor(
+    readonly value: string,
+    what: string,
+  ) {
     super(
-      `Refusing to use ${JSON.stringify(championshipId)} as an archive directory name. ` +
-        `Championship IDs are expected to be UUIDs; this one could escape the archive ` +
-        `directory or overwrite its metadata.`,
+      `Refusing to use ${JSON.stringify(value)} as ${what} in the archive: it is not a single ` +
+        `path segment, so it could escape the archive directory or overwrite its metadata.`,
     )
-    this.name = "UnsafeChampionshipId"
+    this.name = "UnsafeArchivePath"
+  }
+}
+
+/** Throws unless `value` is usable as one path segment inside the archive. */
+export function assertSafePathSegment(value: string, what: string): void {
+  // `index.json` would collide with the per-championship index file.
+  //
+  // The `..` test is defence in depth and nothing more: the pattern already
+  // forbids `/` and `\`, so a value that passes it cannot traverse, and "."
+  // and ".." alone fail its first character class. It is here so that widening
+  // the pattern later — to allow a separator, say — can't quietly reintroduce
+  // traversal. The price is refusing a harmless name like "a..b", which no
+  // championship ID or snapshot filename looks like.
+  if (!SAFE_PATH_SEGMENT.test(value) || value === INDEX_FILE || value.includes("..")) {
+    throw new UnsafeArchivePath(value, what)
   }
 }
 
 export function assertSafeChampionshipId(id: string): void {
-  // "index" would collide with the per-championship index file, and "." / ".."
-  // are caught by the pattern's first character class.
-  if (!SAFE_ID.test(id) || id === INDEX_FILE || id.includes("..")) {
-    throw new UnsafeChampionshipId(id)
-  }
+  assertSafePathSegment(id, "a championship directory name")
 }
 
 const INDEX_FILE = "index.json"
@@ -178,7 +207,10 @@ export class FileArchiveStore implements ArchiveStore {
   /** Reads a stored snapshot back, verbatim. */
   async readSnapshot(championshipId: string, file: string): Promise<string> {
     assertSafeChampionshipId(championshipId)
-    assertSafeChampionshipId(file)
+    // Same containment rule, but this one is a filename — a timestamp, not an
+    // ID — so it gets its own wording rather than being reported as a bad
+    // championship ID.
+    assertSafePathSegment(file, "a snapshot filename")
     return readFile(join(this.#root, championshipId, file), "utf8")
   }
 

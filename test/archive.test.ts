@@ -15,8 +15,9 @@ import {
 } from "../src/cli/archive.js"
 import {
   FileArchiveStore,
-  UnsafeChampionshipId,
+  UnsafeArchivePath,
   assertSafeChampionshipId,
+  assertSafePathSegment,
   sha256,
   snapshotFileName,
 } from "../src/archive/store.js"
@@ -159,8 +160,9 @@ describe("championship IDs become path segments", () => {
       "",
       "index.json",
       ".hidden",
+      "a..b/../..",
     ]) {
-      expect(() => assertSafeChampionshipId(bad), bad).toThrow(UnsafeChampionshipId)
+      expect(() => assertSafeChampionshipId(bad), bad).toThrow(UnsafeArchivePath)
     }
   })
 
@@ -168,11 +170,51 @@ describe("championship IDs become path segments", () => {
     expect(() => assertSafeChampionshipId(ID)).not.toThrow()
   })
 
+  it("is a containment check, not a UUID check", () => {
+    // Stated explicitly because the two are easy to conflate. The archive
+    // exists so history isn't lost; refusing to store a championship whose ID
+    // merely has an unfamiliar *shape* would cause the loss it prevents. Only
+    // escaping the directory is a reason to refuse.
+    for (const unusual of ["champ-1", "2026-08-summer-series", "ABC123", "a"]) {
+      expect(() => assertSafeChampionshipId(unusual), unusual).not.toThrow()
+    }
+  })
+
+  it("refuses '..' anywhere, as defence in depth", () => {
+    // "a..b" cannot traverse — the pattern already forbids separators — so
+    // this is belt and braces against the pattern being widened later. Pinned
+    // so the redundancy is deliberate rather than accidental.
+    expect(() => assertSafeChampionshipId("a..b")).toThrow(UnsafeArchivePath)
+  })
+
+  it("applies the same rule to snapshot filenames, which are not UUIDs", () => {
+    // readSnapshot runs the filename through this too, so a UUID-strict check
+    // would break reading back every snapshot the store ever wrote.
+    const file = snapshotFileName(at("2026-08-24T17:00:00Z"))
+    expect(() => assertSafePathSegment(file, "a snapshot filename")).not.toThrow()
+    expect(() => assertSafePathSegment("../index.json", "a snapshot filename")).toThrow(
+      /not a single path segment/,
+    )
+  })
+
+  it("names what it rejected, and what it was being used as", () => {
+    expect(() => assertSafeChampionshipId("../x")).toThrow(/"\.\.\/x".*championship directory name/)
+    expect(() => assertSafePathSegment("../x", "a snapshot filename")).toThrow(
+      /snapshot filename/,
+    )
+  })
+
   it("refuses to write outside the archive", async () => {
     const store = new FileArchiveStore(root)
     await expect(
       store.put("../escaped", '{"a":1}', at("2026-08-24T17:00:00Z")),
-    ).rejects.toThrow(UnsafeChampionshipId)
+    ).rejects.toThrow(UnsafeArchivePath)
+  })
+
+  it("refuses to read outside the archive", async () => {
+    const store = new FileArchiveStore(root)
+    await store.put(ID, '{"a":1}', at("2026-08-24T17:00:00Z"))
+    await expect(store.readSnapshot(ID, "../../etc/passwd")).rejects.toThrow(UnsafeArchivePath)
   })
 
   it("names snapshot files so they sort chronologically and copy to Windows", () => {
