@@ -17,7 +17,7 @@ import type { Championship } from "../acsm/types.js"
 import { EMPTY_PIT_TABLE, loadPitTable, type PitTable } from "../pits/table.js"
 import { loadProfile } from "../profile/load.js"
 import { check } from "../gridmom/index.js"
-import { Severity } from "../gridmom/finding.js"
+import type { Severity } from "../gridmom/finding.js"
 import { formatReport, type ReportFormat } from "../gridmom/report.js"
 
 const USAGE = `gridmom — championship sanity checker
@@ -226,12 +226,11 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     ...(args.now ? { now: args.now } : {}),
   })
 
-  process.stdout.write(
-    formatReport(report, args.format, {
-      colour: args.format === "text" && process.stdout.isTTY === true,
-      ...(args.min ? { minSeverity: args.min } : {}),
-    }) + "\n",
-  )
+  const output = formatReport(report, args.format, {
+    colour: args.format === "text" && process.stdout.isTTY === true,
+    ...(args.min ? { minSeverity: args.min } : {}),
+  })
+  process.stdout.write(`${output}\n`)
 
   if (report.counts.ERROR > 0) return 2
   if (report.counts.WARN > 0) return 1
