@@ -17,6 +17,17 @@ export interface AcsmReader {
   listChampionships(): Promise<ChampionshipSummary[]>
   /** The full export: config, entry list, results, laps and incidents. */
   exportChampionship(id: string): Promise<Championship>
+  /**
+   * The same export as the bytes the server sent, for the archive.
+   *
+   * Plan §8.1 stores raw JSON verbatim and treats everything derived from it as
+   * a projection that can be rebuilt. Parsing and re-serialising would defeat
+   * that: `JSON.stringify` reorders integer-like keys, drops the distinction
+   * between `1` and `1.0`, and normalises whitespace and escapes. None of that
+   * matters for reading a championship, and all of it matters for an archive
+   * whose job is to still be trustworthy after the source is gone.
+   */
+  exportChampionshipRaw(id: string): Promise<string>
   standings(id: string): Promise<unknown>
   healthcheck(): Promise<unknown>
 }
@@ -82,7 +93,11 @@ export class HttpAcsmReader implements AcsmReader {
   async exportChampionship(id: string): Promise<Championship> {
     // Export works while logged out, which is what makes the whole read side
     // credential-free (plan §3.1).
-    return this.#getJson<Championship>(`/championship/${encodeURIComponent(id)}/export`)
+    return this.#getJson<Championship>(exportPath(id))
+  }
+
+  async exportChampionshipRaw(id: string): Promise<string> {
+    return this.#getText(exportPath(id))
   }
 
   async standings(id: string): Promise<unknown> {
@@ -94,6 +109,19 @@ export class HttpAcsmReader implements AcsmReader {
   }
 
   async #getJson<T>(path: string): Promise<T> {
+    // #getText has already proved this parses, so this cannot throw.
+    return JSON.parse(await this.#getText(path)) as T
+  }
+
+  /**
+   * Fetches a JSON endpoint and returns the response body unchanged.
+   *
+   * It is still validated as JSON — a login redirect answers 200 with HTML, so
+   * the check below is what turns "Public Access got switched off" into a
+   * sentence rather than a stored HTML page — but what comes back is the text,
+   * not a re-serialisation of it. See `exportChampionshipRaw`.
+   */
+  async #getText(path: string): Promise<string> {
     const url = `${this.#baseUrl}${path}`
 
     // Cache reads fail open. A truncated or corrupt entry is a cache miss, not
@@ -102,7 +130,8 @@ export class HttpAcsmReader implements AcsmReader {
     const cached = await this.#cache?.get(url)
     if (cached !== undefined) {
       try {
-        return JSON.parse(cached) as T
+        JSON.parse(cached)
+        return cached
       } catch {
         // Fall through and refetch.
       }
@@ -132,9 +161,8 @@ export class HttpAcsmReader implements AcsmReader {
 
     // A login redirect returns 200 with HTML, so a parse failure here usually
     // means Public Access got switched off rather than a malformed body.
-    let parsed: T
     try {
-      parsed = JSON.parse(text) as T
+      JSON.parse(text)
     } catch {
       const hint = text.trimStart().startsWith("<")
         ? " (got HTML — is Public Access still enabled?)"
@@ -143,8 +171,13 @@ export class HttpAcsmReader implements AcsmReader {
     }
 
     await this.#cache?.set(url, text)
-    return parsed
+    return text
   }
+}
+
+/** Path to a championship's export. */
+function exportPath(id: string): string {
+  return `/championship/${encodeURIComponent(id)}/export`
 }
 
 function asMessage(e: unknown): string {
@@ -174,6 +207,15 @@ export class StaticAcsmReader implements AcsmReader {
     const c = this.#byId.get(id)
     if (!c) throw new AcsmError(`No championship ${id} in this reader`)
     return c
+  }
+
+  /**
+   * Re-serialised, because this reader was handed objects and never saw a
+   * response body. Fine for tests and `--file`; deliberately not what the
+   * archive runs against, since "verbatim" is the whole point there.
+   */
+  async exportChampionshipRaw(id: string): Promise<string> {
+    return JSON.stringify(await this.exportChampionship(id))
   }
 
   async standings(): Promise<unknown> {

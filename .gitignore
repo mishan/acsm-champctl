@@ -6,6 +6,12 @@ dist/
 !.env.example
 
 # Local archive + HTTP cache. Never committed.
+#
+# data/ is league data, not code, and some of it is personal data: the
+# championship archive (data/archive/, plan §8.1) stores every export verbatim,
+# and every export carries driver names and Steam GUIDs. The tool builds this
+# directory; the league owns what's in it. Only the *.example.json files that
+# document a format are tracked.
 .cache/
 data/*
 !data/*.example.json

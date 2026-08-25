@@ -11,6 +11,9 @@ README covers what exists today.
 - **Phase 1 — gridmom**, the sanity checker, plus the read-only client it needs.
   Done.
 
+- **Phase 1b — the archive.** Every championship export the league has ever run,
+  kept verbatim, on a nightly schedule. Read-only by construction.
+
 - **Phase 2 — the write path.** Foundations are in: an authenticated session, an
   ordered-multimap form parser, the import safety rules, and a Docker test
   harness so the write path can be verified against a throwaway ACSM rather than
@@ -24,6 +27,7 @@ makes "the bot never holds write credentials" a property of the code.
 src/
   acsm/        types, read client, session (write), form parser, diff,
                rate limiter, response cache, import safety rules
+  archive/     verbatim export store + the ingest run
   content/     installed-content index (interface + snapshot impl)
   pits/        track pit table, acsm | scan | manual precedence
   profile/     league profile schema + loader
@@ -138,6 +142,43 @@ parsing anything.
 every format finding and `--suppress champ.repeated-track` hides just the one.
 Useful for a league that genuinely runs the same track twice.
 
+## Archive
+
+`champctl-archive` keeps a copy of every championship export the league has ever
+run (plan §8.1). ACSM is the only place that history exists, so the sooner this
+starts running the less of it can be lost.
+
+```sh
+npm run archive -- run       # fetch every championship, store what changed
+npm run archive -- status    # what's in the archive already
+```
+
+Read-only by construction — it holds an `AcsmReader`, which has no credentials
+and no write methods. That is what makes it the one job safe to point at a
+league's production manager on a schedule.
+
+Exit codes follow gridmom's contract: `0` nothing changed, `1` something was
+archived, `2` at least one championship failed, `3` the run itself failed. A
+failure outranks a success, so a night that archived thirty and lost one still
+exits 2. One bad championship never aborts the rest — the point of a nightly
+job is that the archive gets no worse.
+
+**Bodies are stored verbatim**, not parsed and re-serialised. `JSON.stringify`
+reorders integer-like keys, turns `1.0` into `1`, and normalises escapes — none
+of which matters for reading a championship, and all of which matters for an
+archive whose job is to still be trustworthy after the source is gone. Stats
+tables are a projection on top, expected to be rebuilt from scratch whenever a
+definition changes or two driver identities get merged.
+
+**Snapshots are deduplicated by content**, so a nightly run over a finished
+season doesn't write an identical copy every night forever. A snapshot appears
+only when the export actually changed, which makes the file list a change
+history. `lastCheckedAt` separately records that the run happened, so "nothing
+changed" stays distinguishable from "the job has been broken for a month".
+
+Lives in `data/archive/`, which is gitignored: league data, and personal data at
+that, since every export carries driver names and Steam GUIDs.
+
 ## League profiles
 
 BATL's baseline is `profiles/batl.json`. Another league drops in their own and
@@ -202,11 +243,12 @@ off the ACSM source rather than guessed.
 
 - **A real export fixture.** Everything here is tested against synthetic
   fixtures. `fixtures/import-roundtrip/` (plan §4.1) needs a real BATL export
-  before the round-trip regression test can exist.
+  before the round-trip regression test can exist — the archive's first run
+  produces one, it just needs sanitising before it can be committed.
 - **Content checks need a source.** `ContentIndex` is defined and wired in, but
   nothing populates it. `/content/tracks/{track}/ui/ui_track.json` is the
   endpoint; the harness needs AC content installed to exercise it.
 - **The read-modify-write flow itself.** `session.ts` and `form.ts` are the
   pieces; the finalize-a-race operation that uses them is next, and the live
   suite is where it gets proven.
-- Phases 1b onward: archive ingest, UI, bot.
+- Phases 3 onward: UI, bot.
