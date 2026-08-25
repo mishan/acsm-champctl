@@ -80,6 +80,12 @@ an index-out-of-range panic in ACSM, not a validation message.
 form, never by assembling it from the JSON export. This is the plan's §3.2
 read-modify-write rule, and the source is why it isn't optional.
 
+Counting those keys against each other catches a *short* array but not an
+absent one: drop a key entirely and the nine that remain still agree, so there
+is nothing to disagree with. `REQUIRED_ENTRY_LIST_FIELDS` in `src/acsm/form.ts`
+lists the keys named above, plus `EntryList.EntrantID` from §2, and a POST
+carrying entrants without all of them is refused.
+
 ## 2. Omitting `EntryList.EntrantID` silently renumbers every pit box
 
 ```go

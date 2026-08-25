@@ -15,7 +15,7 @@ export interface FakeEntrant {
   skin: string
   ballast?: number
   restrictor?: number
-  /** Rendered only when `renderEntrantId` is on — see docs/acsm-write-path.md §2. */
+  /** Rendered unless `renderEntrantId` is off — see docs/acsm-write-path.md §2. */
   pitBox?: number
   internalUUID?: string
   /** An unpaired checkbox: omitted from the POST when unchecked. */
@@ -25,8 +25,13 @@ export interface FakeEntrant {
 export interface FakeEventFormOptions {
   entrants: FakeEntrant[]
   /**
-   * Whether the form renders `EntryList.EntrantID`. The public build does not
-   * for championship events, which is the thing recon has to settle.
+   * Whether the form renders `EntryList.EntrantID`.
+   *
+   * Defaults to on, because that is what 1.7.9 measurably does: 24 of them for
+   * 24 entrants (docs/acsm-write-path.md §2, which predicted the opposite and
+   * was corrected). A fixture that omits it by default is a fixture no real
+   * manager produces, and it quietly exempted the whole suite from the rule
+   * that a POST must carry it.
    */
   renderEntrantId?: boolean
   /** Championship event rows render Name/Team/GUID readonly. */
@@ -40,7 +45,7 @@ export interface FakeEventFormOptions {
 export function fakeEventForm(options: FakeEventFormOptions): string {
   const {
     entrants,
-    renderEntrantId = false,
+    renderEntrantId = true,
     championshipEvent = true,
     action = "/championship/abc/event/submit",
     raceLaps = 20,

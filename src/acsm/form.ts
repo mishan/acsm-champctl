@@ -293,6 +293,38 @@ export const NON_ARRAY_ENTRY_LIST_FIELDS = [
 ] as const
 
 /**
+ * The `EntryList.*` keys a POST must carry once it carries any entrants at all.
+ *
+ * Counting keys against each other cannot see a key that isn't there: a payload
+ * with nine of these arrays at length 24 and the tenth missing entirely is
+ * perfectly consistent, and passes an arity check with nothing to compare. What
+ * ACSM does with it is not consistent at all.
+ *
+ * The first nine are indexed unguarded in `BuildEntryList` — `r.Form[k][i]` with
+ * no length test — so a missing one is an index-out-of-range panic in the
+ * manager (docs/acsm-write-path.md §1). `EntrantID` is guarded, and is here for
+ * the opposite reason: its `else` branch assigns `PitBox = i`, so omitting it
+ * doesn't leave pit boxes alone, it renumbers every entrant to its position in
+ * the list (§2). A panic is loud; that one is silent, and worse.
+ *
+ * Fails closed, like the arity check it sits beside. If some form legitimately
+ * renders without one of these, the write stops and someone reads the recon
+ * output — which costs a diagnosis. Guessing the other way costs an entry list.
+ */
+export const REQUIRED_ENTRY_LIST_FIELDS = [
+  "EntryList.Car",
+  "EntryList.Skin",
+  "EntryList.Name",
+  "EntryList.Team",
+  "EntryList.GUID",
+  "EntryList.Ballast",
+  "EntryList.Restrictor",
+  "EntryList.FixedSetup",
+  "EntryList.InternalUUID",
+  "EntryList.EntrantID",
+] as const
+
+/**
  * Drops the unpaired checkboxes. Returns a new array.
  *
  * Not in place: callers pass fields they parsed from the page, and a write
@@ -348,5 +380,17 @@ export function checkEntryListShape(fields: readonly FormField[]): EntryListShap
     }
   }
 
-  return entries.filter(([, n]) => n !== expected).map(([key, n]) => ({ key, count: n, expected }))
+  const problems = entries
+    .filter(([, n]) => n !== expected)
+    .map(([key, n]) => ({ key, count: n, expected }))
+
+  // A key that isn't there has no count to disagree with, so the loop above
+  // can't see it — which is why the required list exists.
+  if (expected > 0) {
+    for (const key of REQUIRED_ENTRY_LIST_FIELDS) {
+      if (counts[key] === undefined) problems.push({ key, count: 0, expected })
+    }
+  }
+
+  return problems
 }
