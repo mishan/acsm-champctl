@@ -14,7 +14,12 @@
 
 import { resolve } from "node:path"
 
-import { findFormByAction, parseForm, shape } from "../../src/acsm/form.js"
+import {
+  NON_ARRAY_ENTRY_LIST_FIELDS,
+  findFormByAction,
+  parseForm,
+  shape,
+} from "../../src/acsm/form.js"
 import type { AcsmSession } from "../../src/acsm/session.js"
 import type { Championship } from "../../src/acsm/types.js"
 import { events, sessionKeysUsed } from "../../src/acsm/view.js"
@@ -35,6 +40,7 @@ import {
   stableUrl,
   writeArtefact,
 } from "./env.js"
+import { raggedKeys } from "./report.js"
 
 const FIXTURE = resolve(process.cwd(), "fixtures/synthetic/recon-seed.json")
 
@@ -163,12 +169,14 @@ async function main(): Promise<void> {
     log(`  !! EntryList.EntrantID appears ${entrantIdCount} times but there are ${nameCount} entrants.`)
   }
 
-  // The unpaired checkboxes: present in the form but omitted when unchecked,
-  // which breaks ACSM's positional read (docs/acsm-write-path.md §4).
-  for (const key of ["EntryList.OverwriteAllEvents", "EntryList.TransferTeamPoints"]) {
+  // The EntryList keys that aren't per-entrant arrays, reported separately so
+  // the ragged list below only contains things worth looking at. The two
+  // checkboxes are rendered unpaired, which breaks ACSM's positional read
+  // (docs/acsm-write-path.md §4); NumEntrants is a form-level counter.
+  for (const key of NON_ARRAY_ENTRY_LIST_FIELDS) {
     const n = editSnapshot.shape[key] ?? 0
     if (n > 0 && n !== nameCount) {
-      log(`  ${key} appears ${n} times for ${nameCount} entrants — unpaired, as expected.`)
+      log(`  ${key} appears ${n} times for ${nameCount} entrants — known not to be an array.`)
     }
   }
 
@@ -281,10 +289,5 @@ function entrantStatusLinks(html: string): string[] {
   return [...out]
 }
 
-function raggedKeys(shapes: Record<string, number>, expected: number): string[] {
-  return Object.entries(shapes)
-    .filter(([k, n]) => k.startsWith("EntryList.") && n !== expected)
-    .map(([k, n]) => `${k}=${n}`)
-}
 
 await runRecon("recon:forms", main)

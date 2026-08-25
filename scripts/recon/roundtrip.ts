@@ -17,8 +17,9 @@ import { resolve } from "node:path"
 
 import { IMPORT_HOUSEKEEPING, type Change, diff, formatChanges } from "../../src/acsm/diff.js"
 import type { Championship } from "../../src/acsm/types.js"
-import { events, sessionKeysUsed, slots } from "../../src/acsm/view.js"
+import { sessionKeysUsed } from "../../src/acsm/view.js"
 import { exportPath, importChampionship } from "../../src/acsm/write.js"
+import { comparePitBoxes } from "./report.js"
 import {
   connect,
   log,
@@ -162,28 +163,5 @@ function redact(changes: readonly Change[]): Change[] {
   })
 }
 
-function comparePitBoxes(sent: Championship, returned: Championship) {
-  const boxesOf = (c: Championship): number[] =>
-    slots(events(c)[0]?.EntryList).map((s) => s.entrant.PitBox ?? -1)
-
-  const before = boxesOf(sent)
-  const after = boxesOf(returned)
-
-  const seen = new Set<number>()
-  const duplicates = new Set<number>()
-  for (const b of before) {
-    if (seen.has(b)) duplicates.add(b)
-    seen.add(b)
-  }
-
-  return {
-    sentCount: before.length,
-    returnedCount: after.length,
-    entrantsLost: Math.max(0, before.length - after.length),
-    sentDuplicates: [...duplicates].sort((a, b) => a - b),
-    sentPitBoxes: before,
-    returnedPitBoxes: after,
-  }
-}
 
 await runRecon("recon:roundtrip", main)
