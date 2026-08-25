@@ -58,13 +58,22 @@ export interface HttpReaderOptions {
   /** Per-request timeout. */
   timeoutMs?: number
   userAgent?: string
-  /** Optional response cache; see `FileCache`. */
+  /** Optional response cache; see `SqliteCache`. */
   cache?: ResponseCache
 }
 
 export interface ResponseCache {
   get(key: string): Promise<string | undefined>
   set(key: string, value: string): Promise<void>
+  /**
+   * Releases whatever the cache holds open. Optional: a cache backed by
+   * nothing has nothing to release.
+   *
+   * The reader deliberately does not call this. A cache outlives any one
+   * reader — that is what makes it a cache — so closing it belongs to whoever
+   * opened it.
+   */
+  close?(): void | Promise<void>
 }
 
 export class HttpAcsmReader implements AcsmReader {

@@ -74,11 +74,26 @@ export function check(
   return report
 }
 
-/** Suppression matches a code exactly or by dotted prefix (`entry` hides all). */
+/**
+ * Whether a finding was asked to be hidden.
+ *
+ * Matches the emitted code, any dotted prefix of it, and the id of the check
+ * that produced it. That last one is not decoration: `champ.acsr` emits
+ * `champ.acsr-export` and `champ.acsr-gates`, and `champ.empty` emits
+ * `champ.no-events` and `champ.no-entrants`. Those are *siblings* of the check
+ * id, not dotted children, so prefix matching never reached them and
+ * `--suppress champ.acsr` silently did nothing — leaving a league to discover
+ * an emitted code that appears in no list champctl prints.
+ */
 function isSuppressed(f: Finding, suppressed: ReadonlySet<string>): boolean {
   if (suppressed.size === 0) return false
-  if (suppressed.has(f.code)) return true
-  const parts = f.code.split(".")
+  return matchesId(f.code, suppressed) || matchesId(f.checkId, suppressed)
+}
+
+function matchesId(id: string | undefined, suppressed: ReadonlySet<string>): boolean {
+  if (id === undefined) return false
+  if (suppressed.has(id)) return true
+  const parts = id.split(".")
   for (let i = 1; i < parts.length; i++) {
     if (suppressed.has(parts.slice(0, i).join("."))) return true
   }

@@ -463,13 +463,22 @@ export class AcsmSession {
     const problems = checkEntryListShape(sent)
     if (problems.length > 0) {
       const detail = problems
-        .map((p) => `${p.key} has ${p.count}, expected ${p.expected}`)
+        .map((p) => (p.count === 0 ? `${p.key} is missing` : `${p.key} has ${p.count}`))
         .join("; ")
+      // Two different mistakes share this refusal, and they need different
+      // advice: a ragged array is usually a mutation bug, a missing key is
+      // usually a form champctl didn't parse as expected.
+      const missing = problems.some((p) => p.count === 0)
+      const hint = missing
+        ? `A key champctl never saw is a parsing problem, not a mutation one — run ` +
+          `\`npm run recon:forms\` against this manager and compare what the form ` +
+          `renders with REQUIRED_ENTRY_LIST_FIELDS in form.ts.`
+        : `If one of those keys is a form-level field rather than a per-entrant ` +
+          `array, add it to NON_ARRAY_ENTRY_LIST_FIELDS in form.ts.`
       throw new AcsmWriteError(
-        `Refusing to POST ${path}: the entry list arrays don't line up (${detail}). ` +
-          `ACSM reads these as parallel arrays, so sending this would give entrants ` +
-          `each other's data. If one of those keys is a form-level field rather than ` +
-          `a per-entrant array, add it to NON_ARRAY_ENTRY_LIST_FIELDS in form.ts.`,
+        `Refusing to POST ${path}: the entry list arrays don't line up ` +
+          `(${problems[0]!.expected} entrants; ${detail}). ACSM reads these as parallel ` +
+          `arrays, so sending this would give entrants each other's data. ${hint}`,
         undefined,
         path,
       )

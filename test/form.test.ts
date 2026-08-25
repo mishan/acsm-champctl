@@ -85,11 +85,16 @@ describe("parsing an ACSM event form", () => {
 })
 
 describe("EntryList.EntrantID", () => {
-  it("is absent when ACSM doesn't render it", () => {
-    // The public build omits it for championship events, and ACSM then sets
-    // PitBox to the list index — renumbering everyone. See docs/acsm-write-path.md §2.
+  it("blocks the write when a form doesn't render it", () => {
+    // Omit the key and ACSM's else branch sets PitBox to the list index,
+    // renumbering every entrant (docs/acsm-write-path.md §2). Nothing counts
+    // wrong in that payload — nine arrays of three, all agreeing — so arity
+    // alone sees a clean form and the write goes out.
     const f = parseForm(fakeEventForm({ entrants: threeEntrants, renderEntrantId: false }))
     expect(count(f.fields, "EntryList.EntrantID")).toBe(0)
+    expect(checkEntryListShape(f.fields)).toEqual([
+      { key: "EntryList.EntrantID", count: 0, expected: 3 },
+    ])
   })
 
   it("carries the pit box when it is rendered", () => {
@@ -145,6 +150,25 @@ describe("entry list shape checking", () => {
 
   it("says nothing about a form with no entry list", () => {
     expect(checkEntryListShape([{ name: "Track", value: "suzuka" }])).toEqual([])
+  })
+
+  it("catches a key dropped entirely, not just one shortened", () => {
+    // Every remaining array still agrees at three, so there is nothing for a
+    // count to disagree with. ACSM indexes EntryList.Name unguarded, so this
+    // payload is an index-out-of-range panic in the manager rather than a
+    // validation message (docs/acsm-write-path.md §1).
+    const fields = parseForm(fakeEventForm({ entrants: threeEntrants })).fields.filter(
+      (f) => f.name !== "EntryList.Name",
+    )
+    expect(checkEntryListShape(fields)).toEqual([{ key: "EntryList.Name", count: 0, expected: 3 }])
+  })
+
+  it("doesn't demand an entry list from a form that has none", () => {
+    // The required-key rule only applies once a payload carries entrants;
+    // otherwise every non-entrant form on the manager becomes unwritable.
+    const fields = parseForm(fakeEventForm({ entrants: [] })).fields
+    expect(fields.some((f) => f.name.startsWith("EntryList."))).toBe(false)
+    expect(checkEntryListShape(fields)).toEqual([])
   })
 
   it("ignores EntryList.NumEntrants, a form-level count", () => {

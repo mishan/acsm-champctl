@@ -1,3 +1,4 @@
+import { Settings } from "luxon"
 import { describe, expect, it } from "vitest"
 
 import { check } from "../src/gridmom/index.js"
@@ -58,6 +59,29 @@ describe("Scheduled = qualiStart - practice", () => {
 })
 
 describe("weekday", () => {
+  it("writes English weekdays whatever the host's locale is", () => {
+    // The prose around the date is English, so the date has to be. Luxon
+    // formats through the ambient default otherwise, turning this sentence
+    // into "…is on Donnerstag rather than the usual Mittwoch" on a German
+    // host — and making the assertions below pass in CI and fail on a laptop.
+    //
+    // Driven through Settings rather than LANG, because Node's Intl default
+    // doesn't follow the environment variable: the env-based version of this
+    // test passed with or without the fix, which is no test at all.
+    const previous = Settings.defaultLocale
+    Settings.defaultLocale = "de"
+    try {
+      const c = championship({
+        Events: [raceEvent({ Scheduled: "2026-09-03T19:00:00-07:00" })], // Thursday
+      })
+      const f = run(c).findings.find((x) => x.code === "schedule.weekday")
+      expect(f?.message).toContain("Thursday")
+      expect(f?.message).not.toContain("Donnerstag")
+    } finally {
+      Settings.defaultLocale = previous
+    }
+  })
+
   it("warns on a non-Wednesday with no reason given", () => {
     const c = championship({
       Events: [raceEvent({ Scheduled: "2026-09-03T19:00:00-07:00" })], // Thursday

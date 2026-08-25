@@ -730,6 +730,25 @@ describe("postForm refuses to scramble an entry list", () => {
     expect(calls).toHaveLength(1)
   })
 
+  it("blocks a payload missing a key outright, and says which", async () => {
+    const { s, calls, ready } = loggedIn()
+    await ready
+    const fields = parseForm(
+      fakeEventForm({ entrants: [entrant("a"), entrant("b")] }),
+    ).fields.filter((f) => f.name !== "EntryList.GUID")
+
+    await expect(s.postForm("/championship/abc/event/submit", fields)).rejects.toThrow(
+      /EntryList\.GUID is missing/,
+    )
+    // The advice has to differ from the ragged case: a key that was never
+    // there is a form champctl misread, not a mutation that went wrong, and
+    // pointing at NON_ARRAY_ENTRY_LIST_FIELDS would send someone the wrong way.
+    await expect(s.postForm("/championship/abc/event/submit", fields)).rejects.toThrow(
+      /recon:forms/,
+    )
+    expect(calls).toHaveLength(1)
+  })
+
   it("never sends the unpaired checkboxes back", async () => {
     // docs §4: ACSM renders these once per entrant with no hidden partner and
     // then reads them positionally, so a browser omitting the unchecked ones
@@ -1088,9 +1107,9 @@ describe("regenerateIds", () => {
     // adding a field. An export is parsed JSON, where __proto__ survives as an
     // ordinary own property — so a championship that merely *contained* one
     // came out inheriting fields nobody set, and every check downstream read
-    // them as real. deepMerge has guarded this since it was written.
+    // them as real.
     const source = JSON.parse(
-      String.raw`{"ID":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","Nested":{"__proto__":{"polluted":true},"Ref":"ok"}}`,
+      `{"ID":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","Nested":{"__proto__":{"polluted":true},"Ref":"ok"}}`,
     ) as { Nested: Record<string, unknown> }
 
     const out = regenerateIds(source)
