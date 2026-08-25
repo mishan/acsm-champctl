@@ -77,11 +77,19 @@ export async function ingest(
   const seen = new Set<string>()
 
   for (const summary of summaries) {
-    const championshipId = summary.ID
-    const name = summary.Name
+    // Read defensively, because `listChampionships` only checks that the
+    // response was an array. A `null` element — or a string, or a number —
+    // survives that check, and `summary.ID` on it throws *here*, outside
+    // `ingestOne`'s try, aborting the whole run. For a job whose contract is
+    // "one bad championship never stops the rest", losing every remaining
+    // championship to one malformed list entry is the wrong failure.
+    const entry: { ID?: unknown; Name?: unknown } =
+      summary !== null && typeof summary === "object" ? summary : {}
+    const championshipId = typeof entry.ID === "string" ? entry.ID : undefined
+    const name = typeof entry.Name === "string" ? entry.Name : undefined
 
-    // A summary with no ID can't be fetched or filed. Report it rather than
-    // dropping it silently — it means the list shape changed.
+    // A summary with no usable ID can't be fetched or filed. Report it rather
+    // than dropping it silently — it means the list shape changed.
     if (!championshipId) {
       // Through onProgress like every other outcome. Pushing it to `outcomes`
       // alone would have the summary say "1 failed" while nothing on screen

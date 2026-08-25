@@ -17,8 +17,9 @@ import { pathToFileURL } from "node:url"
 
 import { HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
 import { loadProfile } from "../profile/load.js"
-import { FileArchiveStore } from "../archive/store.js"
+import { SqliteArchiveStore } from "../archive/store.js"
 import { ingest, IngestError, type IngestOutcome, type IngestReport } from "../archive/ingest.js"
+import { reportUsageError, runCli, UsageError } from "./args.js"
 
 const USAGE = `champctl-archive — keep a copy of every championship export
 
@@ -29,7 +30,7 @@ Usage:
 Options:
   --profile <id|path>   league profile (default: batl)
   --base-url <url>      override the profile's ACSM base URL
-  --dir <path>          archive directory (default: data/archive)
+  --db <path>           archive database (default: data/archive/archive.db)
   --since <iso>         skip championships already checked since this time
   --json                machine-readable output
   -h, --help            this
@@ -48,7 +49,7 @@ interface Args {
   command: string
   profile: string
   baseUrl?: string
-  dir?: string
+  db?: string
   since?: Date
   json: boolean
   help: boolean
@@ -56,13 +57,6 @@ interface Args {
 
 /** Identifies archive traffic in ACSM's logs, distinctly from gridmom's. */
 export const ARCHIVE_USER_AGENT = "acsm-champctl/0.1 (archive)"
-
-export class UsageError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "UsageError"
-  }
-}
 
 export function parseArgs(argv: readonly string[]): Args {
   const args: Args = { command: "", profile: "batl", json: false, help: false }
@@ -86,8 +80,8 @@ export function parseArgs(argv: readonly string[]): Args {
       case "--base-url":
         args.baseUrl = next()
         break
-      case "--dir":
-        args.dir = next()
+      case "--db":
+        args.db = next()
         break
       case "--json":
         args.json = true
@@ -109,12 +103,12 @@ export function parseArgs(argv: readonly string[]): Args {
   // No command here takes a positional target, unlike `gridmom check <id>`.
   // Accepting extras and ignoring them would let a typo, or a value that
   // drifted away from the option it belongs to, look like a clean run against
-  // the default archive directory.
+  // the default archive.
   if (rest.length > 1) {
     const extra = rest.slice(1).map((a) => JSON.stringify(a))
     throw new UsageError(
       `${args.command} takes no arguments, but got ${extra.join(", ")}. ` +
-        `Did that belong to an option, such as --dir?`,
+        `Did that belong to an option, such as --db?`,
     )
   }
 
@@ -159,10 +153,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   try {
     return await runCommand(argv)
   } catch (e) {
-    if (e instanceof UsageError) {
-      process.stderr.write(`${e.message}\n\n${USAGE}`)
-      return 3
-    }
+    if (e instanceof UsageError) return reportUsageError(e, USAGE)
     if (e instanceof IngestError) {
       process.stderr.write(`${e.message}\n`)
       return 3
@@ -179,7 +170,10 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     return args.help ? 0 : 3
   }
 
-  const store = new FileArchiveStore(args.dir ?? resolve(process.cwd(), "data/archive"))
+  // One database file rather than a directory of them, so --dir became --db.
+  const store = await SqliteArchiveStore.open(
+    args.db ?? resolve(process.cwd(), "data/archive/archive.db"),
+  )
 
   if (args.command === "status") return status(store, args)
   if (args.command !== "run") throw new UsageError(`Unknown command ${args.command}`)
@@ -218,7 +212,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
   return exitCodeFor(report)
 }
 
-async function status(store: FileArchiveStore, args: Args): Promise<number> {
+async function status(store: SqliteArchiveStore, args: Args): Promise<number> {
   const ids = await store.list()
   const rows = []
   for (const id of ids) {
@@ -254,15 +248,7 @@ async function status(store: FileArchiveStore, args: Args): Promise<number> {
 
 /** Entry point used by both `bin/champctl-archive.js` and `npm run archive`. */
 export async function run(argv: readonly string[]): Promise<void> {
-  try {
-    process.exitCode = await main(argv)
-  } catch (e) {
-    // main() already handles UsageError and IngestError; anything reaching
-    // here is ACSM or the filesystem misbehaving, which usage text won't fix.
-    const msg = e instanceof Error ? e.message : String(e)
-    process.stderr.write(`champctl-archive couldn't run: ${msg}\n`)
-    process.exitCode = 3
-  }
+  await runCli({ name: "champctl-archive", usage: USAGE, main }, argv)
 }
 
 // Run when executed directly, not when imported by a test.

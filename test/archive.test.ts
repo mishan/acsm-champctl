@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -7,20 +7,13 @@ import { AcsmError, HttpAcsmReader, type AcsmReader } from "../src/acsm/client.j
 import type { Championship, ChampionshipSummary } from "../src/acsm/types.js"
 import { ingest, IngestError, type IngestReport } from "../src/archive/ingest.js"
 import {
-  UsageError,
   describe as describeOutcome,
   exitCodeFor,
   parseArgs,
   summarise,
 } from "../src/cli/archive.js"
-import {
-  FileArchiveStore,
-  UnsafeArchivePath,
-  assertSafeChampionshipId,
-  assertSafePathSegment,
-  sha256,
-  snapshotFileName,
-} from "../src/archive/store.js"
+import { UsageError } from "../src/cli/args.js"
+import { SqliteArchiveStore, sha256 } from "../src/archive/store.js"
 
 let root: string
 
@@ -29,6 +22,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  for (const s of stores.splice(0)) s.close()
   await rm(root, { recursive: true, force: true })
 })
 
@@ -40,79 +34,90 @@ const at = (iso: string): Date => new Date(iso)
 /** The store deals in bytes, so the fixtures do too. */
 const b = (s: string): Buffer => Buffer.from(s, "utf8")
 
+/**
+ * A fresh store per test.
+ *
+ * In memory by default: these assert behaviour, not durability, and an
+ * in-memory database starts empty every time with no cleanup. The few tests
+ * about persistence and locking open a real file under `root` and say so.
+ */
+const stores: SqliteArchiveStore[] = []
+const newStore = async (): Promise<SqliteArchiveStore> => {
+  const s = await SqliteArchiveStore.open(":memory:")
+  stores.push(s)
+  return s
+}
+
 describe("archive store", () => {
   it("stores the body byte for byte", async () => {
     // The archive's whole value is that it is still trustworthy after the
     // source is gone, so it must not normalise anything. This body has key
     // ordering and spacing that JSON.stringify would not reproduce.
-    const store = new FileArchiveStore(root)
+    const s = await newStore()
     const body = b('{"Name":"BATL",   "ID":"x",\n "Events":[1.0, 2.50]}')
-    const result = await store.put(ID, body, at("2026-08-24T17:00:00Z"))
+    const { snapshot } = await s.put(ID, body, at("2026-08-24T17:00:00Z"))
 
-    const onDisk = await readFile(join(root, ID, result.snapshot.file))
-    expect(onDisk.equals(body)).toBe(true)
+    expect((await s.readSnapshot(ID, snapshot.fetchedAt)).equals(body)).toBe(true)
   })
 
   it("stores bytes a UTF-8 decode would have changed", async () => {
-    // The reason put takes a Buffer. Response.text() strips a leading BOM and
-    // replaces every invalid sequence with U+FFFD, so a string-typed pipeline
-    // stores something the server never sent — and sha256 then describes the
-    // substitution rather than the source.
-    const store = new FileArchiveStore(root)
+    // The reason put takes a Buffer and the column is BLOB rather than TEXT.
+    // Response.text() strips a leading BOM and replaces every invalid sequence
+    // with U+FFFD, so a string-typed pipeline stores something the server never
+    // sent — and sha256 then describes the substitution rather than the source.
+    const s = await newStore()
     const body = Buffer.concat([
-      Buffer.from([0xef, 0xbb, 0xbf]), // BOM
+      Buffer.from([0xef, 0xbb, 0xbf]),
       b('{"a":1,"bad":"'),
-      Buffer.from([0xff]), // not valid UTF-8
+      Buffer.from([0xff]),
       b('"}'),
     ])
 
-    const result = await store.put(ID, body, at("2026-08-24T17:00:00Z"))
-    const onDisk = await readFile(join(root, ID, result.snapshot.file))
+    const { snapshot } = await s.put(ID, body, at("2026-08-24T17:00:00Z"))
+    const back = await s.readSnapshot(ID, snapshot.fetchedAt)
 
-    expect(onDisk.equals(body)).toBe(true)
-    expect(result.snapshot.bytes).toBe(body.byteLength)
+    expect(back.equals(body)).toBe(true)
+    expect(snapshot.bytes).toBe(body.byteLength)
     // A round trip through a string would have lost the BOM and turned 0xff
     // into three replacement bytes, so this would not match.
-    expect(onDisk.equals(b(body.toString("utf8")))).toBe(false)
+    expect(back.equals(b(body.toString("utf8")))).toBe(false)
   })
 
   it("writes one snapshot per change, not per run", async () => {
-    const store = new FileArchiveStore(root)
+    const s = await newStore()
     const body = b('{"a":1}')
 
-    const first = await store.put(ID, body, at("2026-08-24T17:00:00Z"))
-    const second = await store.put(ID, body, at("2026-08-25T17:00:00Z"))
-    const third = await store.put(ID, b('{"a":2}'), at("2026-08-26T17:00:00Z"))
+    const first = await s.put(ID, body, at("2026-08-24T17:00:00Z"))
+    const second = await s.put(ID, body, at("2026-08-25T17:00:00Z"))
+    const third = await s.put(ID, b('{"a":2}'), at("2026-08-26T17:00:00Z"))
 
     expect(first.stored).toBe(true)
     expect(second.stored).toBe(false)
     expect(third.stored).toBe(true)
-
-    const files = (await readdir(join(root, ID))).filter((f) => f !== "index.json")
-    expect(files).toHaveLength(2)
+    expect((await s.read(ID))?.snapshots).toHaveLength(2)
   })
 
   it("records that an unchanged run happened", async () => {
     // Otherwise there is no way to tell "nothing changed" from "the job has
     // been silently failing for a month".
-    const store = new FileArchiveStore(root)
-    await store.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
-    await store.put(ID, b('{"a":1}'), at("2026-08-25T17:00:00Z"))
+    const s = await newStore()
+    await s.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
+    await s.put(ID, b('{"a":1}'), at("2026-08-25T17:00:00Z"))
 
-    const index = await store.read(ID)
+    const index = await s.read(ID)
     expect(index?.snapshots).toHaveLength(1)
     expect(index?.lastCheckedAt).toBe("2026-08-25T17:00:00.000Z")
     expect(index?.firstSeen).toBe("2026-08-24T17:00:00.000Z")
   })
 
   it("keeps the change history in order, with the name at the time", async () => {
-    const store = new FileArchiveStore(root)
-    await store.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"), "August")
-    await store.put(ID, b('{"a":2}'), at("2026-09-24T17:00:00Z"), "September")
+    const s = await newStore()
+    await s.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"), "August")
+    await s.put(ID, b('{"a":2}'), at("2026-09-24T17:00:00Z"), "September")
 
-    const index = await store.read(ID)
-    expect(index?.snapshots.map((s) => s.name)).toEqual(["August", "September"])
-    expect(index?.snapshots.map((s) => s.fetchedAt)).toEqual([
+    const index = await s.read(ID)
+    expect(index?.snapshots.map((x) => x.name)).toEqual(["August", "September"])
+    expect(index?.snapshots.map((x) => x.fetchedAt)).toEqual([
       "2026-08-24T17:00:00.000Z",
       "2026-09-24T17:00:00.000Z",
     ])
@@ -122,228 +127,143 @@ describe("archive store", () => {
     // A championship that changes and then reverts should record the revert as
     // its own snapshot; treating it as a duplicate of the older body would
     // lose the fact that it changed twice.
-    const store = new FileArchiveStore(root)
-    await store.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
-    await store.put(ID, b('{"a":2}'), at("2026-08-25T17:00:00Z"))
-    const back = await store.put(ID, b('{"a":1}'), at("2026-08-26T17:00:00Z"))
+    const s = await newStore()
+    await s.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
+    await s.put(ID, b('{"a":2}'), at("2026-08-25T17:00:00Z"))
+    const back = await s.put(ID, b('{"a":1}'), at("2026-08-26T17:00:00Z"))
 
     expect(back.stored).toBe(true)
-    expect((await store.read(ID))?.snapshots).toHaveLength(3)
+    expect((await s.read(ID))?.snapshots).toHaveLength(3)
   })
 
   it("keeps championships apart", async () => {
-    const store = new FileArchiveStore(root)
-    await store.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
-    await store.put(OTHER, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
+    const s = await newStore()
+    await s.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
+    await s.put(OTHER, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
 
-    expect(await store.list()).toEqual([ID, OTHER].sort())
-    // Same body, different championship: both are stored.
-    expect((await store.read(OTHER))?.snapshots).toHaveLength(1)
+    expect(await s.list()).toEqual([ID, OTHER].sort())
+    expect((await s.read(OTHER))?.snapshots).toHaveLength(1)
   })
 
-  it("survives an index that is missing or corrupt", async () => {
-    // A half-written index must not make a championship permanently
-    // un-archivable; the next run should just store a fresh snapshot.
-    const store = new FileArchiveStore(root)
-    await store.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
-    await writeFile(join(root, ID, "index.json"), "{ truncated", "utf8")
-
-    const again = await store.put(ID, b('{"a":1}'), at("2026-08-25T17:00:00Z"))
-    expect(again.stored).toBe(true)
-  })
-
-  it("reads a snapshot back unchanged", async () => {
-    const store = new FileArchiveStore(root)
-    const body = b('{"Name":"BATL",   "ID":"x"}')
-    const { snapshot } = await store.put(ID, body, at("2026-08-24T17:00:00Z"))
-    expect((await store.readSnapshot(ID, snapshot.file)).equals(body)).toBe(true)
-  })
-
-  it("records the hash and byte length", async () => {
-    const store = new FileArchiveStore(root)
-    const text = '{"a":"ä"}' // multi-byte, so bytes !== length
+  it("records the hash and byte length of the stored bytes", async () => {
+    const s = await newStore()
+    const text = '{"a":"ä"}'
     const body = b(text)
-    const { snapshot } = await store.put(ID, body, at("2026-08-24T17:00:00Z"))
+    const { snapshot } = await s.put(ID, body, at("2026-08-24T17:00:00Z"))
     expect(snapshot.sha256).toBe(sha256(body))
     expect(snapshot.bytes).toBe(body.byteLength)
     expect(snapshot.bytes).not.toBe(text.length)
   })
 
-  it("returns an empty list rather than throwing on a missing archive", async () => {
-    expect(await new FileArchiveStore(join(root, "nope")).list()).toEqual([])
+  it("returns nothing for a championship it has never seen", async () => {
+    const s = await newStore()
+    expect(await s.read(ID)).toBeUndefined()
+    expect(await s.list()).toEqual([])
   })
 
-  it("surfaces a real IO error rather than reporting an empty archive", async () => {
-    // A broken archive must not look like an empty one. If it did, the ingest
-    // would report "archived" every night while writing nothing — the worst
-    // outcome for a tool whose job is not losing data.
-    await writeFile(join(root, "not-a-directory"), "x", "utf8")
-    const store = new FileArchiveStore(join(root, "not-a-directory"))
-    await expect(store.list()).rejects.toThrow(/ENOTDIR/)
+  it("says which snapshot is missing rather than returning nothing", async () => {
+    const s = await newStore()
+    await expect(s.readSnapshot(ID, "2026-08-24T17:00:00.000Z")).rejects.toThrow(/No snapshot/)
   })
 
-  it("surfaces an unreadable index rather than treating it as absent", async () => {
-    const store = new FileArchiveStore(root)
-    await store.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
-    // A directory where the index file should be: not ENOENT, not a parse
-    // failure, so it has to be reported.
-    await rm(join(root, ID, "index.json"))
-    await mkdir(join(root, ID, "index.json"))
-    await expect(store.read(ID)).rejects.toThrow(/EISDIR/)
-  })
+  it("writes the body and its metadata as one transaction", async () => {
+    // The bug the file layout kept producing in different forms: a body and an
+    // index entry are two writes, and an interruption between them left one
+    // without the other. Here they are one row, so a failed insert leaves
+    // neither — asserted by making the insert fail and checking nothing landed.
+    const s = await newStore()
+    await s.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
 
-  it("still treats a missing index as simply absent", async () => {
-    expect(await new FileArchiveStore(root).read(ID)).toBeUndefined()
-  })
+    // Same championship, same instant: the primary key rejects it.
+    await expect(s.put(ID, b('{"a":2}'), at("2026-08-24T17:00:00Z"))).rejects.toThrow()
 
-  it("treats a valid-but-wrong-shaped index as absent, not as an index", async () => {
-    // Parsing was not enough, and casting the result was the bug. `{}` made
-    // put() throw on `existing.snapshots.at(-1)`; `{"snapshots":"nope"}` threw
-    // nothing at all and silently dropped the history instead.
-    const store = new FileArchiveStore(root)
-    for (const body of [
-      "{}",
-      "null",
-      "[]",
-      '"a string"',
-      '{"snapshots":"nope"}',
-      '{"championshipId":"x","firstSeen":"t","lastCheckedAt":"t"}',
-      '{"championshipId":"x","firstSeen":"t","lastCheckedAt":"t","snapshots":[1,2]}',
-    ]) {
-      await mkdir(join(root, ID), { recursive: true })
-      await writeFile(join(root, ID, "index.json"), body, "utf8")
-      expect(await store.read(ID), body).toBeUndefined()
-    }
-  })
-
-  it("recovers from a wrong-shaped index rather than throwing", async () => {
-    // The contract is "recoverable means treat it as absent", so the next run
-    // has to store a fresh snapshot instead of falling over.
-    const store = new FileArchiveStore(root)
-    await store.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
-    await writeFile(join(root, ID, "index.json"), "{}", "utf8")
-
-    const again = await store.put(ID, b('{"a":2}'), at("2026-08-25T17:00:00Z"))
-    expect(again.stored).toBe(true)
-    expect((await store.read(ID))?.snapshots).toHaveLength(1)
-
-    // The index forgot the first snapshot, but the bytes are still there to be
-    // recovered by rehashing. Asserting only on the index length would treat
-    // losing the body as acceptable, which is the one thing it isn't.
-    const files = (await readdir(join(root, ID))).filter((f) => f !== "index.json")
-    expect(files).toHaveLength(2)
-  })
-
-  it("writes the index atomically, so a torn write can't erase the history", async () => {
-    // A plain writeFile truncates before it writes. A crash in that window left
-    // a short file, which read() treats as absent — and the next put() would
-    // start a fresh index, silently dropping every snapshot recorded so far
-    // while the bodies sat orphaned on disk. tmp + rename removes the window.
-    const store = new FileArchiveStore(root)
-    await store.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
-    await store.put(ID, b('{"a":2}'), at("2026-08-25T17:00:00Z"))
-
-    // Nothing left behind, so a reader never sees the intermediate file.
-    const files = await readdir(join(root, ID))
-    expect(files.filter((f) => f.endsWith(".tmp"))).toEqual([])
-    expect((await store.read(ID))?.snapshots).toHaveLength(2)
-  })
-
-  it("does not publish another writer's bytes when two writes overlap", async () => {
-    // The temp file is named per write, not a fixed index.json.tmp. Two runs on
-    // the same championship — a manual one during the cron window — otherwise
-    // write the same scratch path, and the interleaving is not benign.
-    // Measured, with writer A and writer B sharing one temp name:
-    //
-    //   A writes tmp, B writes tmp, A renames -> the published index is B's
-    //   B then renames -> ENOENT, because A already moved the file away
-    //
-    // So A silently publishes B's index — losing whatever A recorded — and B
-    // fails with an error about a file it did write. Avoiding a torn write by
-    // way of a shared scratch file just loses the index a different way.
-    //
-    // This does not make concurrent runs safe: put() is still an unguarded
-    // read-modify-write, so one of these snapshots can be missing from the
-    // index. What must not happen is a rename failing, or an index belonging to
-    // neither writer. Several rounds, because it is a race either way.
-    const store = new FileArchiveStore(root)
-    for (let round = 0; round < 20; round++) {
-      const id = `${ID.slice(0, -2)}${String(round).padStart(2, "0")}`
-      // Neither may reject: the ENOENT above is the shared-name failure.
-      await Promise.all([
-        store.put(id, b('{"a":1}'), at("2026-08-24T17:00:00Z")),
-        store.put(id, b('{"a":2}'), at("2026-08-25T17:00:00Z")),
-      ])
-
-      const index = await store.read(id)
-      expect(index, `round ${round}: the index must parse and be shaped like one`).toBeDefined()
-      expect(index?.championshipId).toBe(id)
-      expect(index?.snapshots.length).toBeGreaterThanOrEqual(1)
-      // Every snapshot the index names has to exist on disk.
-      for (const s of index?.snapshots ?? []) {
-        expect((await store.readSnapshot(id, s.file)).byteLength).toBeGreaterThan(0)
-      }
-      expect((await readdir(join(root, id))).filter((f) => f.endsWith(".tmp"))).toEqual([])
-    }
-  })
-
-  it("refuses to overwrite a body the index already lists", async () => {
-    // Same instant, different body: the filename is derived from the clock, so
-    // it collides. Overwriting would destroy archived bytes while the index
-    // went on listing both — worse than failing, for an archive.
-    const store = new FileArchiveStore(root)
-    const when = at("2026-08-24T17:00:00Z")
-    await store.put(ID, b('{"a":1}'), when)
-
-    await expect(store.put(ID, b('{"a":2}'), when)).rejects.toThrow(/EEXIST/)
-    // The original body is untouched.
-    const index = await store.read(ID)
-    const file = index?.snapshots[0]?.file as string
-    expect((await store.readSnapshot(ID, file)).toString("utf8")).toBe('{"a":1}')
-  })
-
-  it("accepts a real index, including one with optional fields missing", async () => {
-    // Proportionate: a snapshot without a `name` is still a usable history.
-    const store = new FileArchiveStore(root)
-    await mkdir(join(root, ID), { recursive: true })
-    await writeFile(
-      join(root, ID, "index.json"),
-      JSON.stringify({
-        championshipId: ID,
-        firstSeen: "2026-08-24T17:00:00.000Z",
-        lastCheckedAt: "2026-08-24T17:00:00.000Z",
-        snapshots: [{ fetchedAt: "t", file: "f.json", sha256: "abc", bytes: 3 }],
-      }),
-      "utf8",
+    const index = await s.read(ID)
+    expect(index?.snapshots).toHaveLength(1)
+    expect((await s.readSnapshot(ID, index?.snapshots[0]?.fetchedAt as string)).toString()).toBe(
+      '{"a":1}',
     )
-    expect((await store.read(ID))?.snapshots).toHaveLength(1)
   })
 
-  it("skips directories that aren't ours rather than choking on them", async () => {
-    // The archive root is an ordinary directory somebody may keep other things
-    // in. Returning these made `status` throw UnsafeArchivePath on a folder
-    // nobody ever claimed was a championship.
-    const store = new FileArchiveStore(root)
-    await store.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
-    for (const junk of ["lost+found", ".tmp", ".git", "index.json"]) {
-      await mkdir(join(root, junk), { recursive: true })
-    }
+  it("cannot record a hash for a body it does not hold", async () => {
+    // Dedup used to compare against a hash in a separate index file, so
+    // deleting a snapshot left the hash vouching for bytes that were gone —
+    // and every later run reported "unchanged" and moved lastCheckedAt on,
+    // masking the loss permanently. One row makes that unrepresentable.
+    const s = await newStore()
+    await s.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
 
-    expect(await store.list()).toEqual([ID])
+    const index = await s.read(ID)
+    for (const snap of index?.snapshots ?? []) {
+      const body = await s.readSnapshot(ID, snap.fetchedAt)
+      expect(sha256(body)).toBe(snap.sha256)
+      expect(body.byteLength).toBe(snap.bytes)
+    }
   })
 
-  it("everything list() returns can be passed straight to read()", async () => {
-    // This is the contract `status` depends on.
-    const store = new FileArchiveStore(root)
-    await store.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
-    await store.put(OTHER, b('{"a":2}'), at("2026-08-24T17:00:00Z"))
-    await mkdir(join(root, "lost+found"), { recursive: true })
+  it("serialises overlapping writers instead of losing one", async () => {
+    // Two runs on the same championship — the nightly job and someone running
+    // it by hand. With a directory and an index file, both read the old index
+    // and the second to finish published one that omitted the first's
+    // snapshot. BEGIN IMMEDIATE takes the write lock before the read, so the
+    // second transaction sees the first's row and appends to it.
+    //
+    // Two connections to one file, because that is what two processes are; a
+    // shared in-memory database would not exercise the lock.
+    const path = join(root, "concurrent.db")
+    const a = await SqliteArchiveStore.open(path)
+    const c = await SqliteArchiveStore.open(path)
+    try {
+      await a.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
+      await c.put(ID, b('{"a":2}'), at("2026-08-25T17:00:00Z"))
 
-    const ids = await store.list()
-    expect(ids).toHaveLength(2)
-    for (const id of ids) {
-      await expect(store.read(id)).resolves.toBeDefined()
+      expect((await a.read(ID))?.snapshots).toHaveLength(2)
+      expect((await c.read(ID))?.snapshots).toHaveLength(2)
+    } finally {
+      a.close()
+      c.close()
     }
+  })
+
+  it("persists across reopening, which is the point of an archive", async () => {
+    const path = join(root, "persist.db")
+    const first = await SqliteArchiveStore.open(path)
+    await first.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"), "August")
+    first.close()
+
+    const second = await SqliteArchiveStore.open(path)
+    try {
+      const index = await second.read(ID)
+      expect(index?.snapshots).toHaveLength(1)
+      expect(index?.snapshots[0]?.name).toBe("August")
+      expect(
+        (await second.readSnapshot(ID, index?.snapshots[0]?.fetchedAt as string)).toString(),
+      ).toBe('{"a":1}')
+    } finally {
+      second.close()
+    }
+  })
+
+  it("creates the directory the database is asked to live in", async () => {
+    const path = join(root, "nested", "deeper", "archive.db")
+    const s = await SqliteArchiveStore.open(path)
+    try {
+      await s.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
+      expect((await s.read(ID))?.snapshots).toHaveLength(1)
+    } finally {
+      s.close()
+    }
+  })
+
+  it("takes an id that would have been an unsafe path segment", async () => {
+    // The file layout turned ids into directory names, so "../../etc" had to be
+    // refused — and a future ACSM issuing a non-UUID id risked being refused
+    // with it, turning an unrecognised id into the data loss the archive exists
+    // to prevent. Bound parameters make the question go away.
+    const s = await newStore()
+    for (const odd of ["../../etc", "a/b", "index.json", "  ", "ünïcode"]) {
+      await s.put(odd, b('{"id":1}'), at("2026-08-24T17:00:00Z"))
+    }
+    expect(await s.list()).toHaveLength(5)
   })
 })
 
@@ -430,88 +350,6 @@ describe("the reader parses each response once", () => {
   })
 })
 
-describe("championship IDs become path segments", () => {
-  it("refuses traversal and absolute paths", async () => {
-    // The ID comes off the wire and is about to name a directory.
-    for (const bad of [
-      "../../etc",
-      "..",
-      ".",
-      "/etc/passwd",
-      "a/b",
-      "a\\b",
-      "",
-      "index.json",
-      ".hidden",
-      "a..b/../..",
-    ]) {
-      expect(() => assertSafeChampionshipId(bad), bad).toThrow(UnsafeArchivePath)
-    }
-  })
-
-  it("accepts the UUIDs ACSM actually issues", () => {
-    expect(() => assertSafeChampionshipId(ID)).not.toThrow()
-  })
-
-  it("is a containment check, not a UUID check", () => {
-    // Stated explicitly because the two are easy to conflate. The archive
-    // exists so history isn't lost; refusing to store a championship whose ID
-    // merely has an unfamiliar *shape* would cause the loss it prevents. Only
-    // escaping the directory is a reason to refuse.
-    for (const unusual of ["champ-1", "2026-08-summer-series", "ABC123", "a"]) {
-      expect(() => assertSafeChampionshipId(unusual), unusual).not.toThrow()
-    }
-  })
-
-  it("refuses '..' anywhere, as defence in depth", () => {
-    // "a..b" cannot traverse — the pattern already forbids separators — so
-    // this is belt and braces against the pattern being widened later. Pinned
-    // so the redundancy is deliberate rather than accidental.
-    expect(() => assertSafeChampionshipId("a..b")).toThrow(UnsafeArchivePath)
-  })
-
-  it("applies the same rule to snapshot filenames, which are not UUIDs", () => {
-    // readSnapshot runs the filename through this too, so a UUID-strict check
-    // would break reading back every snapshot the store ever wrote.
-    const file = snapshotFileName(at("2026-08-24T17:00:00Z"))
-    expect(() => assertSafePathSegment(file, "a snapshot filename")).not.toThrow()
-    expect(() => assertSafePathSegment("../index.json", "a snapshot filename")).toThrow(
-      /not a single path segment/,
-    )
-  })
-
-  it("names what it rejected, and what it was being used as", () => {
-    expect(() => assertSafeChampionshipId("../x")).toThrow(/"\.\.\/x".*championship directory name/)
-    expect(() => assertSafePathSegment("../x", "a snapshot filename")).toThrow(/snapshot filename/)
-  })
-
-  it("refuses to write outside the archive", async () => {
-    const store = new FileArchiveStore(root)
-    await expect(store.put("../escaped", b('{"a":1}'), at("2026-08-24T17:00:00Z"))).rejects.toThrow(
-      UnsafeArchivePath,
-    )
-  })
-
-  it("refuses to read outside the archive", async () => {
-    const store = new FileArchiveStore(root)
-    await store.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
-    await expect(store.readSnapshot(ID, "../../etc/passwd")).rejects.toThrow(UnsafeArchivePath)
-  })
-
-  it("names snapshot files so they sort chronologically and copy to Windows", () => {
-    const early = snapshotFileName(at("2026-08-24T09:00:00Z"))
-    const late = snapshotFileName(at("2026-08-24T17:00:00Z"))
-    expect([late, early].sort()).toEqual([early, late])
-    for (const name of [early, late]) {
-      expect(name).not.toMatch(/[:*?"<>|]/)
-    }
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Ingest
-// ---------------------------------------------------------------------------
-
 interface FakeOptions {
   summaries: ChampionshipSummary[]
   bodies?: Record<string, string>
@@ -549,7 +387,7 @@ describe("ingest", () => {
   const clock = (iso: string) => () => new Date(iso)
 
   it("archives every championship the list returns", async () => {
-    const store = new FileArchiveStore(root)
+    const store = await newStore()
     const reader = fakeReader({ summaries: [{ ID: ID, Name: "August" }, { ID: OTHER }] })
 
     const report = await ingest(reader, store, { now: clock("2026-08-24T17:00:00Z") })
@@ -562,7 +400,7 @@ describe("ingest", () => {
   it("keeps going when one championship fails", async () => {
     // The point of a nightly job is that the archive gets no worse. One bad
     // championship must not cost the other thirty.
-    const store = new FileArchiveStore(root)
+    const store = await newStore()
     const reader = fakeReader({
       summaries: [{ ID }, { ID: OTHER, Name: "Second" }],
       fail: { [ID]: "500 Internal Server Error" },
@@ -582,13 +420,13 @@ describe("ingest", () => {
   it("treats a failure to list as fatal", async () => {
     // Without a list there is nothing to iterate, so reporting success here
     // would mean a broken job looks like a clean one forever.
-    const store = new FileArchiveStore(root)
+    const store = await newStore()
     const reader = fakeReader({ summaries: [], failList: "Public Access is off" })
     await expect(ingest(reader, store)).rejects.toBeInstanceOf(IngestError)
   })
 
   it("reports a list entry with no ID rather than dropping it", async () => {
-    const store = new FileArchiveStore(root)
+    const store = await newStore()
     const reader = fakeReader({ summaries: [{ Name: "Nameless" }, { ID }] })
 
     const report = await ingest(reader, store, { now: clock("2026-08-24T17:00:00Z") })
@@ -597,7 +435,7 @@ describe("ingest", () => {
   })
 
   it("fetches a duplicated list entry only once", async () => {
-    const store = new FileArchiveStore(root)
+    const store = await newStore()
     const reader = fakeReader({ summaries: [{ ID }, { ID }] })
 
     const report = await ingest(reader, store, { now: clock("2026-08-24T17:00:00Z") })
@@ -606,7 +444,7 @@ describe("ingest", () => {
   })
 
   it("counts an unchanged championship separately from a stored one", async () => {
-    const store = new FileArchiveStore(root)
+    const store = await newStore()
     const reader = fakeReader({ summaries: [{ ID }] })
 
     await ingest(reader, store, { now: clock("2026-08-24T17:00:00Z") })
@@ -618,7 +456,7 @@ describe("ingest", () => {
 
   it("can skip championships already checked recently", async () => {
     // So a re-run after a partial failure doesn't refetch everything.
-    const store = new FileArchiveStore(root)
+    const store = await newStore()
     const reader = fakeReader({ summaries: [{ ID }] })
     await ingest(reader, store, { now: clock("2026-08-24T17:00:00Z") })
 
@@ -632,21 +470,21 @@ describe("ingest", () => {
   })
 
   it("stores the raw body, not a re-serialisation of it", async () => {
-    const store = new FileArchiveStore(root)
+    const store = await newStore()
     const body = `{"Name":"BATL",   "ID":"${ID}",\n "x":1.0}`
     const reader = fakeReader({ summaries: [{ ID }], bodies: { [ID]: body } })
 
     await ingest(reader, store, { now: clock("2026-08-24T17:00:00Z") })
 
     const index = await store.read(ID)
-    const file = index?.snapshots[0]?.file as string
-    expect((await store.readSnapshot(ID, file)).toString("utf8")).toBe(body)
+    const at = index?.snapshots[0]?.fetchedAt as string
+    expect((await store.readSnapshot(ID, at)).toString("utf8")).toBe(body)
   })
 
   it("does not let a later success hide an earlier failure", async () => {
     // The exit code is what a cron job acts on, so "archived 30, failed 1"
     // has to surface the 1.
-    const store = new FileArchiveStore(root)
+    const store = await newStore()
     const reader = fakeReader({
       summaries: [{ ID }, { ID: OTHER }],
       fail: { [ID]: "boom" },
@@ -656,7 +494,7 @@ describe("ingest", () => {
   })
 
   it("reports progress as it goes", async () => {
-    const store = new FileArchiveStore(root)
+    const store = await newStore()
     const reader = fakeReader({ summaries: [{ ID }, { ID: OTHER }] })
     const seen: string[] = []
 
@@ -709,9 +547,16 @@ describe("archive CLI", () => {
   })
 
   it("parses the options it documents", () => {
-    const args = parseArgs(["run", "--dir", "/tmp/a", "--since", "2026-08-24T00:00:00Z", "--json"])
+    const args = parseArgs([
+      "run",
+      "--db",
+      "/tmp/a.db",
+      "--since",
+      "2026-08-24T00:00:00Z",
+      "--json",
+    ])
     expect(args.command).toBe("run")
-    expect(args.dir).toBe("/tmp/a")
+    expect(args.db).toBe("/tmp/a.db")
     expect(args.json).toBe(true)
     expect(args.since?.toISOString()).toBe("2026-08-24T00:00:00.000Z")
   })
@@ -722,7 +567,7 @@ describe("archive CLI", () => {
 
   it("rejects an unknown option instead of ignoring it", () => {
     expect(() => parseArgs(["run", "--dry-run"])).toThrow(UsageError)
-    expect(() => parseArgs(["run", "--dir"])).toThrow(/needs a value/)
+    expect(() => parseArgs(["run", "--db"])).toThrow(/needs a value/)
   })
 
   it("rejects extra positional arguments", () => {

@@ -41,8 +41,9 @@ profiles/      league baselines — batl.json ships here
 
 ## Quick start
 
-Needs Node `^20.19.0 || >=22.12.0` — that's Vite 8's floor, and Vite comes in
-via Vitest.
+Needs Node `>=22.13.0`. That floor is `node:sqlite`, which the archive uses:
+it exists from 22.5 but only without `--experimental-sqlite` from 22.13. Node 20
+is no longer supported — it has no `node:sqlite` at all.
 
 ```sh
 npm install
@@ -51,7 +52,7 @@ npm run gridmom -- check --file fixtures/synthetic/suzuka-duplicate-pitboxes.jso
 ```
 
 `npm run lint`, `npm run format:check` and `npm run typecheck` are what CI
-enforces, alongside the tests on Node 20.19, 22 and 24. `npm run format`
+enforces, alongside the tests on Node 22.13 and 24. `npm run format`
 applies the formatting if a change has drifted from it.
 
 Against a live manager (no credentials needed — Public Access is enabled):
@@ -151,6 +152,7 @@ starts running the less of it can be lost.
 ```sh
 npm run archive -- run       # fetch every championship, store what changed
 npm run archive -- status    # what's in the archive already
+npm run archive -- run --db /srv/champctl/archive.db
 ```
 
 Read-only by construction — it holds an `AcsmReader`, which has no credentials
@@ -163,21 +165,33 @@ failure outranks a success, so a night that archived thirty and lost one still
 exits 2. One bad championship never aborts the rest — the point of a nightly
 job is that the archive gets no worse.
 
-**Bodies are stored verbatim**, not parsed and re-serialised. `JSON.stringify`
-reorders integer-like keys, turns `1.0` into `1`, and normalises escapes — none
-of which matters for reading a championship, and all of which matters for an
-archive whose job is to still be trustworthy after the source is gone. Stats
-tables are a projection on top, expected to be rebuilt from scratch whenever a
-definition changes or two driver identities get merged.
+**Bodies are stored verbatim**, as `BLOB`s — not parsed and re-serialised, and
+not decoded to text. `JSON.stringify` reorders integer-like keys, turns `1.0`
+into `1`, and normalises escapes; a UTF-8 decode strips a byte-order mark and
+replaces anything malformed. None of that matters for reading a championship,
+and all of it matters for an archive whose job is to still be trustworthy after
+the source is gone. Stats tables are a projection on top, expected to be rebuilt
+from scratch whenever a definition changes or two driver identities get merged.
 
 **Snapshots are deduplicated by content**, so a nightly run over a finished
 season doesn't write an identical copy every night forever. A snapshot appears
-only when the export actually changed, which makes the file list a change
+only when the export actually changed, which makes the snapshot list a change
 history. `lastCheckedAt` separately records that the run happened, so "nothing
 changed" stays distinguishable from "the job has been broken for a month".
 
-Lives in `data/archive/`, which is gitignored: league data, and personal data at
-that, since every export carries driver names and Steam GUIDs.
+**It's a SQLite database**, `data/archive/archive.db`, rather than a directory
+of JSON files with an index beside them. The first version was the directory,
+and every bug found in it was one bug in different clothes: a body and its index
+entry are two writes that have to land together, and they kept not doing. A torn
+index read as "no index" and started a fresh one; a shared temp file let one run
+publish another's bytes; two overlapping runs each published an index missing
+the other's snapshot; dedup trusted a hash whose body had been deleted. Those
+each have a fix, and the fixes were turning into a hand-rolled transaction log.
+A row in a transaction is the same guarantee, already written and already
+tested. `--db` points somewhere else if you want it to.
+
+Gitignored either way: league data, and personal data at that, since every
+export carries driver names and Steam GUIDs.
 
 ## League profiles
 
