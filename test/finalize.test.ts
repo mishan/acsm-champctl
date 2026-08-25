@@ -579,6 +579,65 @@ describe("planning a finalize", () => {
     expect(after.gridmom.findings.map((f) => f.code)).toContain("schedule.past")
   })
 
+  it("checks the schedule it would write, not the one already there", async () => {
+    // gridmom ran against a would-be championship with the format applied and
+    // Scheduled untouched, so every schedule check saw the *old* time. Moving a
+    // race onto a Saturday raised no schedule.weekday; the preview said the
+    // change was clean and it wasn't.
+    const { session } = await harness()
+    const base = {
+      championship: champ(),
+      championshipId: CHAMP_ID,
+      eventId: EVENT_ID,
+      format: format({ length: { kind: "laps", laps: 18 } }),
+      profile: testProfile(), // races on weekday 3, Wednesday
+      pits: pitTable([suzukaPits]),
+      now: NOW,
+    }
+
+    // The fixture races on a Wednesday, so nothing to say.
+    const wednesday = await planFinalize(session, {
+      ...base,
+      qualiStart: { date: "2026-09-09", time: "20:00" },
+    })
+    expect(wednesday.gridmom.findings.map((f) => f.code)).not.toContain("schedule.weekday")
+
+    // 2026-09-12 is a Saturday. The write would move it there, so the preview
+    // has to say so before it is sent.
+    const saturday = await planFinalize(session, {
+      ...base,
+      qualiStart: { date: "2026-09-12", time: "20:00" },
+    })
+    expect(saturday.gridmom.findings.map((f) => f.code)).toContain("schedule.weekday")
+  })
+
+  it("stops reporting a stale schedule problem the change is fixing", async () => {
+    // The other direction, and the one that actually blocked a push:
+    // applyFinalize refuses to save while any WARN stands, so a race already in
+    // the past kept warning even when the plan was moving it into the future —
+    // demanding an acknowledgement for a problem the change resolves.
+    const { session } = await harness()
+    const late = new Date("2026-09-30T00:00:00Z") // fixture event is 2026-09-02
+    const base = {
+      championship: champ(),
+      championshipId: CHAMP_ID,
+      eventId: EVENT_ID,
+      format: format({ length: { kind: "laps", laps: 18 } }),
+      profile: testProfile(),
+      pits: pitTable([suzukaPits]),
+      now: late,
+    }
+
+    const untouched = await planFinalize(session, base)
+    expect(untouched.gridmom.findings.map((f) => f.code)).toContain("schedule.past")
+
+    const moved = await planFinalize(session, {
+      ...base,
+      qualiStart: { date: "2026-10-07", time: "20:00" }, // a Wednesday, in the future
+    })
+    expect(moved.gridmom.findings.map((f) => f.code)).not.toContain("schedule.past")
+  })
+
   it("reports the change without writing anything", async () => {
     const { session, posts } = await harness()
     const plan = await planFinalize(session, {

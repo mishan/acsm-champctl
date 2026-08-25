@@ -248,7 +248,9 @@ is unchanged, which is at least coherent.
 
 **gridmom runs against the would-be championship**, not the current one, so the
 preview shows the problems this change is about to introduce rather than
-yesterday's.
+yesterday's. That includes the schedule: a plan that moves quali is checked at
+the time it would land, so moving a race onto a Saturday says so before it is
+sent, and moving one out of the past stops complaining that it is in the past.
 
 ## League profiles
 

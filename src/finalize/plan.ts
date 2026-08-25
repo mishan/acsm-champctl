@@ -175,12 +175,22 @@ export async function planFinalize(
     if (before !== after) formChanges.push({ name, before, after })
   }
 
-  const schedule = planSchedule(ev, options)
+  const planned = planSchedule(ev, options)
+  const schedule = planned?.schedule
 
   // gridmom runs against the championship as it *would* be. Checking the
   // current one would report yesterday's problems and miss the ones this
   // change is about to introduce.
-  const wouldBe = withEvent(championship, round - 1, applyFormat(ev, format))
+  //
+  // That has to include the *schedule*, not only the format. Applying the
+  // format alone left `Scheduled` at its current value, so every schedule
+  // check ran against the old time: moving a race onto a Saturday raised no
+  // schedule.weekday, moving one into the past raised no schedule.past — and
+  // moving one *out* of a stale problem still reported it, so applyFinalize
+  // demanded an acknowledgement for a warning the change was fixing.
+  const wouldBeEvent = applyFormat(ev, format)
+  if (planned) wouldBeEvent.Scheduled = planned.scheduled
+  const wouldBe = withEvent(championship, round - 1, wouldBeEvent)
   const gridmom = check(wouldBe, profile, {
     ...(options.pits ? { pits: options.pits } : {}),
     ...(options.now ? { now: options.now } : {}),
@@ -203,10 +213,17 @@ export async function planFinalize(
   }
 }
 
+/**
+ * The planned schedule change, plus the `Scheduled` value it implies.
+ *
+ * The ISO instant is returned alongside the form values because the caller
+ * needs it for the would-be championship gridmom checks, and deriving it twice
+ * would be two chances to derive it differently.
+ */
 function planSchedule(
   ev: ChampionshipEvent,
   options: PlanOptions,
-): FinalizePlan["schedule"] | undefined {
+): { schedule: NonNullable<FinalizePlan["schedule"]>; scheduled: string } | undefined {
   if (!options.qualiStart) return undefined
 
   const zone = options.profile.schedule.timezone
@@ -224,11 +241,15 @@ function planSchedule(
 
   const scheduled = scheduledFromQuali(wanted, practice)
   return {
-    from: existing?.toFormat("yyyy-MM-dd HH:mm ZZZZ"),
-    to: wanted.toFormat("yyyy-MM-dd HH:mm ZZZZ"),
-    // Recurrence is filled in at apply time from the schedule form itself, so
-    // an existing repeat isn't cancelled by echoing a blank.
-    values: scheduleFormValues(scheduled, zone, ""),
+    schedule: {
+      ...(existing ? { from: existing.toFormat("yyyy-MM-dd HH:mm ZZZZ") } : { from: undefined }),
+      to: wanted.toFormat("yyyy-MM-dd HH:mm ZZZZ"),
+      // Recurrence is filled in at apply time from the schedule form itself,
+      // so an existing repeat isn't cancelled by echoing a blank.
+      values: scheduleFormValues(scheduled, zone, ""),
+    },
+    // What ACSM will hold afterwards, in the same shape an export uses.
+    scheduled: scheduled.toISO() ?? "",
   }
 }
 
