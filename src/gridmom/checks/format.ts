@@ -7,7 +7,7 @@
  * its stop — the likeliest way this goes wrong.
  */
 
-import type { ChampionshipEvent } from "../../acsm/types.js"
+import { SESSION_KEY_ALIASES, type ChampionshipEvent } from "../../acsm/types.js"
 import { classes, eventHasStarted, eventLabel, events, session } from "../../acsm/view.js"
 import type { Check } from "../context.js"
 import { pluralize } from "../finding.js"
@@ -208,9 +208,83 @@ function cap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
+/**
+ * ACSM keys `RaceSetup.Sessions` by its `SessionType` constants — `PRACTICE`,
+ * `QUALIFY`, `RACE`, `BOOK` — and looks them up by exactly those strings.
+ *
+ * A championship keyed with the friendly spellings survives a round trip
+ * looking perfectly healthy: the map is `map[SessionType]SessionConfig` and
+ * `SessionType` is a Go string type, so any key unmarshals and comes back out
+ * of the export unchanged. But ACSM's own editor finds nothing under the key it
+ * looks up, renders the event form with default lengths and every session
+ * disabled, and a save then writes that blankness back — the sessions are gone.
+ *
+ * ERROR rather than WARN because it is not cosmetic and not recoverable by
+ * looking: the JSON reads correctly, the UI shows an empty event, and the first
+ * person to open and save it loses the configuration. Blocking a push is
+ * exactly right for a championship nobody can edit.
+ *
+ * champctl's own reads accept either spelling (`SESSION_KEY_ALIASES`), which is
+ * why this went unnoticed — every internal check agreed with the fixture while
+ * ACSM disagreed with both.
+ */
+export const nonCanonicalSessionKeys: Check = {
+  id: "format.session-keys",
+  section: "6.3",
+  run(ctx, emit) {
+    events(ctx.championship).forEach((ev, i) => {
+      const sessions = ev.RaceSetup?.Sessions
+      if (!sessions) return
+      const label = eventLabel(ev, i + 1)
+
+      const wrong = Object.keys(sessions).filter((k) => !CANONICAL_SESSION_KEYS.has(k))
+      if (wrong.length === 0) return
+
+      // Listed from the canonical set rather than written out, so a key added
+      // there cannot go missing from the advice — which is how BOOK came to be
+      // named as valid one sentence and omitted from the suggestion the next.
+      const anyOf = `one of ${[...CANONICAL_SESSION_KEYS].join(", ")}`
+      const suggestions = wrong.map((k) => `${k} should be ${canonicalise(k) ?? anyOf}`)
+
+      emit(
+        "ERROR",
+        "format.session-keys",
+        `${cap(label)} keys its sessions as ${humanKeys(wrong)}, which ACSM does not read — ` +
+          `it expects ${humanKeys([...CANONICAL_SESSION_KEYS])}. The export looks right, but the ` +
+          `event opens blank in Server Manager and saving it there wipes the sessions. ` +
+          `${suggestions.join("; ")}.`,
+        { round: i + 1, event: label, path: `Events[${i}].RaceSetup.Sessions` },
+        { keys: wrong },
+      )
+    })
+  },
+}
+
+/** What ACSM's `SessionType` constants actually are. */
+const CANONICAL_SESSION_KEYS = new Set(["PRACTICE", "QUALIFY", "RACE", "BOOK"])
+
+/** The canonical spelling for a key champctl recognises, if it recognises it. */
+function canonicalise(key: string): string | undefined {
+  const k = key.trim().toLowerCase()
+  for (const [canonical, aliases] of Object.entries(SESSION_KEY_ALIASES)) {
+    if (!aliases.includes(k)) continue
+    return canonical === "Booking"
+      ? "BOOK"
+      : canonical === "Qualifying"
+        ? "QUALIFY"
+        : canonical.toUpperCase()
+  }
+  return undefined
+}
+
+function humanKeys(keys: readonly string[]): string {
+  return keys.map((k) => `\`${k}\``).join(", ")
+}
+
 export const formatChecks: readonly Check[] = [
   raceLengthAmbiguous,
   pitWindowDisagreesWithFormat,
   reversedGridWithoutMultiplier,
   differsFromBaseline,
+  nonCanonicalSessionKeys,
 ]

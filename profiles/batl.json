@@ -20,7 +20,7 @@
     "raceSetup": {
       "EntryListType": 1,
       "PracticeEntryListType": 2,
-      "RaceExtraLap": false,
+      "RaceExtraLap": 0,
       "AllowDuplicateSkinChoices": false
     },
     "championship": {

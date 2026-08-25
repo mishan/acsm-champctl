@@ -74,14 +74,48 @@ describe.skipIf(!LIVE)("ACSM harness", () => {
       const returned = await session.getJson<Championship>(exportPath(id))
       const changes = diff(sent, returned, { ignore: IMPORT_HOUSEKEEPING })
 
+      // What this test is for is a value ACSM *rewrote* — a field sent as one
+      // thing and returned as another, which is how a setting gets silently
+      // changed underneath a league (plan §5.4). Fields the build adds with
+      // zero values, or drops because its struct has no such field, are schema
+      // drift between the fixture and the manager, not that.
+      //
+      // Asserting on all three together made this test unrunnable anywhere but
+      // the exact build the fixture was captured from: against 2.4.15 the
+      // synthetic seed produces 514 differences, of which 512 are 2.4.15
+      // knowing about CSPCarFlags, VIP, IsPlaceHolder and friends. Drowning the
+      // two that matter in 512 that don't is how a real rewrite goes unnoticed.
+      const drift = changes.filter((c) => c.kind !== "changed")
+      if (drift.length > 0) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `Round-trip schema drift on this build (${drift.length} fields added or dropped):\n` +
+            formatChanges(drift.slice(0, 12)),
+        )
+      }
+
+      // Go re-serialises a timestamp without the trailing zero in its
+      // fractional seconds — "…57.790Z" comes back as "…57.79Z" — so a
+      // string comparison reports a change about one run in ten, whenever the
+      // millisecond happens to end in zero. Same instant, different spelling,
+      // and a test that fails one time in ten is a test people learn to
+      // re-run. Compared as instants; anything that isn't a valid date on both
+      // sides stays a change.
+      const sameInstant = (c: { before?: unknown; after?: unknown }): boolean => {
+        if (typeof c.before !== "string" || typeof c.after !== "string") return false
+        const a = Date.parse(c.before)
+        const b = Date.parse(c.after)
+        return Number.isFinite(a) && Number.isFinite(b) && a === b
+      }
+
+      const rewritten = changes.filter((c) => c.kind === "changed" && !sameInstant(c))
+      if (rewritten.length > 0) {
+        // eslint-disable-next-line no-console
+        console.log(`Round-trip differences:\n${formatChanges(rewritten)}`)
+      }
       // Not asserted empty: the plan expects PracticeEntryListType to be
       // rewritten 2 -> 1 and that must stay visible until it's understood.
-      // Print it so a failure explains itself.
-      if (changes.length > 0) {
-        // eslint-disable-next-line no-console
-        console.log(`Round-trip differences:\n${formatChanges(changes)}`)
-      }
-      const unexpected = changes.filter((c) => c.path !== "PracticeEntryListType")
+      const unexpected = rewritten.filter((c) => c.path !== "PracticeEntryListType")
       expect(unexpected, formatChanges(unexpected)).toEqual([])
     })
 
@@ -166,15 +200,29 @@ describe.skipIf(!LIVE)("ACSM harness", () => {
       const fields = [...form.fields]
       setOne(fields, "Editing", eventId)
       setOne(fields, "action", "saveChampionship")
-      const boxes = getAll(fields, "EntryList.EntrantID")
-      const target = boxes.length - 1
-      setAt(fields, "EntryList.EntrantID", target, "25")
 
+      // Swap two of the rendered values rather than inventing a number.
+      //
+      // This asked for pit box 25 on a six-entrant championship and expected it
+      // back. 2.4.15 does not honour an out-of-range box — measured — so the
+      // test failed while the mechanism it was written to check works fine. A
+      // swap stays inside whatever range this build allows, which means a
+      // failure here is about EntrantID not being honoured rather than about
+      // the number 25.
+      const before = getAll(fields, "EntryList.EntrantID")
+      expect(before.length, "need two entrants to swap").toBeGreaterThanOrEqual(2)
+      setAt(fields, "EntryList.EntrantID", 0, before[1]!)
+      setAt(fields, "EntryList.EntrantID", 1, before[0]!)
+
+      const namesInFormOrder = getAll(fields, "EntryList.Name")
       await session.postForm(eventSubmitPath(id), fields)
 
       const after = await session.getJson<Championship>(exportPath(id))
-      const pitBoxes = slots(events(after)[0]!.EntryList).map((s) => s.entrant.PitBox)
-      expect(pitBoxes).toContain(25)
+      const boxByName = new Map(
+        slots(events(after)[0]!.EntryList).map((s) => [s.entrant.Name, s.entrant.PitBox]),
+      )
+      expect(boxByName.get(namesInFormOrder[0]!)).toBe(Number(before[1]))
+      expect(boxByName.get(namesInFormOrder[1]!)).toBe(Number(before[0]))
     })
   })
 

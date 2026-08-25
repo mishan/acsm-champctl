@@ -185,3 +185,68 @@ describe("baseline drift", () => {
     expect(f?.message).toContain("35 minute quali")
   })
 })
+
+/**
+ * The failure this exists to catch cost a day of looking in the wrong place:
+ * the event form rendered defaults with every session disabled, which read as
+ * "ACSM populates this form with JavaScript and champctl can never drive it".
+ * It was the fixture keying its sessions `Practice`/`Qualifying`/`Race` while
+ * ACSM looks up `PRACTICE`/`QUALIFY`/`RACE`.
+ *
+ * The nasty part is that nothing else can see it. The export round-trips the
+ * friendly keys unchanged, and champctl's own readers accept either spelling,
+ * so every internal check agrees with the fixture while ACSM disagrees with
+ * both.
+ */
+describe("session keys ACSM can actually read", () => {
+  const withSessionKeys = (sessions: Record<string, { Time?: number; Laps?: number }>) =>
+    championship({ Events: [raceEvent({ RaceSetup: { Sessions: sessions } })] })
+
+  it("is quiet on the keys ACSM uses", () => {
+    const c = withSessionKeys({
+      PRACTICE: { Time: 60 },
+      QUALIFY: { Time: 20 },
+      RACE: { Laps: 18 },
+    })
+    expect(codes(c)).not.toContain("format.session-keys")
+  })
+
+  it("blocks a championship ACSM would render blank", () => {
+    const c = withSessionKeys({
+      Practice: { Time: 60 },
+      Qualifying: { Time: 20 },
+      Race: { Laps: 18 },
+    })
+    const report = run(c)
+    const finding = report.findings.find((f) => f.code === "format.session-keys")
+    expect(finding, "the friendly spellings must be caught").toBeTruthy()
+    // ERROR, not WARN: the JSON reads correctly and the first person to open
+    // and save the event in ACSM loses its configuration.
+    expect(finding?.severity).toBe("ERROR")
+    expect(report.ok, "an error blocks a push").toBe(false)
+  })
+
+  it("names the key and what it should be, since the JSON looks fine", () => {
+    const finding = run(withSessionKeys({ Qualifying: { Time: 20 } })).findings.find(
+      (f) => f.code === "format.session-keys",
+    )
+    expect(finding?.message).toContain("Qualifying")
+    expect(finding?.message).toContain("QUALIFY")
+  })
+
+  it("still reports a key it doesn't recognise at all", () => {
+    // No suggestion to offer, but silence would be worse: ACSM reads nothing
+    // under it either.
+    const finding = run(withSessionKeys({ Warmup: { Time: 5 } })).findings.find(
+      (f) => f.code === "format.session-keys",
+    )
+    expect(finding).toBeTruthy()
+    expect(finding?.message).toContain("Warmup")
+    // The advice must name every key the check accepts. It listed three while
+    // the same sentence called four valid, so an unrecognised key was told to
+    // become one of a set that didn't match the one it was measured against.
+    for (const key of ["PRACTICE", "QUALIFY", "RACE", "BOOK"]) {
+      expect(finding?.message, `${key} is accepted, so it belongs in the advice`).toContain(key)
+    }
+  })
+})

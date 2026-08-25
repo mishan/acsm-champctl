@@ -77,8 +77,23 @@ export function readFormat(ev: ChampionshipEvent): RaceFormat {
     length,
     reversedGridPositions: numberOr(rs.ReversedGridRacePositions, 0),
     mandatoryPit: numberOr(rs.RacePitWindowStart, 0) > 0,
-    extraLap: rs.RaceExtraLap === true,
+    extraLap: readExtraLap(rs.RaceExtraLap),
   }
+}
+
+/**
+ * `RaceExtraLap` as a yes/no, from whatever the export happens to carry.
+ *
+ * This was `=== true`, which is false for the `1` a real ACSM export sends —
+ * so champctl read every championship that had the extra lap *on* as having it
+ * off, and a finalize or a clone would then quietly turn it off for real. Only
+ * a live import caught it; a synthetic fixture written with `false` agreed
+ * with the bug.
+ */
+function readExtraLap(value: unknown): boolean {
+  if (typeof value === "number") return value !== 0
+  if (typeof value === "string") return value !== "" && value !== "0"
+  return value === true
 }
 
 /** True when the two formats describe the same race. `note` is not compared. */
@@ -174,8 +189,7 @@ export function applyFormat(ev: ChampionshipEvent, format: RaceFormat): Champion
   // is about to set — blocking a push that fixes the very thing complained
   // about. For `emitMonth`, which applies a format for real rather than for
   // preview, the month would simply be emitted without its race length.
-  const raceKey =
-    Object.keys(sessions).find((k) => k.toUpperCase() === "RACE") ?? newRaceKey(sessions)
+  const raceKey = Object.keys(sessions).find((k) => k.toUpperCase() === "RACE") ?? newRaceKey()
   const existing = sessions[raceKey] ?? { Name: "Race" }
   sessions[raceKey] = {
     ...existing,
@@ -209,24 +223,33 @@ export function applyFormat(ev: ChampionshipEvent, format: RaceFormat): Champion
       Sessions: sessions,
       RacePitWindowStart: pitWindowStart,
       ReversedGridRacePositions: format.reversedGridPositions,
-      RaceExtraLap: format.extraLap,
+      // A number, not the boolean the league-facing format uses. ACSM's struct
+      // field is an int and Go's unmarshal rejects the whole championship on a
+      // bool — so emitting one made every generated month unimportable, which
+      // is the sharpest possible version of this bug: the JSON looked right and
+      // the server refused all of it. See `RaceExtraLap` in acsm/types.ts.
+      RaceExtraLap: format.extraLap ? 1 : 0,
     },
   }
 }
 
 /**
- * The key to file a newly-created race session under.
+ * The key to file a newly-created race session under. Always `RACE`.
  *
- * ACSM's `SessionType` constants are `PRACTICE`/`QUALIFY`/`RACE` and that is
- * what a real export uses, so `RACE` is the default. But exports have also
- * carried the friendly spellings, and an event whose other sessions are
- * `Practice`/`Qualifying` should get `Race` rather than a `RACE` sitting oddly
- * beside them — `lookupSession` finds either, so this is about not leaving a
- * mess for a human reading the JSON.
+ * This used to prefer the friendly `Race` when the event's other sessions were
+ * spelled that way, on the reasoning that a mixed map is a mess for whoever
+ * reads the JSON next. That was tidiness applied to the wrong thing: ACSM keys
+ * `RaceSetup.Sessions` by its `SessionType` constants and looks them up by
+ * exactly those strings, so a session filed under `Race` is one ACSM cannot
+ * see. It survives the export unchanged, opens blank in Server Manager, and is
+ * wiped by the first save.
+ *
+ * So matching the neighbours was actively making the championship worse when
+ * the neighbours were already wrong. `format.session-keys` reports the ones
+ * that are; this stops champctl adding more.
  */
-function newRaceKey(sessions: Record<string, unknown>): string {
-  const friendly = Object.keys(sessions).some((k) => k !== k.toUpperCase() && /^[A-Z]/.test(k))
-  return friendly ? "Race" : "RACE"
+function newRaceKey(): string {
+  return "RACE"
 }
 
 function numberOr(v: unknown, fallback: number): number {

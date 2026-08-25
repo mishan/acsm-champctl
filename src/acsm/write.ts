@@ -10,6 +10,7 @@
 import { randomUUID } from "node:crypto"
 
 import { findFormByAction } from "./form.js"
+import { walkChampionshipIds } from "./listing.js"
 import { AcsmWriteError, isRedirectStatus, type AcsmSession } from "./session.js"
 import type { Championship } from "./types.js"
 import { GO_ZERO_TIME, eventHasStarted, events, isZeroTime } from "./view.js"
@@ -31,27 +32,26 @@ export function eventSchedulePath(championshipId: string, eventId: string): stri
   return `/championship/${encodeURIComponent(championshipId)}/event/${encodeURIComponent(eventId)}/schedule`
 }
 
+/**
+ * The championship overview page, which is where the schedule form is rendered.
+ *
+ * Worth stating because the obvious guess is wrong: the schedule form's
+ * *action* is `eventSchedulePath`, but that route is POST-only — a GET of it
+ * returns 405 on 2.4.x. The form itself lives here, one per event.
+ */
+export function championshipPath(championshipId: string): string {
+  return `/championship/${encodeURIComponent(championshipId)}`
+}
+
 export function entrantStatusPath(championshipId: string, entrantGuid: string): string {
   return `/championship/${encodeURIComponent(championshipId)}/entrant/${encodeURIComponent(entrantGuid)}`
 }
 
 export const IMPORT_PATH = "/championship/import"
 
-/**
- * Championship IDs, scraped from the championships page.
- *
- * `/api/championships/list.json` is premium-only (docs/acsm-write-path.md §6),
- * so on the public build the HTML is the only way to enumerate them.
- */
+/** Championship IDs from the listing pages, for an authenticated session. */
 export async function listChampionshipIds(session: AcsmSession): Promise<string[]> {
-  const html = await session.getText("/championships")
-  const ids = new Set<string>()
-  const re = /\/championship\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi
-  for (const m of html.matchAll(re)) {
-    const id = m[1]
-    if (id) ids.add(id.toLowerCase())
-  }
-  return [...ids]
+  return walkChampionshipIds((path) => session.getText(path))
 }
 
 /**

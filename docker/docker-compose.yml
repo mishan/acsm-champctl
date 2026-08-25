@@ -23,6 +23,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.premium
+      args:
+        # Which zip in docker/premium/ to build from, matched as a substring of
+        # the filename. Only needed when there is more than one; with a single
+        # zip it is ignored. BATL runs 2.4.5.
+        ACSM_VERSION: ${ACSM_VERSION:-}
     container_name: champctl-acsm
     restart: unless-stopped
     environment:
@@ -61,7 +66,13 @@ services:
       - acsm-depotdownloader:/home/assetto/depotdownloader
     healthcheck:
       # /healthcheck.json is unauthenticated in every build, which makes it the
-      # right readiness probe.
+      # only probe available without credentials — but note what it does not
+      # cover. Measured on 2.4.15 with the store path pointing at a directory
+      # that did not exist: every page returned "Failed to initialise server
+      # manager ... Open server manager storage", and this endpoint answered
+      # 200 throughout. Healthy here means the HTTP server is listening, not
+      # that the manager works. `npm run harness:provision` is the real check,
+      # because it has to log in and drive a form to succeed.
       test: ["CMD-SHELL", "wget -qO- http://localhost:8772/healthcheck.json || exit 1"]
       interval: 5s
       timeout: 3s

@@ -73,7 +73,15 @@ export function fakeEventForm(options: FakeEventFormOptions): string {
         <input type="text" name="EntryList.Team" value="${e.team ?? ""}"${ro}>
         <input type="text" name="EntryList.GUID" value="${e.guid}"${ro}>
         <select name="EntryList.Car"><option value="${e.model}" selected="selected">${e.model}</option></select>
-        <select name="EntryList.Skin"><option value="${e.skin}" selected="selected">${e.skin}</option></select>
+        <select name="EntryList.Skin">${
+          // An empty skin renders an option-less select, which is what 2.4.15
+          // does for every `any_car_model` slot: the options are filled in by
+          // JavaScript from the car's skin list, and the sentinel model has
+          // none. Rendering a tidy `<option value="">` here instead would have
+          // hidden the bug that made champctl POST a short EntryList.Skin
+          // array and take a 500 from ACSM.
+          e.skin === "" ? "" : `<option value="${e.skin}" selected="selected">${e.skin}</option>`
+        }</select>
         <input type="number" name="EntryList.Ballast" value="${e.ballast ?? 0}">
         <input type="number" name="EntryList.Restrictor" value="${e.restrictor ?? 0}">
         <select name="EntryList.FixedSetup"><option value="">No Fixed Setup</option></select>

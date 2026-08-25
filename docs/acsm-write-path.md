@@ -155,7 +155,7 @@ Suzuka event has entrants sitting in map slots 10, 19 and 22 whose `PitBox`
 values are 3, 16 and 27. Check the `PitBox` field, not the key — which is what
 `entry.duplicate-pit-box` does.
 
-## 4. Repeated bare checkboxes break alignment — an ACSM bug
+## 4. Repeated bare checkboxes — not the bug this said it was
 
 `EntryList.OverwriteAllEvents` and `EntryList.TransferTeamPoints` are rendered as
 plain checkboxes with no hidden partner field, once per entrant, and read
@@ -167,13 +167,39 @@ if r.Form["EntryList.OverwriteAllEvents"] != nil &&
    formValueAsInt(r.Form["EntryList.OverwriteAllEvents"][i]) == 1 {
 ```
 
-A browser omits unchecked boxes entirely. So ticking the box on the 12th entrant
-sends a single value at index 0, and ACSM applies it to the *first* entrant.
-The feature can only behave correctly when every box is ticked or none are.
+**Corrected.** This section used to conclude that the feature cannot work: a
+browser omits unchecked boxes, so ticking the box on the 12th entrant sends one
+value at index 0 and ACSM applies it to the *first* entrant.
 
-**Consequence for champctl:** omit both keys entirely unless deliberately using
-them, and never echo back what the form rendered. Omitted means "false for
-everyone", which is the safe reading and the one the guard above produces.
+That is true of a plain browser and false of this one. ACSM installs a global
+submit handler that rewrites **every** checkbox before the form is serialised —
+checked becomes `value="1"`, unchecked is replaced by a hidden `0`:
+
+```js
+$("form").submit(function () {
+  $(this).find('input[type="checkbox"]').each(function () {
+    t.is(":checked") ? t.attr("value", "1")
+                     : (t.after().append(t.clone().attr({type: "hidden", value: 0})),
+                        t.prop("disabled", true))
+  })
+})
+```
+
+So a real browser sends all N values, correctly paired, and the positional read
+above is fed exactly what it expects. The `formValueAsInt(...) == 1` in that
+snippet is the other half of the same story: ACSM's Go side has never been
+given the browser default `on`, and reads it as false.
+
+**Consequence for champctl**, and it is much broader than these two keys:
+`parseForm` emits `1`/`0` for every checkbox on the page. Echoing a form back
+the browser-standard way turned off every box that was on — measured on 2.4.5,
+a single finalize took an event from three sessions to none while reporting
+success. See `docs/acsm-2.4.15.md` §5.
+
+champctl still strips these two per-entrant keys before POST, which is
+unchanged behaviour and safe: absent reads as false for everyone. Sending them
+faithfully is now possible and would preserve a genuinely ticked one, and wants
+measuring against a live manager before it changes.
 
 ## 5. Endpoints confirmed present in the public build
 

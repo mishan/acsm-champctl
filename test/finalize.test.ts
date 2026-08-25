@@ -60,7 +60,7 @@ describe("reading a format off an event", () => {
         RacePitWindowStart: 1,
         ReversedGridRacePositions: 5,
         RaceExtraLap: true,
-        Sessions: { Race: { Name: "Race", Time: 0, Laps: 20, IsOpen: 1 } },
+        Sessions: { RACE: { Name: "Race", Time: 0, Laps: 20, IsOpen: 1 } },
       },
     })
     expect(readFormat(ev)).toEqual({
@@ -71,9 +71,45 @@ describe("reading a format off an event", () => {
     })
   })
 
+  /**
+   * `RaceExtraLap` is an int on the wire — measured against 2.4.15, which
+   * refuses the whole import with "cannot unmarshal bool into Go struct field
+   * ... of type int". Two bugs came out of assuming a bool:
+   *
+   * Reading, `rs.RaceExtraLap === true` is false for the `1` an export
+   * actually carries, so champctl saw the extra lap as off on every real
+   * championship that had it on — and a finalize or a clone would then write
+   * that back and turn it off for real. The synthetic fixtures agreed with the
+   * bug, because they were written with `false`.
+   *
+   * Writing, a bool made every emitted month unimportable.
+   */
+  it("reads the extra lap from the int an export really carries", () => {
+    const withValue = (RaceExtraLap: unknown) =>
+      readFormat(raceEvent({ RaceSetup: { RaceExtraLap } as never })).extraLap
+
+    expect(withValue(1)).toBe(true)
+    expect(withValue(0)).toBe(false)
+    // Still true for the bool a hand-written fixture might carry.
+    expect(withValue(true)).toBe(true)
+    expect(withValue(false)).toBe(false)
+    expect(withValue(undefined)).toBe(false)
+  })
+
+  it("writes the extra lap as a number, because a bool fails the whole import", () => {
+    const on = applyFormat(raceEvent({}), format({ extraLap: true })).RaceSetup?.RaceExtraLap
+    const off = applyFormat(raceEvent({}), format({ extraLap: false })).RaceSetup?.RaceExtraLap
+    expect(on).toBe(1)
+    expect(off).toBe(0)
+    // Not `toBe(1)` passing on `true` by coincidence — ACSM rejects the type,
+    // so the type is the thing under test.
+    expect(typeof on).toBe("number")
+    expect(typeof off).toBe("number")
+  })
+
   it("reads a timed race as minutes", () => {
     const ev = raceEvent({
-      RaceSetup: { Sessions: { Race: { Name: "Race", Time: 40, Laps: 0, IsOpen: 1 } } },
+      RaceSetup: { Sessions: { RACE: { Name: "Race", Time: 40, Laps: 0, IsOpen: 1 } } },
     })
     expect(readFormat(ev).length).toEqual({ kind: "minutes", minutes: 40 })
   })
@@ -82,7 +118,7 @@ describe("reading a format off an event", () => {
     // ACSM treats a non-zero lap count as the length and ignores Time, so
     // reporting 40 minutes here would describe a race that won't happen.
     const ev = raceEvent({
-      RaceSetup: { Sessions: { Race: { Name: "Race", Time: 40, Laps: 18, IsOpen: 1 } } },
+      RaceSetup: { Sessions: { RACE: { Name: "Race", Time: 40, Laps: 18, IsOpen: 1 } } },
     })
     expect(readFormat(ev).length).toEqual({ kind: "laps", laps: 18 })
   })
@@ -159,7 +195,7 @@ describe("mapping a format onto form fields", () => {
 describe("applying a format to an event", () => {
   it("does not mutate the event it was given", () => {
     const ev = raceEvent({
-      RaceSetup: { Sessions: { Race: { Name: "Race", Time: 0, Laps: 20, IsOpen: 1 } } },
+      RaceSetup: { Sessions: { RACE: { Name: "Race", Time: 0, Laps: 20, IsOpen: 1 } } },
     })
     const before = JSON.stringify(ev)
     applyFormat(ev, format({ length: { kind: "laps", laps: 18 } }))
@@ -195,15 +231,21 @@ describe("applying a format to an event", () => {
     expect(readFormat(after).length).toEqual({ kind: "laps", laps: 18 })
   })
 
-  it("follows the spelling the event's other sessions use", () => {
-    // lookupSession finds either, so this is only about not leaving a RACE
-    // sitting oddly beside a Practice for whoever reads the JSON next.
+  /**
+   * This used to assert the opposite — that a created race session follows the
+   * spelling of its neighbours, so a `Race` sits beside a `Practice` rather
+   * than a `RACE` looking odd next to it. Tidiness applied to the wrong thing:
+   * ACSM looks sessions up by its `SessionType` constants, so a session filed
+   * under `Race` is one it cannot see, and matching wrong neighbours made the
+   * championship worse rather than neater.
+   */
+  it("always creates the race session under the key ACSM reads", () => {
     const friendly = raceEvent({
       RaceSetup: { Sessions: { Practice: { Name: "Practice", Time: 60, Laps: 0, IsOpen: 1 } } },
     })
     expect(Object.keys(applyFormat(friendly, format()).RaceSetup?.Sessions ?? {})).toEqual([
       "Practice",
-      "Race",
+      "RACE",
     ])
 
     const shouty = raceEvent({
@@ -217,10 +259,10 @@ describe("applying a format to an event", () => {
 
   it("leaves the other sessions alone when it creates one", () => {
     const ev = raceEvent({
-      RaceSetup: { Sessions: { Practice: { Name: "Practice", Time: 60, Laps: 0, IsOpen: 1 } } },
+      RaceSetup: { Sessions: { PRACTICE: { Name: "Practice", Time: 60, Laps: 0, IsOpen: 1 } } },
     })
     const after = applyFormat(ev, format())
-    expect(after.RaceSetup?.Sessions?.["Practice"]).toEqual({
+    expect(after.RaceSetup?.Sessions?.["PRACTICE"]).toEqual({
       Name: "Practice",
       Time: 60,
       Laps: 0,
@@ -230,7 +272,7 @@ describe("applying a format to an event", () => {
 
   it("round-trips through readFormat", () => {
     const ev = raceEvent({
-      RaceSetup: { Sessions: { Race: { Name: "Race", Time: 0, Laps: 1, IsOpen: 1 } } },
+      RaceSetup: { Sessions: { RACE: { Name: "Race", Time: 0, Laps: 1, IsOpen: 1 } } },
     })
     const wanted = format({
       length: { kind: "minutes", minutes: 40 },
@@ -381,7 +423,7 @@ describe("schedule maths", () => {
     // An event with a 30 minute practice would otherwise be scheduled from the
     // league's 60 and start half an hour early.
     const ev = raceEvent({
-      RaceSetup: { Sessions: { Practice: { Name: "Practice", Time: 30, Laps: 0, IsOpen: 1 } } },
+      RaceSetup: { Sessions: { PRACTICE: { Name: "Practice", Time: 30, Laps: 0, IsOpen: 1 } } },
     })
     expect(practiceMinutesFor(ev, 60)).toBe(30)
     expect(practiceMinutesFor(raceEvent({ RaceSetup: { Sessions: {} } }), 60)).toBe(60)
@@ -554,7 +596,11 @@ async function harness(options: HarnessOptions = {}) {
       }
       return new Response("", { status: options.submitStatus ?? 302, headers: { location: "/" } })
     }
-    if (url.includes("/schedule")) {
+    // The schedule form is rendered on the *championship* page, not at its own
+    // action — that route is POST-only and a GET of it is a 405 on 2.4.x. This
+    // double used to serve it from the action URL, which is why the unit tests
+    // went on passing against a fetch that no real manager would have answered.
+    if (url.includes(`/championship/${CHAMP_ID}`) && !url.includes("/event/")) {
       return new Response(options.scheduleHtml ?? scheduleFormHtml(), { status: 200 })
     }
     const page = pages[Math.min(eventGets, pages.length - 1)] as string
@@ -584,7 +630,7 @@ const champ = (over: Partial<ChampionshipEvent> = {}) =>
         ID: EVENT_ID,
         Scheduled: "2026-09-02T19:00:00-07:00",
         EntryList: entryList([driver("Ada"), driver("Grace")]),
-        RaceSetup: { Sessions: { Race: { Name: "Race", Time: 0, Laps: 20, IsOpen: 1 } } },
+        RaceSetup: { Sessions: { RACE: { Name: "Race", Time: 0, Laps: 20, IsOpen: 1 } } },
         ...over,
       }),
     ],
@@ -831,17 +877,63 @@ describe("the entry list fingerprint", () => {
     expect(a).not.toBe(b)
   })
 
-  it("notices two entrants swapping places", () => {
-    // ACSM reads these as parallel positional arrays, so order is identity.
+  /**
+   * This used to assert the opposite, on the reasoning that ACSM reads these
+   * as parallel positional arrays so order is identity. True of the POST, and
+   * the wrong conclusion for the fingerprint: measured on 2.4.5 and 2.4.15,
+   * two consecutive fetches of an unchanged event form return the entrants in
+   * different orders, because ACSM iterates a Go map. Treating that as
+   * tampering meant `champctl-finalize --push` refused every write.
+   */
+  it("ignores a reshuffle, which these builds do on their own", () => {
     const a = entryListFingerprint([
       { name: "EntryList.Name", value: "Ada" },
       { name: "EntryList.Name", value: "Grace" },
+      { name: "EntryList.GUID", value: "1" },
+      { name: "EntryList.GUID", value: "2" },
     ])
     const b = entryListFingerprint([
       { name: "EntryList.Name", value: "Grace" },
       { name: "EntryList.Name", value: "Ada" },
+      { name: "EntryList.GUID", value: "2" },
+      { name: "EntryList.GUID", value: "1" },
+    ])
+    expect(a).toBe(b)
+  })
+
+  it("still notices an entrant renamed under a reshuffle", () => {
+    // The case the guard exists for, in the shape these builds deliver it:
+    // the rows moved *and* somebody's details changed. Order-insensitive must
+    // not mean value-insensitive.
+    const a = entryListFingerprint([
+      { name: "EntryList.Name", value: "Ada" },
+      { name: "EntryList.Name", value: "Grace" },
+      { name: "EntryList.GUID", value: "1" },
+      { name: "EntryList.GUID", value: "2" },
+    ])
+    const b = entryListFingerprint([
+      { name: "EntryList.Name", value: "Someone Else" },
+      { name: "EntryList.Name", value: "Ada" },
+      { name: "EntryList.GUID", value: "2" },
+      { name: "EntryList.GUID", value: "1" },
     ])
     expect(a).not.toBe(b)
+  })
+
+  it("ignores pit boxes, which are not stable across a save", () => {
+    // EntryList.EntrantID is the pit box, and 2.4.x renders it as the row's
+    // position rather than the entrant's stored value — so it changes whenever
+    // the rows move. BATL neither assigns nor promises pit boxes, so blocking
+    // a write over one would protect something nobody relies on.
+    const a = entryListFingerprint([
+      { name: "EntryList.Name", value: "Ada" },
+      { name: "EntryList.EntrantID", value: "0" },
+    ])
+    const b = entryListFingerprint([
+      { name: "EntryList.Name", value: "Ada" },
+      { name: "EntryList.EntrantID", value: "7" },
+    ])
+    expect(a).toBe(b)
   })
 
   it("notices an added entrant", () => {

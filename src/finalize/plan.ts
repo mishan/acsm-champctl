@@ -20,7 +20,16 @@
 
 import { createHash } from "node:crypto"
 
-import { findFormByAction, getOne, type FormField, type ParsedForm } from "../acsm/form.js"
+import {
+  findFormByAction,
+  getAll,
+  getOne,
+  shape,
+  NON_ARRAY_ENTRY_LIST_FIELDS,
+  UNPAIRED_ENTRY_LIST_CHECKBOXES,
+  type FormField,
+  type ParsedForm,
+} from "../acsm/form.js"
 import type { AcsmSession } from "../acsm/session.js"
 import type { Championship, ChampionshipEvent } from "../acsm/types.js"
 import { eventEditPath, eventSubmitPath } from "../acsm/write.js"
@@ -108,14 +117,52 @@ export interface PlanOptions {
 }
 
 /**
- * Every `EntryList.*` value, in order, hashed.
+ * `EntryList.*` keys deliberately left out of the fingerprint.
  *
- * Order is part of the identity, not an accident: ACSM reads these keys as
- * parallel positional arrays (docs §1), so two entrants swapping places is a
- * real change even though the set is identical.
+ * `EntrantID` is the pit box, and on 2.4.x the form renders it as the row's
+ * position rather than the entrant's stored value — always `0..n-1`, whatever
+ * the entrants are actually numbered. Hashing it means the fingerprint changes
+ * whenever the rows move, which is on every request.
  *
- * Deliberately over-sensitive. A false "someone changed the entry list" costs
- * a reload; a false "nothing changed" costs an entrant.
+ * The per-entrant checkboxes are excluded for a different reason, and it is no
+ * longer the one this comment used to give. `parseForm` now emits every
+ * checkbox as "1" or "0", so they *are* attributable to entrants — "a browser
+ * drops the unchecked ones" describes a payload champctl stopped producing.
+ * They are excluded because champctl strips them before every POST (form.ts),
+ * so it neither preserves nor promises them: guarding a value the write is
+ * going to discard would refuse a save over a field nobody is protecting.
+ */
+const FINGERPRINT_EXCLUDED: ReadonlySet<string> = new Set<string>([
+  "EntryList.EntrantID",
+  ...UNPAIRED_ENTRY_LIST_CHECKBOXES,
+  ...NON_ARRAY_ENTRY_LIST_FIELDS,
+])
+
+/**
+ * The entry list as a set of entrants, hashed. Order-insensitive.
+ *
+ * This used to hash every `EntryList.*` value in document order, reasoning that
+ * ACSM reads them as parallel positional arrays so a reorder is a real change.
+ * The reasoning is right and the conclusion was still wrong: measured on 2.4.5
+ * and 2.4.15, the event form returns entrants in a different order on
+ * *consecutive fetches of an unchanged page* — Go map iteration, randomised on
+ * purpose. So the guard fired on every finalize, and `champctl-finalize
+ * --push` could not write at all.
+ *
+ * What the guard is for is someone being added, removed or edited between the
+ * preview and the write — a sign-up approved in ACSM while a preview is open,
+ * whom a full-form replace would silently delete (plan §5.3). That is a
+ * question about the *set* of entrants, so this zips the parallel arrays back
+ * into per-entrant records, sorts them and hashes that. A rename still trips
+ * it; a reshuffle no longer does.
+ *
+ * Pit boxes are excluded on purpose — see `FINGERPRINT_EXCLUDED`. They are not
+ * stable across a save on these builds, and BATL neither assigns nor promises
+ * them, so treating a renumbering as tampering would block every write to
+ * protect something nobody relies on.
+ *
+ * Still fails closed on what matters: the entrant count is hashed first, so an
+ * added or removed entrant is caught even if every other field were excluded.
  *
  * The separators are escapes rather than literal bytes. They hash identically,
  * but a raw NUL in the source trips git's binary heuristic, and the whole file
@@ -123,11 +170,28 @@ export interface PlanOptions {
  * on the file holding the guard that stops a save deleting an entrant.
  */
 export function entryListFingerprint(fields: readonly FormField[]): string {
-  const h = createHash("sha256")
-  for (const f of fields) {
-    if (!f.name.startsWith("EntryList.")) continue
-    h.update(f.name).update("\u0000").update(f.value).update("\u0001")
+  const counts = shape(fields)
+  const entrants = counts["EntryList.Name"] ?? 0
+
+  // Only keys that genuinely are one-per-entrant. Anything else cannot be
+  // zipped into a record without guessing which entrant it belongs to.
+  const keys = Object.keys(counts)
+    .filter((k) => k.startsWith("EntryList.") && !FINGERPRINT_EXCLUDED.has(k))
+    .filter((k) => counts[k] === entrants)
+    .sort()
+
+  const values = new Map(keys.map((k) => [k, getAll(fields, k)]))
+  const records: string[] = []
+  for (let i = 0; i < entrants; i++) {
+    let record = ""
+    for (const k of keys) record += `${k}\u0000${values.get(k)?.[i] ?? ""}\u0001`
+    records.push(record)
   }
+  records.sort()
+
+  const h = createHash("sha256")
+  h.update(`entrants\u0000${entrants}\u0001`)
+  for (const r of records) h.update(r).update("\u0002")
   return h.digest("hex")
 }
 

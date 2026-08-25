@@ -37,6 +37,12 @@ export interface ParsedForm {
    * paste-the-JSON form from an upload-a-file one.
    */
   textAreaFields: string[]
+  /**
+   * Names of `<input type="checkbox">` controls, checked or not. Every one of
+   * them is in `fields` as "1" or "0" — see the checkbox branch in
+   * `parseForm` for why they are not browser-standard here.
+   */
+  checkboxFields: string[]
 }
 
 export class FormParseError extends Error {
@@ -57,12 +63,23 @@ export interface ParseFormOptions {
  * Extracts the fields a browser would submit for a form.
  *
  * Follows the HTML submission rules that matter here:
- *  - unchecked checkboxes and unselected radios are omitted
+ *  - unselected radios are omitted
  *  - disabled controls are omitted; readonly ones are NOT (ACSM renders the
  *    championship entrant name, team and GUID readonly, and they must be sent)
  *  - a select with nothing marked selected submits its first option
  *  - buttons are omitted, since no button was "clicked"
  *  - unnamed controls are omitted
+ *
+ * Two deliberate departures from the browser, both because ACSM does not
+ * actually consume a browser-standard payload. Each is the difference between
+ * a working write and a destroyed event, and each was measured rather than
+ * reasoned about:
+ *
+ *  - **Checkboxes** go out as "1" or "0", always, never "on" and never absent.
+ *    ACSM's own JavaScript rewrites them that way on submit, so "1"/"0" is the
+ *    only thing its Go side has ever been given. See the checkbox branch.
+ *  - **A `<select>` with no options** submits an empty value, where a browser
+ *    submits nothing. See the select branch.
  */
 export function parseForm(html: string, options: ParseFormOptions = {}): ParsedForm {
   const $ = cheerio.load(html)
@@ -106,6 +123,7 @@ function parseFormElement(
   const fields: FormField[] = []
   const fileFields: string[] = []
   const textAreaFields: string[] = []
+  const checkboxFields: string[] = []
   const push = (name: string | undefined, value: string): void => {
     if (name) fields.push({ name, value })
   }
@@ -127,7 +145,18 @@ function parseFormElement(
       } else if (!multiple) {
         // A single select with no explicit selection submits its first option.
         const first = $el.find("option").first()
+        // An option-less select is where champctl has to stop imitating a
+        // browser. ACSM renders one per entrant whose car has no skins to
+        // choose from — every `any_car_model` slot, which is what an unclaimed
+        // sign-up looks like (plan §4.4) — and it populates the options in
+        // JavaScript that champctl doesn't run. A browser submits nothing for
+        // an empty select, so the EntryList.Skin array arrives shorter than the
+        // rest, and ACSM indexes these in parallel without a length check:
+        // measured against 2.4.15, six names with two skins is an HTTP 500.
+        // Sending an empty value keeps the arrays aligned and each entrant
+        // keeps its own skin, which is also measured rather than assumed.
         if (first.length > 0) push(name, optionValue($, first[0]!))
+        else push(name, "")
       }
       return
     }
@@ -146,9 +175,35 @@ function parseFormElement(
       fileFields.push(name)
       return
     }
-    if (type === "checkbox" || type === "radio") {
+    if (type === "radio") {
       if ($el.attr("checked") === undefined) return
       push(name, $el.attr("value") ?? "on")
+      return
+    }
+
+    // Checkboxes are not browser-standard here, and this is the single most
+    // destructive thing champctl got wrong. ACSM rewrites every one of them in
+    // a global submit handler before the browser serialises the form:
+    //
+    //   $("form").submit(function () {
+    //     $(this).find('input[type="checkbox"]').each(function () {
+    //       t.is(":checked") ? t.attr("value", "1")
+    //                        : (t.after().append(t.clone().attr({type: "hidden", value: 0})),
+    //                           t.prop("disabled", true))
+    //     })
+    //   })
+    //
+    // So what ACSM's Go side ever sees is an explicit "1" or "0", never the
+    // browser default of "on" — and it parses accordingly, reading "on" as
+    // false. Echoing the form back the way a browser would therefore turns off
+    // every box that was on. Measured on 2.4.5: a save that sent
+    // `Race.Enabled=on` dropped the practice, qualifying and race
+    // configuration entirely, taking the event from three sessions to none
+    // while reporting success. Sending "1" for those same six boxes preserves
+    // all three.
+    if (type === "checkbox") {
+      checkboxFields.push(name)
+      push(name, $el.attr("checked") === undefined ? "0" : "1")
       return
     }
     push(name, $el.attr("value") ?? "")
@@ -162,6 +217,7 @@ function parseFormElement(
     fields,
     fileFields,
     textAreaFields,
+    checkboxFields,
   }
 }
 
@@ -270,9 +326,26 @@ export function shape(fields: readonly FormField[]): Record<string, number> {
  * index 0 and ACSM applies it to the *first* entrant. The feature can only
  * behave when every box is ticked or none are.
  *
- * champctl therefore strips them from every POST rather than echoing back what
- * the form rendered. Absent means "false for everyone", which is the safe
- * reading and the only one that cannot quietly apply someone else's setting.
+ * Two corrections, both measured, and together they make this a smaller problem
+ * than it reads:
+ *
+ * 1. **They are not unpaired to a real browser.** ACSM rewrites every checkbox
+ *    to an explicit 1 or 0 on submit (see the checkbox branch in `parseForm`),
+ *    so a browser sends all N, correctly paired, and the positional read above
+ *    is fed what it expects. The `formValueAsInt(...) == 1` in ACSM's own code
+ *    is the same fact from the other side.
+ * 2. **Neither field is on the 2.4.x event form at all.** Measured on 2.4.5:
+ *    zero rendered for six entrants, and neither name appears anywhere on the
+ *    page. They live on the championship *edit* form, which champctl does not
+ *    drive — and there they render 8 and 7 times for 6 entrants, so whatever
+ *    the extra rows are, that form needs its own reading before anything
+ *    writes it.
+ *
+ * So champctl still strips them, and on 2.4.x that strips nothing. Kept because
+ * 1.7.9 does render them on the event form, and absent means "false for
+ * everyone" — the only reading that cannot quietly apply one entrant's setting
+ * to another. Sending them faithfully is a change to make when champctl drives
+ * the form that actually has them.
  */
 export const UNPAIRED_ENTRY_LIST_CHECKBOXES = [
   "EntryList.OverwriteAllEvents",

@@ -60,7 +60,13 @@ deployment.
 
 Public Access is enabled on `ac.batlracing.com`, so these need no credentials:
 
-- `GET /api/championships/list.json`
+- ~~`GET /api/championships/list.json`~~ — **does not exist.** 404 on 2.4.5 and
+  2.4.15, and 404 on `ac.batlracing.com` itself, logged out or in, while
+  `/api/results/list.json` beside it answers 200. The archive walked this
+  endpoint, so it could not enumerate a single championship on the server it
+  was built for. Championships are listed only by the server-rendered
+  `/championships` page, which Public Access serves without credentials;
+  `walkChampionshipIds` reads them from there.
 - `GET /championship/{id}/standings.json`
 - `GET /api/results/list.json?q=&page=&sort=`
 - `GET /results/download/{filename}.json`

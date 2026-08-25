@@ -83,10 +83,15 @@ export function driver(name: string, over: Partial<Entrant> = {}): Partial<Entra
 export function raceEvent(over: Partial<ChampionshipEvent> = {}): ChampionshipEvent {
   const { RaceSetup: raceSetupOver, ...eventOver } = over
 
+  // Keyed the way ACSM keys them. The friendly spellings used to be the default
+  // here and champctl reads either, so every test agreed with a shape ACSM does
+  // not read — an event keyed that way opens blank in Server Manager and a save
+  // wipes it. `format.session-keys` catches it now, and a builder that produced
+  // the broken shape would put that finding on almost every fixture.
   const defaultSessions = {
-    Practice: { Name: "Practice", Time: 60, Laps: 0, IsOpen: 1 },
-    Qualifying: { Name: "Qualifying", Time: 20, Laps: 0, IsOpen: 1 },
-    Race: { Name: "Race", Time: 0, Laps: 20, IsOpen: 1 },
+    PRACTICE: { Name: "Practice", Time: 60, Laps: 0, IsOpen: 1 },
+    QUALIFY: { Name: "Qualifying", Time: 20, Laps: 0, IsOpen: 1 },
+    RACE: { Name: "Race", Time: 0, Laps: 20, IsOpen: 1 },
   }
 
   const { Sessions: sessionsOver, ...raceSetupRest } = raceSetupOver ?? {}

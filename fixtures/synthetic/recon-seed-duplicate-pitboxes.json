@@ -1,6 +1,6 @@
 {
   "ID": "00000000-0000-4000-8000-000000000099",
-  "Name": "champctl duplicate pit box probe — DO NOT USE FOR A REAL RACE",
+  "Name": "champctl duplicate pit box probe \u2014 DO NOT USE FOR A REAL RACE",
   "Description": "Two entrants share pit box 1 and pit box 3 is unused. If ACSM drops an entrant on import, duplicate pit boxes delete people.",
   "Created": "2027-01-01T00:00:00-08:00",
   "Updated": "2027-01-01T00:00:00-08:00",
@@ -146,27 +146,27 @@
         "PickupModeEnabled": 1,
         "RacePitWindowStart": 0,
         "RacePitWindowEnd": 0,
-        "RaceExtraLap": false,
+        "RaceExtraLap": 0,
         "ReversedGridRacePositions": 0,
         "SecondRaceMultiplier": 1,
         "AllowDuplicateSkinChoices": false,
         "MandatoryLongPitEnabled": false,
         "Sessions": {
-          "Practice": {
+          "PRACTICE": {
             "Name": "Practice",
             "Time": 60,
             "Laps": 0,
             "IsOpen": 1,
             "WaitTime": 60
           },
-          "Qualifying": {
+          "QUALIFY": {
             "Name": "Qualifying",
             "Time": 20,
             "Laps": 0,
             "IsOpen": 1,
             "WaitTime": 60
           },
-          "Race": {
+          "RACE": {
             "Name": "Race",
             "Time": 0,
             "Laps": 12,
@@ -293,27 +293,27 @@
         "PickupModeEnabled": 1,
         "RacePitWindowStart": 0,
         "RacePitWindowEnd": 0,
-        "RaceExtraLap": false,
+        "RaceExtraLap": 0,
         "ReversedGridRacePositions": 5,
         "SecondRaceMultiplier": 1,
         "AllowDuplicateSkinChoices": false,
         "MandatoryLongPitEnabled": false,
         "Sessions": {
-          "Practice": {
+          "PRACTICE": {
             "Name": "Practice",
             "Time": 60,
             "Laps": 0,
             "IsOpen": 1,
             "WaitTime": 60
           },
-          "Qualifying": {
+          "QUALIFY": {
             "Name": "Qualifying",
             "Time": 20,
             "Laps": 0,
             "IsOpen": 1,
             "WaitTime": 60
           },
-          "Race": {
+          "RACE": {
             "Name": "Race",
             "Time": 0,
             "Laps": 12,
@@ -450,6 +450,6 @@
   "ACSR": false,
   "ExportSecondRaceToACSR": false,
   "ACSRSkillGate": "",
-  "ACSRSafetyGate": "",
+  "ACSRSafetyGate": 0,
   "StartNextPracticeOnEventComplete": true
 }

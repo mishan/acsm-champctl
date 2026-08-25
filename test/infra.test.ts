@@ -64,6 +64,8 @@ describe("rate limiter", () => {
   })
 })
 
+const A = "11111111-2222-3333-4444-555555555555"
+
 describe("HTTP reader", () => {
   const reader = (fetchImpl: typeof globalThis.fetch) =>
     new HttpAcsmReader({ baseUrl: "https://acsm.example/", fetch: fetchImpl, rateLimit: false })
@@ -94,6 +96,33 @@ describe("HTTP reader", () => {
   it("unwraps a list that arrives inside an envelope", async () => {
     const r = reader(async () => new Response(JSON.stringify({ championships: [{ ID: "a" }] })))
     await expect(r.listChampionships()).resolves.toEqual([{ ID: "a" }])
+  })
+
+  /**
+   * `/api/championships/list.json` does not exist on 2.4.5 or 2.4.15, nor on
+   * ac.batlracing.com — measured, 404 even as admin. The listing page is the
+   * only way to enumerate championships, so the fallback is the normal path
+   * rather than a rescue.
+   */
+  it("falls back to the listing page when the endpoint is a 404", async () => {
+    const r = reader(async (url) =>
+      String(url).includes("list.json")
+        ? new Response("not found", { status: 404 })
+        : new Response(`<a href="/championship/${A}">x</a>`, { status: 200 }),
+    )
+    await expect(r.listChampionships()).resolves.toEqual([{ ID: A }])
+  })
+
+  /**
+   * The failure the fallback must not swallow. With Public Access off the
+   * endpoint answers with login HTML, which #getJson reports usefully — and
+   * scraping instead reads *another* login page, finds no championships, and
+   * hands back an empty list. The archive would then exit 0 having archived
+   * nothing: the exact outcome it exists to prevent, reported as success.
+   */
+  it("does not scrape past a Public Access failure", async () => {
+    const r = reader(async () => new Response("<html>login</html>", { status: 200 }))
+    await expect(r.listChampionships()).rejects.toThrow(/Public Access/)
   })
 
   it("treats a corrupt cache entry as a miss rather than failing forever", async () => {

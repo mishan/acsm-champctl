@@ -10,6 +10,7 @@
  * filesystem) can be swapped in later as a config change (plan §9).
  */
 
+import { walkChampionshipIds } from "./listing.js"
 import type { Championship, ChampionshipSummary } from "./types.js"
 import { RateLimiter, type RateLimiterOptions } from "./rate-limit.js"
 
@@ -94,8 +95,34 @@ export class HttpAcsmReader implements AcsmReader {
     this.#cache = options.cache
   }
 
+  /**
+   * Every championship on the server.
+   *
+   * `/api/championships/list.json` is the documented endpoint (plan §3.1) and
+   * it does not exist on 2.4.5 or 2.4.15 — measured, 404 even when logged in as
+   * admin, while `/api/results/list.json` beside it answers 200. Since that is
+   * the endpoint `champctl-archive` walks, the archive could not enumerate a
+   * single championship on the version BATL runs, and nothing noticed because
+   * no test had ever run a CLI against a real manager.
+   *
+   * So: try the endpoint, and fall back to scraping the championships page,
+   * which Public Access serves without credentials. The scrape yields ids and
+   * no names; callers already read this defensively.
+   */
   async listChampionships(): Promise<ChampionshipSummary[]> {
-    const body = await this.#getJson<unknown>("/api/championships/list.json")
+    let body: unknown
+    try {
+      body = await this.#getJson<unknown>("/api/championships/list.json")
+    } catch (e) {
+      // Only a 404 falls back. Catching every AcsmError swallowed the one that
+      // matters: with Public Access off the endpoint answers with login HTML,
+      // #getJson raises "not JSON — is Public Access still enabled?", and the
+      // scrape then reads another login page and finds no championships. The
+      // archive would exit 0 having archived nothing, which is the failure it
+      // exists to prevent, reported as success.
+      if (e instanceof AcsmError && e.status === 404) return await this.#scrapeChampionships()
+      throw e
+    }
     if (Array.isArray(body)) return body as ChampionshipSummary[]
     // Some versions wrap the list; accept the common shapes rather than fail.
     if (body && typeof body === "object") {
@@ -105,6 +132,20 @@ export class HttpAcsmReader implements AcsmReader {
       }
     }
     throw new AcsmError("Championship list was not an array")
+  }
+
+  /**
+   * Championship ids off the HTML listing, for builds with no list endpoint.
+   *
+   * Ids only: the page shows names, but parsing them out of markup is the kind
+   * of thing that breaks silently on a template change, and every caller reads
+   * the name defensively already because the JSON shape varies too.
+   */
+  async #scrapeChampionships(): Promise<ChampionshipSummary[]> {
+    const ids = await walkChampionshipIds(async (path) =>
+      (await this.#request(path)).toString("utf8"),
+    )
+    return ids.map((ID) => ({ ID }) as ChampionshipSummary)
   }
 
   async exportChampionship(id: string): Promise<Championship> {
