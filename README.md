@@ -3,7 +3,7 @@
 Championship creation, validation and stats for Assetto Corsa Server Manager.
 Built for BATL, usable by any league.
 
-Four commands:
+Five commands:
 
 | | |
 |---|---|
@@ -11,6 +11,7 @@ Four commands:
 | `champctl-archive` | keep a copy of every export the league has ever run |
 | `champctl-finalize` | set a race's format and push it |
 | `champctl-month` | create a month of racing from a template |
+| `champctl-serve` | the same finalize flow as a web UI, for people without a terminal |
 
 Working on champctl itself? See [AGENTS.md](AGENTS.md) and
 [docs/development.md](docs/development.md).
@@ -25,9 +26,9 @@ npm install
 npm run gridmom -- check --file fixtures/synthetic/suzuka-duplicate-pitboxes.json
 ```
 
-Installed, the four commands are on your `PATH` as `gridmom`,
-`champctl-archive`, `champctl-finalize` and `champctl-month`. From a checkout,
-`npm run gridmom -- <args>` is the same thing.
+Installed, the five commands are on your `PATH` as `gridmom`,
+`champctl-archive`, `champctl-finalize`, `champctl-month` and `champctl-serve`.
+From a checkout, `npm run gridmom -- <args>` is the same thing.
 
 Every command takes `--profile` and `--base-url`; `--help` on any of them is
 authoritative.
@@ -262,6 +263,57 @@ unless a round overrides it; without `startDate`, rounds fall on the league's
 race weekday starting from the next one. `className`, `description` and
 `signUpsEnabled` are also accepted.
 
+## champctl-serve
+
+The weekly flow with a face on it: pick the round, set what the racers voted
+for, read the diff, push. Same engine as `champctl-finalize`, so the preview and
+the write agree with the CLI by construction rather than by resemblance.
+
+```sh
+champctl-serve                 # http://127.0.0.1:3000
+champctl-serve --port 8080 --host 0.0.0.0
+```
+
+```
+  --port <n>            port to listen on (default: 3000, or $PORT)
+  --host <addr>         address to bind (default: 127.0.0.1)
+  --profile <id|path>   league profile (default: batl)
+  --pits <path>         track pit table (default: data/track-pits.json)
+  --base-url <url>      override the profile's ACSM base URL
+  --client <dir>        built client to serve (default: dist/client)
+  --no-cache            bypass the on-disk response cache
+  --trust-proxy         read X-Forwarded-For for the client address
+  --insecure-cookies    development only; see below
+```
+
+**The server holds no ACSM credentials.** It never reads `CHAMPCTL_USERNAME` or
+`CHAMPCTL_PASSWORD`. Each person signs in through the UI with their own, the
+resulting cookie jar stays server-side for an hour, and the browser gets an
+opaque handle. Nothing is written to disk, so a restart signs everyone out —
+which is the right trade against an admin password that survives a redeploy.
+Permissions are whatever ACSM says they are: if the person can't edit
+championships there, the push fails there.
+
+**Serve it over HTTPS.** It forwards admin credentials between hosts, so the
+session cookie carries `Secure` and a browser will refuse to keep it over plain
+`http://`. `--insecure-cookies` turns that off for local development and logs a
+warning saying what it costs. Behind a reverse proxy, pass `--trust-proxy` —
+`request.ip` is what the failed-login throttle counts against, and without it
+every login in the world shares one bucket.
+
+The screen is mobile-first, because the thing it is for is applying a Discord
+poll result from a phone the evening before a race. It shows the same three
+things the CLI prints — what changes, the exact fields that will be posted, and
+gridmom against the round *as it would be* — and it refuses in the same places:
+an error blocks the push outright, warnings need an acknowledgement, and an
+entry list that moved while the preview was open refuses the write and asks you
+to look again.
+
+```sh
+npm run serve      # the API and, if built, the client
+npm run dev        # Vite on :5173, proxying /api to a champctl-serve on :3000
+```
+
 ## Configuration
 
 **League profile.** BATL's baseline is `profiles/batl.json`; another league
@@ -275,6 +327,18 @@ race number. ACSM has no race number field, so without it the duplicate-race-
 number check doesn't run — guessing at digits inside arbitrary skin names finds
 a "duplicate" in every entry list.
 
+`formats` is the league's own shorthand — BATL's `1x40` and `2x20` — offered as
+one-tap starting points in the web UI. They live in the profile rather than in
+the UI because they are league convention: another league's names and numbers
+should be a config change, not a fork.
+
+```json
+"formats": [
+  { "name": "1x40", "length": { "kind": "minutes", "minutes": 40 },
+    "reversedGridPositions": 0, "mandatoryPit": true, "extraLap": false }
+]
+```
+
 **Track pit counts.** `data/track-pits.json`, an array of records — see
 [`data/track-pits.example.json`](data/track-pits.example.json). Three sources,
 with `manual` always winning, because mod tracks routinely lie in their ui file.
@@ -282,7 +346,10 @@ The file is gitignored: it's league data, not code. Without it the grid checks
 degrade to a warning that the pit count is unknown rather than guessing.
 
 **Credentials.** `CHAMPCTL_USERNAME` and `CHAMPCTL_PASSWORD`, read from the
-environment and never written to disk. Only the write commands need them.
+environment and never written to disk. Only the write *commands* need them —
+`champctl-serve` deliberately does not read them at all, because a long-running
+service holding an admin password in its environment is one exposed endpoint
+away from being an admin password anyone can spend.
 
 **Cache.** Responses are cached in `.cache/acsm/cache.db` for five minutes, so
 re-running gridmom while fixing a pit box costs one request. It holds whole
@@ -292,9 +359,12 @@ response bodies — entry lists, so driver names and Steam GUIDs — and is crea
 ## Status
 
 gridmom, the archive, and the finalize and month engines are done and driven by
-their CLIs. What's left:
+their CLIs. The finalize flow also has a web UI. What's left:
 
-- **No HTTP server or UI** on top of finalize and month yet, and no Discord bot.
+- **The month builder is CLI-only.** `champctl-serve` covers the weekly flow;
+  creating a month still means `champctl-month`. The sign-up approval queue
+  isn't built either — it needs the approve/reject POST captured first.
+- **No Discord bot**, so no polls, no announcements, no nightly gridmom report.
 - **Content checks have no source.** Three `content.*` checks need an index of
   what's installed on the server, and nothing populates one yet, so they can't
   fire. The pit-count check reads the pit table instead and works today.

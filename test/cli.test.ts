@@ -1,6 +1,7 @@
+import { existsSync } from "node:fs"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
@@ -16,6 +17,7 @@ import {
   UsageError as MonthUsageError,
 } from "../src/cli/month.js"
 import { confirm, UsageError } from "../src/cli/args.js"
+import { clientRootFor, parseArgs as parseServeArgs } from "../src/cli/serve.js"
 import type { RaceFormat } from "../src/finalize/format.js"
 import type { FinalizePlan } from "../src/finalize/plan.js"
 import type { EmitResult } from "../src/emit/month.js"
@@ -434,5 +436,132 @@ describe("rendering a month", () => {
 
   it("says what was derived rather than inherited", () => {
     expect(renderResult(result)).toContain("Created and Updated stamped")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// champctl-serve's arguments
+// ---------------------------------------------------------------------------
+
+describe("parsing champctl-serve's arguments", () => {
+  it("reads the options it documents", () => {
+    const args = parseServeArgs([
+      "--port",
+      "8080",
+      "--host",
+      "0.0.0.0",
+      "--profile",
+      "batl",
+      "--no-cache",
+      "--trust-proxy",
+    ])
+    expect(args.port).toBe(8080)
+    expect(args.host).toBe("0.0.0.0")
+    expect(args.profile).toBe("batl")
+    expect(args.cache).toBe(false)
+    expect(args.trustProxy).toBe(true)
+  })
+
+  it("binds loopback unless told otherwise", () => {
+    // champctl proxies whatever ACSM credentials it is handed, so reaching the
+    // network has to be a decision someone makes rather than one they inherit.
+    expect(parseServeArgs([]).host).toBe("127.0.0.1")
+    expect(parseServeArgs([]).insecureCookies).toBe(false)
+  })
+
+  it("refuses a value that is obviously the next option", () => {
+    // `--host --port 3000` would otherwise set the host to "--port" and then
+    // fail on "3000" with "Unknown option 3000" — a complaint about the wrong
+    // argument entirely, for a mistake made two arguments earlier.
+    expect(() => parseServeArgs(["--host", "--port", "3000"])).toThrow(UsageError)
+    expect(() => parseServeArgs(["--host", "--port", "3000"])).toThrow(/looks like another option/)
+  })
+
+  it("still says which option was left empty at the end of the line", () => {
+    expect(() => parseServeArgs(["--profile"])).toThrow(/--profile needs a value/)
+  })
+
+  it("lets a negative number through to the check that can explain it", () => {
+    // Not a flag. The port check has something specific to say about -1, and
+    // "looks like another option" is not it.
+    expect(() => parseServeArgs(["--port", "-1"])).toThrow(/port/i)
+    expect(() => parseServeArgs(["--port", "-1"])).not.toThrow(/looks like another option/)
+  })
+
+  it("names an unknown option rather than guessing", () => {
+    expect(() => parseServeArgs(["--reverse-proxy"])).toThrow(/Unknown option --reverse-proxy/)
+  })
+
+  it("calls a stray word an argument, not an option", () => {
+    // champctl-serve takes no positional arguments, so "Unknown option batl"
+    // sends the reader looking for a flag they never typed. The likeliest
+    // mistake is the one worth naming.
+    expect(() => parseServeArgs(["batl"])).toThrow(/takes no arguments/)
+    expect(() => parseServeArgs(["batl"])).toThrow(/--profile batl/)
+    expect(() => parseServeArgs(["batl"])).not.toThrow(/Unknown option/)
+  })
+
+  describe("$PORT", () => {
+    const PORT = process.env["PORT"]
+    afterEach(() => {
+      if (PORT === undefined) delete process.env["PORT"]
+      else process.env["PORT"] = PORT
+    })
+
+    it("is used when no --port was given", () => {
+      process.env["PORT"] = "8080"
+      expect(parseServeArgs([]).port).toBe(8080)
+    })
+
+    it("loses to an explicit --port", () => {
+      process.env["PORT"] = "8080"
+      expect(parseServeArgs(["--port", "9090"]).port).toBe(9090)
+    })
+
+    it("is rejected when it isn't a port", () => {
+      process.env["PORT"] = "nonsense"
+      expect(() => parseServeArgs([])).toThrow(/PORT needs a port number/)
+    })
+
+    it("does not stop --help from printing", () => {
+      // The one command that has to work when everything else is
+      // misconfigured. Reading the environment before knowing whether help was
+      // asked for meant a broken $PORT refused to explain the flag that would
+      // have overridden it.
+      process.env["PORT"] = "nonsense"
+      expect(() => parseServeArgs(["--help"])).not.toThrow()
+      expect(parseServeArgs(["--help"]).help).toBe(true)
+    })
+  })
+})
+
+describe("finding the built client", () => {
+  it("takes an explicit --client relative to the working directory", () => {
+    // What a path someone typed means.
+    expect(clientRootFor("build/ui")).toBe(resolve(process.cwd(), "build/ui"))
+  })
+
+  it("finds dist/client when running from a checkout", () => {
+    // This suite runs from `src/`, where `../client` resolves to `src/client`
+    // and does not exist. That is the `npm run serve` case, and resolving only
+    // the nearest candidate made the documented "the API and, if built, the
+    // client" quietly mean API-only however many times you had built.
+    //
+    // Skipped rather than failed when nothing is built: this asserts the
+    // lookup, not that CI happens to have run `vite build` first.
+    const built = resolve(process.cwd(), "dist/client")
+    if (!existsSync(built)) return
+    expect(clientRootFor(undefined)).toBe(built)
+  })
+
+  it("names dist/client when there is nothing built to serve", () => {
+    // Whatever it returns goes into `registerClient`'s warning, so it has to
+    // be a path `npm run build` will actually create. The weak version of this
+    // test asserted only that the path ended in "client", which `src/client`
+    // does — the exact wrong answer it was meant to rule out.
+    //
+    // This suite runs from `src/`, so the assertion is about the fallback.
+    const root = clientRootFor(undefined)
+    expect(root).toBe(resolve(process.cwd(), "dist/client"))
   })
 })
