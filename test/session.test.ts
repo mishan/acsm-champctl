@@ -975,6 +975,28 @@ describe("import safety rules", () => {
 })
 
 describe("regenerateIds", () => {
+  it("does not reparent an object while rebuilding it", () => {
+    // The sweep rebuilds every object in the championship key by key, and
+    // `out["__proto__"] = value` on a plain object reparents it rather than
+    // adding a field. An export is parsed JSON, where __proto__ survives as an
+    // ordinary own property — so a championship that merely *contained* one
+    // came out inheriting fields nobody set, and every check downstream read
+    // them as real. deepMerge has guarded this since it was written.
+    const source = JSON.parse(
+      String.raw`{"ID":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","Nested":{"__proto__":{"polluted":true},"Ref":"ok"}}`,
+    ) as { Nested: Record<string, unknown> }
+
+    const out = regenerateIds(source)
+
+    expect(out.Nested["polluted"]).toBeUndefined()
+    expect(Object.getPrototypeOf(out.Nested)).toBe(Object.prototype)
+    // The rest of the object is untouched, and ids are still swept.
+    expect(out.Nested["Ref"]).toBe("ok")
+    expect((out as unknown as { ID: string }).ID).not.toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    // And nothing leaked onto the global prototype either way.
+    expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined()
+  })
+
   it("rewrites every UUID so an import creates rather than overwrites", () => {
     const before = championship({ ID: "11111111-2222-3333-4444-555555555555" })
     const after = regenerateIds(before)

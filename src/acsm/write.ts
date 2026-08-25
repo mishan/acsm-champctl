@@ -124,6 +124,25 @@ export async function exportAsReimportableCopy(
  * Identity is remapped consistently — a given old ID always becomes the same
  * new one — so internal references survive.
  */
+/**
+ * Keys that must never be assigned onto a rebuilt object.
+ *
+ * `out[k] = value` on a plain object whose key is `__proto__` *reparents* the
+ * object rather than adding a field. An ACSM export is parsed JSON, where
+ * `__proto__` survives as an ordinary own property, so any code that rebuilds
+ * an object key by key can silently give it a new prototype — and everything
+ * downstream then reads inherited fields nobody set.
+ *
+ * Exported because rebuilding is a pattern rather than a place: `deepMerge`
+ * and the emitter's id sweep both do it, and two copies of this list is one
+ * that gets updated and one that doesn't.
+ */
+export const FORBIDDEN_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+])
+
 export function regenerateIds<T>(value: T): T {
   const mapping = new Map<string, string>()
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -141,7 +160,16 @@ export function regenerateIds<T>(value: T): T {
     if (Array.isArray(v)) return v.map(walk)
     if (v && typeof v === "object") {
       const out: Record<string, unknown> = {}
-      for (const [k, val] of Object.entries(v)) out[k] = walk(val)
+      for (const [k, val] of Object.entries(v)) {
+        // Dropped rather than copied. This walk rebuilds every object in the
+        // championship, so an export carrying `__proto__` as an own property
+        // reparented the rebuilt copy — measured: the emitted month inherited
+        // `polluted: true` from a template that merely contained it, and every
+        // check downstream then read fields nobody had set. `deepMerge` has
+        // guarded this since it was written; the sweep did not.
+        if (FORBIDDEN_KEYS.has(k)) continue
+        out[k] = walk(val)
+      }
       return out
     }
     return v
