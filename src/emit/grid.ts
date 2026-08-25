@@ -85,8 +85,17 @@ export function gridCap(tracks: readonly TrackRef[], pits?: PitTable, fallback =
   }
 }
 
+/**
+ * The label a person reads in the grid summary and the unknown-track list.
+ *
+ * Trimmed, because untrimmed values produce two entries that look identical —
+ * "spa" and "spa " — in a list whose whole job is telling someone which track
+ * to add a pit count for.
+ */
 function trackLabel(t: TrackRef): string {
-  return t.layout ? `${t.track} (${t.layout})` : t.track
+  const track = t.track.trim()
+  const layout = t.layout?.trim()
+  return layout ? `${track} (${layout})` : track
 }
 
 function humanList(items: readonly string[]): string {

@@ -363,10 +363,11 @@ describe("emitting a month", () => {
       template: o.template ?? template(),
       spec: o.spec ?? spec(),
       profile: testProfile(),
-      // `pits` present in o at all means "use this", including undefined — the
-      // no-pit-table case is exactly what one of these tests is about. Spread
-      // rather than assigned, because exactOptionalPropertyTypes distinguishes
-      // an absent property from one set to undefined.
+      // Passing `pits: undefined` explicitly means "no pit table" — the case
+      // one of these tests is about — and omitting the key entirely means "use
+      // the shared one". Both end up *absent* on EmitOptions rather than set to
+      // undefined, because exactOptionalPropertyTypes distinguishes the two and
+      // EmitOptions.pits does not accept undefined.
       ...("pits" in o ? (o.pits ? { pits: o.pits } : {}) : { pits }),
       now: NOW,
     })
@@ -630,6 +631,27 @@ describe("emitting a month", () => {
         /Round 2 has no track/,
       )
     }
+  })
+
+  it("trims car models rather than emitting one with a space in it", () => {
+    // A spec is usually hand-edited JSON, where " bmw_m3" is as easy to type as
+    // "". Untrimmed it reaches RaceSetup.Cars and AvailableCars as a model ACSM
+    // does not have — which fails on race night rather than here. The blank
+    // check already refused the empty case; this is the same typo with a
+    // character in it.
+    const { championship: c } = emit({ spec: spec({ cars: [" bmw_m3 ", "ford_gt "] }) })
+    expect(c.Classes?.[0]?.AvailableCars).toEqual(["bmw_m3", "ford_gt"])
+    for (const ev of events(c)) expect(ev.RaceSetup?.Cars).toBe("bmw_m3;ford_gt")
+  })
+
+  it("trims a track and its layout, so the pit lookup and the summary agree", () => {
+    const { championship: c, grid } = emit({
+      spec: spec({ rounds: [{ track: " suzuka " }, { track: "spa " }] }),
+    })
+    expect(events(c).map((e) => e.RaceSetup?.Track)).toEqual(["suzuka", "spa"])
+    // The label the summary prints, and the one the pit table was asked for.
+    expect(grid.summary).not.toMatch(/ \)|\( /)
+    expect(grid.maxClients).toBe(24) // suzuka's count was still found
   })
 
   it("refuses a blank car model, naming it, not just an empty car list", () => {

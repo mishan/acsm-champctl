@@ -144,13 +144,19 @@ export function emitMonth(options: EmitOptions): EmitResult {
     )
   }
 
+  // Trimmed once, here, and used everywhere below. A spec is usually parsed
+  // JSON, and " bmw_m3" is as easy to type as "" — it just fails later and
+  // less obviously, as an unknown car model on race night rather than as a
+  // blank one. Refusing it would be unhelpful when the fix is unambiguous.
+  const cars = spec.cars.map((c) => c.trim())
+
   // A list of blanks is the same mistake as an empty list, and just as
   // reachable from a hand-edited spec. `["", "bmw"]` joins to ";bmw" for
   // RaceSetup.Cars and leaves "" in the class AvailableCars — a model that
   // cannot load, in the field that decides what people are allowed to enter.
   // Refused by index for the same reason blank tracks are, below.
-  const blankCars = spec.cars
-    .map((c, i) => (c?.trim() ? undefined : i + 1))
+  const blankCars = cars
+    .map((c, i) => (c ? undefined : i + 1))
     .filter((n): n is number => n !== undefined)
   if (blankCars.length > 0) {
     throw new EmitError(
@@ -164,8 +170,16 @@ export function emitMonth(options: EmitOptions): EmitResult {
   // a blank track is a plausible typo rather than a programming error. Left
   // alone it emits an event with `Track: ""`, which ACSM accepts and then
   // fails to load on race night.
-  const blank = spec.rounds
-    .map((r, i) => (r.track?.trim() ? undefined : i + 1))
+  // Same for tracks and layouts: they reach RaceSetup.Track, the pit-table
+  // lookup and the grid summary, and whitespace makes all three disagree.
+  const rounds = spec.rounds.map((r) => ({
+    ...r,
+    track: r.track?.trim() ?? "",
+    ...(r.layout === undefined ? {} : { layout: r.layout.trim() }),
+  }))
+
+  const blank = rounds
+    .map((r, i) => (r.track ? undefined : i + 1))
     .filter((n): n is number => n !== undefined)
   if (blank.length > 0) {
     throw new EmitError(
@@ -182,12 +196,12 @@ export function emitMonth(options: EmitOptions): EmitResult {
   // Created and still get a schedule that moved, and a caller passing `now`
   // deliberately would get a month half in one timeframe and half in another.
   const schedule = monthSchedule(
-    spec.rounds,
+    rounds,
     profile,
     spec.startDate,
     DateTime.fromJSDate(now).setZone(profile.schedule.timezone),
   )
-  const grid = gridCap(spec.rounds, options.pits)
+  const grid = gridCap(rounds, options.pits)
 
   // Start from the template, then the league baseline. Both are whole-object
   // overlays, so anything neither mentions survives from the template.
@@ -206,7 +220,7 @@ export function emitMonth(options: EmitOptions): EmitResult {
   const entryList = unclaimedEntryList(slots)
 
   const spectatorEnabled = base.SpectatorCarEnabled === true
-  const cars = derivedCars(spec.cars, spectatorEnabled ? base.SpectatorCar?.Model : undefined)
+  const carList = derivedCars(cars, spectatorEnabled ? base.SpectatorCar?.Model : undefined)
   derived.push(
     `RaceSetup.Cars from the class car list${spectatorEnabled ? " plus the spectator car" : ""}`,
   )
@@ -226,8 +240,8 @@ export function emitMonth(options: EmitOptions): EmitResult {
     // championship, so "GT3" or "RSS Formula Hybrid" is already the label a
     // league uses. Falling straight to `cars[0]` renamed an inherited class to
     // a model string, which reads like an id rather than a class.
-    Name: spec.className ?? templateClass?.Name ?? spec.cars[0] ?? "Class",
-    AvailableCars: [...spec.cars],
+    Name: spec.className?.trim() || templateClass?.Name || cars[0] || "Class",
+    AvailableCars: [...cars],
     Entrants: entryList,
   }
 
@@ -270,12 +284,12 @@ export function emitMonth(options: EmitOptions): EmitResult {
     return s
   }
 
-  const eventList: ChampionshipEvent[] = spec.rounds.map((round, i) =>
+  const eventList: ChampionshipEvent[] = rounds.map((round, i) =>
     buildEvent({
       templateEvent,
       round,
       scheduled: scheduleFor(i),
-      cars,
+      cars: carList,
       ...(capped ? { maxClients: grid.maxClients } : {}),
       entryList: unclaimedEntryList(slots),
       baselineRaceSetup,
@@ -345,8 +359,13 @@ export function emitMonth(options: EmitOptions): EmitResult {
  * list advertised a van nobody could pick.
  */
 export function derivedCars(cars: readonly string[], spectatorModel?: string): string {
-  const all = [...cars]
-  if (spectatorModel && !all.includes(spectatorModel)) all.push(spectatorModel)
+  // Trimmed here as well as at the spec boundary, because the spectator model
+  // comes from the template rather than the spec and this is the only place
+  // the two meet. A stray space would otherwise produce "a;b; ford_transit",
+  // which ACSM reads as a model it doesn't have.
+  const all = cars.map((c) => c.trim()).filter(Boolean)
+  const spectator = spectatorModel?.trim()
+  if (spectator && !all.includes(spectator)) all.push(spectator)
   return all.join(";")
 }
 
