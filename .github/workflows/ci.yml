@@ -26,7 +26,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: "22"
           cache: npm
 
       - run: npm ci
@@ -100,7 +100,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: "22"
           cache: npm
 
       - run: npm ci
@@ -109,8 +109,12 @@ jobs:
       # run on that version is cache-only. The checksum in oss.sh is checked
       # whether the zip came from the cache or the network — a poisoned cache
       # entry is exactly the case a pin exists for.
+      # v5, not v4. v4 ships a Node 20 runtime, which GitHub has deprecated —
+      # the runner forces it onto 24 and prints a warning on every run. That is
+      # the *action's* runtime, nothing to do with the Node this project builds
+      # on, which the setup-node step above pins.
       - name: Cache the Server Manager release
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .harness/oss-1.7.9/server-manager.zip
           key: acsm-oss-1.7.9
@@ -125,28 +129,30 @@ jobs:
           CHAMPCTL_LIVE_PASSWORD: champctl-ci-not-a-secret
         run: npm run harness:provision
 
+      # Once, with a machine-readable result.
+      #
+      # The suite skips silently without CHAMPCTL_LIVE_URL, so a job that failed
+      # to set it would pass having run nothing — vitest exits 0 for "no tests
+      # matched". The count is what turns a green tick into a green tick that
+      # means something.
+      #
+      # Read from the JSON reporter rather than grepped out of the human
+      # output. That is not tidiness: vitest writes ANSI colour codes even
+      # through a pipe, so `Tests  35 passed` is really
+      # `Tests  \e[1m\e[32m35 passed`, and a pattern that looks right in the
+      # rendered log never matches the bytes. Under `bash -e` the failed grep
+      # then killed the step *after* 35 tests had passed, which is the worst
+      # kind of CI failure: correct code, red build, nothing in the log saying
+      # why.
       - name: Live suite
         env:
           CHAMPCTL_LIVE_URL: http://127.0.0.1:8772
           CHAMPCTL_LIVE_USERNAME: admin
           CHAMPCTL_LIVE_PASSWORD: champctl-ci-not-a-secret
-        run: npm run test:live
+        run: npm run test:live -- --reporter=default --reporter=json --outputFile=live.json
 
-      # The suite skips silently without CHAMPCTL_LIVE_URL, so a job that
-      # failed to set it would pass having run nothing. This is the difference
-      # between a green tick and a green tick that means something.
       - name: Prove the suite actually ran
-        env:
-          CHAMPCTL_LIVE_URL: http://127.0.0.1:8772
-          CHAMPCTL_LIVE_USERNAME: admin
-          CHAMPCTL_LIVE_PASSWORD: champctl-ci-not-a-secret
-        run: |
-          npm run test:live 2>&1 | tee live.log
-          grep -qE "Tests +[0-9]+ passed" live.log
-          if grep -qE "Tests +0 passed|no tests" live.log; then
-            echo "The live suite ran zero tests, which means it skipped." >&2
-            exit 1
-          fi
+        run: node scripts/harness/assert-live-ran.mjs live.json
 
       - name: Server Manager log
         if: failure()
