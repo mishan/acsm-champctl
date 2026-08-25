@@ -12,8 +12,6 @@
  * pit box — see docs/acsm-write-path.md §2.
  */
 
-import { resolve } from "node:path"
-
 import {
   NON_ARRAY_ENTRY_LIST_FIELDS,
   findFormByAction,
@@ -34,15 +32,15 @@ import {
 import {
   connect,
   log,
-  redactBaseUrl,
   runRecon,
   seedChampionship,
-  stableUrl,
   writeArtefact,
 } from "./env.js"
-import { raggedKeys } from "./report.js"
+import { raggedKeys, redactBaseUrl, stableSource, stableUrl } from "./report.js"
 
-const FIXTURE = resolve(process.cwd(), "fixtures/synthetic/recon-seed.json")
+// Relative, so the fallback path in the artefact is repo-relative rather
+// than whoever ran it. seedChampionship resolves it against cwd to read.
+const FIXTURE = "fixtures/synthetic/recon-seed.json"
 
 interface FormSnapshot {
   path: string
@@ -246,7 +244,7 @@ async function main(): Promise<void> {
     baseUrl: redactBaseUrl(session.baseUrl),
     // How this build takes a championship. 1.7.9 pastes JSON into a textarea;
     // 2.4.5 uploads a file. Recorded because it changed between them.
-    seedSource: stableUrl(source),
+    seedSource: stableSource(source),
     sessionKeys: sessionKeysUsed(exported),
     importMechanism: mechanism.kind,
     importField: mechanism.field,

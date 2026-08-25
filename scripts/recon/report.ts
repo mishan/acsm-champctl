@@ -8,9 +8,78 @@
  * the log. That is exactly the kind of thing worth pinning down.
  */
 
+import { basename, isAbsolute, relative } from "node:path"
+
 import { NON_ARRAY_ENTRY_LIST_FIELDS } from "../../src/acsm/form.js"
 import type { Championship } from "../../src/acsm/types.js"
 import { events, slots } from "../../src/acsm/view.js"
+
+/**
+ * A base URL with the host removed, for writing into a committed artefact.
+ *
+ * The scheme and port are the parts worth keeping — they say whether the
+ * capture came from the premium service or the oss profile. The host is
+ * somebody's LAN address or internal hostname, and these files are public.
+ */
+export function redactBaseUrl(baseUrl: string): string {
+  try {
+    const u = new URL(baseUrl)
+    return `${u.protocol}//<redacted>${u.port ? `:${u.port}` : ""}`
+  } catch {
+    return "<redacted>"
+  }
+}
+
+const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
+const STEAM_GUID = /\b7656119\d{10}\b/g
+
+/**
+ * A URL reduced to the part worth committing: path only, identifiers masked.
+ *
+ * Two reasons, and both matter for a file that gets checked in.
+ *
+ * Privacy: form actions are resolved to absolute URLs, so they carry the host
+ * — which is how a LAN address ends up in a public artefact even after the
+ * `baseUrl` field is redacted. Entrant links carry Steam GUIDs outright.
+ *
+ * Stability: the championship and event UUIDs are new on every run, so an
+ * un-masked capture differs from the previous one everywhere, every time. The
+ * whole point of committing these is that the diff on the next ACSM upgrade
+ * shows what actually changed.
+ */
+/**
+ * A provenance string reduced to something safe and stable to commit.
+ *
+ * Unlike `stableUrl` this does NOT parse as a URL — these are sentences
+ * ("copy of championship <uuid> on this server") or filesystem paths, and
+ * URL-parsing a sentence percent-encodes the spaces into nonsense.
+ *
+ * Absolute paths are made relative to the working directory, because a fixture
+ * path resolved at load time carries somebody's home directory, and these
+ * files are committed and public.
+ */
+export function stableSource(source: string): string {
+  const absolute = isAbsolute(source)
+  const text = absolute ? toRepoRelative(source) : source
+  return text.replace(UUID_ANYWHERE, "{id}").replace(STEAM_GUID, "{guid}")
+}
+
+function toRepoRelative(absolutePath: string): string {
+  const rel = relative(process.cwd(), absolutePath)
+  // Outside the repo entirely: keep the filename, drop the directories.
+  return !rel || rel.startsWith("..") ? basename(absolutePath) : rel
+}
+
+export function stableUrl(url: string): string {
+  let out = url
+  try {
+    const u = new URL(url, "http://placeholder")
+    out = u.pathname + u.search
+  } catch {
+    // Already a path, or something unparseable; mask it as-is.
+  }
+  return out.replace(UUID_ANYWHERE, "{id}").replace(STEAM_GUID, "{guid}")
+}
 
 /**
  * EntryList keys whose count doesn't match the entrant count, excluding those

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest"
 
-import { comparePitBoxes, raggedKeys } from "../scripts/recon/report.js"
+import {
+  comparePitBoxes,
+  raggedKeys,
+  redactBaseUrl,
+  stableSource,
+  stableUrl,
+} from "../scripts/recon/report.js"
 import type { Entrant, EntryList } from "../src/acsm/types.js"
 import { championship, driver, raceEvent } from "./support/build.js"
 
@@ -96,5 +102,51 @@ describe("comparePitBoxes", () => {
   it("copes with a championship that has no events", () => {
     const empty = championship({ Events: [] })
     expect(comparePitBoxes(empty, empty)).toMatchObject({ sentCount: 0, returnedCount: 0 })
+  })
+})
+
+describe("masking for committed artefacts", () => {
+  it("keeps scheme and port but drops the host", () => {
+    expect(redactBaseUrl("http://192.168.2.4:8772")).toBe("http://<redacted>:8772")
+    expect(redactBaseUrl("https://ac.batlracing.com")).toBe("https://<redacted>")
+    expect(redactBaseUrl("not a url")).toBe("<redacted>")
+  })
+
+  it("reduces a form action to a path with ids masked", () => {
+    // Actions resolve to absolute URLs, so they carry the host; the ids are
+    // new on every run, so leaving them makes every capture differ.
+    expect(
+      stableUrl("http://192.168.2.4:8772/championship/b3607ce3-cb71-48e0-a335-ed09b8ce377e/event/submit"),
+    ).toBe("/championship/{id}/event/submit")
+  })
+
+  it("masks Steam GUIDs in entrant links", () => {
+    expect(stableUrl("/championship/x/entrant/76561198012345678")).toBe(
+      "/championship/x/entrant/{guid}",
+    )
+  })
+
+  it("makes an absolute fixture path repo-relative", () => {
+    // Resolved at load time it carries somebody's home directory, and these
+    // files are committed and public.
+    const abs = `${process.cwd()}/fixtures/synthetic/recon-seed.json`
+    expect(stableSource(abs)).toBe("fixtures/synthetic/recon-seed.json")
+  })
+
+  it("keeps only the filename for a path outside the repo", () => {
+    expect(stableSource("/etc/somewhere/else/export.json")).toBe("export.json")
+  })
+
+  it("leaves a relative path alone", () => {
+    expect(stableSource("fixtures/synthetic/recon-seed.json")).toBe(
+      "fixtures/synthetic/recon-seed.json",
+    )
+  })
+
+  it("masks ids in a provenance sentence without mangling it", () => {
+    // stableUrl would percent-encode the spaces into nonsense; this is prose,
+    // not a URL.
+    expect(stableSource("copy of championship b3607ce3-cb71-48e0-a335-ed09b8ce377e on this server"))
+      .toBe("copy of championship {id} on this server")
   })
 })

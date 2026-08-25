@@ -19,13 +19,12 @@ import { IMPORT_HOUSEKEEPING, type Change, diff, formatChanges } from "../../src
 import type { Championship } from "../../src/acsm/types.js"
 import { sessionKeysUsed } from "../../src/acsm/view.js"
 import { exportPath, importChampionship } from "../../src/acsm/write.js"
-import { comparePitBoxes } from "./report.js"
+import { comparePitBoxes, stableSource } from "./report.js"
 import {
   connect,
   log,
   runRecon,
   seedChampionship,
-  stableUrl,
   writeArtefact,
 } from "./env.js"
 
@@ -129,8 +128,8 @@ async function main(): Promise<void> {
     capturedAt: new Date().toISOString(),
     // Masked: the ids are new every run, and a throwaway container's id is
     // meaningless a day later. The console prints them at run time.
-    source: stableUrl(seedSource),
-    championshipId: stableUrl(championshipId),
+    source: stableSource(seedSource),
+    championshipId: stableSource(championshipId),
     idsPreserved,
     differences: redact(all),
     substantiveDifferences: redact(substantive),
