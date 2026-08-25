@@ -10,7 +10,7 @@
 import { SESSION_KEY_ALIASES, type ChampionshipEvent } from "../../acsm/types.js"
 import { classes, eventHasStarted, eventLabel, events, session } from "../../acsm/view.js"
 import type { Check } from "../context.js"
-import { pluralize } from "../finding.js"
+import { cap, pluralize } from "../finding.js"
 
 /**
  * Whether the event is meant to have a mandatory stop.
@@ -79,7 +79,7 @@ export const pitWindowDisagreesWithFormat: Check = {
       const label = eventLabel(ev, i + 1)
       const loc = { round: i + 1, event: label, path: `Events[${i}].RaceSetup.RacePitWindowStart` }
       const race = session(ev, "Race")
-      const lengthText = describeLength(race?.Laps ?? 0, race?.Time ?? 0)
+      const lengthText = lengthAdjective(race?.Laps ?? 0, race?.Time ?? 0)
 
       if (intent && windowStart === 0) {
         emit(
@@ -108,7 +108,17 @@ export const pitWindowDisagreesWithFormat: Check = {
  * Length as an adjective, for use before a noun: "a 40-lap single race".
  * Hyphenated, because "a 40 lap single race" reads as a typo.
  */
-function describeLength(laps: number, minutes: number): string {
+/**
+ * A race length as an adjective — "18-lap", "40-minute" — for the middle of a
+ * sentence.
+ *
+ * Deliberately not `describeLength`, which is exported from finalize/format.ts
+ * and produces "18 laps" for a diff a person reads. Two functions with one name
+ * and different output is worse than two copies of the same one: the wrong
+ * import still compiles, still reads correctly at the call site, and produces
+ * "a 18 laps race".
+ */
+function lengthAdjective(laps: number, minutes: number): string {
   if (laps > 0) return `${laps}-lap`
   if (minutes > 0) return `${minutes}-minute`
   return "long"
@@ -202,10 +212,6 @@ export const differsFromBaseline: Check = {
 function format(v: unknown): string {
   if (typeof v === "boolean") return v ? "on" : "off"
   return String(v)
-}
-
-function cap(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
 /**

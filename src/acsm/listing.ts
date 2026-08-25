@@ -8,8 +8,7 @@
 
 import * as cheerio from "cheerio"
 
-/** The championships listing page. */
-export const CHAMPIONSHIPS_PATH = "/championships"
+import { CHAMPIONSHIPS_PATH } from "./paths.js"
 
 const MAX_PAGES = 20
 
@@ -50,8 +49,9 @@ export function championshipIdsFrom(html: string): string[] {
  * and the archive's existing history is complete rather than truncated. That
  * mattered enough to check, since a silently short listing would have been
  * invisible in everything the archive had already collected.
- * which is exactly why it is written to find links rather than to construct
- * them. Guessing that the parameter is `?page=` and looping until a page comes
+ *
+ * So this returns nothing today, which is exactly why it is written to find
+ * links rather than to construct them. Guessing that the parameter is `?page=` and looping until a page comes
  * back empty would be a guess about a shape nobody has seen, and it would look
  * like it worked too. Any anchor back to the listing with a different query is
  * a further page whatever the parameter turns out to be called.

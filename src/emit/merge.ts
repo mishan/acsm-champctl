@@ -34,7 +34,17 @@
 import { FORBIDDEN_KEYS } from "../acsm/write.js"
 
 /** Plain object, as distinct from an array, null, or a class instance. */
-function isPlainObject(v: unknown): v is Record<string, unknown> {
+/**
+ * A `{}`-shaped object, and nothing with a prototype of its own.
+ *
+ * Stricter than `diff.ts`'s predicate of the same name, on purpose: a deep
+ * merge that recursed into a Date or a class instance would take it apart
+ * field by field and hand back a plain object wearing its properties. The
+ * looser one is right for diffing, where walking anything object-shaped is
+ * exactly what is wanted. Named apart so the difference is a decision rather
+ * than a coincidence of imports.
+ */
+function isMergeableObject(v: unknown): v is Record<string, unknown> {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return false
   const proto = Object.getPrototypeOf(v) as unknown
   return proto === Object.prototype || proto === null
@@ -47,7 +57,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  */
 export function deepMerge<T>(base: T, overlay: unknown): T {
   if (overlay === undefined) return base
-  if (!isPlainObject(base) || !isPlainObject(overlay)) return overlay as T
+  if (!isMergeableObject(base) || !isMergeableObject(overlay)) return overlay as T
 
   const out: Record<string, unknown> = { ...base }
   for (const [key, value] of Object.entries(overlay)) {

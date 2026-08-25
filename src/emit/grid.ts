@@ -16,6 +16,7 @@
  * applies on one night of it.
  */
 
+import { humanList } from "../gridmom/finding.js"
 import type { PitTable } from "../pits/table.js"
 
 export interface TrackRef {
@@ -62,7 +63,7 @@ export function gridCap(
     // and the label already agree about " spa " and "spa". Repeating it at the
     // call site would be a second copy of a rule that has one home, and the
     // kind that drifts. `test/infra.test.ts` pins the boundary.
-    const label = trackLabel(t)
+    const label = trackPhrase(t)
     const record = pits?.get(t.track, t.layout ?? "")
     if (!record || typeof record.pitboxes !== "number" || record.pitboxes <= 0) {
       if (!unknownTracks.includes(label)) unknownTracks.push(label)
@@ -114,14 +115,16 @@ export function gridCap(
  * "spa" and "spa " — in a list whose whole job is telling someone which track
  * to add a pit count for.
  */
-function trackLabel(t: TrackRef): string {
+/**
+ * A track for the middle of a sentence — "Brands Hatch (Indy)".
+ *
+ * Deliberately not `trackLabel`, which is exported from acsm/view.ts and
+ * produces the identifier form `brands_hatch/indy`. Same idea, different
+ * audience, and one name for both is how "capped at 24 by brands_hatch/indy"
+ * reaches a person.
+ */
+function trackPhrase(t: TrackRef): string {
   const track = t.track.trim()
   const layout = t.layout?.trim()
   return layout ? `${track} (${layout})` : track
-}
-
-function humanList(items: readonly string[]): string {
-  if (items.length <= 1) return items[0] ?? ""
-  if (items.length === 2) return `${items[0]} and ${items[1]}`
-  return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`
 }

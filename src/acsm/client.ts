@@ -11,6 +11,7 @@
  */
 
 import { walkChampionshipIds } from "./listing.js"
+import { exportPath } from "./paths.js"
 import type { Championship, ChampionshipSummary } from "./types.js"
 import { RateLimiter, type RateLimiterOptions } from "./rate-limit.js"
 
@@ -267,12 +268,15 @@ function assertJson(bytes: Buffer, path: string, url: string): unknown {
   }
 }
 
-/** Path to a championship's export. */
-function exportPath(id: string): string {
-  return `/championship/${encodeURIComponent(id)}/export`
-}
-
-function asMessage(e: unknown): string {
+/**
+ * An error as a sentence, naming an abort as what it actually was.
+ *
+ * `AbortError` is what a fetch timeout throws, and "The operation was aborted"
+ * reads like something champctl chose to do. Exported because the archive had
+ * its own copy without the abort case, so the one place most likely to time out
+ * — a nightly run over every championship — was the one reporting it worst.
+ */
+export function asMessage(e: unknown): string {
   if (e instanceof Error) return e.name === "AbortError" ? "timed out" : e.message
   return String(e)
 }

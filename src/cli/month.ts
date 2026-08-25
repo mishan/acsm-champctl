@@ -18,7 +18,6 @@
  */
 
 import { readFile, writeFile } from "node:fs/promises"
-import { createInterface } from "node:readline/promises"
 import { pathToFileURL } from "node:url"
 import { resolve } from "node:path"
 
@@ -31,7 +30,7 @@ import { EmitError, emitMonth, type EmitResult, type MonthSpec } from "../emit/m
 import { ScheduleError } from "../finalize/schedule.js"
 import { check } from "../gridmom/index.js"
 import { loadProfile } from "../profile/load.js"
-import { loadPits, reportUsageError, runCli, UsageError } from "./args.js"
+import { confirm, loadPits, reportUsageError, runCli, UsageError } from "./args.js"
 
 // Re-exported so callers and tests have one obvious place to import it from,
 // while there is still only one class.
@@ -230,30 +229,6 @@ function assertMonthSpec(value: unknown, path: string): asserts value is MonthSp
     if (typeof r !== "object" || r === null || Array.isArray(r)) {
       bad(`has a round ${i + 1} that is not an object`)
     }
-  }
-}
-
-/**
- * Asks, when there is someone to ask. Twin of the one in `finalize.ts`.
- *
- * With stdin at EOF — cron, a closed fd, `< /dev/null` — `rl.question` never
- * settles: the process hangs and then exits **13** on Node's unsettled
- * top-level await warning, outside the documented 0/1/2/3 contract. The prompt
- * goes to stderr so it cannot corrupt a `--json` document on stdout.
- */
-export async function confirm(question: string): Promise<boolean> {
-  if (!process.stdin.isTTY) {
-    throw new UsageError(
-      "Refusing to ask for confirmation with nothing attached to stdin — there is no one to " +
-        "answer, and waiting would hang. Pass --yes to confirm up front.",
-    )
-  }
-  const rl = createInterface({ input: process.stdin, output: process.stderr })
-  try {
-    const answer = await rl.question(`${question} [y/N] `)
-    return /^y(es)?$/i.test(answer.trim())
-  } finally {
-    rl.close()
   }
 }
 
