@@ -530,6 +530,35 @@ describe("emitting a month", () => {
     expect(derived.join(" ")).toMatch(/references to the template's id/)
   })
 
+  it("emits a month with nothing reparented, whatever the template carried", () => {
+    // An end-to-end invariant, not a test of one guard. Two passes rebuild
+    // every object in the championship — the id sweep and, for a non-UUID root
+    // id, replaceExactString — and `out[k] = ...` with a __proto__ key
+    // reparents an object rather than adding a field. An export is parsed
+    // JSON, where __proto__ survives as an ordinary own property.
+    //
+    // Deliberately asserted on the emitted month rather than on either pass:
+    // when this was written the two happened to cancel out, the sweep
+    // reparenting and replaceExactString rebuilding it away, so a test aimed
+    // at one of them passed whether or not it was guarded. What must hold is
+    // that nothing comes out of emitMonth inheriting fields nobody set.
+    const t = template({ ID: "last-months-championship" }) as Championship & {
+      SomeFutureAcsmField?: unknown
+    }
+    // Parsed, because __proto__ only survives as an own property that way.
+    t.SomeFutureAcsmField = JSON.parse(
+      String.raw`{"__proto__":{"polluted":true},"Ref":"ok"}`,
+    ) as object
+
+    const { championship: c } = emit({ template: t })
+    const field = (c as Record<string, unknown>)["SomeFutureAcsmField"] as Record<string, unknown>
+
+    expect(field["polluted"]).toBeUndefined()
+    expect(Object.getPrototypeOf(field)).toBe(Object.prototype)
+    expect(field["Ref"]).toBe("ok")
+    expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined()
+  })
+
   it("does not repoint the nil UUID, which means 'unset' everywhere", () => {
     // The one id that must not be swept: it is the blank-value sentinel, so
     // rewriting each occurrence would turn every unset date and reference in

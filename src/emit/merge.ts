@@ -46,7 +46,24 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * JSON is a prototype-pollution attempt. `JSON.parse` keeps it as an ordinary
  * own property, which is exactly what makes a naive recursive merge assign it.
  */
-const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"])
+/**
+ * Keys that must never be assigned onto a rebuilt object.
+ *
+ * `out[k] = value` where the key is `__proto__` reparents the object rather
+ * than adding a field, and a spec or template is parsed JSON, where the key
+ * survives as an ordinary own property.
+ *
+ * Exported because `deepMerge` is not the only place in this directory that
+ * rebuilds an object — `replaceExactString` in `month.ts` does too, and two
+ * copies of the list is one that gets updated and one that doesn't. The id
+ * sweep in `acsm/write.ts` needs the same rule and currently keeps its own
+ * copy; the two should become one once both branches have landed.
+ */
+export const FORBIDDEN_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+])
 
 /**
  * Deep-merges `overlay` onto `base`, returning a new value.

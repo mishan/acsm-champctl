@@ -41,7 +41,7 @@ import { applyFormat } from "../finalize/format.js"
 import { practiceMinutesFor } from "../finalize/schedule.js"
 import type { PitTable } from "../pits/table.js"
 import type { LeagueProfile } from "../profile/types.js"
-import { deepMerge, mergeAll } from "./merge.js"
+import { deepMerge, FORBIDDEN_KEYS, mergeAll } from "./merge.js"
 import { gridCap, type GridCap } from "./grid.js"
 import { monthSchedule, type RoundSchedule } from "./schedule.js"
 
@@ -454,13 +454,6 @@ export function unclaimedEntryList(slots: number): EntryList {
 const NIL_UUID = "00000000-0000-0000-0000-000000000000"
 
 /**
- * Whether `regenerateIds` would have given this ID a fresh value.
- *
- * The nil UUID is excluded precisely *because* the sweep skips it. Counting it
- * as already-fresh would let a template whose ID is all zeroes emit a month
- * that keeps it — and then every such month collides with every other one.
- */
-/**
  * Replaces every string that exactly equals `from`, returning a new object.
  *
  * Deliberately whole-string rather than substring: an ID embedded in a URL or
@@ -473,7 +466,17 @@ function replaceExactString<T>(value: T, from: string, to: string): T {
     if (Array.isArray(v)) return v.map(walk)
     if (v && typeof v === "object") {
       const out: Record<string, unknown> = {}
-      for (const [k, val] of Object.entries(v)) out[k] = walk(val)
+      for (const [k, val] of Object.entries(v)) {
+        // Same guard `deepMerge` uses, for the same reason and from the same
+        // list. A template is parsed JSON, where `__proto__` survives as an
+        // ordinary own property — and `out[k] = ...` on a plain object with
+        // that key reparents the object rather than adding a field, so the
+        // emitted month would silently inherit whatever it pointed at.
+        // Rebuilding an object is exactly where that bites, and this rebuilds
+        // every object in the championship.
+        if (FORBIDDEN_KEYS.has(k)) continue
+        out[k] = walk(val)
+      }
       return out
     }
     return v
@@ -481,6 +484,13 @@ function replaceExactString<T>(value: T, from: string, to: string): T {
   return walk(value) as T
 }
 
+/**
+ * Whether `regenerateIds` would have given this ID a fresh value.
+ *
+ * The nil UUID is excluded precisely *because* the sweep skips it. Counting it
+ * as already-fresh would let a template whose ID is all zeroes emit a month
+ * that keeps it — and then every such month collides with every other one.
+ */
 function isFreshlyGeneratedId(value: string | undefined): boolean {
   if (!value || value === NIL_UUID) return false
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
