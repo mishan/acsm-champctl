@@ -4,6 +4,7 @@ import { api, isAuthFailure, type Config, type SessionState } from "./api"
 import { ChampionshipList } from "./components/ChampionshipList"
 import { Finalize } from "./components/Finalize"
 import { Login } from "./components/Login"
+import { NewMonth } from "./components/NewMonth"
 import { Message } from "./components/Message"
 import { RoundList } from "./components/RoundList"
 import { useRoute } from "./route"
@@ -77,8 +78,25 @@ export function App(): React.JSX.Element {
 
       <main>
         {route.name === "home" && (
-          <ChampionshipList
-            onOpen={(id) => navigate({ name: "championship", id })}
+          <>
+            <div className="actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => navigate({ name: "new-month" })}
+              >
+                New month
+              </button>
+            </div>
+            <ChampionshipList
+              onOpen={(id) => navigate({ name: "championship", id })}
+              onAuthLost={onAuthLost}
+            />
+          </>
+        )}
+        {route.name === "new-month" && (
+          <NewMonth
+            onCreated={(id) => navigate({ name: "championship", id })}
             onAuthLost={onAuthLost}
           />
         )}

@@ -26,23 +26,37 @@ import type {
   ConfigResponse,
   FormatPreset,
   LoginResponse,
+  MonthImportResponse,
+  MonthPlanRequest,
+  MonthPlanResponse,
+  MonthPlanView,
+  MonthRoundView,
   PlanRequest,
   PlanResponse,
   PlanView,
   RaceFormat,
   RoundView,
   SessionResponse,
+  TrackRequest,
 } from "../../src/web/wire.js"
 
 export type {
   ApplyResponse,
   ChampionshipListItem,
-  // `championship()` returns it, for the same reason `PlanResponse` is here.
+  // Every response type this module returns is re-exported, so a caller that
+  // wants to name what it got back never has to reach past here into the
+  // server's wire types.
+  ChampionshipListResponse,
   ChampionshipResponse,
   ChampionshipView,
   CheckReport,
   Finding,
   FormatPreset,
+  MonthImportResponse,
+  MonthPlanRequest,
+  MonthPlanResponse,
+  MonthPlanView,
+  MonthRoundView,
   PlanRequest,
   // `plan()` returns it, so a caller that wants to name what it got back
   // should not have to reach past this module into the server's wire types.
@@ -51,6 +65,7 @@ export type {
   RaceFormat,
   RoundView,
   Severity,
+  TrackRequest,
 }
 
 /** Local aliases for the two the components read most. */
@@ -172,4 +187,17 @@ export const api = {
    */
   apply: (planId: string, acknowledgeWarnings: boolean): Promise<ApplyResponse> =>
     request(`/plans/${encodeURIComponent(planId)}/apply`, json({ acknowledgeWarnings })),
+
+  /**
+   * Preview a month cloned from a past championship. Writes nothing.
+   *
+   * Takes a signal for the same reason `plan` does: the review screen
+   * re-previews as the track list is edited.
+   */
+  monthPlan: (body: MonthPlanRequest, signal?: AbortSignal): Promise<MonthPlanResponse> =>
+    request("/months/plan", { ...json(body), ...(signal ? { signal } : {}) }),
+
+  /** Create it. Takes the plan id, so what lands is what was reviewed. */
+  createMonth: (planId: string, acknowledgeWarnings: boolean): Promise<MonthImportResponse> =>
+    request(`/months/${encodeURIComponent(planId)}/import`, json({ acknowledgeWarnings })),
 }
