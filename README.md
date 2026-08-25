@@ -19,6 +19,10 @@ README covers what exists today.
   harness so the write path can be verified against a throwaway ACSM rather than
   by hand.
 
+- **Phase 3 — finalize a race.** The engine is in: the flow with a diff preview
+  and the stale-entry-list guard, plus the server-side session store. No HTTP
+  server or UI on top of it yet.
+
 The read client and the write session are separate types on purpose. The bot and
 the archive import only `AcsmReader`, which has no way to authenticate — that
 makes "the bot never holds write credentials" a property of the code.
@@ -32,6 +36,8 @@ src/
   pits/        track pit table, acsm | scan | manual precedence
   profile/     league profile schema + loader
   gridmom/     the checker: findings model, check registry, formatters
+  finalize/    race format, schedule maths, plan + apply (phase 3)
+  web/         server-side session store for the UI
   cli/         the command-line entry points, over a shared args module
 docker/        throwaway ACSM for recon and live tests
 scripts/recon/ form and round-trip recon against the harness
@@ -201,6 +207,48 @@ it.
 `--since` is parsed strictly as ISO 8601, and a bare date means UTC midnight
 rather than the machine's, so the same cron line means the same thing
 everywhere.
+
+## Finalize a race
+
+The weekly flow from plan §5.2, as a library: read the event, apply a voted
+format, preview exactly what changes, push. Phase 3's engine — no HTTP server
+or UI yet, which is where the rest of Phase 3 goes.
+
+```ts
+const plan = await planFinalize(session, {
+  championship, championshipId, eventId,
+  format: { length: { kind: "laps", laps: 18 }, reversedGridPositions: 5,
+            mandatoryPit: true, extraLap: false },
+  qualiStart: { date: "2026-09-09", time: "20:00" },  // optional
+  profile, pits,
+})
+
+plan.changes      // "Race length: 40 minutes → 18 laps"
+plan.formChanges  // the exact fields that will be posted
+plan.gridmom      // checked against the championship as it *would* be
+plan.blocked      // an ERROR; nothing overrides this
+
+await applyFinalize(session, plan, { acknowledgeWarnings: true })
+```
+
+Planning performs no writes. Three things about applying are worth knowing:
+
+**The entry list is fingerprinted at preview time and re-checked immediately
+before the POST.** ACSM's event form replaces the whole entry list, so a
+sign-up approved in ACSM while the preview is open would be silently deleted by
+the save — plan §5.3 calls this the most likely way champctl could destroy data
+while appearing to work. On a mismatch the write is refused and nothing is
+sent. The window doesn't close entirely, since ACSM has no conditional write,
+but it shrinks to one round trip and the failure is loud.
+
+**It's two requests, not one.** The event submit form doesn't carry
+`Scheduled`, so moving quali time is a second POST to the schedule endpoint.
+The event save goes first: if it fails, the schedule is untouched and the event
+is unchanged, which is at least coherent.
+
+**gridmom runs against the would-be championship**, not the current one, so the
+preview shows the problems this change is about to introduce rather than
+yesterday's.
 
 ## League profiles
 

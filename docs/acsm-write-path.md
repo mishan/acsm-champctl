@@ -431,3 +431,37 @@ never-import-over-a-live-ID rule stays load-bearing.
 - `EntryList.InternalUUID` is a hidden field in the form, confirming it is
   per-list identity rather than a join key: the form carries whatever that list
   rendered.
+
+## 14. `RaceExtraLap` is not a browser checkbox
+
+It looks like one, and treating it as one silently inverts the setting.
+
+The rule for a checkbox is that an unchecked box is *absent* from the
+submission, so a client sets it by adding the key and clears it by removing
+the key. Our form parser deliberately reproduces that (§4): it drops unchecked
+boxes.
+
+`RaceExtraLap` does not behave that way. The recon capture shows the field
+present **exactly once** on the rendered event form, while the seed
+championship it was captured from has `RaceExtraLap: false`. Presence therefore
+does not mean checked — the field carries its value rather than its existence.
+Adding and removing the key would have written the opposite of what the person
+asked for, in both directions, with no error.
+
+So the finalize path writes it as `"1"` / `"0"` in place, via `setOne`, which
+also refuses to touch a key that appears more than once. If a later build
+renders it paired (a hidden `0` plus a checkbox `1`, giving a count of two)
+that fails loudly rather than scrambling the form's arity.
+
+Two things still unconfirmed, both cheap to settle on the harness:
+
+- Whether the single field is a hidden input, a select, or something else.
+  Only the count and the value were captured.
+- The same question for the other boolean-looking scalars on that form —
+  `ABSAllowed`, `TyreBlanketsAllowed`, `ForceVirtualMirror`. champctl doesn't
+  write any of them yet, so nothing depends on the answer today, but anything
+  that starts writing them needs to ask first.
+
+The general lesson is worth keeping: **the count in a form capture tells you
+the arity, not the encoding.** Pair it with a known value from the export
+before deciding what a field means.
