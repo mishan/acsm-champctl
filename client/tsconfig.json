@@ -1,0 +1,11 @@
+{
+  "//": "The client compiles against the same strict settings as the server, plus DOM and JSX. `types: node` is here because the client imports response types from src/web/, and those files transitively import node builtins for their own use — type-only, erased at build. A *value* import from src/ would break the Vite build loudly rather than quietly ship the server, which is the failure mode to want.",
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}
