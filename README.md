@@ -271,9 +271,11 @@ off the ACSM source rather than guessed.
 - **Content checks need a source.** `ContentIndex` is defined and wired in, but
   nothing populates it, so the three checks that need it — `content.track-`,
   `content.car-` and `content.skin-missing` — cannot fire in production. The
-  fourth, `content.pit-count-unknown`, reads the pit table rather than the
-  content index and works today. `/content/tracks/{track}/ui/ui_track.json` is
-  the endpoint; the harness needs AC content installed to exercise it. The
+  fourth reads the pit table rather than the content index and works today,
+  emitting `content.pit-count-unknown` for a track the pit table has never
+  heard of and `content.pit-count-unverified` for one taken on trust.
+  `/content/tracks/{track}/ui/ui_track.json` is the endpoint; the harness needs
+  AC content installed to exercise it. The
   three gated checks are tested against a stub index, so they will be right
   when a producer arrives rather than being written and verified at the same
   time as it.

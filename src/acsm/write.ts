@@ -115,16 +115,6 @@ export async function exportAsReimportableCopy(
 }
 
 /**
- * Rewrites every UUID in a championship so an import creates a new object.
- *
- * ACSM preserves UUIDs exactly as sent, which makes this load-bearing rather
- * than tidy: re-importing an unmodified export overwrites the championship it
- * came from (plan §5.4).
- *
- * Identity is remapped consistently — a given old ID always becomes the same
- * new one — so internal references survive.
- */
-/**
  * Keys that must never be assigned onto a rebuilt object.
  *
  * `out[k] = value` on a plain object whose key is `__proto__` *reparents* the
@@ -143,6 +133,16 @@ export const FORBIDDEN_KEYS: ReadonlySet<string> = new Set([
   "prototype",
 ])
 
+/**
+ * Rewrites every UUID in a championship so an import creates a new object.
+ *
+ * ACSM preserves UUIDs exactly as sent, which makes this load-bearing rather
+ * than tidy: re-importing an unmodified export overwrites the championship it
+ * came from (plan §5.4).
+ *
+ * Identity is remapped consistently — a given old ID always becomes the same
+ * new one — so internal references survive.
+ */
 export function regenerateIds<T>(value: T): T {
   const mapping = new Map<string, string>()
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
