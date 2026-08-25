@@ -16,13 +16,13 @@ import { DateTime } from "luxon"
 import type { ChampionshipEvent } from "../../acsm/types.js"
 import { eventHasStarted, eventLabel, events, isZeroTime, session } from "../../acsm/view.js"
 import type { Check, CheckContext } from "../context.js"
-import { humanList } from "../finding.js"
+import { MESSAGE_LOCALE, humanList } from "../finding.js"
 
 /** Parses `Scheduled` into the league zone, preserving the instant. */
 function scheduledAt(ev: ChampionshipEvent, zone: string): DateTime | undefined {
   if (isZeroTime(ev.Scheduled)) return undefined
   const dt = DateTime.fromISO(ev.Scheduled!, { setZone: true })
-  return dt.isValid ? dt.setZone(zone) : undefined
+  return dt.isValid ? dt.setZone(zone).setLocale(MESSAGE_LOCALE) : undefined
 }
 
 /** Practice duration in minutes, from the event if set, else the profile. */
@@ -132,7 +132,7 @@ export const twoEventsSameNight: Check = {
       emit(
         "WARN",
         "schedule.collision",
-        `${humanList(evs.map((e) => e.label))} are all scheduled for ${DateTime.fromISO(day).toFormat("cccc d LLLL")}.`,
+        `${humanList(evs.map((e) => e.label))} are all scheduled for ${DateTime.fromISO(day).setLocale(MESSAGE_LOCALE).toFormat("cccc d LLLL")}.`,
         { path: "Events[].Scheduled" },
         { date: day, rounds: evs.map((e) => e.round) },
       )
@@ -145,7 +145,7 @@ export const scheduledInThePast: Check = {
   section: "6.2",
   run(ctx, emit) {
     const { timezone } = ctx.profile.schedule
-    const now = DateTime.fromJSDate(ctx.now, { zone: timezone })
+    const now = DateTime.fromJSDate(ctx.now, { zone: timezone }).setLocale(MESSAGE_LOCALE)
 
     events(ctx.championship).forEach((ev, i) => {
       if (eventHasStarted(ev)) return

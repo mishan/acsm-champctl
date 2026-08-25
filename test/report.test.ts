@@ -166,6 +166,23 @@ describe("suppression", () => {
     })
     expect(report(c, ["format"]).findings.every((f) => !f.code.startsWith("format."))).toBe(true)
   })
+
+  it("hides a check by its id, even when the codes aren't under it", () => {
+    // `champ.acsr` emits `champ.acsr-export`: a sibling of the check id, not a
+    // dotted child, so prefix matching never reached it. Suppressing the check
+    // by the name champctl prints for it has to work, or a league has to guess
+    // codes it has only ever seen in output.
+    const c = championship({ ACSR: false, ExportSecondRaceToACSR: true })
+    expect(report(c).findings.map((f) => f.code)).toContain("champ.acsr-export")
+    expect(report(c, ["champ.acsr"]).findings.map((f) => f.code)).not.toContain("champ.acsr-export")
+  })
+
+  it("doesn't let a check id swallow its neighbours", () => {
+    // `champ.acsr` must not take `champ.acsr-gates`' unrelated siblings with
+    // it — suppression is per-check, not a substring sweep of `champ.`.
+    const c = championship({ ACSR: false, ExportSecondRaceToACSR: true, Events: [] })
+    expect(report(c, ["champ.acsr"]).findings.map((f) => f.code)).toContain("champ.no-events")
+  })
 })
 
 describe("robustness", () => {

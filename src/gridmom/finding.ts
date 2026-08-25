@@ -34,9 +34,33 @@ export interface FindingLocation {
   path?: string
 }
 
+/**
+ * The locale every message renders in.
+ *
+ * The prose around a date is English, so the date has to be too. Luxon
+ * otherwise formats through the host's `Intl`, which turns one sentence into
+ * "round 1 is on Mittwoch" under `LANG=de_DE` — and makes a test asserting
+ * "Thursday" pass in CI and fail on someone's laptop.
+ *
+ * Applied per `DateTime` rather than through `Settings.defaultLocale`, which
+ * is process-global: gridmom is a library that runs inside someone else's
+ * program, and reaching into Luxon's globals is not its business.
+ */
+export const MESSAGE_LOCALE = "en"
+
 export interface Finding {
   /** Stable machine id, e.g. `entry.duplicate-pit-box`. Safe to suppress on. */
   code: string
+  /**
+   * The check that produced it, e.g. `champ.acsr`.
+   *
+   * Not always the same as `code`, which is the point: one check can emit
+   * several codes, and `champ.acsr` emits `champ.acsr-export` and
+   * `champ.acsr-gates`. Those are *siblings* of the check id rather than
+   * dotted children, so `--suppress champ.acsr` matched neither and a league
+   * had to know an emitted code that appears nowhere in the check list.
+   */
+  checkId?: string
   severity: Severity
   /** One plain sentence. Discord-ready. No severity words, no jargon. */
   message: string

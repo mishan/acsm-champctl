@@ -44,13 +44,19 @@ export interface Check {
 
 export function collect(ctx: CheckContext, checks: readonly Check[]): Finding[] {
   const findings: Finding[] = []
+  // Which check is currently running, so every finding it emits can say where
+  // it came from. `--suppress` needs that: a check's id is not always one of
+  // the codes it emits.
+  let running = ""
   const emit: Emit = (severity, code, message, location, data) => {
     const f: Finding = { code, severity, message }
+    if (running) f.checkId = running
     if (location) f.location = location
     if (data) f.data = data
     findings.push(f)
   }
   for (const check of checks) {
+    running = check.id
     try {
       check.run(ctx, emit)
     } catch (e) {

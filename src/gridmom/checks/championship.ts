@@ -6,7 +6,7 @@ import { DateTime } from "luxon"
 
 import { classes, events, isZeroTime, slots, trackLabel } from "../../acsm/view.js"
 import type { Check } from "../context.js"
-import { humanList, pluralize } from "../finding.js"
+import { MESSAGE_LOCALE, humanList, pluralize } from "../finding.js"
 
 export const dropScoresExceedRounds: Check = {
   id: "champ.ignore-worst",
@@ -186,9 +186,9 @@ export const signUpDeadlinePassed: Check = {
     if (isZeroTime(closes)) return
 
     const zone = ctx.profile.schedule.timezone
-    const deadline = DateTime.fromISO(closes!, { setZone: true })
+    const deadline = DateTime.fromISO(closes!, { setZone: true }).setLocale(MESSAGE_LOCALE)
     if (!deadline.isValid) return
-    const now = DateTime.fromJSDate(ctx.now, { zone })
+    const now = DateTime.fromJSDate(ctx.now, { zone }).setLocale(MESSAGE_LOCALE)
     if (deadline >= now) return
 
     emit(
@@ -234,7 +234,7 @@ export const createdBeforeItsOwnEvents: Check = {
   run(ctx, emit) {
     const created = ctx.championship.Created
     if (isZeroTime(created)) return
-    const createdAt = DateTime.fromISO(created!, { setZone: true })
+    const createdAt = DateTime.fromISO(created!, { setZone: true }).setLocale(MESSAGE_LOCALE)
     if (!createdAt.isValid) return
 
     const scheduledTimes = events(ctx.championship)
