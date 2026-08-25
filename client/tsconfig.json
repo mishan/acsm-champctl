@@ -1,0 +1,11 @@
+{
+  "//": "The client compiles against the same strict settings as the server, plus DOM and JSX. `types: []` because this is a browser bundle and nothing in it should typecheck against Node globals: with @types/node in scope, `setTimeout` resolves to the Node overload returning a `Timeout` object rather than the DOM one returning a number, and code written against that compiles here and misbehaves in a browser. It does not hide the React typings — `types` governs which @types packages are injected as globals, while React arrives through ordinary module resolution, from `import ... from 'react'` and from `react/jsx-runtime` via `jsx: react-jsx`. The client imports response types from src/web/, whose modules import node builtins for their own use; those are type-only and erased, and resolve without the globals. A *value* import from src/ would break the Vite build loudly rather than quietly ship the server, which is the failure mode to want.",
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "types": []
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}
