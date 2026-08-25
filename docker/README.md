@@ -201,9 +201,9 @@ docker compose exec acsm cat /usr/local/bin/steamcmd
 If you're seeing it on an image built before this fix, rebuild:
 
 ```sh
-docker compose down
-docker build -f Dockerfile.premium -t champctl/acsm-premium:local .
-docker compose up -d
+npm run harness:down
+npm run harness:build
+npm run harness:up
 ```
 
 **The UI never comes up.** `npm run harness:logs`. With Steam credentials set,
@@ -286,9 +286,15 @@ Answers you don't get:
 | | |
 |---|---|
 | `docker-compose.yml` | Premium service by default, `oss` profile for the public image |
-| `Dockerfile.premium` | Builds an image from a release zip in `premium/` |
-| `config.yml` | Monitoring off, no steam credentials, fixed session key |
-| `.env.example` | Copy to `.env`; holds the image name and harness credentials |
+| `Dockerfile.premium` | Builds an image from the release zip in `premium/` |
+| `entrypoint.sh` | Renders the config at boot, then checks there's a server to run |
+| `config.template.yml` | The premium service's config, with `__STEAM_*__` placeholders |
+| `config.oss.yml` | The same thing with blanks, for the `oss` profile |
+| `.env.example` | Copy to `.env`; holds the image names and harness credentials |
+
+There is deliberately no tracked `config.yml`. The entrypoint writes one into
+the container at boot from the template plus `.env`, which is what keeps the
+Steam credentials out of git.
 
 `premium/*.zip` and `.env` are both gitignored — the zip is licensed software
 and the `.env` holds a password.

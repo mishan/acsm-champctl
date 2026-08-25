@@ -3,8 +3,10 @@
 # The premium build isn't published as a Docker image, so drop the release zip
 # you downloaded into docker/premium/ and build:
 #
-#   cd docker
-#   docker build -f Dockerfile.premium -t champctl/acsm-premium:local .
+#   npm run harness:build
+#
+# Compose owns the build; building this by hand skips whatever build args it
+# passes and diverges from what docker/README.md documents.
 #
 # The zip is gitignored. Do not commit it — it is licensed software.
 #
@@ -98,15 +100,30 @@ RUN set -eux; \
 
 WORKDIR /home/assetto/server-manager
 
-# Unpack whichever release zip is present. The wildcard keeps the Dockerfile
-# from pinning a version you then have to edit on every ACSM upgrade.
+# Unpack the release zip. The wildcard keeps the Dockerfile from pinning a
+# version you'd have to edit on every ACSM upgrade — but there must be exactly
+# one, because which build ends up in the image is the whole question this
+# harness exists to answer.
 COPY premium/*.zip /tmp/acsm/
 RUN set -eux; \
-    zip="$(find /tmp/acsm -name '*.zip' | head -n1)"; \
-    test -n "$zip"; \
+    zips="$(find /tmp/acsm -maxdepth 1 -name '*.zip' | sort)"; \
+    count="$(printf '%s\n' "$zips" | grep -c . || true)"; \
+    if [ "$count" -eq 0 ]; then \
+      echo "No release zip in docker/premium/. Put one there and rebuild." >&2; exit 1; \
+    fi; \
+    if [ "$count" -gt 1 ]; then \
+      echo "More than one zip in docker/premium/:" >&2; \
+      printf '  %s\n' $zips >&2; \
+      echo "Leave exactly one — otherwise which version gets built is a coin toss," >&2; \
+      echo "and a harness built from the wrong version answers the wrong questions." >&2; \
+      exit 1; \
+    fi; \
+    zip="$zips"; \
+    echo "Building from $(basename "$zip")"; \
     unzip -q "$zip" -d /tmp/acsm/extracted; \
-    bin="$(find /tmp/acsm/extracted -type f -name 'server-manager' | head -n1)"; \
-    test -n "$bin" || { echo "No linux 'server-manager' binary in $zip"; exit 1; }; \
+    bins="$(find /tmp/acsm/extracted -type f -name 'server-manager' | sort)"; \
+    bin="$(printf '%s\n' "$bins" | head -n1)"; \
+    test -n "$bin" || { echo "No linux 'server-manager' binary in $zip" >&2; exit 1; }; \
     cp "$bin" /home/assetto/server-manager/server-manager; \
     chmod +x /home/assetto/server-manager/server-manager; \
     # Keep anything shipped alongside the binary (plugins, static assets on
