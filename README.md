@@ -180,7 +180,8 @@ off the ACSM source rather than guessed.
   championship. So a pit box past the end of a track is only an ERROR once the
   event has actually run — before that it's the expected shape of an
   oversubscribed list.
-- **`EntryList.OverwriteAllEvents` and `TransferTeamPoints` are never sent.**
+- **`EntryList.OverwriteAllEvents` and `EntryList.TransferTeamPoints` are never
+  sent.**
   ACSM renders them once per entrant with no hidden partner and reads them
   positionally, so omitting the unchecked ones shifts the rest onto the wrong
   people. `postForm` strips both; absent means "false for everyone".

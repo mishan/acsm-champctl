@@ -162,6 +162,25 @@ describe("pit table precedence", () => {
     expect(t.get("spa")?.pitboxes).toBe(26)
   })
 
+  it("normalises whitespace at the lookup, so callers don't have to", () => {
+    // The one place this rule lives. gridCap builds a human-facing label from
+    // the same track and layout it looks up with, so if the lookup were
+    // whitespace-sensitive the summary would name a track the table had never
+    // found — and every caller would need its own trim to stay honest, which
+    // is the sort of rule that drifts once it has two homes.
+    const t = new InMemoryPitTable([
+      { track: "spa", layout: "", pitboxes: 30, source: "manual" },
+      { track: "brands_hatch", layout: "indy", pitboxes: 24, source: "manual" },
+    ])
+    expect(t.get(" spa ")?.pitboxes).toBe(30)
+    expect(t.get("brands_hatch", " indy ")?.pitboxes).toBe(24)
+    // And records are normalised on the way in, not only on the way out.
+    const messy = new InMemoryPitTable([
+      { track: " monza ", layout: " ", pitboxes: 26, source: "manual" },
+    ])
+    expect(messy.get("monza")?.pitboxes).toBe(26)
+  })
+
   it("falls back from a layout to the whole track", () => {
     const t = new InMemoryPitTable([
       { track: "silverstone", layout: "", pitboxes: 24, source: "manual" },
