@@ -23,7 +23,7 @@ import { pathToFileURL } from "node:url"
 import { AcsmError, HttpAcsmReader } from "../acsm/client.js"
 import { AcsmSession } from "../acsm/session.js"
 import { events } from "../acsm/view.js"
-import { applyFinalize, EntryListChangedError } from "../finalize/apply.js"
+import { applyFinalize, EntryListChangedError, PartialWriteError } from "../finalize/apply.js"
 import type { RaceFormat, RaceLength } from "../finalize/format.js"
 import { readFormat } from "../finalize/format.js"
 import { FinalizeError, planFinalize, type FinalizePlan } from "../finalize/plan.js"
@@ -105,9 +105,28 @@ export function parseArgs(argv: readonly string[]): Args {
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string
+    /**
+     * The next argument, refusing one that is obviously another flag.
+     *
+     * `--quali` takes two values and called this twice with no lookahead, so
+     * `--quali 2026-09-09 --push` read "--push" as the time and silently
+     * dropped the flag — the write never happened and nothing said why. The
+     * later parse does reject "--push" as a time, but it complains about the
+     * time rather than about the option that got eaten.
+     *
+     * A leading "-" followed by a digit is a negative number, not a flag, and
+     * stays allowed so a value like -1 reaches the check that has something
+     * useful to say about it.
+     */
     const next = (): string => {
       const v = argv[++i]
       if (v === undefined) throw new UsageError(`${a} needs a value`)
+      if (v.startsWith("-") && !/^-\d/.test(v)) {
+        throw new UsageError(
+          `${a} needs a value, but the next argument is ${JSON.stringify(v)}, which looks like ` +
+            `another option. If that is genuinely the value, there is no way to say so yet.`,
+        )
+      }
       return v
     }
     /**
@@ -323,6 +342,12 @@ export async function main(argv: readonly string[]): Promise<number> {
     // request that needs retyping. The message already says what to do; the
     // usage block says what the flag looks like.
     if (e instanceof ScheduleError) return reportUsageError(new UsageError(e.message), USAGE)
+    // Before the generic FinalizeError branch: a partial write is not a
+    // refusal, it is a half-finished job, and the message says which half.
+    if (e instanceof PartialWriteError) {
+      process.stderr.write(`${e.message}\n`)
+      return 3
+    }
     if (e instanceof FinalizeError) {
       process.stderr.write(`${e.message}\n`)
       return 2

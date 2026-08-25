@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest"
 
 import { AcsmSession } from "../src/acsm/session.js"
 import type { ChampionshipEvent } from "../src/acsm/types.js"
-import { applyFinalize, EntryListChangedError } from "../src/finalize/apply.js"
+import { AcsmError } from "../src/acsm/client.js"
+import { applyFinalize, EntryListChangedError, PartialWriteError } from "../src/finalize/apply.js"
 import {
   applyFormat,
   describeLength,
@@ -523,6 +524,8 @@ const TWO = [
 ]
 
 interface HarnessOptions {
+  /** Fail the schedule POST only, after the event POST has gone through. */
+  failSchedulePost?: boolean
   /** Event HTML per GET, in order; the last is reused. */
   eventPages?: string[]
   scheduleHtml?: string
@@ -544,6 +547,11 @@ async function harness(options: HarnessOptions = {}) {
     }
     if (init.method === "POST") {
       posts.push({ url, body: init.body as URLSearchParams })
+      // Lets a test fail the *second* write while the first succeeds, which is
+      // the partial state applyFinalize has to describe rather than swallow.
+      if (options.failSchedulePost && url.includes("/schedule")) {
+        return new Response("nope", { status: 500, statusText: "Internal Server Error" })
+      }
       return new Response("", { status: options.submitStatus ?? 302, headers: { location: "/" } })
     }
     if (url.includes("/schedule")) {
@@ -861,6 +869,40 @@ describe("applying a finalize", () => {
       pits: pitTable([suzukaPits]),
       ...over,
     })
+
+  it("says what landed when the schedule save fails after the event save", async () => {
+    // The two writes are deliberately ordered so a failure leaves a coherent
+    // state, but the *reporting* wasn't: the raw failure escaped, the CLI's
+    // "Pushed: ..." line never printed, and AcsmWriteError didn't extend
+    // AcsmError so it fell through to "champctl itself failed". The operator
+    // was told nothing happened when half of it had — and the obvious next
+    // move, running it again, re-applies a format that is already applied.
+    const h = await harness({ failSchedulePost: true })
+    const plan = await planFor(h, { qualiStart: { date: "2026-09-09", time: "20:00" } })
+    expect(plan.schedule, "this test needs a schedule change to fail").toBeTruthy()
+
+    const err = await applyFinalize(h.session, plan, { acknowledgeWarnings: true }).catch(
+      (e: unknown) => e,
+    )
+
+    expect(err).toBeInstanceOf(PartialWriteError)
+    expect((err as Error).message).toMatch(/event was saved/)
+    expect((err as Error).message).toMatch(/still at its old time/)
+    // And it carries what ACSM actually said, rather than replacing it.
+    expect((err as PartialWriteError).cause).toBeInstanceOf(AcsmError)
+
+    // Both writes were attempted, in order: the event one did go through.
+    expect(h.posts.map((p) => p.url.includes("/schedule"))).toEqual([false, true])
+  })
+
+  it("lets a failure before the event save through unchanged", async () => {
+    // Only the *partial* case gets rewrapped; a plain refusal keeps its own
+    // error so the entry-list and gridmom messages aren't buried.
+    const h = await harness({ submitStatus: 200 })
+    const plan = await planFor(h)
+    const err = await applyFinalize(h.session, plan).catch((e: unknown) => e)
+    expect(err).not.toBeInstanceOf(PartialWriteError)
+  })
 
   it("posts the event form with only the planned fields changed", async () => {
     const h = await harness()

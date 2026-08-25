@@ -92,6 +92,21 @@ describe("champctl-finalize arguments", () => {
     expect(parseFinalizeArgs(["a", "1"]).pit).toBeUndefined()
   })
 
+  it("refuses a value that is obviously the next flag", () => {
+    // --quali takes two values and called next() twice with no lookahead, so
+    // `--quali 2026-09-09 --push` read "--push" as the time and dropped the
+    // flag: the write never happened and nothing said why.
+    expect(() => parseFinalizeArgs(["a", "1", "--quali", "2026-09-09", "--push"])).toThrow(
+      /looks like another option/,
+    )
+    expect(() => parseFinalizeArgs(["a", "1", "--profile", "--push"])).toThrow(
+      /looks like another option/,
+    )
+    // A negative number is a value, not a flag, and still reaches the check
+    // that has something useful to say about it.
+    expect(() => parseFinalizeArgs(["a", "1", "--reversed", "-1"])).toThrow(/whole number/)
+  })
+
   it("refuses an empty numeric value rather than reading it as zero", () => {
     // `Number("")` is 0, so `--laps "$LAPS"` with an unset variable asked for
     // a zero-lap race. formFieldsFor posts Race.Laps: "0" and Race.Time: "0" —

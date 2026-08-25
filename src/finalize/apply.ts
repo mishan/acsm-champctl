@@ -51,6 +51,29 @@ export class EntryListChangedError extends FinalizeError {
   }
 }
 
+/**
+ * The event saved and the schedule didn't.
+ *
+ * Its own type because the remedy is specific and not "try again": the format
+ * is applied, only the quali time is not, and the person needs to know that
+ * before deciding what to do. `cause` carries whatever ACSM actually said.
+ */
+export class PartialWriteError extends FinalizeError {
+  constructor(
+    plan: FinalizePlan,
+    override readonly cause: unknown,
+  ) {
+    const why = cause instanceof Error ? cause.message : String(cause)
+    super(
+      `Half of this went through. The event was saved, so the format is applied, but the ` +
+        `schedule save failed and round ${plan.round} is still at its old time: ${why}. ` +
+        `Re-running would re-apply a format that is already applied — set the quali time in ` +
+        `ACSM, or re-run once you know why the schedule POST failed.`,
+    )
+    this.name = "PartialWriteError"
+  }
+}
+
 export interface ApplyOptions {
   /**
    * Proceed despite gridmom WARN findings. Has no effect on ERROR, which
@@ -134,7 +157,16 @@ export async function applyFinalize(
 
   let scheduleSaved = false
   if (plan.schedule) {
-    await saveSchedule(session, plan)
+    try {
+      await saveSchedule(session, plan)
+    } catch (e) {
+      // The event save already went through. Letting the raw failure escape
+      // told the operator the run failed and nothing about what landed, so the
+      // obvious next move — run it again — would re-apply a format that was
+      // already applied while the race stayed at the old time.
+      if (eventSaved) throw new PartialWriteError(plan, e)
+      throw e
+    }
     scheduleSaved = true
   }
 
