@@ -17,6 +17,25 @@ export interface AcsmReader {
   listChampionships(): Promise<ChampionshipSummary[]>
   /** The full export: config, entry list, results, laps and incidents. */
   exportChampionship(id: string): Promise<Championship>
+  /**
+   * The same export as the bytes the server sent, for the archive.
+   *
+   * Plan §8.1 stores raw JSON verbatim and treats everything derived from it as
+   * a projection that can be rebuilt. Parsing and re-serialising would defeat
+   * that: `JSON.stringify` reorders integer-like keys, drops the distinction
+   * between `1` and `1.0`, and normalises whitespace and escapes. None of that
+   * matters for reading a championship, and all of it matters for an archive
+   * whose job is to still be trustworthy after the source is gone.
+   *
+   * A `Buffer` rather than a string, and that distinction is the whole point.
+   * `Response.text()` is a WHATWG UTF-8 decode: it strips a leading BOM and
+   * replaces every invalid byte sequence with U+FFFD. Returning a string and
+   * re-encoding it downstream would store something the server never sent,
+   * while `sha256` and `bytes` went on describing the re-encoding — so neither
+   * could ever be checked against the source. Decoding happens on a copy, for
+   * validation only.
+   */
+  exportChampionshipRaw(id: string): Promise<Buffer>
   standings(id: string): Promise<unknown>
   healthcheck(): Promise<unknown>
 }
@@ -82,7 +101,16 @@ export class HttpAcsmReader implements AcsmReader {
   async exportChampionship(id: string): Promise<Championship> {
     // Export works while logged out, which is what makes the whole read side
     // credential-free (plan §3.1).
-    return this.#getJson<Championship>(`/championship/${encodeURIComponent(id)}/export`)
+    return this.#getJson<Championship>(exportPath(id))
+  }
+
+  async exportChampionshipRaw(id: string): Promise<Buffer> {
+    // Deliberately not cached. The cache stores decoded strings, so a hit could
+    // only hand back a re-encoding — the exact substitution this method exists
+    // to avoid. The archive skips the cache anyway; this makes it structural.
+    const bytes = await this.#request(exportPath(id))
+    assertJson(bytes, exportPath(id), `${this.#baseUrl}${exportPath(id)}`)
+    return bytes
   }
 
   async standings(id: string): Promise<unknown> {
@@ -94,25 +122,24 @@ export class HttpAcsmReader implements AcsmReader {
   }
 
   async #getJson<T>(path: string): Promise<T> {
+    return (await this.#fetchJson(path)).parsed as T
+  }
+
+  /**
+   * One request, returning the body as the bytes that arrived.
+   *
+   * Everything above this decides what to do with them: `#fetchJson` decodes
+   * and caches, `exportChampionshipRaw` keeps them. Reading `arrayBuffer()`
+   * rather than `text()` here is what makes the verbatim path possible at all —
+   * by the time `text()` has run, a BOM and any invalid sequence are already
+   * gone and cannot be recovered.
+   */
+  async #request(path: string): Promise<Buffer> {
     const url = `${this.#baseUrl}${path}`
-
-    // Cache reads fail open. A truncated or corrupt entry is a cache miss, not
-    // an error — otherwise one bad write leaves the CLI permanently broken for
-    // that URL with no obvious way out.
-    const cached = await this.#cache?.get(url)
-    if (cached !== undefined) {
-      try {
-        return JSON.parse(cached) as T
-      } catch {
-        // Fall through and refetch.
-      }
-    }
-
     await this.#limiter?.acquire()
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.#timeoutMs)
-    let text: string
     try {
       const res = await this.#fetch(url, {
         headers: { Accept: "application/json", "User-Agent": this.#userAgent },
@@ -122,29 +149,77 @@ export class HttpAcsmReader implements AcsmReader {
       if (!res.ok) {
         throw new AcsmError(`${res.status} ${res.statusText} from ${path}`, res.status, url)
       }
-      text = await res.text()
+      return Buffer.from(await res.arrayBuffer())
     } catch (e) {
       if (e instanceof AcsmError) throw e
       throw new AcsmError(`Request to ${path} failed: ${asMessage(e)}`, undefined, url)
     } finally {
       clearTimeout(timer)
     }
+  }
 
-    // A login redirect returns 200 with HTML, so a parse failure here usually
-    // means Public Access got switched off rather than a malformed body.
-    let parsed: T
-    try {
-      parsed = JSON.parse(text) as T
-    } catch {
-      const hint = text.trimStart().startsWith("<")
-        ? " (got HTML — is Public Access still enabled?)"
-        : ""
-      throw new AcsmError(`Response from ${path} was not JSON${hint}`, undefined, url)
+  /**
+   * Fetches a JSON endpoint and returns both the decoded text and the parsed
+   * value, from a single parse.
+   *
+   * Parsing is also the validation step — a login redirect answers 200 with
+   * HTML, and that check is what turns "Public Access got switched off" into a
+   * sentence rather than a stored HTML page.
+   */
+  async #fetchJson(path: string): Promise<{ text: string; parsed: unknown }> {
+    const url = `${this.#baseUrl}${path}`
+
+    // Cache reads fail open. A truncated or corrupt entry is a cache miss, not
+    // an error — otherwise one bad write leaves the CLI permanently broken for
+    // that URL with no obvious way out.
+    const cached = await this.#cache?.get(url)
+    if (cached !== undefined) {
+      try {
+        return { text: cached, parsed: JSON.parse(cached) }
+      } catch {
+        // Fall through and refetch.
+      }
     }
 
+    const bytes = await this.#request(path)
+    const text = decodeForParsing(bytes)
+    const parsed = assertJson(bytes, path, url)
+
     await this.#cache?.set(url, text)
-    return parsed
+    return { text, parsed }
   }
+}
+
+/**
+ * Decodes a body for parsing, dropping a leading BOM.
+ *
+ * `Response.text()` did this for us and `Buffer.toString` does not, so without
+ * it a BOM'd export would newly fail to parse. The BOM stays in the bytes the
+ * archive stores — that is the point of the split.
+ */
+function decodeForParsing(bytes: Buffer): string {
+  const text = bytes.toString("utf8")
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
+/** Parses a body, or explains why it isn't JSON. Returns the parsed value. */
+function assertJson(bytes: Buffer, path: string, url: string): unknown {
+  const text = decodeForParsing(bytes)
+  try {
+    return JSON.parse(text)
+  } catch {
+    // A login redirect returns 200 with HTML, so a parse failure here usually
+    // means Public Access got switched off rather than a malformed body.
+    const hint = text.trimStart().startsWith("<")
+      ? " (got HTML — is Public Access still enabled?)"
+      : ""
+    throw new AcsmError(`Response from ${path} was not JSON${hint}`, undefined, url)
+  }
+}
+
+/** Path to a championship's export. */
+function exportPath(id: string): string {
+  return `/championship/${encodeURIComponent(id)}/export`
 }
 
 function asMessage(e: unknown): string {
@@ -174,6 +249,15 @@ export class StaticAcsmReader implements AcsmReader {
     const c = this.#byId.get(id)
     if (!c) throw new AcsmError(`No championship ${id} in this reader`)
     return c
+  }
+
+  /**
+   * Re-serialised, because this reader was handed objects and never saw a
+   * response body. Fine for tests and `--file`; deliberately not what the
+   * archive runs against, since "verbatim" is the whole point there.
+   */
+  async exportChampionshipRaw(id: string): Promise<Buffer> {
+    return Buffer.from(JSON.stringify(await this.exportChampionship(id)), "utf8")
   }
 
   async standings(): Promise<unknown> {

@@ -11,6 +11,9 @@ README covers what exists today.
 - **Phase 1 — gridmom**, the sanity checker, plus the read-only client it needs.
   Done.
 
+- **Phase 1b — the archive.** Every championship export the league has ever run,
+  kept verbatim, on a nightly schedule. Read-only by construction.
+
 - **Phase 2 — the write path.** Foundations are in: an authenticated session, an
   ordered-multimap form parser, the import safety rules, and a Docker test
   harness so the write path can be verified against a throwaway ACSM rather than
@@ -24,6 +27,7 @@ makes "the bot never holds write credentials" a property of the code.
 src/
   acsm/        types, read client, session (write), form parser, diff,
                rate limiter, response cache, import safety rules
+  archive/     verbatim export store + the ingest run
   content/     installed-content index (interface + snapshot impl)
   pits/        track pit table, acsm | scan | manual precedence
   profile/     league profile schema + loader
@@ -37,8 +41,9 @@ profiles/      league baselines — batl.json ships here
 
 ## Quick start
 
-Needs Node `^20.19.0 || >=22.12.0` — that's Vite 8's floor, and Vite comes in
-via Vitest.
+Needs Node `>=22.13.0`. That floor is `node:sqlite`, which the archive uses:
+it exists from 22.5 but only without `--experimental-sqlite` from 22.13. Node 20
+is no longer supported — it has no `node:sqlite` at all.
 
 ```sh
 npm install
@@ -47,7 +52,7 @@ npm run gridmom -- check --file fixtures/synthetic/suzuka-duplicate-pitboxes.jso
 ```
 
 `npm run lint`, `npm run format:check` and `npm run typecheck` are what CI
-enforces, alongside the tests on Node 20.19, 22 and 24. `npm run format`
+enforces, alongside the tests on Node 22.13 and 24. `npm run format`
 applies the formatting if a change has drifted from it.
 
 Against a live manager (no credentials needed — Public Access is enabled):
@@ -138,6 +143,65 @@ parsing anything.
 every format finding and `--suppress champ.repeated-track` hides just the one.
 Useful for a league that genuinely runs the same track twice.
 
+## Archive
+
+`champctl-archive` keeps a copy of every championship export the league has ever
+run (plan §8.1). ACSM is the only place that history exists, so the sooner this
+starts running the less of it can be lost.
+
+```sh
+npm run archive -- run       # fetch every championship, store what changed
+npm run archive -- status    # what's in the archive already
+npm run archive -- run --db /srv/champctl/archive.db
+```
+
+Read-only by construction — it holds an `AcsmReader`, which has no credentials
+and no write methods. That is what makes it the one job safe to point at a
+league's production manager on a schedule.
+
+Exit codes follow gridmom's contract: `0` nothing changed, `1` something was
+archived, `2` at least one championship failed, `3` the run itself failed. A
+failure outranks a success, so a night that archived thirty and lost one still
+exits 2. One bad championship never aborts the rest — the point of a nightly
+job is that the archive gets no worse.
+
+**Bodies are stored verbatim**, as `BLOB`s — not parsed and re-serialised, and
+not decoded to text. `JSON.stringify` reorders integer-like keys, turns `1.0`
+into `1`, and normalises escapes; a UTF-8 decode strips a byte-order mark and
+replaces anything malformed. None of that matters for reading a championship,
+and all of it matters for an archive whose job is to still be trustworthy after
+the source is gone. Stats tables are a projection on top, expected to be rebuilt
+from scratch whenever a definition changes or two driver identities get merged.
+
+**Snapshots are deduplicated by content**, so a nightly run over a finished
+season doesn't write an identical copy every night forever. A snapshot appears
+only when the export actually changed, which makes the snapshot list a change
+history. `lastCheckedAt` separately records that the run happened, so "nothing
+changed" stays distinguishable from "the job has been broken for a month".
+
+**It's a SQLite database**, `data/archive/archive.db`, rather than a directory
+of JSON files with an index beside them. The first version was the directory,
+and every bug found in it was one bug in different clothes: a body and its index
+entry are two writes that have to land together, and they kept not doing. A torn
+index read as "no index" and started a fresh one; a shared temp file let one run
+publish another's bytes; two overlapping runs each published an index missing
+the other's snapshot; dedup trusted a hash whose body had been deleted. Those
+each have a fix, and the fixes were turning into a hand-rolled transaction log.
+A row in a transaction is the same guarantee, already written and already
+tested. `--db` points somewhere else if you want it to.
+
+Gitignored either way: league data, and personal data at that, since every
+export carries driver names and Steam GUIDs. `.gitignore` keeps it out of the
+repo and does nothing about the other accounts on the machine, so champctl
+creates the directory `0700` and the database `0600` — including SQLite's
+`-wal` sidecar, which holds pages not yet checkpointed and is archive content
+in its own right. A directory that already exists is left as the operator set
+it.
+
+`--since` is parsed strictly as ISO 8601, and a bare date means UTC midnight
+rather than the machine's, so the same cron line means the same thing
+everywhere.
+
 ## League profiles
 
 BATL's baseline is `profiles/batl.json`. Another league drops in their own and
@@ -202,11 +266,12 @@ off the ACSM source rather than guessed.
 
 - **A real export fixture.** Everything here is tested against synthetic
   fixtures. `fixtures/import-roundtrip/` (plan §4.1) needs a real BATL export
-  before the round-trip regression test can exist.
+  before the round-trip regression test can exist — the archive's first run
+  produces one, it just needs sanitising before it can be committed.
 - **Content checks need a source.** `ContentIndex` is defined and wired in, but
   nothing populates it. `/content/tracks/{track}/ui/ui_track.json` is the
   endpoint; the harness needs AC content installed to exercise it.
 - **The read-modify-write flow itself.** `session.ts` and `form.ts` are the
   pieces; the finalize-a-race operation that uses them is next, and the live
   suite is where it gets proven.
-- Phases 1b onward: archive ingest, UI, bot.
+- Phases 3 onward: UI, bot.
