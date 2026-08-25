@@ -55,3 +55,7 @@ docs/review-*.md
 
 # The OSS harness downloads a release zip and runs it in place.
 .harness/
+
+# Playwright leaves traces and screenshots behind on a failing run.
+test-results/
+playwright-report/

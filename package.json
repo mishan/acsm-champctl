@@ -52,7 +52,8 @@
     "test:live": "vitest run --config vitest.live.config.ts",
     "recon:forms": "tsx scripts/recon/forms.ts",
     "recon:roundtrip": "tsx scripts/recon/roundtrip.ts",
-    "championship": "tsx src/cli/championship.ts"
+    "championship": "tsx src/cli/championship.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
@@ -65,6 +66,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",
+    "@playwright/test": "^1.62.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.6",

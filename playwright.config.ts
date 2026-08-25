@@ -1,0 +1,85 @@
+import { defineConfig } from "@playwright/test"
+
+/**
+ * The browser suite: champctl as a person actually reaches it.
+ *
+ * This exists to close one specific gap, and it is worth naming precisely
+ * because everything either side of it is already covered. The client tests
+ * mock `api`, so they never make a request. The server tests drive Fastify
+ * directly, so they never load the client. Between them sits the contract that
+ * `client/src/api.ts` calls the paths `src/web/routes.ts` serves — and when the
+ * championship rename moved `/months/plan` to `/championships/plan`, every one
+ * of those tests stayed green while the UI 404'd in a browser.
+ *
+ * So the value here is not "click the buttons again". It is that the request
+ * leaving the browser and the route receiving it are the same string, proven
+ * by a real fetch from real bundled code.
+ *
+ * Opt-in the same way the live suite is, and for the same reason: it needs a
+ * running ACSM. Without `CHAMPCTL_LIVE_URL` the specs skip, so `npm test` on a
+ * laptop with no harness stays green.
+ *
+ *   npm run harness:oss -- start
+ *   npm run build:client
+ *   CHAMPCTL_LIVE_URL=... CHAMPCTL_LIVE_PASSWORD=... npm run test:e2e
+ */
+
+const PORT = Number(process.env["CHAMPCTL_E2E_PORT"] ?? 3100)
+
+export default defineConfig({
+  testDir: "test/e2e",
+  // `.e2e.ts`, not `.test.ts`: vitest's node project globs `test/**/*.test.ts`,
+  // and a browser spec picked up by vitest fails in a way that reads as a
+  // broken test rather than a misfiled one.
+  testMatch: "**/*.e2e.ts",
+  // Serially, and one worker. These import championships into a shared manager
+  // and delete them again; two workers would be two people editing the same
+  // ACSM, which is a race the tool is designed to *detect* rather than a thing
+  // to arrange on purpose.
+  fullyParallel: false,
+  workers: 1,
+  forbidOnly: !!process.env["CI"],
+  retries: 0,
+  reporter: process.env["CI"] ? "list" : "line",
+  // Generous, because champctl rate-limits its own reads to be polite to a
+  // league's production manager (plan §3.1) — five per twenty seconds. Against
+  // a local harness that is pure latency, and a screen that makes three reads
+  // spends a minute waiting for permission champctl gave itself.
+  timeout: 120_000,
+  expect: { timeout: 40_000 },
+
+  use: {
+    baseURL: `http://127.0.0.1:${PORT}`,
+    // On failure only: a passing run should leave nothing behind, and a failing
+    // one should say what the page looked like.
+    trace: "retain-on-failure",
+    screenshot: "only-on-failure",
+  },
+
+  /**
+   * The real server, started the way a deployment starts it.
+   *
+   * `--insecure-cookies` because the session cookie is `Secure` by default and
+   * a browser will not keep one over plain `http://`. That is the flag's whole
+   * purpose and this is exactly the case it exists for; the alternative is
+   * terminating TLS in a test harness to prove something about champctl.
+   *
+   * `--client dist/client` rather than letting the default resolve: under tsx
+   * the default is a checkout path, and depending on which branch of
+   * `clientRootFor` runs is a way to test the wrong thing by accident.
+   *
+   * `--unthrottled-reads` because champctl paces its own reads at five per
+   * twenty seconds to be polite to a league's manager, and a browser flow that
+   * makes three of them then spends a minute waiting for permission champctl
+   * gave itself. The harness is a container this suite started and will throw
+   * away, which is the case that flag exists for.
+   */
+  webServer: {
+    command: `node_modules/.bin/tsx src/cli/serve.ts --port ${PORT} --insecure-cookies --unthrottled-reads --client dist/client --base-url ${process.env["CHAMPCTL_LIVE_URL"] ?? "http://127.0.0.1:8772"}`,
+    url: `http://127.0.0.1:${PORT}/healthz`,
+    reuseExistingServer: !process.env["CI"],
+    timeout: 30_000,
+    stdout: "pipe",
+    stderr: "pipe",
+  },
+})

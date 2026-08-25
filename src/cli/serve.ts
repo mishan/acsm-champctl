@@ -51,6 +51,10 @@ Options:
   --insecure-cookies    send the session cookie without Secure, so a browser
                         will keep it over plain HTTP. Development only — the
                         session stands in for an ACSM admin login.
+  --unthrottled-reads   drop the polite delay champctl puts between its reads.
+                        Only against a manager you can throw away: the delay
+                        exists so champctl is a good citizen on a league's
+                        production Server Manager.
   -h, --help            this
 
 champctl-serve holds no ACSM credentials. Each person logs in through the UI
@@ -72,6 +76,7 @@ interface Args {
   cache: boolean
   trustProxy: boolean
   insecureCookies: boolean
+  unthrottledReads: boolean
   help: boolean
 }
 
@@ -90,6 +95,7 @@ export function parseArgs(argv: readonly string[]): Args {
     cache: true,
     trustProxy: false,
     insecureCookies: false,
+    unthrottledReads: false,
     help: false,
   }
 
@@ -147,6 +153,9 @@ export function parseArgs(argv: readonly string[]): Args {
         break
       case "--trust-proxy":
         args.trustProxy = true
+        break
+      case "--unthrottled-reads":
+        args.unthrottledReads = true
         break
       case "--insecure-cookies":
         args.insecureCookies = true
@@ -269,13 +278,25 @@ async function main(argv: readonly string[]): Promise<number> {
     app = buildServer({
       profile,
       baseUrl,
-      reader: new HttpAcsmReader({ baseUrl, ...(cache ? { cache } : {}) }),
+      reader: new HttpAcsmReader({
+        baseUrl,
+        ...(cache ? { cache } : {}),
+        ...(args.unthrottledReads ? { rateLimit: false as const } : {}),
+      }),
       pits: await loadPits(args.pits),
       clientRoot: clientRootFor(args.client),
       secureCookies: !args.insecureCookies,
       trustProxy: args.trustProxy,
       logger: true,
     })
+
+    if (args.unthrottledReads) {
+      app.log.warn(
+        "Reading Server Manager without the usual delay between requests. That delay is how " +
+          "champctl stays a good citizen on a league's production manager; only leave this on " +
+          "against one you can throw away.",
+      )
+    }
 
     await app.listen({ port: args.port, host: args.host })
     await shutdownSignal()
