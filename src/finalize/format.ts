@@ -22,9 +22,7 @@ import type { ChampionshipEvent, RaceSetup } from "../acsm/types.js"
 import { session } from "../acsm/view.js"
 
 /** Laps or minutes; both are legitimate and both get voted on. */
-export type RaceLength =
-  | { kind: "laps"; laps: number }
-  | { kind: "minutes"; minutes: number }
+export type RaceLength = { kind: "laps"; laps: number } | { kind: "minutes"; minutes: number }
 
 export interface RaceFormat {
   length: RaceLength
@@ -95,7 +93,9 @@ export function sameFormat(a: RaceFormat, b: RaceFormat): boolean {
 
 export function sameLength(a: RaceLength, b: RaceLength): boolean {
   if (a.kind !== b.kind) return false
-  return a.kind === "laps" ? a.laps === (b as { laps: number }).laps : a.minutes === (b as { minutes: number }).minutes
+  return a.kind === "laps"
+    ? a.laps === (b as { laps: number }).laps
+    : a.minutes === (b as { minutes: number }).minutes
 }
 
 /** "18 laps" / "40 minutes", for a diff a person reads. */
@@ -174,7 +174,8 @@ export function applyFormat(ev: ChampionshipEvent, format: RaceFormat): Champion
   // is about to set — blocking a push that fixes the very thing complained
   // about. For `emitMonth`, which applies a format for real rather than for
   // preview, the month would simply be emitted without its race length.
-  const raceKey = Object.keys(sessions).find((k) => k.toUpperCase() === "RACE") ?? newRaceKey(sessions)
+  const raceKey =
+    Object.keys(sessions).find((k) => k.toUpperCase() === "RACE") ?? newRaceKey(sessions)
   const existing = sessions[raceKey] ?? { Name: "Race" }
   sessions[raceKey] = {
     ...existing,

@@ -110,6 +110,16 @@ export async function applyFinalize(
     // established — but anything else ACSM changed in the meantime should be
     // echoed back as it now stands rather than reverted to what we first read.
     const fields = [...fresh.fields]
+
+    // The two keys that say *which* save this is (plan §5.2). `Editing` is
+    // rendered by the form, so this only restates it; `action` is not — it is
+    // carried by the submit button, and `parseForm` drops buttons on purpose.
+    // So a payload built purely from the parsed form is missing it, which is
+    // how a browser and champctl come to send different things. Both live tests
+    // that drive this endpoint set them explicitly for the same reason.
+    setOne(fields, "Editing", plan.eventId)
+    setOne(fields, "action", "saveChampionship")
+
     for (const [name, value] of Object.entries(formFieldsFor(plan.desired))) {
       // setOne refuses a repeated key, so a build that renders one of these
       // more than once fails loudly instead of scrambling a positional array.

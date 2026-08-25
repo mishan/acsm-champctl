@@ -202,16 +202,68 @@ export function qualiStartFrom(date: string, time: string, zone: string): DateTi
  * `recurrence` is echoed from whatever the form already had. Scheduled events
  * can repeat, champctl does not model that yet, and blanking it here would
  * quietly cancel a repeat someone set up in ACSM.
+ *
+ * **The ambiguity check belongs here too, not only on the input.**
+ * `qualiStartFrom` refuses a wall clock the zone can't answer for, but the
+ * value this function renders is `Scheduled` — practice start — which is quali
+ * *minus the practice length*. Subtracting from an unambiguous instant can land
+ * inside the repeated hour: on 2026-11-01 in America/Los_Angeles a quali at
+ * 02:00 is unambiguous, and 60 minutes earlier renders as "01:00", which
+ * happens twice that night. The form carries a bare wall clock plus a zone name
+ * and nothing that says which of the two, so ACSM resolves it itself — Go's
+ * `ParseInLocation` takes the first match — and the race lands an hour from
+ * where it was put, with the write reporting success. Validating the input and
+ * then transmitting something else derived from it is how that got missed.
  */
 export function scheduleFormValues(
   scheduled: DateTime,
   zone: string,
   recurrence: string,
 ): ScheduleFormValues {
+  // Checked before anything is formatted. Luxon's `toFormat` on an invalid
+  // DateTime returns the *string* "Invalid DateTime" rather than throwing, so
+  // an unsupported zone — a profile typo, most likely — would post
+  // `event-schedule-date=Invalid DateTime` and the same again for the time.
+  // The ambiguity check below cannot catch it either: `localTimeCandidates`
+  // gives up and returns an empty list for a zone it can't probe, which reads
+  // as "unambiguous" here.
+  if (!scheduled.isValid) {
+    throw new ScheduleError(
+      `Refusing to send an invalid date and time to ACSM: ${scheduled.invalidReason ?? "unknown"}` +
+        `${scheduled.invalidExplanation ? ` (${scheduled.invalidExplanation})` : ""}.`,
+    )
+  }
   const local = scheduled.setZone(zone)
+  if (!local.isValid) {
+    throw new ScheduleError(
+      `${JSON.stringify(zone)} is not a timezone this system knows, so the race time cannot be ` +
+        `worked out: ${local.invalidReason ?? "unknown"}. The league profile's ` +
+        `\`schedule.timezone\` needs an IANA name such as "America/Los_Angeles".`,
+    )
+  }
+
+  const date = local.toFormat("yyyy-MM-dd")
+  const time = local.toFormat("HH:mm")
+
+  // Only the overlap is reachable here: `local` is a real instant, so the wall
+  // clock it renders as exists by construction. One candidate is the normal
+  // case; the gap (zero candidates) cannot arise.
+  const candidates = localTimeCandidates(date, time, zone)
+  if (candidates.length > 1) {
+    const [first, second] = candidates as [DateTime, DateTime]
+    const apart = Math.round((second.toMillis() - first.toMillis()) / 60_000)
+    throw new ScheduleError(
+      `Refusing to send ${date} ${time} as the practice start: the clocks go back in ${zone} ` +
+        `that night, so that wall clock happens twice — ${apart} minutes apart ` +
+        `(${first.toFormat("ZZ")} or ${second.toFormat("ZZ")}) — and the schedule form has no ` +
+        `way to say which one is meant. Move quali far enough either side of the change that ` +
+        `the practice start lands outside the repeated period.`,
+    )
+  }
+
   return {
-    [SCHEDULE_FIELD.date]: local.toFormat("yyyy-MM-dd"),
-    [SCHEDULE_FIELD.time]: local.toFormat("HH:mm"),
+    [SCHEDULE_FIELD.date]: date,
+    [SCHEDULE_FIELD.time]: time,
     [SCHEDULE_FIELD.timezone]: zone,
     [SCHEDULE_FIELD.recurrence]: recurrence,
   }

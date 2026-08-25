@@ -31,6 +31,7 @@ import {
   championship,
   driver,
   entryList,
+  NOW,
   pitTable,
   raceEvent,
   suzukaPits,
@@ -224,9 +225,7 @@ describe("the diff a person reads", () => {
       format({ length: { kind: "minutes", minutes: 40 }, mandatoryPit: true }),
       format({ length: { kind: "laps", laps: 18 }, mandatoryPit: true }),
     )
-    expect(changes).toEqual([
-      { label: "Race length", before: "40 minutes", after: "18 laps" },
-    ])
+    expect(changes).toEqual([{ label: "Race length", before: "40 minutes", after: "18 laps" }])
   })
 
   it("is empty when nothing changed", () => {
@@ -390,6 +389,51 @@ describe("schedule maths", () => {
       "event-schedule-recurrence": "",
     })
   })
+
+  it("refuses to send a practice start that happens twice", () => {
+    // The gap the input check left open. Quali at 02:00 on 2026-11-01 in LA is
+    // unambiguous and passes qualiStartFrom, but Scheduled is quali minus the
+    // practice length, and 01:00 that night happens twice. The form sends a
+    // bare wall clock plus a zone name, so ACSM picks one — Go takes the first
+    // match — and the race lands an hour early while the write reports success.
+    const quali = qualiStartFrom("2026-11-01", "02:00", ZONE)
+    const scheduled = scheduledFromQuali(quali, 60)
+
+    // Both instants really do render as the same wall clock: that is the bug.
+    expect(scheduled.toFormat("HH:mm")).toBe("01:00")
+    expect(localTimeCandidates("2026-11-01", "01:00", ZONE)).toHaveLength(2)
+
+    expect(() => scheduleFormValues(scheduled, ZONE, "")).toThrow(ScheduleError)
+    expect(() => scheduleFormValues(scheduled, ZONE, "")).toThrow(/happens twice|going back|back/i)
+  })
+
+  it("still sends a practice start just outside the repeated hour", () => {
+    // The check has to refuse the ambiguous hour without refusing the night.
+    const quali = qualiStartFrom("2026-11-01", "03:00", ZONE)
+    const values = scheduleFormValues(scheduledFromQuali(quali, 60), ZONE, "")
+    expect(values["event-schedule-time"]).toBe("02:00")
+    expect(values["event-schedule-date"]).toBe("2026-11-01")
+  })
+
+  it("refuses an unsupported zone rather than posting 'Invalid DateTime'", () => {
+    // Luxon's toFormat on an invalid DateTime returns the *string* "Invalid
+    // DateTime" instead of throwing, so a profile typo would have posted
+    // event-schedule-date=Invalid DateTime, and the same again for the time.
+    // The ambiguity check cannot catch it either: localTimeCandidates gives up
+    // and returns an empty list for a zone it can't probe, which reads there as
+    // "unambiguous".
+    const scheduled = DateTime.fromISO("2026-09-02T19:00", { zone: ZONE })
+    expect(scheduled.setZone("Not/AZone").toFormat("HH:mm")).toBe("Invalid DateTime")
+
+    expect(() => scheduleFormValues(scheduled, "Not/AZone", "")).toThrow(ScheduleError)
+    expect(() => scheduleFormValues(scheduled, "Not/AZone", "")).toThrow(/not a timezone/)
+  })
+
+  it("refuses an invalid instant rather than formatting it", () => {
+    const bad = DateTime.fromISO("not-a-date")
+    expect(bad.isValid).toBe(false)
+    expect(() => scheduleFormValues(bad, ZONE, "")).toThrow(ScheduleError)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -399,7 +443,10 @@ describe("schedule maths", () => {
 const EVENT_ID = "event-1"
 const CHAMP_ID = "11111111-2222-3333-4444-555555555555"
 
-function eventFormHtml(entrants: { name: string; guid: string; pit: number }[], over: Record<string, string> = {}): string {
+function eventFormHtml(
+  entrants: { name: string; guid: string; pit: number }[],
+  over: Record<string, string> = {},
+): string {
   const base: Record<string, string> = {
     Track: "suzuka",
     "Race.Laps": "20",
@@ -505,6 +552,33 @@ const champ = (over: Partial<ChampionshipEvent> = {}) =>
   })
 
 describe("planning a finalize", () => {
+  it("checks against the clock it is given, not the wall clock", async () => {
+    // Every plan test passes now: NOW for this reason. Without it, check()
+    // falls back to new Date(), the fixture event (2026-09-02) drifts into the
+    // past, schedule.past starts warning on every plan, and applyFinalize
+    // refuses to save without an acknowledgement — so the suite would have gone
+    // red on a date rather than on a change. Pinning the clock in one place is
+    // only half of it; this asserts the clock is actually threaded through.
+    const { session } = await harness()
+    const options = {
+      championship: champ(),
+      championshipId: CHAMP_ID,
+      eventId: EVENT_ID,
+      format: format({ length: { kind: "laps", laps: 18 } }),
+      profile: testProfile(),
+      pits: pitTable([suzukaPits]),
+    }
+
+    const before = await planFinalize(session, { ...options, now: NOW })
+    expect(before.gridmom.findings.map((f) => f.code)).not.toContain("schedule.past")
+
+    const after = await planFinalize(session, {
+      ...options,
+      now: new Date("2027-01-01T00:00:00Z"),
+    })
+    expect(after.gridmom.findings.map((f) => f.code)).toContain("schedule.past")
+  })
+
   it("reports the change without writing anything", async () => {
     const { session, posts } = await harness()
     const plan = await planFinalize(session, {
@@ -513,14 +587,13 @@ describe("planning a finalize", () => {
       eventId: EVENT_ID,
       format: format({ length: { kind: "laps", laps: 18 } }),
       profile: testProfile(),
+      now: NOW,
       pits: pitTable([suzukaPits]),
     })
 
     expect(posts).toHaveLength(0)
     expect(plan.round).toBe(1)
-    expect(plan.changes).toEqual([
-      { label: "Race length", before: "20 laps", after: "18 laps" },
-    ])
+    expect(plan.changes).toEqual([{ label: "Race length", before: "20 laps", after: "18 laps" }])
     expect(plan.formChanges).toEqual([{ name: "Race.Laps", before: "20", after: "18" }])
     expect(plan.noop).toBe(false)
   })
@@ -533,6 +606,7 @@ describe("planning a finalize", () => {
       eventId: EVENT_ID,
       format: format({ length: { kind: "laps", laps: 20 } }),
       profile: testProfile(),
+      now: NOW,
       pits: pitTable([suzukaPits]),
     })
     expect(plan.noop).toBe(true)
@@ -549,6 +623,7 @@ describe("planning a finalize", () => {
       eventId: EVENT_ID,
       format: format({ length: { kind: "minutes", minutes: 0 } }),
       profile: testProfile(),
+      now: NOW,
       pits: pitTable([suzukaPits]),
     })
     // A zero-length race is what gridmom's format check exists to catch.
@@ -571,6 +646,7 @@ describe("planning a finalize", () => {
       eventId: EVENT_ID,
       format: format({ length: { kind: "laps", laps: 18 } }),
       profile: testProfile(),
+      now: NOW,
       pits: pitTable([suzukaPits]),
     })
 
@@ -587,7 +663,8 @@ describe("planning a finalize", () => {
         eventId: "not-an-event",
         format: format(),
         profile: testProfile(),
-      pits: pitTable([suzukaPits]),
+        now: NOW,
+        pits: pitTable([suzukaPits]),
       }),
     ).rejects.toThrow(FinalizeError)
   })
@@ -601,7 +678,8 @@ describe("planning a finalize", () => {
         eventId: EVENT_ID,
         format: format(),
         profile: testProfile(),
-      pits: pitTable([suzukaPits]),
+        now: NOW,
+        pits: pitTable([suzukaPits]),
       }),
     ).rejects.toThrow(/no form posting to/)
   })
@@ -615,6 +693,7 @@ describe("planning a finalize", () => {
       format: format({ length: { kind: "laps", laps: 20 } }),
       qualiStart: { date: "2026-09-02", time: "20:00" },
       profile: testProfile(),
+      now: NOW,
       pits: pitTable([suzukaPits]),
     })
     expect(unchanged.schedule).toBeUndefined()
@@ -627,6 +706,7 @@ describe("planning a finalize", () => {
       format: format({ length: { kind: "laps", laps: 20 } }),
       qualiStart: { date: "2026-09-02", time: "21:00" },
       profile: testProfile(),
+      now: NOW,
       pits: pitTable([suzukaPits]),
     })
     expect(moved.schedule?.values["event-schedule-time"]).toBe("20:00") // practice start
@@ -687,6 +767,7 @@ describe("applying a finalize", () => {
       eventId: EVENT_ID,
       format: format({ length: { kind: "laps", laps: 18 } }),
       profile: testProfile(),
+      now: NOW,
       pits: pitTable([suzukaPits]),
       ...over,
     })
@@ -703,6 +784,20 @@ describe("applying a finalize", () => {
     // Untouched fields are echoed back as the form rendered them.
     expect(body.get("Track")).toBe("suzuka")
     expect(body.getAll("EntryList.Name")).toEqual(["Ada", "Grace"])
+  })
+
+  it("names the save, which the parsed form alone cannot", async () => {
+    // `action` rides on the submit button and parseForm drops buttons, so a
+    // payload built from the form is missing the one field that says what kind
+    // of save this is. The harness answers 302 to any POST, so nothing here
+    // could have caught its absence — hence asserting on the body directly.
+    const h = await harness()
+    await applyFinalize(h.session, await planFor(h))
+
+    const body = h.posts[0]!.body
+    expect(body.get("action")).toBe("saveChampionship")
+    expect(body.get("Editing")).toBe(EVENT_ID)
+    expect(body.getAll("action")).toHaveLength(1)
   })
 
   it("re-fetches the form before writing", async () => {
@@ -790,9 +885,7 @@ describe("applying a finalize", () => {
       gridmom: {
         ...plan.gridmom,
         counts: { ...plan.gridmom.counts, WARN: 1 },
-        findings: [
-          { code: "champ.x", severity: "WARN" as const, message: "Something looks off." },
-        ],
+        findings: [{ code: "champ.x", severity: "WARN" as const, message: "Something looks off." }],
       },
     }
     await expect(applyFinalize(h.session, warned)).rejects.toThrow(/acknowledgement/)
