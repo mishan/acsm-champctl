@@ -147,7 +147,15 @@ async function ingestOne(
     // so the one signal that the archive is broken became a slightly slower
     // run that exits 0. `read`'s own contract is that it distinguishes absent
     // from unreadable, and catching everything here threw that away.
-    const existing = await store.read(championshipId)
+    let existing: Awaited<ReturnType<ArchiveStore["read"]>>
+    try {
+      existing = await store.read(championshipId)
+    } catch (e) {
+      throw new IngestError(
+        `Couldn't read the archive for ${championshipId}, so --since can't tell what is ` +
+          `already stored: ${asMessage(e)}`,
+      )
+    }
     const last = existing?.lastCheckedAt
     if (last && new Date(last) >= options.skipCheckedSince) {
       return {
@@ -173,7 +181,20 @@ async function ingestOne(
     return { kind: "failed", championshipId, ...named, error: asMessage(e) }
   }
 
-  const result = await store.put(championshipId, body, now(), name)
+  // IngestError rather than a bare throw, because that is the type the CLI
+  // maps to the documented exit 3. Letting the raw error escape got the
+  // *scope* right — a broken archive fails the run, not a championship — and
+  // the exit code wrong, which is the half a cron job actually reads.
+  let result: StoreResult
+  try {
+    result = await store.put(championshipId, body, now(), name)
+  } catch (e) {
+    throw new IngestError(
+      `Couldn't write ${championshipId} to the archive, so the run stopped rather than ` +
+        `reporting a clean night: ${asMessage(e)}`,
+    )
+  }
+
   return result.stored
     ? { kind: "stored", championshipId, ...named, result }
     : { kind: "unchanged", championshipId, ...named, result }

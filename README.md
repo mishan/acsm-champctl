@@ -269,11 +269,14 @@ off the ACSM source rather than guessed.
   before the round-trip regression test can exist — the archive's first run
   produces one, it just needs sanitising before it can be committed.
 - **Content checks need a source.** `ContentIndex` is defined and wired in, but
-  nothing populates it, so the four `content.*` checks cannot fire in
-  production. `/content/tracks/{track}/ui/ui_track.json` is the endpoint; the
-  harness needs AC content installed to exercise it. The checks themselves are
-  tested against a stub index, so they will be right when a producer arrives
-  rather than being written and verified at the same time as it.
+  nothing populates it, so the three checks that need it — `content.track-`,
+  `content.car-` and `content.skin-missing` — cannot fire in production. The
+  fourth, `content.pit-count-unknown`, reads the pit table rather than the
+  content index and works today. `/content/tracks/{track}/ui/ui_track.json` is
+  the endpoint; the harness needs AC content installed to exercise it. The
+  three gated checks are tested against a stub index, so they will be right
+  when a producer arrives rather than being written and verified at the same
+  time as it.
 - **The read-modify-write flow itself.** `session.ts` and `form.ts` are the
   pieces; the finalize-a-race operation that uses them is next, and the live
   suite is where it gets proven.

@@ -403,6 +403,43 @@ describe("archive store", () => {
     }
   })
 
+  it("replaces an index left over from an older archive layout", async () => {
+    // CREATE INDEX IF NOT EXISTS is a no-op when an index of that name already
+    // exists with *different columns*, so an archive created before snapshots
+    // were ordered by fetch time would have kept an index that no longer
+    // matches any query and never been told.
+    const path = join(root, "upgrade.db")
+    const old = new DatabaseSync(path)
+    old.exec("PRAGMA journal_mode = WAL")
+    old.exec(
+      `CREATE TABLE snapshot (
+         id INTEGER PRIMARY KEY, championship_id TEXT NOT NULL, fetched_at TEXT NOT NULL,
+         sha256 TEXT NOT NULL, bytes INTEGER NOT NULL, name TEXT, body BLOB NOT NULL
+       ) STRICT`,
+    )
+    old.exec("CREATE INDEX snapshot_history ON snapshot (championship_id, id)")
+    old.close()
+
+    const s = await SqliteArchiveStore.open(path)
+    try {
+      const raw = new DatabaseSync(path)
+      const names = (
+        raw.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all() as unknown as {
+          name: string
+        }[]
+      ).map((r) => r.name)
+      raw.close()
+
+      expect(names).toContain("snapshot_by_fetch")
+      expect(names).not.toContain("snapshot_history")
+      // And it still works against the upgraded file.
+      await s.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
+      expect((await s.read(ID))?.snapshots).toHaveLength(1)
+    } finally {
+      s.close()
+    }
+  })
+
   it("keeps the archive readable only by its owner", async () => {
     // Driver names and Steam GUIDs. .gitignore keeps them out of the repo and
     // does nothing about the other accounts on a league VPS — under the usual
@@ -702,9 +739,14 @@ describe("ingest", () => {
       list: () => store.list(),
     }
 
-    await expect(ingest(reader, broken, { now: clock("2026-08-24T17:00:00Z") })).rejects.toThrow(
-      /disk is full/,
+    // Caught once, then asserted on: IngestError specifically, because that is
+    // the type the CLI maps to exit 3. Getting the scope right while letting a
+    // raw Error escape would leave a cron job reading the wrong code.
+    const err = await ingest(reader, broken, { now: clock("2026-08-24T17:00:00Z") }).catch(
+      (e: unknown) => e,
     )
+    expect(err).toBeInstanceOf(IngestError)
+    expect((err as Error).message).toMatch(/disk is full/)
     // And it stopped rather than working through the rest.
     expect(reader.fetched).toEqual([ID])
   })
@@ -730,7 +772,7 @@ describe("ingest", () => {
         now: clock("2026-08-24T17:00:00Z"),
         skipCheckedSince: new Date("2026-08-01T00:00:00Z"),
       }),
-    ).rejects.toThrow(/database is locked/)
+    ).rejects.toBeInstanceOf(IngestError)
     expect(reader.fetched).toEqual([])
   })
 

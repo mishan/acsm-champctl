@@ -124,7 +124,14 @@ CREATE TABLE IF NOT EXISTS snapshot (
   body            BLOB NOT NULL
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS snapshot_history
+-- Dropped by its old name rather than left to CREATE IF NOT EXISTS, which is
+-- a no-op when an index of that name already exists *with different columns*.
+-- An archive created before snapshots were ordered by fetch time would
+-- otherwise keep an index on (championship_id, id) and silently never get one
+-- matching the queries that replaced it.
+DROP INDEX IF EXISTS snapshot_history;
+
+CREATE INDEX IF NOT EXISTS snapshot_by_fetch
   ON snapshot (championship_id, fetched_at, id);
 `
 
