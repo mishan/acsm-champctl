@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest"
 
-import { AcsmError } from "../src/acsm/client.js"
 import { assertDisposable, isDisposableHost } from "../src/acsm/disposable.js"
-import { AcsmAuthError, AcsmSession, AcsmWriteError, CookieJar } from "../src/acsm/session.js"
+import type { Championship } from "../src/acsm/types.js"
+import { AcsmAuthError, AcsmSession, CookieJar } from "../src/acsm/session.js"
 import { parseForm } from "../src/acsm/form.js"
 import {
   IMPORT_HOUSEKEEPING,
@@ -583,13 +583,18 @@ describe("import safety rules", () => {
   })
 
   const IMPORTED_ID = "99999999-8888-7777-6666-555555555555"
+  const EXISTING_ID = "11111111-2222-3333-4444-555555555555"
 
   /**
    * A session where the import itself always succeeds, so the only thing that
-   * can refuse is the ID check. GETs must serve the import page — that is how
-   * detectImportMechanism works out where to put the JSON.
+   * can refuse is the target check.
+   *
+   * `target` is what GET /championship/{id}/export answers with, since that is
+   * how the guard now looks at the server — through the session, not a reader.
+   * GETs of the import page must still serve HTML; that is how
+   * detectImportMechanism finds where to put the JSON.
    */
-  const importSession = async () => {
+  const importSession = async (target?: Championship | Response) => {
     const { fn } = scriptedFetch((url, init) => {
       if (url.endsWith("/login")) {
         return new Response("", {
@@ -603,6 +608,11 @@ describe("import safety rules", () => {
           headers: { location: `/championship/${IMPORTED_ID}` },
         })
       }
+      if (url.includes("/export")) {
+        if (target instanceof Response) return target
+        if (target) return new Response(JSON.stringify(target), { status: 200 })
+        return new Response("not found", { status: 404, statusText: "Not Found" })
+      }
       return new Response(fakeImportPage("textarea"), { status: 200 })
     })
     const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
@@ -610,130 +620,80 @@ describe("import safety rules", () => {
     return s
   }
 
-  const readerThat = (over: Partial<Record<string, unknown>>) =>
-    ({
-      listChampionships: async () => {
-        throw new AcsmError("no list endpoint on this build")
-      },
-      exportChampionship: async () => ({}),
-      standings: async () => ({}),
-      healthcheck: async () => ({}),
-      ...over,
-    }) as never
+  it("checks the target through the session, not a reader", async () => {
+    // A reader could be a StaticAcsmReader, point at another host, or serve
+    // HttpAcsmReader's response cache — and a stale results-free copy would
+    // authorise overwriting a championship that has since been raced. The
+    // session is the server being written to and doesn't cache.
+    const s = await importSession(
+      championship({ Events: [raceEvent({ StartedTime: "2026-07-01T19:00:00-07:00" })] }),
+    )
+    await expect(
+      importChampionship(s, championship({ ID: EXISTING_ID }), { freshIds: false }),
+    ).rejects.toThrow(/has results for round 1/)
+  })
 
   it("treats a 404 from the export as 'that ID is free'", async () => {
     const s = await importSession()
-    const reader = readerThat({
-      exportChampionship: async () => {
-        throw new AcsmError("404 Not Found", 404)
-      },
-    })
     await expect(
-      importChampionship(s, championship({ ID: "11111111-2222-3333-4444-555555555555" }), {
-        freshIds: false,
-        reader,
-      }),
+      importChampionship(s, championship({ ID: EXISTING_ID }), { freshIds: false }),
     ).resolves.toMatchObject({ championshipId: IMPORTED_ID })
   })
 
   it("refuses rather than guessing when the target can't be read", async () => {
-    // A 500, a timeout or a DNS failure must not read as "nothing there" —
-    // the next thing that happens is an import that overwrites a live
-    // championship.
-    const s = await importSession()
-    for (const failure of [
-      new AcsmError("500 Internal Server Error", 500),
-      new AcsmError("Request timed out"),
-      new Error("getaddrinfo ENOTFOUND"),
-    ]) {
-      const reader = readerThat({
-        exportChampionship: async () => {
-          throw failure
-        },
-      })
-      await expect(
-        importChampionship(s, championship({ ID: "11111111-2222-3333-4444-555555555555" }), {
-          freshIds: false,
-          reader,
-        }),
-      ).rejects.toThrow(/Couldn't read championship/)
-    }
+    // A 500 or a timeout must not read as "nothing there" — the next thing
+    // that happens is an import that overwrites a live championship.
+    const s = await importSession(new Response("boom", { status: 500 }))
+    await expect(
+      importChampionship(s, championship({ ID: EXISTING_ID }), { freshIds: false }),
+    ).rejects.toThrow(/Couldn't read championship/)
   })
 
-  it("insists on a reader when it could land on an existing championship", async () => {
-    // freshIds: false means the payload keeps its own ID, so it may overwrite
-    // something. Without a reader there is no way to find out what.
-    const s = await importSession()
+  it("needs no extra plumbing when generating fresh IDs, since nothing can collide", async () => {
+    const s = await importSession(
+      championship({ Events: [raceEvent({ StartedTime: "2026-07-01T19:00:00-07:00" })] }),
+    )
+    // Fresh IDs, so the target is never consulted at all.
     await expect(
-      importChampionship(s, championship({ ID: "11111111-2222-3333-4444-555555555555" }), {
-        freshIds: false,
-      }),
-    ).rejects.toThrow(/needs a reader to check what is there first/)
-  })
-
-  it("needs no reader when generating fresh IDs, since nothing can collide", async () => {
-    const s = await importSession()
-    await expect(
-      importChampionship(s, championship({ ID: "11111111-2222-3333-4444-555555555555" })),
+      importChampionship(s, championship({ ID: EXISTING_ID })),
     ).resolves.toMatchObject({ championshipId: IMPORTED_ID })
   })
 
   it("refuses to overwrite a target that has results, even with allowOverwrite", async () => {
-    // assertNoResults only inspects the payload. A results-free championship
-    // carrying a live one's ID would sail past it and destroy three weeks of
-    // racing — so the *target* is what gets checked.
-    const s = await importSession()
     const live = championship({
-      ID: "11111111-2222-3333-4444-555555555555",
       Events: [
         raceEvent({ StartedTime: "2026-07-01T19:00:00-07:00" }),
         raceEvent({ Scheduled: "2026-09-09T19:00:00-07:00" }),
       ],
     })
-    const reader = readerThat({ exportChampionship: async () => live })
-
     for (const allowOverwrite of [false, true]) {
+      const s = await importSession(live)
       await expect(
-        importChampionship(s, championship({ ID: "11111111-2222-3333-4444-555555555555" }), {
+        importChampionship(s, championship({ ID: EXISTING_ID }), {
           freshIds: false,
           allowOverwrite,
-          reader,
         }),
       ).rejects.toThrow(/has results for round 1/)
     }
   })
 
-  it("allows overwriting a target with no results when asked", async () => {
-    const s = await importSession()
-    const reader = readerThat({ exportChampionship: async () => championship() })
+  it("refuses an existing results-free target unless allowOverwrite is set", async () => {
+    const s = await importSession(championship())
     await expect(
-      importChampionship(s, championship({ ID: "11111111-2222-3333-4444-555555555555" }), {
+      importChampionship(s, championship({ ID: EXISTING_ID }), { freshIds: false }),
+    ).rejects.toThrow(/already exists on this server/)
+  })
+
+  it("allows overwriting a results-free target when asked", async () => {
+    const s = await importSession(championship())
+    await expect(
+      importChampionship(s, championship({ ID: EXISTING_ID }), {
         freshIds: false,
         allowOverwrite: true,
-        reader,
       }),
     ).resolves.toMatchObject({ championshipId: IMPORTED_ID })
   })
 
-  it("refuses an ID that already exists on the server", async () => {
-    const { fn } = scriptedFetch((url) =>
-      url.endsWith("/login")
-        ? new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
-        : new Response("", { status: 302, headers: { location: "/championship/x" } }),
-    )
-    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
-    await s.login({ username: "admin", password: "x" })
-
-    const reader = {
-      listChampionships: async () => [{ ID: "keep-me" }],
-      exportChampionship: async () => ({}),
-      standings: async () => ({}),
-      healthcheck: async () => ({}),
-    }
-    await expect(
-      importChampionship(s, championship({ ID: "keep-me" }), { freshIds: false, reader }),
-    ).rejects.toThrow(AcsmWriteError)
-  })
 })
 
 describe("regenerateIds", () => {

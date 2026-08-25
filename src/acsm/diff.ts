@@ -177,6 +177,13 @@ export function formatChanges(changes: readonly Change[], limit = 100): string {
         return `- ${c.path} was ${render(c.before)}`
       case "changed":
         return `~ ${c.path}: ${render(c.before)} → ${render(c.after)}`
+      default: {
+        // Unreachable while Change["kind"] is those three, and the never
+        // assignment makes adding a fourth a compile error rather than a
+        // silent "undefined" in the middle of a report.
+        const unhandled: never = c.kind
+        throw new Error(`Unknown change kind: ${String(unhandled)}`)
+      }
     }
   })
   if (changes.length > shown.length) {

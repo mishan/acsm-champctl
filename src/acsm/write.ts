@@ -9,7 +9,6 @@
 
 import { randomUUID } from "node:crypto"
 
-import { AcsmError, type AcsmReader } from "./client.js"
 import { findFormByAction } from "./form.js"
 import { AcsmWriteError, type AcsmSession } from "./session.js"
 import type { Championship } from "./types.js"
@@ -48,8 +47,10 @@ export async function listChampionshipIds(session: AcsmSession): Promise<string[
   const html = await session.getText("/championships")
   const ids = new Set<string>()
   const re = /\/championship\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi
-  let m: RegExpExecArray | null
-  while ((m = re.exec(html)) !== null) ids.add(m[1]!.toLowerCase())
+  for (const m of html.matchAll(re)) {
+    const id = m[1]
+    if (id) ids.add(id.toLowerCase())
+  }
   return [...ids]
 }
 
@@ -198,12 +199,6 @@ export interface ImportOptions {
    */
   allowOverwrite?: boolean
   /**
-   * Reader used to inspect what is already on the server. Required when
-   * freshIds is false, because that is the case where the import can land on
-   * an existing championship and its results have to be checked first.
-   */
-  reader?: AcsmReader
-  /**
    * Skip the form probe and use this mechanism. Leave unset — detecting it is
    * one cheap GET and it's the difference between working on 1.7.x and 2.4.x.
    */
@@ -248,13 +243,7 @@ export async function importChampionship(
   // a real championship, and then the target has to be inspected — checking
   // only the payload's results says nothing about what is already there.
   if (options.freshIds === false && payload.ID) {
-    if (!options.reader) {
-      throw new AcsmWriteError(
-        `Importing with freshIds: false can overwrite championship ${payload.ID} on the server, ` +
-          `so it needs a reader to check what is there first. Pass one, or leave freshIds on.`,
-      )
-    }
-    await assertTargetSafeToOverwrite(options.reader, payload.ID, options.allowOverwrite === true)
+    await assertTargetSafeToOverwrite(session, payload.ID, options.allowOverwrite === true)
   }
 
   const mechanism = options.mechanism ?? (await detectImportMechanism(session))
@@ -291,21 +280,28 @@ export async function importChampionship(
  * So before an import that can land on an existing ID, fetch the target and
  * check *its* results.
  *
+ * Read through the **session**, not an AcsmReader. The session is by
+ * definition the server about to be written to and it does not cache. A reader
+ * is none of those things: HttpAcsmReader serves from a several-minute
+ * response cache, StaticAcsmReader answers from a fixture, and either can be
+ * pointed at a different host entirely. A guard that decides "no results" from
+ * a stale or unrelated copy is worse than no guard, because it reads as one.
+ *
  * `allowOverwrite` relaxes "something is already there". It does not relax
  * "that something has results" — nothing does. If you genuinely need to replace
  * a championship that has been raced, delete it in ACSM first, where the
  * confirmation is a human's problem rather than a flag.
  */
 async function assertTargetSafeToOverwrite(
-  reader: AcsmReader,
+  session: AcsmSession,
   id: string,
   allowOverwrite: boolean,
 ): Promise<void> {
   let target: Championship
   try {
-    target = await reader.exportChampionship(id)
+    target = await session.getJson<Championship>(exportPath(id))
   } catch (e) {
-    const status = e instanceof AcsmError ? e.status : undefined
+    const status = e instanceof AcsmWriteError ? e.status : undefined
     if (status === 404) return // Nothing there; nothing to protect.
     // Anything else is inconclusive, and an inconclusive answer must not
     // authorise the write this check exists to prevent.
