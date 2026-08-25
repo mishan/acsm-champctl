@@ -15,6 +15,7 @@
 import { getSetCookies } from "undici"
 
 import { RateLimiter, type RateLimiterOptions } from "./rate-limit.js"
+import { AcsmError } from "./client.js"
 import {
   checkEntryListShape,
   parseForm,
@@ -35,13 +36,18 @@ export class AcsmAuthError extends Error {
   }
 }
 
-export class AcsmWriteError extends Error {
-  constructor(
-    message: string,
-    readonly status?: number,
-    readonly url?: string,
-  ) {
-    super(message)
+/**
+ * A write ACSM refused, or one champctl refused to send.
+ *
+ * Extends `AcsmError` because that is what it is — a failure talking to ACSM —
+ * and because every CLI already has a branch for `AcsmError` that reports it as
+ * such. Extending plain `Error` meant those branches missed it and it fell
+ * through to the catch-all, so a refused save was reported as "champctl itself
+ * failed" rather than as ACSM saying no.
+ */
+export class AcsmWriteError extends AcsmError {
+  constructor(message: string, status?: number, url?: string) {
+    super(message, status, url)
     this.name = "AcsmWriteError"
   }
 }
