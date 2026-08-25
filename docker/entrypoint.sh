@@ -34,6 +34,28 @@ say() { printf 'champctl-harness: %s\n' "$1" >&2; }
 # CHAMPCTL_SELF_TEST=1 to exercise it.
 yaml_single_quote() { printf '%s' "${1//\'/\'\'}"; }
 
+# force_update goes into the YAML *unquoted*, because it has to land as a
+# boolean rather than the string "false". That means anything else placed there
+# either breaks the parse or, worse, doesn't: a stray value can end up as a
+# YAML string, and a non-empty string is not what Go will unmarshal into a
+# bool. Either way the failure surfaces much later as Server Manager not
+# starting, with nothing pointing back at a typo in .env.
+#
+# So normalise what is forgiving to normalise — surrounding whitespace, which
+# `FOO=false ` in a .env file leaves behind, and case — and refuse everything
+# else by name. Echoes the value back, since the whole point is that the
+# typo is visible.
+yaml_boolean() {
+  local raw=$1 trimmed
+  trimmed=${raw#"${raw%%[![:space:]]*}"}   # leading whitespace
+  trimmed=${trimmed%"${trimmed##*[![:space:]]}"}  # trailing whitespace
+  case "${trimmed,,}" in
+    true)  printf 'true' ;;
+    false) printf 'false' ;;
+    *) return 1 ;;
+  esac
+}
+
 if [[ "${CHAMPCTL_SELF_TEST:-}" == "1" ]]; then
   fail=0
   check() {
@@ -48,7 +70,27 @@ if [[ "${CHAMPCTL_SELF_TEST:-}" == "1" ]]; then
   check "trailing'"    "trailing''"
   check "none"         "none"
   check 'amp&and$dollar\back' 'amp&and$dollar\back'
-  [[ $fail -eq 0 ]] && echo "yaml_single_quote: ok"
+
+  check_bool() {
+    local got; got=$(yaml_boolean "$1") || got="<rejected>"
+    if [[ "$got" != "$2" ]]; then
+      printf 'yaml_boolean %q -> %q, expected %q\n' "$1" "$got" "$2" >&2
+      fail=1
+    fi
+  }
+  check_bool "true"    "true"
+  check_bool "false"   "false"
+  check_bool "TRUE"    "true"
+  check_bool "False"   "false"
+  check_bool " true "  "true"
+  check_bool $'\ttrue' "true"
+  check_bool "yes"     "<rejected>"
+  check_bool "1"       "<rejected>"
+  check_bool "tru"     "<rejected>"
+  check_bool ""        "<rejected>"
+  check_bool "true false" "<rejected>"
+
+  [[ $fail -eq 0 ]] && echo "yaml_single_quote: ok" && echo "yaml_boolean: ok"
   exit $fail
 fi
 
@@ -58,7 +100,16 @@ fi
 if [[ -f "$TEMPLATE" ]]; then
   steam_username=$(yaml_single_quote "${STEAM_USERNAME:-}")
   steam_password=$(yaml_single_quote "${STEAM_PASSWORD:-}")
-  steam_force_update=${STEAM_FORCE_UPDATE:-false}
+  # Checked before anything is written, so a typo is a sentence here rather
+  # than a YAML parse error or a silently-wrong setting later.
+  if ! steam_force_update=$(yaml_boolean "${STEAM_FORCE_UPDATE:-false}"); then
+    say "STEAM_FORCE_UPDATE is '${STEAM_FORCE_UPDATE}', which is not a boolean."
+    say "It has to be exactly true or false — it goes into config.yml unquoted,"
+    say "where Server Manager reads it as steam.force_update. Fix it in"
+    say "docker/.env and restart. (Leading/trailing spaces and capitalisation"
+    say "are fine; 'yes', '1' and anything else are not.)"
+    exit 1
+  fi
 
   config=$(<"$TEMPLATE")
   config=${config//__STEAM_USERNAME__/"$steam_username"}

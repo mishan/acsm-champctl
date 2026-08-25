@@ -229,6 +229,17 @@ Manager reads it from nowhere else — so the entrypoint creates it `0600` befor
 writing, not after. Worth remembering if you `docker cp` anything out of
 `/home/assetto/server-manager`.
 
+`STEAM_FORCE_UPDATE` is the one value substituted *unquoted*, because
+`steam.force_update` has to arrive as a YAML boolean rather than the string
+`"false"`. So the entrypoint validates it before writing anything and refuses to
+start on anything that isn't `true` or `false` — capitalisation and surrounding
+spaces are forgiven, `yes` and `1` are not. Without that check a typo surfaces
+much later as Server Manager failing to start, with nothing pointing back at
+`.env`.
+
+`CHAMPCTL_SELF_TEST=1 bash docker/entrypoint.sh` exercises the quoting and the
+boolean parsing without starting anything.
+
 The `oss` profile mounts `config.oss.yml` instead — a plain copy with blanks —
 because the upstream image ships its own entrypoint and would never render the
 template. Change one, change the other.
