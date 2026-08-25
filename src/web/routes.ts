@@ -1,0 +1,532 @@
+/**
+ * The JSON API the finalize screen runs on (plan §5.2).
+ *
+ * Thin on purpose. Everything that can lose a race night lives in
+ * `src/finalize/`, and this reads a request, calls it, and shapes the answer —
+ * the same relationship `src/cli/finalize.ts` has to the same engine. Two front
+ * ends over one engine is the arrangement that keeps them agreeing about what a
+ * push does; a second implementation of "which fields change" would be a second
+ * set of bugs, and only one of the two would get fixed.
+ *
+ * Three things here are load-bearing rather than plumbing:
+ *
+ * **Routes are authenticated unless they say otherwise.** Not a list of
+ * protected paths — a list of public ones, checked by a hook that runs for
+ * everything. A route added without thinking about auth comes out protected,
+ * which is the direction this has to fail in.
+ *
+ * **A push takes a plan id and nothing else.** Not a lap count, not a quali
+ * time. See `plans.ts`: it is what makes the entry-list guard mean anything
+ * across two HTTP requests, and what stops a client pushing a change nobody
+ * previewed.
+ *
+ * **Numbers have upper bounds.** `formFieldsFor` posts `String(laps)`, and
+ * JSON Schema's `integer` is happy with `1e30` — for which `Number.isInteger`
+ * is true and `String` gives `"1e+30"`. A bound is the difference between a
+ * rejected request and a race length ACSM parses as zero.
+ */
+
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify"
+
+import type { AcsmReader } from "../acsm/client.js"
+import { AcsmAuthError, AcsmSession } from "../acsm/session.js"
+import { events } from "../acsm/view.js"
+import { applyFinalize, EntryListChangedError, PartialWriteError } from "../finalize/apply.js"
+import {
+  MAX_LAPS,
+  MAX_MINUTES,
+  MAX_REVERSED,
+  readFormat,
+  withOverrides,
+  type FormatOverrides,
+} from "../finalize/format.js"
+import { planFinalize } from "../finalize/plan.js"
+import { check } from "../gridmom/index.js"
+import type { PitTable } from "../pits/table.js"
+import { EMPTY_PIT_TABLE } from "../pits/table.js"
+import type { LeagueProfile } from "../profile/types.js"
+import { ApiError } from "./errors.js"
+import { PlanStore } from "./plans.js"
+import {
+  DEFAULT_TTL_MS,
+  SESSION_COOKIE,
+  SessionStore,
+  sessionCookieAttributes,
+  type StoredSession,
+} from "./sessions.js"
+import { LoginThrottle } from "./throttle.js"
+import { championshipList, championshipView, planView, roundView } from "./view.js"
+import type {
+  ApplyResponse,
+  ChampionshipListResponse,
+  ChampionshipResponse,
+  ConfigResponse,
+  LoginResponse,
+  PlanRequest,
+  PlanResponse,
+  SessionResponse,
+} from "./wire.js"
+
+declare module "fastify" {
+  interface FastifyContextConfig {
+    /**
+     * Reachable without a champctl session.
+     *
+     * Absent means protected. Every route that wants otherwise says so at the
+     * route, where the person adding it is looking.
+     */
+    public?: boolean
+  }
+}
+
+export interface ApiContext {
+  profile: LeagueProfile
+  pits: PitTable
+  /** The league's ACSM. Logins and reads both go here. */
+  baseUrl: string
+  reader: AcsmReader
+  sessions: SessionStore
+  plans: PlanStore
+  throttle: LoginThrottle
+  /** Injectable so a test can drive a session over a stub `fetch`. */
+  createSession: (baseUrl: string) => AcsmSession
+  /** Whether the session cookie carries `Secure`. See `sessions.ts`. */
+  secureCookies: boolean
+  sessionTtlMs: number
+  /** Injectable so the schedule checks are deterministic under test. */
+  now: () => Date
+}
+
+export interface ApiContextOptions extends Partial<ApiContext> {
+  profile: LeagueProfile
+  baseUrl: string
+  reader: AcsmReader
+}
+
+export function apiContext(options: ApiContextOptions): ApiContext {
+  const sessionTtlMs = options.sessionTtlMs ?? DEFAULT_TTL_MS
+  return {
+    profile: options.profile,
+    baseUrl: options.baseUrl,
+    reader: options.reader,
+    pits: options.pits ?? EMPTY_PIT_TABLE,
+    sessions: options.sessions ?? new SessionStore({ ttlMs: sessionTtlMs }),
+    plans: options.plans ?? new PlanStore(),
+    throttle: options.throttle ?? new LoginThrottle(),
+    createSession: options.createSession ?? ((baseUrl) => new AcsmSession({ baseUrl })),
+    secureCookies: options.secureCookies ?? true,
+    sessionTtlMs,
+    now: options.now ?? (() => new Date()),
+  }
+}
+
+const planBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    laps: { type: "integer", minimum: 1, maximum: MAX_LAPS },
+    minutes: { type: "integer", minimum: 1, maximum: MAX_MINUTES },
+    reversedGridPositions: { type: "integer", minimum: 0, maximum: MAX_REVERSED },
+    mandatoryPit: { type: "boolean" },
+    extraLap: { type: "boolean" },
+    quali: {
+      type: "object",
+      additionalProperties: false,
+      required: ["date", "time"],
+      properties: {
+        date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+        time: { type: "string", pattern: "^\\d{2}:\\d{2}$" },
+      },
+    },
+  },
+} as const
+
+const roundParamsSchema = {
+  type: "object",
+  required: ["id", "round"],
+  properties: {
+    id: { type: "string", minLength: 1, maxLength: 200 },
+    round: { type: "integer", minimum: 1 },
+  },
+} as const
+
+/**
+ * The preview body.
+ *
+ * `PlanRequest` is the wire contract the client codes against; intersecting it
+ * with `FormatOverrides` is what makes it type-check when passed straight to
+ * `withOverrides`. If the two ever drift apart, this stops compiling — which is
+ * the point of writing it this way rather than restating the fields.
+ */
+type PlanBody = PlanRequest & FormatOverrides
+
+export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
+  return async (app: FastifyInstance): Promise<void> => {
+    app.addHook("onRequest", async (req) => {
+      if (req.routeOptions.config?.public === true) return
+      requireSession(ctx, req)
+    })
+
+    /**
+     * Nothing under /api is cacheable, by anyone.
+     *
+     * Every response here varies by the httpOnly session cookie and none of it
+     * is shared: a championship list is read with *this* person's ACSM
+     * credentials, and `/session` answers with their username. A URL is
+     * identical between two people and a cookie is not part of a shared
+     * cache's key, so a proxy is entitled to hand one person's
+     * `{ authenticated: true, username }` to the next — and running behind a
+     * reverse proxy is a supported deployment, so "entitled to" is a thing
+     * that will happen.
+     *
+     * Applied to the whole plugin rather than to `/session`, because the same
+     * argument covers every route under it and picking them off one at a time
+     * means the next route added is the one that isn't.
+     */
+    app.addHook("onSend", async (_req, reply) => {
+      reply.header("Cache-Control", "no-store")
+      reply.header("Vary", "Cookie")
+    })
+
+    // -----------------------------------------------------------------------
+    // Session
+    // -----------------------------------------------------------------------
+
+    /**
+     * Which manager this is, so the login screen can name it.
+     *
+     * Public because a login screen is public, and because none of it is a
+     * secret: the base URL is a manager whose read API is open by design, and
+     * the schedule defaults are in the league profile that ships in the repo.
+     */
+    app.get(
+      "/config",
+      { config: { public: true } },
+      async (): Promise<ConfigResponse> => ({
+        league: { id: ctx.profile.id, name: ctx.profile.name },
+        baseUrl: ctx.baseUrl,
+        timezone: ctx.profile.schedule.timezone,
+        qualiStart: ctx.profile.schedule.qualiStart,
+        practiceMinutes: ctx.profile.schedule.practiceMinutes,
+        // The league's shorthands — "1x40", "2x20" — as one-tap starting points.
+        // They come from the profile rather than from the client so that another
+        // league's names and numbers are a config change, not a fork.
+        formats: ctx.profile.formats ?? [],
+      }),
+    )
+
+    /**
+     * Public, and answers 200 either way.
+     *
+     * "Nobody is logged in yet" is the ordinary state of a cold page load, not
+     * a failure, and reporting it as 401 makes every first visit look like an
+     * error in the console and in whatever is watching the logs.
+     */
+    app.get("/session", { config: { public: true } }, async (req): Promise<SessionResponse> => {
+      const info = ctx.sessions.info(req.cookies[SESSION_COOKIE])
+      if (!info) return { authenticated: false }
+      return { authenticated: true, username: info.username, expiresAt: info.expiresAt }
+    })
+
+    app.post<{ Body: { username: string; password: string } }>(
+      "/login",
+      {
+        config: { public: true },
+        schema: {
+          body: {
+            type: "object",
+            required: ["username", "password"],
+            additionalProperties: false,
+            properties: {
+              username: { type: "string", minLength: 1, maxLength: 200 },
+              // No minimum. A short password is ACSM's business to reject, and
+              // a length rule here would only teach an attacker where the
+              // boundary is without stopping anything.
+              password: { type: "string", maxLength: 1000 },
+            },
+          },
+        },
+      },
+      async (req, reply): Promise<LoginResponse> => {
+        const wait = ctx.throttle.retryAfterMs(req.ip)
+        if (wait > 0) {
+          reply.header("retry-after", String(Math.ceil(wait / 1000)))
+          throw new ApiError(
+            429,
+            "throttled",
+            `Too many failed logins from this address. champctl forwards these to ${ctx.baseUrl}, ` +
+              `so it stops asking on your behalf for ${Math.ceil(wait / 60_000)} more minutes. ` +
+              `If this is you, that is how long until the next attempt.`,
+          )
+        }
+
+        const acsm = ctx.createSession(ctx.baseUrl)
+        try {
+          await acsm.login({ username: req.body.username, password: req.body.password })
+        } catch (e) {
+          // Only a rejected credential counts against the allowance.
+          //
+          // Counting every exception meant an ACSM outage spent the allowance
+          // for the address: a handful of timeouts or 502s and the person was
+          // locked out for another fifteen minutes *after* the service came
+          // back, having never typed a wrong password. The throttle exists to
+          // stop champctl forwarding guesses at someone else's manager, and a
+          // manager that is down is not being guessed at.
+          if (isRejectedCredential(e)) ctx.throttle.fail(req.ip)
+          throw e
+        }
+        ctx.throttle.succeed(req.ip)
+
+        const id = ctx.sessions.create(req.body.username, acsm)
+        setSessionCookie(ctx, reply, id)
+        const info = ctx.sessions.info(id)
+        return { username: req.body.username, expiresAt: info?.expiresAt ?? 0 }
+      },
+    )
+
+    /**
+     * Public so that logging out of a session that has already expired is not
+     * itself a 401 — the browser still has a cookie to be rid of, and the one
+     * thing it must not do is leave it there.
+     */
+    app.post("/logout", { config: { public: true } }, async (req, reply) => {
+      const id = req.cookies[SESSION_COOKIE]
+      if (id) {
+        // Plans before the session: dropping the session first would leave
+        // every plan it owns unreachable but still resident, holding a parsed
+        // entry list until the TTL swept it.
+        ctx.plans.dropForSession(id)
+        ctx.sessions.destroy(id)
+      }
+      clearSessionCookie(ctx, reply)
+      return reply.code(204).send()
+    })
+
+    // -----------------------------------------------------------------------
+    // Reads
+    // -----------------------------------------------------------------------
+
+    app.get(
+      "/championships",
+      async (): Promise<ChampionshipListResponse> => ({
+        championships: championshipList(await ctx.reader.listChampionships()),
+      }),
+    )
+
+    app.get<{ Params: { id: string } }>(
+      "/championships/:id",
+      {
+        schema: {
+          params: {
+            type: "object",
+            required: ["id"],
+            properties: { id: { type: "string", minLength: 1, maxLength: 200 } },
+          },
+        },
+      },
+      async (req): Promise<ChampionshipResponse> => {
+        const c = await ctx.reader.exportChampionship(req.params.id)
+        return {
+          championship: championshipView(c, ctx.profile),
+          // The championship as it stands, before anyone edits anything. Plan
+          // §1's third job — "checking a championship for mistakes before
+          // people show up to race" — is most of this tool's value and costs
+          // one pure function call over an export already in hand.
+          gridmom: check(c, ctx.profile, { pits: ctx.pits, now: ctx.now() }),
+        }
+      },
+    )
+
+    // -----------------------------------------------------------------------
+    // Preview and push
+    // -----------------------------------------------------------------------
+
+    app.post<{ Params: { id: string; round: number }; Body: PlanBody }>(
+      "/championships/:id/rounds/:round/plan",
+      { schema: { params: roundParamsSchema, body: planBodySchema } },
+      async (req): Promise<PlanResponse> => {
+        const s = requireSession(ctx, req)
+        const { id, round } = req.params
+        const body = req.body ?? {}
+
+        if (body.laps !== undefined && body.minutes !== undefined) {
+          throw new ApiError(
+            400,
+            "length-ambiguous",
+            "Laps and minutes are two ways to say the same thing; pick one. A race is measured " +
+              "in laps or in minutes, and setting both leaves the export ambiguous.",
+          )
+        }
+
+        const championship = await ctx.reader.exportChampionship(id)
+        const list = events(championship)
+        const ev = list[round - 1]
+        if (!ev?.ID) {
+          throw new ApiError(
+            404,
+            "no-such-round",
+            `Championship ${id} has no round ${round} — it has ${list.length}.`,
+          )
+        }
+
+        const plan = await planFinalize(s.acsm, {
+          championship,
+          championshipId: id,
+          eventId: ev.ID,
+          format: withOverrides(readFormat(ev), body),
+          ...(body.quali ? { qualiStart: body.quali } : {}),
+          profile: ctx.profile,
+          pits: ctx.pits,
+          now: ctx.now(),
+        })
+
+        return {
+          plan: planView(ctx.plans.create(s.id, plan), plan),
+          // What the round looks like right now, so the screen can show the
+          // "before" side without a second request — and so a round that has
+          // since been run says so before anyone pushes to it.
+          round: roundView(ev, round, ctx.profile),
+        }
+      },
+    )
+
+    app.post<{ Params: { planId: string }; Body: { acknowledgeWarnings?: boolean } }>(
+      "/plans/:planId/apply",
+      {
+        schema: {
+          params: {
+            type: "object",
+            required: ["planId"],
+            properties: { planId: { type: "string", minLength: 1, maxLength: 200 } },
+          },
+          body: {
+            type: "object",
+            additionalProperties: false,
+            properties: { acknowledgeWarnings: { type: "boolean" } },
+          },
+        },
+      },
+      async (req): Promise<ApplyResponse> => {
+        const s = requireSession(ctx, req)
+        const { planId } = req.params
+
+        // Acquired, not merely read. Two /apply requests for the same plan
+        // could both pass a plain lookup before either wrote anything, and both
+        // would then POST the same event form — two full-form replaces racing
+        // over one entry list, from a double-click or a retried request. The
+        // plan was only destroyed after the write, which is too late to stop
+        // the second one starting.
+        const taken = ctx.plans.acquire(planId, s.id)
+        if (taken.kind === "not-found") {
+          throw new ApiError(
+            404,
+            "no-such-plan",
+            "That preview has expired, or it was already pushed. Nothing was written. Open the " +
+              "round again and redo the change — the fresh preview will show what it looks like now.",
+          )
+        }
+        if (taken.kind === "in-flight") {
+          throw new ApiError(
+            409,
+            "plan-in-flight",
+            "This change is already being pushed. Nothing extra was written. Wait for it to " +
+              "finish rather than pushing again — the round will show the result.",
+          )
+        }
+        const plan = taken.plan
+
+        try {
+          const result = await applyFinalize(s.acsm, plan, {
+            acknowledgeWarnings: req.body?.acknowledgeWarnings === true,
+          })
+          ctx.plans.destroy(planId)
+          return {
+            eventSaved: result.eventSaved,
+            scheduleSaved: result.scheduleSaved,
+            changes: plan.changes,
+          }
+        } catch (e) {
+          // A plan that can never succeed is dropped, so the obvious retry gets
+          // "take a fresh look" rather than the same refusal a second time.
+          // Both of these are terminal for *this* plan: the entry list has
+          // moved on, or half the write already landed and re-applying would
+          // re-post a format that is already applied.
+          //
+          // Everything else keeps the plan. A refusal for unacknowledged
+          // warnings is the normal path to ticking the box and pushing again,
+          // and making the person rebuild the preview to do that would be a
+          // reason to stop reading the warnings.
+          if (e instanceof EntryListChangedError || e instanceof PartialWriteError) {
+            ctx.plans.destroy(planId)
+          } else {
+            // Released rather than left in flight: this plan is still
+            // applicable, and a refusal that permanently wedged it would be
+            // worse than the race it came from.
+            ctx.plans.release(planId)
+          }
+          throw e
+        }
+      },
+    )
+  }
+}
+
+/**
+ * The session behind this request, or a 401 that says which kind of nothing it
+ * was.
+ *
+ * "You were never logged in" and "you were, an hour ago" want different words
+ * on screen and the same status code, so the distinction is in `code` rather
+ * than in the status. An expired cookie is also cleared on the way out: leaving
+ * it means the browser keeps presenting a handle to a jar that no longer
+ * exists, and every subsequent 401 looks like a bug rather than a timeout.
+ */
+function requireSession(ctx: ApiContext, req: FastifyRequest): StoredSession {
+  const id = req.cookies[SESSION_COOKIE]
+  const found = ctx.sessions.get(id)
+  if (found) return found
+
+  throw new ApiError(
+    401,
+    id ? "session-expired" : "not-authenticated",
+    id
+      ? "Your champctl session has expired. Log in again — nothing was lost, and the round is " +
+          "still where you left it."
+      : "Log in to champctl with your ACSM username and password.",
+  )
+}
+
+function setSessionCookie(ctx: ApiContext, reply: FastifyReply, id: string): void {
+  reply.header(
+    "set-cookie",
+    `${SESSION_COOKIE}=${id}; ${sessionCookieAttributes(ctx.sessionTtlMs, {
+      secure: ctx.secureCookies,
+    })}`,
+  )
+}
+
+export function clearSessionCookie(ctx: ApiContext, reply: FastifyReply): void {
+  // Max-Age=0 rather than an expiry in the past: same effect, and it can't be
+  // wrong about the client's clock.
+  reply.header(
+    "set-cookie",
+    `${SESSION_COOKIE}=; ${sessionCookieAttributes(0, { secure: ctx.secureCookies })}`,
+  )
+}
+
+/**
+ * Whether a login failure was ACSM saying "wrong credentials".
+ *
+ * ACSM answers a bad password with 200 and the login form again, which is why
+ * `AcsmAuthError` carries the status at all. A 5xx is the manager failing, a
+ * 429 is its own rate limiter, and anything that isn't an `AcsmAuthError` never
+ * got an answer — a timeout, a refused connection, DNS. None of those is an
+ * attempt worth counting.
+ */
+function isRejectedCredential(e: unknown): boolean {
+  if (!(e instanceof AcsmAuthError)) return false
+  // Undefined status means login() decided the response was a rejection
+  // without a status to point at, which is still a rejection.
+  if (e.status === undefined) return true
+  return e.status === 200 || e.status === 401 || e.status === 403
+}

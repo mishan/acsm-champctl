@@ -1,0 +1,855 @@
+/**
+ * The web API, driven end to end over a scripted ACSM.
+ *
+ * Nothing here mocks champctl's own code. The server is built with the real
+ * session store, the real plan store, the real `AcsmSession` and the real
+ * finalize engine; only `fetch` is a script. That is what lets a test say
+ * "nothing was written" and mean it — `posts` is every request that left the
+ * process, so a refusal that leaks a POST fails here rather than on a
+ * Wednesday.
+ *
+ * The tests that matter most are the ones asserting a refusal, because a
+ * refusal that silently stopped refusing looks exactly like everything working.
+ */
+
+import type { FastifyInstance } from "fastify"
+import { afterEach, describe, expect, it } from "vitest"
+
+import { StaticAcsmReader } from "../src/acsm/client.js"
+import { AcsmSession } from "../src/acsm/session.js"
+import type { Championship } from "../src/acsm/types.js"
+import { PlanStore } from "../src/web/plans.js"
+import { buildServer } from "../src/web/server.js"
+import { SessionStore } from "../src/web/sessions.js"
+import { LoginThrottle } from "../src/web/throttle.js"
+import { eventFormHtml, scheduleFormHtml, type FormEntrant } from "./support/acsm-html.js"
+import {
+  championship,
+  driver,
+  entryList,
+  NOW,
+  pitTable,
+  raceEvent,
+  suzukaPits,
+  testProfile,
+} from "./support/build.js"
+
+const CHAMP_ID = "11111111-2222-3333-4444-555555555555"
+const EVENT_ID = "event-1"
+const BASE_URL = "https://acsm.example"
+
+const TWO: FormEntrant[] = [
+  { name: "Ada", guid: "76561198000000001", pit: 0 },
+  { name: "Grace", guid: "76561198000000002", pit: 1 },
+]
+
+const champ = (over: Partial<Championship> = {}): Championship =>
+  championship({
+    ID: CHAMP_ID,
+    Name: "Test Championship",
+    Events: [
+      raceEvent({
+        ID: EVENT_ID,
+        Scheduled: "2026-09-02T19:00:00-07:00",
+        EntryList: entryList([driver("Ada"), driver("Grace")]),
+        RaceSetup: { Sessions: { RACE: { Name: "Race", Time: 0, Laps: 20, IsOpen: 1 } } },
+      }),
+    ],
+    ...over,
+  })
+
+interface HarnessOptions {
+  championship?: Championship
+  /** Event HTML per GET, in order; the last is reused. */
+  eventPages?: string[]
+  /** Fail the login POST, as ACSM does for a bad password: 200 and the form. */
+  badLogin?: boolean
+  /** Fail the login POST the way an unwell ACSM does, rather than a wrong password. */
+  loginOutage?: "5xx" | "transport"
+  sessions?: SessionStore
+  plans?: PlanStore
+  throttle?: LoginThrottle
+  /**
+   * Held open until the test resolves it, so two requests can be in the write
+   * at once. Without something like this a "concurrent" test is two sequential
+   * awaits that would pass against the racy version too.
+   */
+  postGate?: Promise<void>
+}
+
+interface Harness {
+  app: FastifyInstance
+  posts: { url: string; body: string }[]
+  cookie: () => string
+  login: (username?: string, password?: string) => Promise<string>
+}
+
+const open: FastifyInstance[] = []
+
+afterEach(async () => {
+  await Promise.all(open.splice(0).map((a) => a.close()))
+})
+
+function harness(options: HarnessOptions = {}): Harness {
+  const posts: { url: string; body: string }[] = []
+  const pages = options.eventPages ?? [eventFormHtml(CHAMP_ID, TWO)]
+  let eventGets = 0
+  let stored = ""
+
+  const fetchImpl: typeof globalThis.fetch = async (input, init = {}) => {
+    const url = String(input)
+    if (url.endsWith("/login")) {
+      // A wrong password is ACSM re-rendering the login page with a 200, not a
+      // 401. Getting that wrong is how a failed login used to look like a
+      // working one.
+      if (options.badLogin) return new Response("<form action='/login'>", { status: 200 })
+      if (options.loginOutage === "5xx") {
+        return new Response("nope", { status: 502, statusText: "Bad Gateway" })
+      }
+      if (options.loginOutage === "transport") throw new TypeError("fetch failed")
+      return new Response("", {
+        status: 302,
+        headers: { "set-cookie": "_acsm_data=x; Path=/", location: "/" },
+      })
+    }
+    if (init.method === "POST") {
+      posts.push({ url, body: String(init.body) })
+      if (options.postGate) await options.postGate
+      return new Response("", { status: 302, headers: { location: "/" } })
+    }
+    // The schedule form is rendered on the *championship* page, not at its own
+    // action — that route is POST-only and a GET of it is a 405 on 2.4.x. This
+    // double served it from the action URL, so these tests passed against a
+    // shape no real manager would answer.
+    if (url.includes(`/championship/${CHAMP_ID}`) && !url.includes("/event/")) {
+      return new Response(scheduleFormHtml(CHAMP_ID, EVENT_ID), { status: 200 })
+    }
+    const page = pages[Math.min(eventGets, pages.length - 1)] as string
+    eventGets++
+    return new Response(page, { status: 200 })
+  }
+
+  const app = buildServer({
+    profile: testProfile(),
+    baseUrl: BASE_URL,
+    reader: new StaticAcsmReader([options.championship ?? champ()]),
+    pits: pitTable([suzukaPits]),
+    // A real session over a scripted socket: the cookie jar, the redirect
+    // rules and the entry-list arity check are all the production ones.
+    createSession: (baseUrl) => new AcsmSession({ baseUrl, fetch: fetchImpl, rateLimit: false }),
+    ...(options.sessions ? { sessions: options.sessions } : {}),
+    ...(options.plans ? { plans: options.plans } : {}),
+    ...(options.throttle ? { throttle: options.throttle } : {}),
+    // Off so the Set-Cookie assertions below are about SameSite and HttpOnly
+    // rather than about a flag every test would have to opt out of anyway.
+    secureCookies: false,
+    now: () => NOW,
+    logger: false,
+  })
+  open.push(app)
+
+  const login = async (username = "admin", password = "x"): Promise<string> => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/login",
+      payload: { username, password },
+    })
+    stored = firstCookie(res.headers["set-cookie"])
+    return stored
+  }
+
+  return { app, posts, cookie: () => stored, login }
+}
+
+function firstCookie(header: string | string[] | number | undefined): string {
+  const line = Array.isArray(header) ? header[0] : header
+  return String(line ?? "").split(";")[0] ?? ""
+}
+
+/** The plan endpoint, already logged in. Return type inferred from inject. */
+function preview(h: Harness, body: Record<string, unknown> = { laps: 18 }, round = 1) {
+  return h.app.inject({
+    method: "POST",
+    url: `/api/championships/${CHAMP_ID}/rounds/${round}/plan`,
+    headers: { cookie: h.cookie() },
+    payload: body,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Authentication
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything the API serves, and whether it is reachable logged out.
+ *
+ * Maintained by hand, which is the weakness of this test and worth stating: a
+ * route added without a line here is simply not covered. What it does catch is
+ * the failure that matters — a route that was protected becoming public — and
+ * `config.public` being opt-*out* means the default for anything forgotten is
+ * still "requires a session".
+ */
+const ROUTES: { method: "GET" | "POST"; url: string; public: boolean }[] = [
+  { method: "GET", url: "/api/config", public: true },
+  { method: "GET", url: "/api/session", public: true },
+  { method: "POST", url: "/api/login", public: true },
+  { method: "POST", url: "/api/logout", public: true },
+  { method: "GET", url: "/api/championships", public: false },
+  { method: "GET", url: `/api/championships/${CHAMP_ID}`, public: false },
+  { method: "POST", url: `/api/championships/${CHAMP_ID}/rounds/1/plan`, public: false },
+  { method: "POST", url: "/api/plans/whatever/apply", public: false },
+]
+
+describe("authentication", () => {
+  it.each(ROUTES.filter((r) => !r.public))("$method $url needs a session", async (route) => {
+    const h = harness()
+    const res = await h.app.inject({ method: route.method, url: route.url, payload: {} })
+    expect(res.statusCode).toBe(401)
+    expect(res.json().error.code).toBe("not-authenticated")
+  })
+
+  it.each(ROUTES.filter((r) => r.public))("$method $url does not", async (route) => {
+    const h = harness()
+    const res = await h.app.inject({
+      method: route.method,
+      url: route.url,
+      payload: { username: "admin", password: "x" },
+    })
+    expect(res.statusCode).not.toBe(401)
+  })
+
+  it("reports a cold page load as logged out rather than as an error", async () => {
+    // 200 with authenticated:false, not 401. Nobody being logged in yet is the
+    // ordinary state of a first visit, and reporting it as a failure puts an
+    // error in the console and the logs on every single one.
+    const h = harness()
+    const res = await h.app.inject({ method: "GET", url: "/api/session" })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ authenticated: false })
+  })
+
+  it("hands back a cookie script can't read and a cross-site POST can't ride", async () => {
+    const h = harness()
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/api/login",
+      payload: { username: "admin", password: "x" },
+    })
+    expect(res.statusCode).toBe(200)
+    const setCookie = String(res.headers["set-cookie"])
+    expect(setCookie).toContain("HttpOnly")
+    expect(setCookie).toContain("SameSite=Lax")
+    // The ACSM cookie stays server-side; the browser gets an opaque handle.
+    expect(setCookie).not.toContain("_acsm_data")
+    expect(res.json().username).toBe("admin")
+  })
+
+  it("refuses a bad password without setting a session", async () => {
+    const h = harness({ badLogin: true })
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/api/login",
+      payload: { username: "admin", password: "wrong" },
+    })
+    expect(res.statusCode).toBe(401)
+    expect(res.headers["set-cookie"]).toBeUndefined()
+  })
+
+  it("says a session expired rather than that you were never logged in", async () => {
+    // Different words on screen for the same status code: one means "log in",
+    // the other means "you did, an hour ago". An expired cookie is also
+    // cleared, so the next request doesn't present a handle to a jar that no
+    // longer exists.
+    let clock = 0
+    const h = harness({ sessions: new SessionStore({ ttlMs: 1000, now: () => clock }) })
+    await h.login()
+
+    clock = 2000
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/api/championships",
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.statusCode).toBe(401)
+    expect(res.json().error.code).toBe("session-expired")
+    expect(String(res.headers["set-cookie"])).toContain("Max-Age=0")
+  })
+
+  it("stops forwarding guesses to ACSM after enough failures", async () => {
+    // Without this the login endpoint is a credential-testing oracle for the
+    // league's admin panel that also launders the source address: every
+    // attempt reaches ACSM from champctl's host.
+    const h = harness({ badLogin: true, throttle: new LoginThrottle({ maxFailures: 3 }) })
+    const attempt = () =>
+      h.app.inject({
+        method: "POST",
+        url: "/api/login",
+        payload: { username: "admin", password: "wrong" },
+      })
+
+    expect((await attempt()).statusCode).toBe(401)
+    expect((await attempt()).statusCode).toBe(401)
+    expect((await attempt()).statusCode).toBe(401)
+    const blocked = await attempt()
+    expect(blocked.statusCode).toBe(429)
+    expect(blocked.headers["retry-after"]).toBeDefined()
+  })
+
+  /**
+   * An ACSM that is down is not being guessed at.
+   *
+   * Every login exception used to spend the allowance, so a handful of
+   * timeouts or 502s during an outage locked the address out for another
+   * fifteen minutes *after* the service recovered — punishing someone who
+   * never typed a wrong password, at exactly the moment they were trying to
+   * get back in.
+   */
+  it.each(["5xx", "transport"] as const)(
+    "does not spend the login allowance on an ACSM %s failure",
+    async (mode) => {
+      const throttle = new LoginThrottle({ maxFailures: 3 })
+      const down = harness({ loginOutage: mode, throttle })
+      const attempt = (h: Harness) =>
+        h.app.inject({
+          method: "POST",
+          url: "/api/login",
+          payload: { username: "admin", password: "right" },
+        })
+
+      for (let i = 0; i < 5; i++) {
+        const res = await attempt(down)
+        expect(res.statusCode, "an outage is not a rejected credential").not.toBe(429)
+      }
+
+      // The allowance is intact, so the real password still works the moment
+      // ACSM comes back.
+      const recovered = harness({ throttle })
+      expect((await attempt(recovered)).statusCode).toBe(200)
+    },
+  )
+
+  /**
+   * Every /api response varies by the httpOnly session cookie and none of it is
+   * shared — a championship list is read with this person's ACSM credentials,
+   * and /session answers with their username. A URL is identical between two
+   * people and a cookie is not part of a shared cache's key, so a proxy would
+   * be entitled to hand one person's session to the next. Running behind a
+   * reverse proxy is a supported deployment, which makes "entitled to" a thing
+   * that happens.
+   */
+  it("marks every API response uncacheable", async () => {
+    const h = harness()
+    await h.login()
+
+    for (const url of ["/api/session", "/api/config", "/api/championships"]) {
+      const res = await h.app.inject({ method: "GET", url, headers: { cookie: h.cookie() } })
+      expect(res.headers["cache-control"], `${url} must not be cached`).toBe("no-store")
+      expect(String(res.headers["vary"] ?? ""), `${url} varies by cookie`).toContain("Cookie")
+    }
+  })
+
+  it("logs out for real, rather than only in the browser", async () => {
+    // The client sends this with no body. Declaring Content-Type: application/json
+    // on a bodyless POST makes Fastify reject it as an empty JSON body before
+    // the route runs — so the UI switched to the login screen while the server
+    // session stayed valid, and a reload signed the person straight back in.
+    const h = harness()
+    await h.login()
+    const cookie = h.cookie()
+
+    const out = await h.app.inject({
+      method: "POST",
+      url: "/api/logout",
+      headers: { cookie, "content-type": "application/json" },
+    })
+    expect(out.statusCode, "a bodyless logout must be accepted").toBeLessThan(400)
+
+    const after = await h.app.inject({ method: "GET", url: "/api/session", headers: { cookie } })
+    expect(after.json()).toMatchObject({ authenticated: false })
+  })
+
+  it("forgets the failures once a login works", async () => {
+    const throttle = new LoginThrottle({ maxFailures: 3 })
+    const bad = harness({ badLogin: true, throttle })
+    await bad.app.inject({
+      method: "POST",
+      url: "/api/login",
+      payload: { username: "a", password: "x" },
+    })
+    await bad.app.inject({
+      method: "POST",
+      url: "/api/login",
+      payload: { username: "a", password: "x" },
+    })
+
+    const good = harness({ throttle })
+    expect(
+      (
+        await good.app.inject({
+          method: "POST",
+          url: "/api/login",
+          payload: { username: "a", password: "right" },
+        })
+      ).statusCode,
+    ).toBe(200)
+
+    // The two earlier failures no longer count, so a fresh mistake doesn't
+    // immediately trip a limit the person has already cleared.
+    const after = harness({ badLogin: true, throttle })
+    expect(
+      (
+        await after.app.inject({
+          method: "POST",
+          url: "/api/login",
+          payload: { username: "a", password: "x" },
+        })
+      ).statusCode,
+    ).toBe(401)
+  })
+
+  it("refuses a write that came from somewhere else", async () => {
+    const h = harness()
+    await h.login()
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${CHAMP_ID}/rounds/1/plan`,
+      headers: { cookie: h.cookie(), origin: "https://evil.example" },
+      payload: { laps: 18 },
+    })
+    expect(res.statusCode).toBe(403)
+    expect(res.json().error.code).toBe("cross-origin")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Previewing
+// ---------------------------------------------------------------------------
+
+describe("previewing a change", () => {
+  it("describes the change and the fields, and writes nothing", async () => {
+    const h = harness()
+    await h.login()
+    const res = await preview(h, { laps: 18 })
+
+    expect(res.statusCode).toBe(200)
+    const { plan } = res.json()
+    expect(plan.changes).toContainEqual({
+      label: "Race length",
+      before: "20 laps",
+      after: "18 laps",
+    })
+    expect(plan.formChanges).toContainEqual({ name: "Race.Laps", before: "20", after: "18" })
+    expect(plan.noop).toBe(false)
+
+    // The whole point of plan-then-apply. Only the login POST happened.
+    expect(h.posts).toHaveLength(0)
+  })
+
+  it("does not send the entry list to the browser", async () => {
+    // A preview reads the rendered event form, which carries every entrant's
+    // name and Steam GUID. The finalize screen sets a lap count; it has no use
+    // for any of that, and the export it comes from is public but this
+    // response is not the place to republish it.
+    const h = harness()
+    await h.login()
+    const res = await preview(h, { laps: 18 })
+
+    expect(res.payload).not.toContain("76561198000000001")
+    expect(res.payload).not.toContain("Ada")
+    expect(res.payload).not.toContain("EntryList")
+  })
+
+  it("changes only what it was asked to change", async () => {
+    // "18 laps" means make it 18 laps, not "and reset everything I didn't
+    // mention". Same rule the CLI documents, same implementation.
+    const h = harness()
+    await h.login()
+    const { plan } = (await preview(h, { laps: 18 })).json()
+    expect(plan.formChanges.map((f: { name: string }) => f.name)).toEqual(["Race.Laps"])
+  })
+
+  it("refuses laps and minutes together", async () => {
+    const h = harness()
+    await h.login()
+    const res = await preview(h, { laps: 18, minutes: 40 })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().error.code).toBe("length-ambiguous")
+  })
+
+  it("refuses a lap count that would not survive being turned into a string", async () => {
+    // `formFieldsFor` posts `String(laps)`, and 1e30 is an integer as far as
+    // both JSON Schema and Number.isInteger are concerned — it stringifies to
+    // "1e+30", which ACSM parses as zero. A race with no end condition.
+    const h = harness()
+    await h.login()
+    const res = await preview(h, { laps: 1e30 })
+    expect(res.statusCode).toBe(400)
+    expect(h.posts).toHaveLength(0)
+  })
+
+  it("says there is nothing to do rather than pretending there is", async () => {
+    const h = harness()
+    await h.login()
+    const { plan } = (await preview(h, { laps: 20 })).json()
+    expect(plan.noop).toBe(true)
+    expect(plan.changes).toEqual([])
+  })
+
+  it("reports a round that doesn't exist as a 404 naming how many there are", async () => {
+    const h = harness()
+    await h.login()
+    const res = await preview(h, { laps: 18 }, 7)
+    expect(res.statusCode).toBe(404)
+    expect(res.json().error.message).toContain("it has 1")
+  })
+
+  it("checks the championship as it would be, not as it is", async () => {
+    // Moving the race onto a Saturday has to say so *before* it is sent. A
+    // check against the current championship would report yesterday's problems
+    // and miss the one this change is about to introduce.
+    const h = harness()
+    await h.login()
+    const { plan } = (
+      await preview(h, { laps: 18, quali: { date: "2026-09-12", time: "20:00" } })
+    ).json()
+    expect(plan.gridmom.findings.map((f: { code: string }) => f.code)).toContain("schedule.weekday")
+    expect(plan.needsAcknowledgement).toBe(true)
+    expect(plan.schedule.to).toContain("2026-09-12 20:00")
+  })
+
+  it("refuses a wall clock the league's zone doesn't have", async () => {
+    const h = harness()
+    await h.login()
+    // 02:30 on the morning the clocks go forward in America/Los_Angeles.
+    const res = await preview(h, { quali: { date: "2027-03-14", time: "02:30" } })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().error.code).toBe("schedule")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Pushing
+// ---------------------------------------------------------------------------
+
+async function planId(h: Harness, body: Record<string, unknown> = { laps: 18 }): Promise<string> {
+  const res = await preview(h, body)
+  return res.json().plan.planId as string
+}
+
+function push(h: Harness, id: string, body: Record<string, unknown> = {}) {
+  return h.app.inject({
+    method: "POST",
+    url: `/api/plans/${id}/apply`,
+    headers: { cookie: h.cookie() },
+    payload: body,
+  })
+}
+
+describe("pushing a change", () => {
+  it("posts the event form with the new length", async () => {
+    const h = harness()
+    await h.login()
+    const res = await push(h, await planId(h))
+
+    expect(res.statusCode).toBe(200)
+    expect(res.json().eventSaved).toBe(true)
+
+    const submit = h.posts.find((p) => p.url.endsWith("/event/submit"))
+    expect(submit).toBeDefined()
+    const sent = new URLSearchParams(submit!.body)
+    expect(sent.get("Race.Laps")).toBe("18")
+    expect(sent.get("action")).toBe("saveChampionship")
+    expect(sent.get("Editing")).toBe(EVENT_ID)
+    // The entry list is round-tripped rather than rebuilt, so both entrants
+    // still have their pit boxes.
+    expect(sent.getAll("EntryList.EntrantID")).toEqual(["0", "1"])
+  })
+
+  it("takes a plan id and nothing else", async () => {
+    // The push body carries no lap count, so there is no second chance to
+    // disagree with the preview. What was approved is what is sent.
+    const h = harness()
+    await h.login()
+    const res = await push(h, await planId(h), { laps: 99 })
+    expect(res.statusCode).toBe(400)
+    expect(h.posts).toHaveLength(0)
+  })
+
+  it("won't spend a plan belonging to another session", async () => {
+    const sessions = new SessionStore()
+    const plans = new PlanStore()
+    const a = harness({ sessions, plans })
+    const b = harness({ sessions, plans })
+    await a.login("ada")
+    await b.login("grace")
+
+    const stolen = await planId(a)
+    const res = await push(b, stolen)
+    expect(res.statusCode).toBe(404)
+    expect(b.posts).toHaveLength(0)
+  })
+
+  it("won't spend a plan twice", async () => {
+    const h = harness()
+    await h.login()
+    const id = await planId(h)
+    expect((await push(h, id)).statusCode).toBe(200)
+
+    const again = await push(h, id)
+    expect(again.statusCode).toBe(404)
+    expect(h.posts.filter((p) => p.url.endsWith("/event/submit"))).toHaveLength(1)
+  })
+
+  /**
+   * Genuinely concurrent, not two sequential awaits: the second request is
+   * dispatched while the first is inside its POST, held there by `postGate`.
+   * The sequential version of this test passes against the racy code, which is
+   * the whole reason the gate exists.
+   *
+   * `plans.get` reserved nothing, so both requests could read the same plan and
+   * both go on to POST the same event form — two full-form replaces racing over
+   * one entry list, from a double-click or a retried request. The plan was
+   * destroyed only after the write, too late to stop the second starting.
+   */
+  it("refuses a second apply while the first is still writing", async () => {
+    let openGate = (): void => {}
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve
+    })
+    const h = harness({ postGate: gate })
+    await h.login()
+    const id = await planId(h)
+
+    const first = push(h, id)
+    // Wait until the first request is actually inside the POST, so the second
+    // is dispatched mid-write rather than before it starts. Macrotask yields,
+    // not microtask: the request pipeline has real async steps before it gets
+    // there, and a microtask drain never lets them run.
+    for (let i = 0; i < 200 && h.posts.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 1))
+    }
+    expect(h.posts.length, "the first request should be in its write by now").toBeGreaterThan(0)
+
+    const second = await push(h, id)
+    expect(second.statusCode, "the second must be turned away, not queued behind it").toBe(409)
+    expect(second.json().error.code).toBe("plan-in-flight")
+
+    openGate()
+    expect((await first).statusCode).toBe(200)
+
+    // The property that matters: one write, not two.
+    expect(h.posts.filter((p) => p.url.endsWith("/event/submit"))).toHaveLength(1)
+  })
+
+  it("won't spend an expired plan", async () => {
+    let clock = 0
+    const h = harness({ plans: new PlanStore({ ttlMs: 1000, now: () => clock }) })
+    await h.login()
+    const id = await planId(h)
+    clock = 2000
+
+    expect((await push(h, id)).statusCode).toBe(404)
+    expect(h.posts).toHaveLength(0)
+  })
+
+  it("refuses warnings without an acknowledgement, and keeps the plan for one", async () => {
+    const h = harness()
+    await h.login()
+    const id = await planId(h, { laps: 18, quali: { date: "2026-09-12", time: "20:00" } })
+
+    const refused = await push(h, id)
+    expect(refused.statusCode).toBe(422)
+    expect(h.posts).toHaveLength(0)
+
+    // Ticking the box must not mean rebuilding the preview: making someone do
+    // that to get past a warning is a reason to stop reading them.
+    const accepted = await push(h, id, { acknowledgeWarnings: true })
+    expect(accepted.statusCode).toBe(200)
+    expect(h.posts.filter((p) => p.url.endsWith("/event/submit"))).toHaveLength(1)
+  })
+
+  it("sends the schedule as a second request, after the event", async () => {
+    // The event submit form doesn't carry `Scheduled`, so moving quali is two
+    // writes — and the order is what makes a failure leave a coherent state.
+    const h = harness()
+    await h.login()
+    const id = await planId(h, { laps: 18, quali: { date: "2026-09-09", time: "20:00" } })
+    const res = await push(h, id, { acknowledgeWarnings: true })
+
+    expect(res.json()).toMatchObject({ eventSaved: true, scheduleSaved: true })
+    const order = h.posts.map((p) => (p.url.includes("/schedule") ? "schedule" : "event"))
+    expect(order).toEqual(["event", "schedule"])
+  })
+
+  it("is blocked by an error, and nothing is sent", async () => {
+    // Duplicate pit boxes: ACSM's AddInPitBox overwrites on collision, so the
+    // next form save drops the loser. Nothing overrides this.
+    const h = harness({
+      championship: champ({
+        Events: [
+          raceEvent({
+            ID: EVENT_ID,
+            Scheduled: "2026-09-02T19:00:00-07:00",
+            EntryList: entryList([driver("Ada"), { ...driver("Grace"), PitBox: 0 }]),
+            RaceSetup: { Sessions: { RACE: { Name: "Race", Time: 0, Laps: 20, IsOpen: 1 } } },
+          }),
+        ],
+      }),
+    })
+    await h.login()
+
+    const { plan } = (await preview(h, { laps: 18 })).json()
+    expect(plan.blocked).toBe(true)
+
+    const res = await push(h, plan.planId, { acknowledgeWarnings: true })
+    expect(res.statusCode).toBe(422)
+    expect(h.posts).toHaveLength(0)
+  })
+
+  it("refuses when the entry list moved under the preview, and drops the plan", async () => {
+    // The sharpest edge in the tool: ACSM's event form replaces the whole
+    // entry list, so a sign-up approved while a preview is open would be
+    // silently deleted by the save. The second GET is the re-fetch before the
+    // POST; it now has a third entrant.
+    const h = harness({
+      eventPages: [
+        eventFormHtml(CHAMP_ID, TWO),
+        eventFormHtml(CHAMP_ID, [...TWO, { name: "Linus", guid: "76561198000000003", pit: 2 }]),
+      ],
+    })
+    await h.login()
+    const id = await planId(h)
+
+    const res = await push(h, id)
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error.code).toBe("entry-list-changed")
+    expect(h.posts).toHaveLength(0)
+
+    // Gone, so the obvious retry says "take a fresh look" rather than
+    // refusing identically a second time.
+    expect((await push(h, id)).statusCode).toBe(404)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Reads and session lifecycle
+// ---------------------------------------------------------------------------
+
+describe("reading a championship", () => {
+  it("lists the rounds with their format and quali time", async () => {
+    const h = harness()
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/api/championships/${CHAMP_ID}`,
+      headers: { cookie: h.cookie() },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body.championship.rounds).toHaveLength(1)
+    const round = body.championship.rounds[0]
+    expect(round.round).toBe(1)
+    expect(round.track).toBe("suzuka")
+    expect(round.format.length).toEqual({ kind: "laps", laps: 20 })
+    // Scheduled is practice start; quali is an hour later. Anyone reading
+    // `Scheduled` as the quali time is an hour out.
+    expect(round.quali.time).toBe("20:00")
+    expect(round.practiceStart.time).toBe("19:00")
+    expect(round.started).toBe(false)
+  })
+
+  it("shows an unscheduled round as unscheduled rather than as the year 1", async () => {
+    // ACSM writes Go's zero time rather than omitting the field, and treating
+    // `0001-01-01` as a real date produces a race two thousand years ago.
+    const h = harness({
+      championship: champ({
+        Events: [raceEvent({ ID: EVENT_ID, Scheduled: "0001-01-01T00:00:00Z" })],
+      }),
+    })
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/api/championships/${CHAMP_ID}`,
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.json().championship.rounds[0].quali).toBeNull()
+  })
+
+  it("runs gridmom over the championship as it stands", async () => {
+    const h = harness({
+      championship: champ({
+        Events: [
+          raceEvent({
+            ID: EVENT_ID,
+            EntryList: entryList([driver("Ada"), { ...driver("Grace"), PitBox: 0 }]),
+          }),
+        ],
+      }),
+    })
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/api/championships/${CHAMP_ID}`,
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.json().gridmom.counts.ERROR).toBeGreaterThan(0)
+  })
+
+  it("lists championships as id and name", async () => {
+    const h = harness()
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/api/championships",
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.json().championships).toEqual([{ id: CHAMP_ID, name: "Test Championship" }])
+  })
+})
+
+describe("logging out", () => {
+  it("ends the session and its plans", async () => {
+    const h = harness()
+    await h.login()
+    const id = await planId(h)
+
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/api/logout",
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.statusCode).toBe(204)
+    expect(String(res.headers["set-cookie"])).toContain("Max-Age=0")
+
+    // The plan held a parsed entry list. Dropping the session without dropping
+    // its plans would leave that resident and unreachable until the TTL.
+    const after = await push(h, id)
+    expect(after.statusCode).toBe(401)
+    expect(h.posts).toHaveLength(0)
+  })
+
+  it("works on a session that has already expired", async () => {
+    // The browser still has a cookie to be rid of, and the one thing logout
+    // must not do is leave it there.
+    const h = harness()
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/api/logout",
+      headers: { cookie: "champctl_session=long-gone" },
+    })
+    expect(res.statusCode).toBe(204)
+    expect(String(res.headers["set-cookie"])).toContain("Max-Age=0")
+  })
+})
+
+describe("serving the client", () => {
+  it("answers an unknown API path with JSON rather than a page", async () => {
+    // A mistyped endpoint answering 200 with HTML is a bug that surfaces as a
+    // parse error somewhere far away from the mistake.
+    const h = harness()
+    const res = await h.app.inject({ method: "GET", url: "/api/nope" })
+    expect(res.statusCode).toBe(404)
+    expect(res.json().error.code).toBe("not-found")
+  })
+})
