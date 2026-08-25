@@ -1,7 +1,7 @@
 /**
- * The finalize form's draft, and the request it implies.
+ * The event screen's draft, and the request it implies.
  *
- * Its own module rather than part of `Finalize.tsx` because it is the rule
+ * Its own module rather than part of `EventEditor.tsx` because it is the rule
  * about *what may be pushed*, and a rule that decides whether a write happens
  * should be testable without rendering anything. A `.tsx` file also cannot be
  * imported by the node test project without turning on JSX for it, which is a

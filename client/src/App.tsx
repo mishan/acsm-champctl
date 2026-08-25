@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from "react"
 
 import { api, isAuthFailure, type Config, type SessionState } from "./api"
 import { ChampionshipList } from "./components/ChampionshipList"
-import { Finalize } from "./components/Finalize"
+import { EventEditor } from "./components/EventEditor"
 import { Login } from "./components/Login"
+import { NewChampionship } from "./components/NewChampionship"
 import { Message } from "./components/Message"
 import { RoundList } from "./components/RoundList"
 import { useRoute } from "./route"
@@ -77,8 +78,25 @@ export function App(): React.JSX.Element {
 
       <main>
         {route.name === "home" && (
-          <ChampionshipList
-            onOpen={(id) => navigate({ name: "championship", id })}
+          <>
+            <div className="actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => navigate({ name: "new-championship" })}
+              >
+                New championship
+              </button>
+            </div>
+            <ChampionshipList
+              onOpen={(id) => navigate({ name: "championship", id })}
+              onAuthLost={onAuthLost}
+            />
+          </>
+        )}
+        {route.name === "new-championship" && (
+          <NewChampionship
+            onCreated={(id) => navigate({ name: "championship", id })}
             onAuthLost={onAuthLost}
           />
         )}
@@ -90,7 +108,7 @@ export function App(): React.JSX.Element {
           />
         )}
         {route.name === "round" && (
-          <Finalize
+          <EventEditor
             championshipId={route.id}
             round={route.round}
             config={config}
