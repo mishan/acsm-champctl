@@ -38,6 +38,7 @@ import { regenerateIds } from "../acsm/write.js"
 import { classes, events } from "../acsm/view.js"
 import type { RaceFormat } from "../finalize/format.js"
 import { applyFormat } from "../finalize/format.js"
+import { practiceMinutesFor } from "../finalize/schedule.js"
 import type { PitTable } from "../pits/table.js"
 import type { LeagueProfile } from "../profile/types.js"
 import { deepMerge, mergeAll } from "./merge.js"
@@ -195,24 +196,56 @@ export function emitMonth(options: EmitOptions): EmitResult {
   // other date in the same championship came from `now` — so a test could pin
   // Created and still get a schedule that moved, and a caller passing `now`
   // deliberately would get a month half in one timeframe and half in another.
+  // The template event's practice length, not the league default: Scheduled is
+  // quali minus practice, and the two disagreeing puts every round off by the
+  // difference. templateEvent is resolved below, so this reads it from the
+  // same place buildEvent will.
+  const firstTemplateEvent = events(template)[0]
+  const practiceMinutes = firstTemplateEvent
+    ? practiceMinutesFor(firstTemplateEvent, profile.schedule.practiceMinutes)
+    : profile.schedule.practiceMinutes
+
   const schedule = monthSchedule(
     rounds,
     profile,
     spec.startDate,
     DateTime.fromJSDate(now).setZone(profile.schedule.timezone),
+    practiceMinutes,
   )
-  const grid = gridCap(rounds, options.pits)
+  // The spectator car takes a pit box, and gridmom counts it against the
+  // track's capacity, so the cap has to leave room for it.
+  const spectatorBoxes = mergeAll<Championship>(template, profile.baseline.championship ?? {})
+    .SpectatorCarEnabled
+    ? 1
+    : 0
+  const grid = gridCap(rounds, options.pits, { reservedBoxes: spectatorBoxes })
 
   // Start from the template, then the league baseline. Both are whole-object
   // overlays, so anything neither mentions survives from the template.
   const base = mergeAll<Championship>(template, profile.baseline.championship ?? {})
 
-  const templateClass = classes(template)[0]
+  const templateClasses = classes(template)
+  const templateClass = templateClasses[0]
   const templateEvent = events(template)[0]
   if (!templateEvent) {
     throw new EmitError(
       "The template championship has no events to use as a shape for this month's rounds. " +
         "A golden template must be a real exported championship (plan §4.1).",
+    )
+  }
+
+  // A MonthSpec describes one class, and `Classes` is replaced wholesale below.
+  // Cloning a two-class championship therefore dropped the second class and its
+  // entrants with no error, no warning and no `derived` line — the emitter's
+  // one silent data loss. Modelling a single class is a deliberate limit;
+  // doing it quietly is not.
+  if (templateClasses.length > 1) {
+    const names = templateClasses.map((c, i) => c.Name ?? `class ${i + 1}`)
+    throw new EmitError(
+      `The template has ${templateClasses.length} classes (${names.join(", ")}), and a month ` +
+        `spec describes one. Emitting would keep ${JSON.stringify(names[0])} and silently drop ` +
+        `the rest along with their entrants. Split the month, or start from a single-class ` +
+        `template.`,
     )
   }
 

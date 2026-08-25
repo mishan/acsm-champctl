@@ -43,7 +43,17 @@ export interface GridCap {
  * makes elsewhere, where a missing count degrades gridmom to a warning rather
  * than a guess.
  */
-export function gridCap(tracks: readonly TrackRef[], pits?: PitTable, fallback = 0): GridCap {
+export function gridCap(
+  tracks: readonly TrackRef[],
+  pits?: PitTable,
+  options: { fallback?: number; reservedBoxes?: number } = {},
+): GridCap {
+  const fallback = options.fallback ?? 0
+  // Boxes that are spoken for before any driver is. The spectator car occupies
+  // one, and gridmom's grid.max-clients counts it against the track's capacity
+  // — so a cap set to the raw pit count emitted a month its own checker
+  // refused, off by exactly the number of spectator cars.
+  const reserved = options.reservedBoxes ?? 0
   const unknownTracks: string[] = []
   let smallest: { label: string; boxes: number } | undefined
 
@@ -54,8 +64,15 @@ export function gridCap(tracks: readonly TrackRef[], pits?: PitTable, fallback =
       if (!unknownTracks.includes(label)) unknownTracks.push(label)
       continue
     }
-    if (!smallest || record.pitboxes < smallest.boxes) {
-      smallest = { label, boxes: record.pitboxes }
+    const usable = record.pitboxes - reserved
+    if (usable <= 0) {
+      // Every box is reserved. Not a cap anyone can race under, and silently
+      // emitting 0 is the bug this module already refuses elsewhere.
+      if (!unknownTracks.includes(label)) unknownTracks.push(label)
+      continue
+    }
+    if (!smallest || usable < smallest.boxes) {
+      smallest = { label, boxes: usable }
     }
   }
 
@@ -71,10 +88,11 @@ export function gridCap(tracks: readonly TrackRef[], pits?: PitTable, fallback =
     }
   }
 
+  const reservedNote = reserved > 0 ? ` (${reserved} reserved for the spectator car)` : ""
   const summary =
     unknownTracks.length === 0
-      ? `Capped at ${smallest.boxes} by ${smallest.label}.`
-      : `Capped at ${smallest.boxes} by ${smallest.label}, but ${humanList(unknownTracks)} ` +
+      ? `Capped at ${smallest.boxes} by ${smallest.label}${reservedNote}.`
+      : `Capped at ${smallest.boxes} by ${smallest.label}${reservedNote}, but ${humanList(unknownTracks)} ` +
         `${unknownTracks.length === 1 ? "has" : "have"} no pit count on file and could be smaller.`
 
   return {

@@ -47,8 +47,21 @@ export function monthSchedule(
   profile: LeagueProfile,
   startDate?: string,
   from: DateTime = DateTime.now(),
+  /**
+   * Practice length for the emitted rounds, when the template's differs from
+   * the league default.
+   *
+   * `Scheduled` is quali minus practice, so using the profile's number while
+   * the event carries its own puts every race night off by the difference —
+   * and gridmom's `schedule.derived-start` reads the length off the *event*,
+   * so the emitter was generating months its own checker complained about.
+   * `finalize/schedule.ts` has `practiceMinutesFor` for exactly this; the
+   * caller resolves it, because only the caller knows the template.
+   */
+  practiceMinutesOverride?: number,
 ): RoundSchedule[] {
-  const { weekday, qualiStart, timezone, practiceMinutes } = profile.schedule
+  const { weekday, qualiStart, timezone } = profile.schedule
+  const practiceMinutes = practiceMinutesOverride ?? profile.schedule.practiceMinutes
 
   const first = startDate
     ? isoDateOrThrow(startDate, timezone)

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest"
 import { diff } from "../src/acsm/diff.js"
 import type { Championship } from "../src/acsm/types.js"
 import { ANY_CAR_MODEL as CANONICAL_ANY_CAR_MODEL } from "../src/acsm/types.js"
-import { events, isAnyCarModel, slots } from "../src/acsm/view.js"
+import { events, isAnyCarModel, session, slots } from "../src/acsm/view.js"
 import { gridCap } from "../src/emit/grid.js"
 import { deepMerge, definedOnly, mergeAll } from "../src/emit/merge.js"
 import {
@@ -19,6 +19,7 @@ import { cloneMonth, specFromChampionship } from "../src/emit/clone.js"
 import type { PitTable } from "../src/pits/table.js"
 import { monthSchedule, nextWeekday } from "../src/emit/schedule.js"
 import { ScheduleError } from "../src/finalize/schedule.js"
+import { check } from "../src/gridmom/index.js"
 import {
   championship,
   championshipClass,
@@ -529,6 +530,55 @@ describe("emitting a month", () => {
     for (const id of ids) expect(id).toMatch(/^[0-9a-f-]{36}$/)
   })
 
+  it("emits a month gridmom has no errors about", () => {
+    // The check the emitter's whole rationale rests on, and the one that was
+    // missing: everything else here asserts a field, while this asserts the
+    // two modules agree about the same championship. Three separate bugs hid
+    // behind its absence — MaxClients: 0, the spectator car uncounted against
+    // the grid cap, and Scheduled derived from the profile's practice length
+    // rather than the event's.
+    const { championship: c } = emit()
+    const report = check(c, testProfile(), { pits, now: NOW })
+    const errors = report.findings.filter((f) => f.severity === "ERROR")
+    expect(errors.map((f) => `${f.code}: ${f.message}`)).toEqual([])
+  })
+
+  it("emits a month gridmom has no errors about, with a spectator car", () => {
+    // The spectator car occupies a pit box, so gridmom counts it against the
+    // track's capacity. gridCap did not, so any template with one emitted a
+    // month whose MaxClients was exactly one too many for its tightest track.
+    const t = template({ SpectatorCarEnabled: true, SpectatorCar: { Model: "ford_transit" } })
+    const { championship: c } = emit({ template: t })
+    const report = check(c, testProfile(), { pits, now: NOW })
+    expect(report.findings.filter((f) => f.severity === "ERROR")).toEqual([])
+  })
+
+  it("derives Scheduled from the event's practice length, not the profile's", () => {
+    // monthSchedule used profile.schedule.practiceMinutes for every round while
+    // the practice session came from the template, so a 30-minute practice
+    // against a 60-minute default put quali half an hour early — and gridmom's
+    // schedule.derived-start, which reads the length off the event, says so.
+    //
+    // The session is *replaced*, not added: the fixture already carries a
+    // "Practice" at 60, and adding a "PRACTICE" at 30 beside it just leaves
+    // lookupSession finding the first one. The initial version of this test did
+    // exactly that and measured nothing.
+    const t = template()
+    for (const ev of events(t)) {
+      ev.RaceSetup = {
+        ...ev.RaceSetup,
+        Sessions: { Practice: { Name: "Practice", Time: 30, Laps: 0, IsOpen: 1 } },
+      }
+    }
+    expect(session(events(t)[0]!, "Practice")?.Time).toBe(30)
+
+    const { championship: c } = emit({ template: t })
+    expect(session(events(c)[0]!, "Practice")?.Time).toBe(30)
+
+    const report = check(c, testProfile(), { pits, now: NOW })
+    expect(report.findings.map((f) => f.code)).not.toContain("schedule.derived-start")
+  })
+
   it("writes MaxClients from the binding track, and says which", () => {
     const { championship: c, grid, derived } = emit()
     expect(grid.maxClients).toBe(24)
@@ -652,6 +702,23 @@ describe("emitting a month", () => {
     // The label the summary prints, and the one the pit table was asked for.
     expect(grid.summary).not.toMatch(/ \)|\( /)
     expect(grid.maxClients).toBe(24) // suzuka's count was still found
+  })
+
+  it("refuses a multi-class template instead of dropping a class", () => {
+    // A MonthSpec describes one class and Classes is replaced wholesale, so a
+    // two-class template lost the second class and its entrants with no error,
+    // no warning and nothing in `derived` — the emitter's one silent data
+    // loss. Modelling a single class is a deliberate limit; doing it quietly
+    // is not.
+    const t = template({
+      Classes: [
+        championshipClass({ Name: "GT3", AvailableCars: ["a"] }),
+        championshipClass({ Name: "GT4", AvailableCars: ["b"] }),
+      ],
+    })
+    expect(() => emit({ template: t })).toThrow(EmitError)
+    expect(() => emit({ template: t })).toThrow(/GT3, GT4/)
+    expect(() => emit({ template: t })).toThrow(/silently drop/)
   })
 
   it("refuses a blank car model, naming it, not just an empty car list", () => {
