@@ -64,6 +64,13 @@ if [[ -f "$TEMPLATE" ]]; then
   config=${config//__STEAM_USERNAME__/"$steam_username"}
   config=${config//__STEAM_PASSWORD__/"$steam_password"}
   config=${config//__STEAM_FORCE_UPDATE__/"$steam_force_update"}
+
+  # The rendered config holds the Steam password in plain text — that is the
+  # only place Server Manager will read it from. Create it empty and lock it
+  # down *before* writing, so it is never briefly world-readable, and so a
+  # `docker cp` or a stray process in the container doesn't pick it up.
+  : >"$OUTPUT"
+  chmod 600 "$OUTPUT"
   printf '%s\n' "$config" >"$OUTPUT"
 elif [[ -f "$OUTPUT" ]]; then
   say "no template at $TEMPLATE; using the config.yml already in place"
@@ -118,8 +125,16 @@ else
   # Server Manager is about to do this login anyway; doing it here first turns
   # a numeric failure buried in the UI into a sentence in the logs.
   say "checking Steam credentials for '${STEAM_USERNAME}'..."
+
+  # Same reasoning as config.yml above: steamcmd writes the account name and
+  # its own auth diagnostics here, so create the log locked down rather than at
+  # whatever the umask happens to be.
+  preflight_log=/tmp/steam-preflight.log
+  : >"$preflight_log"
+  chmod 600 "$preflight_log"
+
   set +e
-  steamcmd +login "$STEAM_USERNAME" "$STEAM_PASSWORD" +quit </dev/null >/tmp/steam-preflight.log 2>&1
+  steamcmd +login "$STEAM_USERNAME" "$STEAM_PASSWORD" +quit </dev/null >"$preflight_log" 2>&1
   preflight=$?
   set -e
 
@@ -135,7 +150,7 @@ else
       say "That caches the credentials in the acsm-steam volume, and later"
       say "non-interactive logins work. Note 'npm run harness:reset' wipes it."
     fi
-    tail -5 /tmp/steam-preflight.log >&2 || true
+    tail -5 "$preflight_log" >&2 || true
     exit 1
   fi
 

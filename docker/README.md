@@ -44,9 +44,9 @@ download the release, swap the binary. The auto-update in the config is
 via steamcmd — a different program. A container built from a 1.7.8 zip stays
 1.7.8 however long it runs.
 
-`npm run recon:forms` records the version it captured against and writes
-`fixtures/recon/forms-<version>.json`, so a 2.4.5 run later produces a diff
-rather than silently replacing a 1.7.x answer.
+The recon scripts (a later change) record the version they captured against
+and write `fixtures/recon/forms-<version>.json`, so a 2.4.5 run later produces
+a diff rather than silently replacing a 1.7.x answer.
 
 ## Setup
 
@@ -169,7 +169,7 @@ reason, which is also what Server Manager's own installer does. See
 **steamcmd exit codes**, as reported by Server Manager. Verified by running
 them:
 
-| | |
+| Exit code | What it means |
 |---|---|
 | `0` | success |
 | `4` | login failed — blank credentials, or a Steam Guard prompt it couldn't answer. See "Steam Guard" above. |
@@ -224,11 +224,20 @@ keeps Steam credentials in the gitignored `.env` rather than in a tracked file.
 Values are quoted as YAML single-quoted scalars, so passwords containing `&`,
 `$`, `\` or `'` survive intact.
 
+The rendered `config.yml` holds the Steam password in plain text — Server
+Manager reads it from nowhere else — so the entrypoint creates it `0600` before
+writing, not after. Worth remembering if you `docker cp` anything out of
+`/home/assetto/server-manager`.
+
 The `oss` profile mounts `config.oss.yml` instead — a plain copy with blanks —
 because the upstream image ships its own entrypoint and would never render the
 template. Change one, change the other.
 
 ## Using it
+
+The `recon:*` and `test:live` scripts arrive with the recon change, not this
+one — until that lands, this section describes what the harness is *for*
+rather than commands you can run today.
 
 ```sh
 set -a && . docker/.env && set +a
@@ -283,7 +292,7 @@ Answers you don't get:
 
 ## Files
 
-| | |
+| File | What it is |
 |---|---|
 | `docker-compose.yml` | Premium service by default, `oss` profile for the public image |
 | `Dockerfile.premium` | Builds an image from the release zip in `premium/` |

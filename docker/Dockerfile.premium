@@ -113,7 +113,7 @@ RUN set -eux; \
     fi; \
     if [ "$count" -gt 1 ]; then \
       echo "More than one zip in docker/premium/:" >&2; \
-      printf '  %s\n' $zips >&2; \
+      printf '%s\n' "$zips" | sed 's/^/  /' >&2; \
       echo "Leave exactly one — otherwise which version gets built is a coin toss," >&2; \
       echo "and a harness built from the wrong version answers the wrong questions." >&2; \
       exit 1; \
