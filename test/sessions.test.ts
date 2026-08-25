@@ -176,4 +176,24 @@ describe("the session cookie", () => {
     expect(attrs).toContain(`Max-Age=${DEFAULT_TTL_MS / 1000}`)
     expect(SESSION_COOKIE).toBe("champctl_session")
   })
+
+  it("drops only Secure when a localhost dev server asks it to", () => {
+    // A browser will not store a `Secure` cookie from `http://localhost`, so
+    // without this there is no way to develop against the real login flow. The
+    // risk is that the escape hatch quietly takes the other protections with
+    // it, which is what this pins: HttpOnly and SameSite are not negotiable.
+    const attrs = sessionCookieAttributes(DEFAULT_TTL_MS, { secure: false })
+    expect(attrs).not.toContain("Secure")
+    expect(attrs).toContain("HttpOnly")
+    expect(attrs).toContain("SameSite=Lax")
+    expect(attrs).toContain("Path=/")
+  })
+
+  it("keeps Secure unless it was asked for explicitly", () => {
+    // The direction this has to fail in is "refuses to work over plain HTTP",
+    // never "quietly sends an admin session in the clear" — so anything that
+    // isn't a deliberate `false` leaves the attribute on.
+    expect(sessionCookieAttributes(DEFAULT_TTL_MS, {})).toContain("Secure")
+    expect(sessionCookieAttributes(DEFAULT_TTL_MS, { secure: true })).toContain("Secure")
+  })
 })

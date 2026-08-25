@@ -202,9 +202,20 @@ export function sameSessionId(a: string, b: string): boolean {
  * (this forwards admin credentials between hosts), `sameSite=lax` so a
  * cross-site form post can't ride the session while ordinary navigation still
  * works.
+ *
+ * `secure` is a parameter rather than a constant only because a browser will
+ * not store a `Secure` cookie from `http://localhost`, so developing against
+ * the real login flow would be impossible without it. It **defaults to on**,
+ * and the server makes turning it off an explicit, logged decision — the
+ * direction this has to fail in is "refuses to work over plain HTTP", not
+ * "quietly sends an admin session in the clear".
  */
 export const SESSION_COOKIE = "champctl_session"
 
-export function sessionCookieAttributes(ttlMs: number = DEFAULT_TTL_MS): string {
-  return `Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${Math.floor(ttlMs / 1000)}`
+export function sessionCookieAttributes(
+  ttlMs: number = DEFAULT_TTL_MS,
+  options: { secure?: boolean } = {},
+): string {
+  const secure = options.secure === false ? "" : " Secure;"
+  return `Path=/; HttpOnly;${secure} SameSite=Lax; Max-Age=${Math.floor(ttlMs / 1000)}`
 }
