@@ -371,11 +371,36 @@ export function emitMonth(options: EmitOptions): EmitResult {
   // reference to it another.
   out = regenerateIds(out)
 
-  // The sweep only rewrites UUID-shaped strings that aren't the nil UUID, so
-  // a template with a non-UUID or all-zeroes ID comes through unchanged and
-  // could still collide. Only those cases need a fresh one, and by then there
-  // is nothing left pointing at the old value for it to disagree with.
-  if (!isFreshlyGeneratedId(out.ID)) out.ID = randomUUID()
+  // The sweep only rewrites UUID-shaped strings that aren't the nil UUID, so a
+  // template whose ID is neither comes through unchanged and could still
+  // collide with the championship it came from. Those cases need a fresh one.
+  //
+  // "By then nothing points at the old value" was wrong, and is why this now
+  // does more than assign. The sweep skipped that ID precisely *because* it
+  // didn't look like a UUID — and it skipped every unmodelled field holding a
+  // copy of it for the same reason. Minting a new root ID on its own therefore
+  // left those references pointing at an ID that no longer existed anywhere.
+  //
+  // So a non-UUID root ID is replaced everywhere it appears, exactly as the
+  // sweep would have done had it recognised it. That inherits the sweep's
+  // trade-off — a field that merely happens to equal the old ID is rewritten
+  // too — which is the same bet `regenerateIds` already takes for UUIDs, and
+  // the cheaper mistake: a stray rewrite is visible in the diff, a dangling
+  // reference is not.
+  //
+  // The nil UUID is the exception. It is the "unset" sentinel and appears on
+  // every blank date, id and reference in the export, so rewriting each
+  // occurrence would fill the month with references to the championship. That
+  // one only gets a fresh root ID.
+  if (!isFreshlyGeneratedId(out.ID)) {
+    const previous = out.ID
+    const fresh = randomUUID()
+    out.ID = fresh
+    if (previous && previous !== NIL_UUID) {
+      out = replaceExactString(out, previous, fresh)
+      derived.push(`references to the template's id ${JSON.stringify(previous)} repointed`)
+    }
+  }
 
   derived.push("every UUID regenerated, so importing creates rather than overwrites")
 
@@ -435,6 +460,27 @@ const NIL_UUID = "00000000-0000-0000-0000-000000000000"
  * as already-fresh would let a template whose ID is all zeroes emit a month
  * that keeps it — and then every such month collides with every other one.
  */
+/**
+ * Replaces every string that exactly equals `from`, returning a new object.
+ *
+ * Deliberately whole-string rather than substring: an ID embedded in a URL or
+ * a sentence is prose, and rewriting inside it would corrupt text rather than
+ * repoint a reference.
+ */
+function replaceExactString<T>(value: T, from: string, to: string): T {
+  const walk = (v: unknown): unknown => {
+    if (typeof v === "string") return v === from ? to : v
+    if (Array.isArray(v)) return v.map(walk)
+    if (v && typeof v === "object") {
+      const out: Record<string, unknown> = {}
+      for (const [k, val] of Object.entries(v)) out[k] = walk(val)
+      return out
+    }
+    return v
+  }
+  return walk(value) as T
+}
+
 function isFreshlyGeneratedId(value: string | undefined): boolean {
   if (!value || value === NIL_UUID) return false
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)

@@ -507,6 +507,46 @@ describe("emitting a month", () => {
     expect(c.Classes?.[0]?.ID).not.toBe(templateClassId)
   })
 
+  it("repoints references when the root id wasn't UUID-shaped", () => {
+    // The sweep skips a non-UUID id — and skips every unmodelled field holding
+    // a copy of it, for the same reason. Minting a fresh root id on its own
+    // therefore left those references pointing at an id that no longer existed
+    // anywhere, which is the failure the sweep exists to prevent, arriving by
+    // the one route it doesn't cover.
+    const t = template({ ID: "last-months-championship" }) as Championship & {
+      SomeFutureAcsmField?: unknown
+    }
+    t.SomeFutureAcsmField = { ChampionshipRef: "last-months-championship" }
+
+    const { championship: c, derived } = emit({ template: t })
+    const ref = (c as Record<string, unknown>)["SomeFutureAcsmField"] as {
+      ChampionshipRef: string
+    }
+
+    expect(c.ID).toMatch(/^[0-9a-f-]{36}$/)
+    expect(c.ID).not.toBe("last-months-championship")
+    expect(ref.ChampionshipRef).toBe(c.ID)
+    expect(JSON.stringify(c)).not.toContain("last-months-championship")
+    expect(derived.join(" ")).toMatch(/references to the template's id/)
+  })
+
+  it("does not repoint the nil UUID, which means 'unset' everywhere", () => {
+    // The one id that must not be swept: it is the blank-value sentinel, so
+    // rewriting each occurrence would turn every unset date and reference in
+    // the month into a reference to the championship.
+    const t = template({ ID: "00000000-0000-0000-0000-000000000000" }) as Championship & {
+      SomeFutureAcsmField?: unknown
+    }
+    t.SomeFutureAcsmField = { Unset: "00000000-0000-0000-0000-000000000000" }
+
+    const { championship: c } = emit({ template: t })
+    const kept = (c as Record<string, unknown>)["SomeFutureAcsmField"] as { Unset: string }
+
+    expect(c.ID).toMatch(/^[0-9a-f-]{36}$/)
+    expect(c.ID).not.toBe("00000000-0000-0000-0000-000000000000")
+    expect(kept.Unset).toBe("00000000-0000-0000-0000-000000000000")
+  })
+
   it("mints a class ID the sweep would not have rewritten", () => {
     // The sweep only rewrites UUID-shaped strings that aren't the nil UUID, so
     // carrying the template's ID through is only safe when it is one. The

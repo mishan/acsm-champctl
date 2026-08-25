@@ -58,6 +58,10 @@ export function gridCap(
   let smallest: { label: string; boxes: number } | undefined
 
   for (const t of tracks) {
+    // No trim here on purpose: `pitKey` normalises both values, so the lookup
+    // and the label already agree about " spa " and "spa". Repeating it at the
+    // call site would be a second copy of a rule that has one home, and the
+    // kind that drifts. `test/infra.test.ts` pins the boundary.
     const label = trackLabel(t)
     const record = pits?.get(t.track, t.layout ?? "")
     if (!record || typeof record.pitboxes !== "number" || record.pitboxes <= 0) {
