@@ -26,23 +26,37 @@ import type {
   ConfigResponse,
   FormatPreset,
   LoginResponse,
+  NewChampionshipResponse,
+  NewChampionshipRequest,
+  NewChampionshipPlanResponse,
+  NewChampionshipPlan,
+  PlannedRoundView,
   PlanRequest,
   PlanResponse,
   PlanView,
   RaceFormat,
   RoundView,
   SessionResponse,
+  TrackRequest,
 } from "../../src/web/wire.js"
 
 export type {
   ApplyResponse,
   ChampionshipListItem,
-  // `championship()` returns it, for the same reason `PlanResponse` is here.
+  // Every response type this module returns is re-exported, so a caller that
+  // wants to name what it got back never has to reach past here into the
+  // server's wire types.
+  ChampionshipListResponse,
   ChampionshipResponse,
   ChampionshipView,
   CheckReport,
   Finding,
   FormatPreset,
+  NewChampionshipResponse,
+  NewChampionshipRequest,
+  NewChampionshipPlanResponse,
+  NewChampionshipPlan,
+  PlannedRoundView,
   PlanRequest,
   // `plan()` returns it, so a caller that wants to name what it got back
   // should not have to reach past this module into the server's wire types.
@@ -51,6 +65,7 @@ export type {
   RaceFormat,
   RoundView,
   Severity,
+  TrackRequest,
 }
 
 /** Local aliases for the two the components read most. */
@@ -172,4 +187,23 @@ export const api = {
    */
   apply: (planId: string, acknowledgeWarnings: boolean): Promise<ApplyResponse> =>
     request(`/plans/${encodeURIComponent(planId)}/apply`, json({ acknowledgeWarnings })),
+
+  /**
+   * Preview a new championship cloned from a past one. Writes nothing.
+   *
+   * Takes a signal for the same reason `plan` does: the review screen
+   * re-previews as the track list is edited.
+   */
+  planNewChampionship: (
+    body: NewChampionshipRequest,
+    signal?: AbortSignal,
+  ): Promise<NewChampionshipPlanResponse> =>
+    request("/championships/plan", { ...json(body), ...(signal ? { signal } : {}) }),
+
+  /** Create it. Takes the plan id, so what lands is what was reviewed. */
+  createChampionship: (
+    planId: string,
+    acknowledgeWarnings: boolean,
+  ): Promise<NewChampionshipResponse> =>
+    request(`/championships/${encodeURIComponent(planId)}/create`, json({ acknowledgeWarnings })),
 }

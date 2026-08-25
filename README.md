@@ -12,8 +12,8 @@ Five commands:
 | `gridmom` | check a championship for the mistakes that ruin a race night |
 | `champctl-archive` | keep a copy of every export the league has ever run |
 | `champctl-finalize` | set a race's format and push it |
-| `champctl-championship` | create a championship of racing from a template |
-| `champctl-serve` | the same finalize flow as a web UI, for people without a terminal |
+| `champctl-championship` | create a championship from a template |
+| `champctl-serve` | the finalize and create-a-championship flows as a web UI, for people without a terminal |
 
 Working on champctl itself? See [AGENTS.md](AGENTS.md) and
 [docs/development.md](docs/development.md).
@@ -270,6 +270,13 @@ race weekday starting from the next one. `className`, `description` and
 The weekly flow with a face on it: pick the round, set what the racers voted
 for, read the diff, push. Same engine as `champctl-finalize`, so the preview and
 the write agree with the CLI by construction rather than by resemblance.
+
+It also creates a championship, the same way `champctl-championship clone`
+does: pick the one to clone, name it, say when it starts, list the tracks in
+order, and read the review before anything is created. Cloning rather than
+uploading a template because a browser has no file on the server's disk, and
+because a league's cars, class, format and entry-list slots are the same as
+last time — what changes is the name, the date and the tracks.
 
 ```sh
 champctl-serve                 # http://127.0.0.1:3000

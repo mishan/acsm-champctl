@@ -1,8 +1,8 @@
 /**
- * Three screens and the back button.
+ * Four screens and the back button.
  *
  * Not a router library, because there is nothing here a router would earn its
- * bundle on: three shapes, no nested layouts, no loaders. What it does buy is
+ * bundle on: four shapes, no nested layouts, no loaders. What it does buy is
  * the phone's back gesture working the way the person expects — the finalize
  * screen is meant to be opened from a Discord link and left again, and a back
  * swipe that exits the app instead of returning to the round list is the kind
@@ -16,11 +16,13 @@ import { useEffect, useState } from "react"
 
 export type Route =
   | { name: "home" }
+  | { name: "new-championship" }
   | { name: "championship"; id: string }
   | { name: "round"; id: string; round: number }
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.split("/").filter(Boolean)
+  if (parts[0] === "new-championship") return { name: "new-championship" }
   if (parts[0] !== "c" || !parts[1]) return { name: "home" }
 
   // A malformed percent escape — `/c/%` — makes decodeURIComponent throw, and
@@ -47,6 +49,8 @@ export function routePath(route: Route): string {
   switch (route.name) {
     case "home":
       return "/"
+    case "new-championship":
+      return "/new-championship"
     case "championship":
       return `/c/${encodeURIComponent(route.id)}`
     case "round":
