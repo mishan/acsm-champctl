@@ -13,9 +13,11 @@ import {
   type ChampionshipEvent,
   type Entrant,
   type EntryList,
+  type EventSession,
   type RaceSetup,
   type SessionConfig,
   type SessionKey,
+  SESSION_KEY_ALIASES,
   type SignUpResponse,
 } from "./types.js"
 
@@ -93,11 +95,55 @@ export function trackLabel(rs: RaceSetup | undefined): string {
   return layout ? `${track}/${layout}` : track
 }
 
+/**
+ * Looks up a session regardless of how this ACSM version spells the key.
+ *
+ * `SessionType` is a Go string type whose constants are `"BOOK"`, `"PRACTICE"`,
+ * `"QUALIFY"`, `"RACE"`, but exports have also carried the friendly spellings.
+ * Because `Sessions` is a map, a key we don't recognise is not an error — the
+ * lookup simply returns nothing, which would silently disable every format
+ * check rather than failing loudly. Hence matching on aliases.
+ */
+function lookupSession<T>(
+  sessions: Record<string, T> | undefined,
+  key: SessionKey,
+): T | undefined {
+  if (!sessions || typeof sessions !== "object") return undefined
+
+  const exact = sessions[key]
+  if (exact !== undefined) return exact
+
+  const aliases = SESSION_KEY_ALIASES[key]
+  for (const [k, v] of Object.entries(sessions)) {
+    if (aliases.includes(k.trim().toLowerCase())) return v
+  }
+  return undefined
+}
+
+/** Session *configuration* — durations, laps — from `RaceSetup.Sessions`. */
 export function session(
   ev: ChampionshipEvent,
   key: SessionKey,
 ): SessionConfig | undefined {
-  return ev.RaceSetup?.Sessions?.[key]
+  return lookupSession(ev.RaceSetup?.Sessions, key)
+}
+
+/** Session *state* — started/completed times and results — from `Sessions`. */
+export function eventSession(
+  ev: ChampionshipEvent,
+  key: SessionKey,
+): EventSession | undefined {
+  return lookupSession(ev.Sessions, key)
+}
+
+/** The literal keys this export used, for recon and for diagnosing a mismatch. */
+export function sessionKeysUsed(c: Championship | undefined): string[] {
+  const keys = new Set<string>()
+  for (const ev of events(c)) {
+    for (const k of Object.keys(ev.RaceSetup?.Sessions ?? {})) keys.add(k)
+    for (const k of Object.keys(ev.Sessions ?? {})) keys.add(k)
+  }
+  return [...keys].sort()
 }
 
 /** A session counts as configured only when ACSM would actually run it. */

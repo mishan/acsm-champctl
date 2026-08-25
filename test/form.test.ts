@@ -151,12 +151,28 @@ describe("entry list shape checking", () => {
     expect(checkEntryListShape(fields)).toEqual([])
   })
 
-  it("ignores any EntryList field appearing exactly once", () => {
-    // Deliberate false-negative so the next unknown counter field doesn't
-    // block writes. See the comment on checkEntryListShape.
+  it("flags an unrecognised EntryList field rather than assuming it's a counter", () => {
+    // Fails closed. If ACSM adds another form-level field this blocks writes
+    // until someone looks at it and adds it to NON_ARRAY_ENTRY_LIST_FIELDS —
+    // which costs a diagnosis, where guessing wrong costs an entry list.
     const fields = parseForm(fakeEventForm({ entrants: threeEntrants })).fields
     fields.push({ name: "EntryList.SomeFutureCounter", value: "3" })
-    expect(checkEntryListShape(fields)).toEqual([])
+    expect(checkEntryListShape(fields)).toEqual([
+      { key: "EntryList.SomeFutureCounter", count: 1, expected: 3 },
+    ])
+  })
+
+  it("catches a two-entrant payload missing one value", () => {
+    // The case an earlier "ignore anything appearing once" rule let through:
+    // drop one of two GUIDs and the count falls to 1, which looked like a
+    // form-level field.
+    const fields = parseForm(fakeEventForm({ entrants: [entrant("a"), entrant("b")] })).fields
+    const i = fields.findIndex((f) => f.name === "EntryList.GUID")
+    expect(i).toBeGreaterThanOrEqual(0)
+    fields.splice(i, 1)
+    expect(checkEntryListShape(fields)).toEqual([
+      { key: "EntryList.GUID", count: 1, expected: 2 },
+    ])
   })
 
   it("still catches a genuinely truncated array", () => {

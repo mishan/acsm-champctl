@@ -1,0 +1,154 @@
+# Builds a runnable image from a premium Server Manager release zip.
+#
+# The premium build isn't published as a Docker image, so drop the release zip
+# you downloaded into docker/premium/ and build:
+#
+#   npm run harness:build
+#
+# Compose owns the build; building this by hand skips whatever build args it
+# passes and diverges from what docker/README.md documents.
+#
+# The zip is gitignored. Do not commit it — it is licensed software.
+#
+# steamcmd is installed because Server Manager runs it whenever the install
+# path has no executable in it, regardless of whether credentials are set.
+#
+# There is no content-free mode. On a fresh volume the container refuses to
+# start until an Assetto Corsa server is present — either because credentials
+# in docker/.env let Server Manager install one, or because
+# `npm run harness:steam-login-qr` has already downloaded it into the volume.
+# See docker/README.md.
+
+FROM debian:bookworm-slim
+
+# steamcmd is a 32-bit binary, hence the i386 architecture and lib32gcc-s1.
+# ca-certificates for ACSR/Discord calls, unzip to unpack the release,
+# wget/curl for the compose healthcheck and the steamcmd download.
+RUN dpkg --add-architecture i386 \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      lib32gcc-s1 \
+      lib32stdc++6 \
+      unzip \
+      wget \
+ && rm -rf /var/lib/apt/lists/*
+
+# Match the paths the upstream image uses, so docker-compose.yml and the
+# published docs stay interchangeable between the premium and OSS services.
+RUN useradd --create-home --home-dir /home/assetto --shell /bin/bash assetto
+
+# steamcmd bootstraps itself into its own directory on first run, so it has to
+# live somewhere the runtime user can write.
+ENV STEAMCMD_DIR=/home/assetto/steamcmd
+RUN mkdir -p "$STEAMCMD_DIR" \
+ && curl -fsSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz \
+    | tar -xz -C "$STEAMCMD_DIR" \
+ && chown -R assetto:assetto "$STEAMCMD_DIR"
+
+# A wrapper, NOT a symlink. steamcmd.sh computes its own root from "$0":
+#
+#   STEAMROOT="$(cd "${0%/*}" && echo $PWD)"
+#   STEAMEXE="${STEAMROOT}/linux32/${STEAMCMD}"
+#
+# Invoked through a symlink in /usr/local/bin, "$0" is the symlink's path, so
+# it looks for /usr/local/bin/linux32/steamcmd, doesn't find it, and exits 127
+# — which Server Manager reports as "you do not have steamcmd installed
+# correctly". Exec'ing the real path keeps "$0" pointing at the script.
+RUN printf '#!/bin/sh\nexec "%s/steamcmd.sh" "$@"\n' "$STEAMCMD_DIR" > /usr/local/bin/steamcmd \
+ && chmod +x /usr/local/bin/steamcmd
+
+# DepotDownloader, for QR-code login (docker/steam-login-qr.sh).
+#
+# steamcmd has no QR sign-in — it only takes a username and password, and
+# prompts for a Steam Guard code it can't ask for when Server Manager runs it
+# in the background. DepotDownloader speaks the newer auth protocol and has a
+# -qr flag, so the password never has to be typed or stored at all.
+#
+# It fetches the same appid into the same directory Server Manager reads, so
+# afterwards Server Manager finds acServer already there.
+ARG DEPOTDOWNLOADER_VERSION=3.4.0
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) dd_arch=linux-x64 ;; \
+      arm64) dd_arch=linux-arm64 ;; \
+      armhf) dd_arch=linux-arm ;; \
+      *) echo "No DepotDownloader build for $arch" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/SteamRE/DepotDownloader/releases/download/DepotDownloader_${DEPOTDOWNLOADER_VERSION}/DepotDownloader-${dd_arch}.zip"; \
+    curl -fsSL "$url" -o /tmp/dd.zip; \
+    mkdir -p /opt/depotdownloader; \
+    unzip -q /tmp/dd.zip -d /opt/depotdownloader; \
+    chmod +x /opt/depotdownloader/DepotDownloader; \
+    rm -f /tmp/dd.zip
+
+# The self-contained build wants ICU unless told otherwise. Invariant mode is
+# fine for a downloader and saves pulling in libicu.
+RUN printf '#!/bin/sh\nexport DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1\nexec /opt/depotdownloader/DepotDownloader "$@"\n' \
+      > /usr/local/bin/depotdownloader \
+ && chmod 0755 /usr/local/bin/depotdownloader
+
+# Fail the build here rather than at `docker compose run` time. Without this,
+# a missing tool surfaces as an OCI "executable file not found in $PATH",
+# which says nothing about which step went wrong.
+RUN set -eux; \
+    command -v steamcmd; \
+    command -v depotdownloader; \
+    depotdownloader --version
+
+WORKDIR /home/assetto/server-manager
+
+# Unpack the release zip. The wildcard keeps the Dockerfile from pinning a
+# version you'd have to edit on every ACSM upgrade — but there must be exactly
+# one, because which build ends up in the image is the whole question this
+# harness exists to answer.
+COPY premium/*.zip /tmp/acsm/
+RUN set -eux; \
+    zips="$(find /tmp/acsm -maxdepth 1 -name '*.zip' | sort)"; \
+    count="$(printf '%s\n' "$zips" | grep -c . || true)"; \
+    if [ "$count" -eq 0 ]; then \
+      echo "No release zip in docker/premium/. Put one there and rebuild." >&2; exit 1; \
+    fi; \
+    if [ "$count" -gt 1 ]; then \
+      echo "More than one zip in docker/premium/:" >&2; \
+      printf '%s\n' "$zips" | sed 's/^/  /' >&2; \
+      echo "Leave exactly one — otherwise which version gets built is a coin toss," >&2; \
+      echo "and a harness built from the wrong version answers the wrong questions." >&2; \
+      exit 1; \
+    fi; \
+    zip="$zips"; \
+    echo "Building from $(basename "$zip")"; \
+    unzip -q "$zip" -d /tmp/acsm/extracted; \
+    bins="$(find /tmp/acsm/extracted -type f -name 'server-manager' | sort)"; \
+    bin="$(printf '%s\n' "$bins" | head -n1)"; \
+    test -n "$bin" || { echo "No linux 'server-manager' binary in $zip" >&2; exit 1; }; \
+    cp "$bin" /home/assetto/server-manager/server-manager; \
+    chmod +x /home/assetto/server-manager/server-manager; \
+    # Keep anything shipped alongside the binary (plugins, static assets on
+    # builds that don't embed them) rather than guessing what's needed.
+    src="$(dirname "$bin")"; \
+    find "$src" -mindepth 1 -maxdepth 1 ! -name 'server-manager' \
+        -exec cp -r {} /home/assetto/server-manager/ \; ; \
+    # Every path compose mounts a named volume at must exist here first, so
+    # it inherits the chown below. Docker creates a missing mountpoint as
+    # root, and the assetto user then can't write to it — for
+    # /home/assetto/depotdownloader that means DepotDownloader silently
+    # failing to remember the QR session under --workdir.
+    mkdir -p /home/assetto/server-manager/db \
+             /home/assetto/server-manager/assetto \
+             /home/assetto/depotdownloader; \
+    rm -rf /tmp/acsm
+
+COPY entrypoint.sh /usr/local/bin/champctl-entrypoint
+RUN chmod +x /usr/local/bin/champctl-entrypoint \
+ && chown -R assetto:assetto /home/assetto
+
+USER assetto
+EXPOSE 8772 9600 9600/udp 8081
+
+# The entrypoint renders config.yml from the committed template plus whatever
+# is in docker/.env, so credentials never end up in a tracked file.
+ENTRYPOINT ["/usr/local/bin/champctl-entrypoint"]
+CMD ["./server-manager"]

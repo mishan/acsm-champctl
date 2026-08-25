@@ -55,7 +55,9 @@ describe("duplicate pit boxes", () => {
     expect(finding!.message).toContain("duplicate pit boxes at 3, 16 and 27")
     // gridmom should name the gaps, since that is the actual fix.
     expect(finding!.message).toContain("gaps at 10, 19 and 22")
-    expect(finding!.data).toMatchObject({ pitBoxes: [3, 16, 27] })
+    // ...and the stakes: AddInPitBox overwrites, so a save deletes the losers.
+    expect(finding!.message).toContain("Saving this event will drop 3 drivers")
+    expect(finding!.data).toMatchObject({ pitBoxes: [3, 16, 27], entrantsAtRisk: 3 })
     expect(report.ok).toBe(false)
   })
 
@@ -75,6 +77,8 @@ describe("duplicate pit boxes", () => {
     const found = run(c).findings.filter((f) => f.code === "entry.duplicate-pit-box")
     expect(found).toHaveLength(1)
     expect(found[0]!.message).toContain("duplicate pit boxes at 9 and 10")
+    // A class list is saved from the championship form, not an event form.
+    expect(found[0]!.message).toContain("Saving the championship will drop 2 drivers")
     expect(found[0]!.location?.className).toBe("RSS Formula Hybrid")
   })
 })

@@ -1,0 +1,77 @@
+################################################################################
+#
+#  ACSM configuration for the OSS profile of the champctl test harness.
+#
+#  A plain copy of config.template.yml with the placeholders filled in as
+#  blanks. It exists because the upstream public image ships its own
+#  entrypoint, so nothing renders the template for that service.
+#
+#  Steam credentials are blank here, which means this profile will fail the
+#  same way the premium one does without them — Server Manager runs steamcmd
+#  whenever install_path is empty. Fill them in if you actually need the OSS
+#  container to boot; it exists only as an occasional cross-check that champctl
+#  degrades sanely on the build most other leagues run.
+#
+#  If you change something here, change it in config.template.yml too.
+#
+################################################################################
+
+steam:
+  username: ''
+  password: ''
+  install_path: assetto
+  executable_path: acServer
+  force_update: false
+
+http:
+  hostname: 0.0.0.0:8772
+  # Fixed so sessions survive a container restart mid-recon. This is a
+  # throwaway local key and must never be reused anywhere real.
+  session_key: champctl-local-harness-not-a-secret
+  server_manager_base_URL:
+  session_store_type: cookie
+  session_store_path: ""
+  tls:
+    enabled: false
+    cert_path: ""
+    key_path: ""
+
+# Off. A test harness should not be sending analytics or error reports about
+# synthetic championships to anyone.
+monitoring:
+  enabled: false
+
+store:
+  type: boltdb
+  path: db/server_manager.db
+  shared_data_path:
+  scheduled_event_check_loop: 0s
+
+accounts:
+  # Leave blank for a normal first-run login (admin / servermanager). Set this
+  # to recover a container whose admin password you've lost, then blank it again.
+  admin_password_override:
+
+live_map:
+  # Nothing to map without a running session, and it's the noisiest thing in
+  # the logs while doing recon.
+  refresh_interval_ms: 0
+
+server:
+  audit_logging: true
+  performance_mode: false
+  dont_open_browser: true
+  scan_content_folder_for_changes: false
+  use_car_name_cache: true
+  persist_mid_session_results: false
+  plugins:
+
+championships:
+  # No reCAPTCHA keys: sign-up forms stay usable locally without a Google
+  # round trip, which is what makes §5.3 recon possible at all.
+  recaptcha:
+    site_key:
+    secret_key:
+
+lua:
+  enabled: false

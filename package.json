@@ -19,10 +19,22 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "harness:build": "docker compose --project-directory docker build",
+    "harness:up": "docker compose --project-directory docker up -d",
+    "harness:down": "docker compose --project-directory docker down",
+    "harness:reset": "docker compose --project-directory docker down -v && docker compose --project-directory docker up -d",
+    "harness:logs": "docker compose --project-directory docker logs -f",
+    "harness:steam-login-qr": "bash docker/steam-login-qr.sh",
+    "harness:steam-login": "bash docker/steam-login.sh",
+    "harness:steam-check": "docker compose --project-directory docker run --rm --entrypoint steamcmd acsm +quit",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "recon:forms": "tsx scripts/recon/forms.ts",
+    "recon:roundtrip": "tsx scripts/recon/roundtrip.ts"
   },
   "dependencies": {
     "cheerio": "^1.2.0",
+    "ipaddr.js": "^2.5.0",
     "luxon": "^3.5.0"
   },
   "devDependencies": {

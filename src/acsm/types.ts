@@ -28,8 +28,27 @@ export const EntryListType = {
 export type EntryListTypeValue =
   (typeof EntryListType)[keyof typeof EntryListType]
 
-/** ACSM session type discriminator, as it appears in `Events[].RaceSetup.Sessions`. */
+/**
+ * The logical session champctl talks about. NOT the literal JSON key.
+ *
+ * ACSM's `SessionType` is a Go string type whose constants are `"BOOK"`,
+ * `"PRACTICE"`, `"QUALIFY"` and `"RACE"` (`config_ini.go`) — uppercase and
+ * abbreviated. Exports have also been seen using the friendly spellings. Since
+ * `Sessions` is a `map[SessionType]...`, an unrecognised key unmarshals without
+ * complaint, so nothing errors when the spelling is wrong; the lookup just
+ * quietly finds nothing.
+ *
+ * Always go through `session()` in view.ts, which resolves either spelling.
+ */
 export type SessionKey = "Booking" | "Practice" | "Qualifying" | "Race"
+
+/** Every JSON key seen for each logical session, lowercased for comparison. */
+export const SESSION_KEY_ALIASES: Record<SessionKey, readonly string[]> = {
+  Booking: ["booking", "book"],
+  Practice: ["practice"],
+  Qualifying: ["qualifying", "qualify", "quali"],
+  Race: ["race"],
+} as const
 
 /**
  * One entrant slot. Appears both in the championship class entrant list and,
@@ -74,7 +93,9 @@ export interface RaceSetup extends Unknowns {
    *  `AvailableCars` plus the spectator model, never inherited (plan §5.5). */
   Cars?: string
   MaxClients?: number
-  Sessions?: Partial<Record<SessionKey, SessionConfig>>
+  /** Keyed by ACSM's SessionType — "PRACTICE"/"QUALIFY"/"RACE" or the
+   *  friendly spellings, depending on version. Use `session()` to read it. */
+  Sessions?: Record<string, SessionConfig>
 
   EntryListType?: number
   PracticeEntryListType?: number
@@ -168,7 +189,8 @@ export interface ChampionshipEvent extends Unknowns {
   CompletedTime?: string
   RaceSetup?: RaceSetup
   EntryList?: EntryList
-  Sessions?: Partial<Record<SessionKey, EventSession>>
+  /** Same key caveat as RaceSetup.Sessions. Use `eventSession()` to read it. */
+  Sessions?: Record<string, EventSession>
 }
 
 export interface ChampionshipClass extends Unknowns {

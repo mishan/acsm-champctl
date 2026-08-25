@@ -1,0 +1,10 @@
+Drop your premium Server Manager release zip in this directory — exactly one —
+then build the image from the repo root:
+
+    npm run harness:build
+
+Exactly one, because the build would otherwise have to guess which to use, and
+it refuses rather than silently picking the wrong version.
+
+The zip itself is gitignored — it is licensed software and must not be
+committed.
