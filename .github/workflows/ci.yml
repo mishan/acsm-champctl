@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A force-push or a quick follow-up commit shouldn't leave the old run
+# grinding away — cancel it, except on main where every commit's result is
+# worth keeping.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Lint and typecheck once rather than per Node version: neither depends on
+  # the runtime, and three copies of the same failure helps nobody.
+  static:
+    name: Lint and typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # Formatting is deliberately not enforced yet — see biome.json. Run
+      # `npm run format` locally if you want it applied.
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+  test:
+    name: Tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      # One version failing is worth knowing about even if another already
+      # has; a half-reported matrix sends you looking in the wrong place.
+      fail-fast: false
+      matrix:
+        # The ends of the range engines declares (^20.19.0 || >=22.12.0), plus
+        # current. 20.19 is the floor Vite 8 imposes, and it's the one most
+        # likely to break silently, since nobody develops on it.
+        node: ["20.19", "22", "24"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Tests
+        run: npm test
+
+      # The live suite talks to a real ACSM and is opt-in via
+      # CHAMPCTL_LIVE_URL, which CI doesn't set. Running it here proves it
+      # skips cleanly rather than erroring — otherwise nothing would notice
+      # that gate breaking until someone tried to use the harness.
+      - name: Live suite skips without a container
+        run: npm run test:live --if-present

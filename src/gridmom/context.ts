@@ -26,15 +26,13 @@ export interface CheckContext {
 }
 
 /** Convenience emitter handed to each check, so checks stay declarative. */
-export interface Emit {
-  (
-    severity: Severity,
-    code: string,
-    message: string,
-    location?: FindingLocation,
-    data?: Record<string, unknown>,
-  ): void
-}
+export type Emit = (
+  severity: Severity,
+  code: string,
+  message: string,
+  location?: FindingLocation,
+  data?: Record<string, unknown>,
+) => void
 
 export interface Check {
   /** Namespaced id prefix for the findings this check emits, e.g. `entry`. */
