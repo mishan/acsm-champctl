@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { dirname, isAbsolute, resolve } from "node:path"
 
+import { IANAZone } from "luxon"
+
 import type { LeagueProfile, Weekday } from "./types.js"
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -60,11 +62,36 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
   if (typeof weekday !== "number" || weekday < 1 || weekday > 7) {
     bad("`schedule.weekday` must be 1..7 (Monday..Sunday)")
   }
-  if (typeof sched["qualiStart"] !== "string" || !/^\d{2}:\d{2}$/.test(sched["qualiStart"])) {
+  // The shape *and* the range. `^\d{2}:\d{2}$` accepts "99:99", which then
+  // reaches `scheduled.set({ hour: 99 })` in the schedule checks and yields an
+  // invalid DateTime rather than an error anyone can act on.
+  const qualiStart = sched["qualiStart"]
+  if (typeof qualiStart !== "string" || !/^\d{2}:\d{2}$/.test(qualiStart)) {
     bad("`schedule.qualiStart` must be `HH:mm`")
+  } else {
+    const [h, m] = qualiStart.split(":").map(Number) as [number, number]
+    if (h > 23 || m > 59) {
+      bad(`\`schedule.qualiStart\` must be a real time; ${JSON.stringify(qualiStart)} is not`)
+    }
   }
-  if (typeof sched["timezone"] !== "string" || !sched["timezone"]) {
+
+  // Checked against tzdata, not merely for being a non-empty string.
+  //
+  // Luxon does not throw on an unknown zone: `setZone` returns an *invalid*
+  // DateTime, and every method on one answers politely. `toFormat` gives the
+  // string "Invalid DateTime", `.weekday` gives NaN, `toISODate()` gives null.
+  // So a transposed letter — "Amercia/Los_Angeles" — produced Discord messages
+  // reading "round 1 is on Invalid DateTime", a NaN weekday comparison that
+  // silently never matched, and a null used as a Map key. None of it looked
+  // like a configuration mistake, which is the reason to catch it here.
+  const timezone = sched["timezone"]
+  if (typeof timezone !== "string" || !timezone) {
     bad("`schedule.timezone` must be an IANA zone name")
+  } else if (!IANAZone.isValidZone(timezone)) {
+    bad(
+      `\`schedule.timezone\` ${JSON.stringify(timezone)} is not a timezone this system knows. ` +
+        `It wants an IANA name such as "America/Los_Angeles" or "Europe/London".`,
+    )
   }
   for (const k of ["practiceMinutes", "qualiMinutes"] as const) {
     if (typeof sched[k] !== "number" || sched[k] < 0) bad(`\`schedule.${k}\` must be >= 0`)

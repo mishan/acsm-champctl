@@ -175,6 +175,15 @@ off the ACSM source rather than guessed.
 - **Duplicate pit boxes delete entrants.** `AddInPitBox` overwrites on
   collision, so the next form save drops the losers. That's why the finding is
   an ERROR and why its message says what happens next.
+- **An entry list is meant to be bigger than the grid.** 30 places against an
+  18-car race is deliberate (plan §4.4); `MaxClients` caps the night, not the
+  championship. So a pit box past the end of a track is only an ERROR once the
+  event has actually run — before that it's the expected shape of an
+  oversubscribed list.
+- **`EntryList.OverwriteAllEvents` and `TransferTeamPoints` are never sent.**
+  ACSM renders them once per entrant with no hidden partner and reads them
+  positionally, so omitting the unchecked ones shifts the rest onto the wrong
+  people. `postForm` strips both; absent means "false for everyone".
 - **`Scheduled` is practice start, not quali start.** `Scheduled = qualiStart −
   practiceDuration`. All schedule maths happens in league wall-clock time and
   is converted, because November crosses a DST boundary.

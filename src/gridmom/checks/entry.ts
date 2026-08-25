@@ -16,6 +16,7 @@ import {
   isMultiModel,
   isUnclaimed,
   normGuid,
+  eventHasStarted,
   raceSetupCars,
   slots,
   spectatorCar,
@@ -200,12 +201,30 @@ export const pitBoxBeyondTrackCapacity: Check = {
       if (over.length === 0) return
 
       const boxes = [...new Set(over.map((s) => s.entrant.PitBox!))].sort((a, b) => a - b)
+
+      // ERROR once the event has run; WARN while it hasn't.
+      //
+      // An entry list deliberately holds more places than the smallest track
+      // has pit boxes (plan §4.4): BATL runs 30 slots against an 18-car grid,
+      // because sizing the *championship* to its tightest night locks people
+      // out of every other one. `MaxClients` is what caps a given race. So on a
+      // month that hasn't started, a pit box past the end is the expected shape
+      // of an oversubscribed list rather than a fault — and emitting ERROR made
+      // the month emitter produce championships gridmom then refused, with two
+      // modules disagreeing about the same file.
+      //
+      // Once the event has started those numbers are real assignments rather
+      // than placeholders, and one past the end is a car with nowhere to go.
+      const started = eventHasStarted(ev)
       emit(
-        "ERROR",
+        started ? "ERROR" : "WARN",
         "entry.pit-box-out-of-range",
-        `${cap(label)} puts ${pluralize(over.length, "someone", "people")} in pit ${pluralize(boxes.length, "box", "boxes")} ${humanList(boxes)}, but ${track} stops at ${record.pitboxes - 1}.`,
+        `${cap(label)} puts ${pluralize(over.length, "someone", "people")} in pit ${pluralize(boxes.length, "box", "boxes")} ${humanList(boxes)}, but ${track} stops at ${record.pitboxes - 1}.` +
+          (started
+            ? ""
+            : ` It hasn't run yet, and an entry list larger than the grid is normal — this only matters for whoever is still in those boxes on the night.`),
         { round: i + 1, event: label, path: `Events[${i}].EntryList` },
-        { pitBoxes: boxes, pitboxes: record.pitboxes, track },
+        { pitBoxes: boxes, pitboxes: record.pitboxes, track, started },
       )
     })
   },

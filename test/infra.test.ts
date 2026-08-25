@@ -189,6 +189,50 @@ describe("profile validation", () => {
     ).toThrow(/weekday/)
   })
 
+  it("rejects a timezone this system doesn't know", () => {
+    // Luxon doesn't throw on an unknown zone — setZone returns an invalid
+    // DateTime and every method on it answers politely, so a transposed letter
+    // produced findings reading "Invalid DateTime", NaN weekday comparisons
+    // that never matched, and a null used as a Map key. None of that looks
+    // like a configuration mistake, which is why it's caught here.
+    expect(() =>
+      validateProfile({
+        id: "x",
+        name: "X",
+        schedule: {
+          weekday: 3,
+          qualiStart: "20:00",
+          timezone: "Amercia/Los_Angeles",
+          practiceMinutes: 60,
+          qualiMinutes: 20,
+        },
+        entryList: { targetSlots: 10 },
+      }),
+    ).toThrow(/not a timezone this system knows/)
+  })
+
+  it("rejects a quali time that matches the shape but isn't a time", () => {
+    // "99:99" passes ^\d{2}:\d{2}$ and then reaches set({ hour: 99 }).
+    for (const qualiStart of ["99:99", "24:00", "20:60"]) {
+      expect(
+        () =>
+          validateProfile({
+            id: "x",
+            name: "X",
+            schedule: {
+              weekday: 3,
+              qualiStart,
+              timezone: "UTC",
+              practiceMinutes: 60,
+              qualiMinutes: 20,
+            },
+            entryList: { targetSlots: 10 },
+          }),
+        qualiStart,
+      ).toThrow(/must be a real time/)
+    }
+  })
+
   it("rejects a malformed quali time", () => {
     expect(() =>
       validateProfile({

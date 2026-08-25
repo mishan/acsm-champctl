@@ -105,10 +105,11 @@ describe("grid capacity", () => {
     expect(codes(c, pitTable())).not.toContain("grid.max-clients")
   })
 
-  it("errors when an entrant sits beyond the last pit box", () => {
+  it("errors when an entrant sits beyond the last pit box on an event that ran", () => {
     const c = championship({
       Events: [
         raceEvent({
+          StartedTime: "2026-08-12T19:00:00-07:00",
           EntryList: entryList([{ ...driver("late"), PitBox: 30 }]),
         }),
       ],
@@ -116,6 +117,29 @@ describe("grid capacity", () => {
     const f = run(c).findings.find((x) => x.code === "entry.pit-box-out-of-range")
     expect(f?.severity).toBe("ERROR")
     expect(f?.message).toContain("stops at 29")
+  })
+
+  it("only warns while the event hasn't run", () => {
+    // An entry list deliberately holds more places than the smallest track has
+    // pit boxes (plan §4.4) — 30 slots against an 18-car grid, because sizing
+    // the championship to its tightest night locks people out of every other
+    // one, and MaxClients is what caps a given race. As an ERROR this made the
+    // month emitter produce championships gridmom then refused to import: two
+    // modules disagreeing about the same file.
+    const c = championship({
+      Events: [
+        raceEvent({
+          EntryList: entryList([{ ...driver("late"), PitBox: 30 }]),
+        }),
+      ],
+    })
+    const report = run(c)
+    const f = report.findings.find((x) => x.code === "entry.pit-box-out-of-range")
+    expect(f?.severity).toBe("WARN")
+    expect(f?.message).toContain("stops at 29")
+    expect(f?.message).toContain("larger than the grid is normal")
+    // And it no longer blocks a push.
+    expect(report.counts.ERROR).toBe(0)
   })
 })
 

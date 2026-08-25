@@ -622,6 +622,55 @@ describe("postForm refuses to scramble an entry list", () => {
     // Nothing was sent — the login is the only call.
     expect(calls).toHaveLength(1)
   })
+
+  it("never sends the unpaired checkboxes back", async () => {
+    // docs §4: ACSM renders these once per entrant with no hidden partner and
+    // then reads them positionally, so a browser omitting the unchecked ones
+    // means whichever survive land on the wrong entrants. A box ticked on the
+    // last entrant arrives as one value at index 0 and is applied to the
+    // first. form.ts documented that champctl omits them; nothing did, and
+    // every write echoed back what the form had rendered.
+    const { s, calls, ready } = loggedIn()
+    await ready
+
+    const fields = parseForm(fakeEventForm({ entrants: [entrant("a"), entrant("b")] })).fields
+    // As if the second entrant's box were ticked in ACSM.
+    fields.push({ name: "EntryList.OverwriteAllEvents", value: "1" })
+    fields.push({ name: "EntryList.TransferTeamPoints", value: "1" })
+
+    await s.postForm("/championship/abc/event/submit", fields)
+
+    const body = calls[1]!.init.body as URLSearchParams
+    expect(body.getAll("EntryList.OverwriteAllEvents")).toEqual([])
+    expect(body.getAll("EntryList.TransferTeamPoints")).toEqual([])
+    // Everything else still goes, in order.
+    expect(body.getAll("EntryList.Name")).toEqual(["a", "b"])
+  })
+
+  it("does not edit the caller's array while stripping", async () => {
+    // The fields come from a page the caller parsed and may still be reading.
+    const { s, ready } = loggedIn()
+    await ready
+    const fields = parseForm(fakeEventForm({ entrants: [entrant("a")] })).fields
+    fields.push({ name: "EntryList.OverwriteAllEvents", value: "1" })
+    const before = fields.length
+
+    await s.postForm("/championship/abc/event/submit", fields)
+    expect(fields).toHaveLength(before)
+  })
+
+  it("still counts a stripped key out of the arity check", async () => {
+    // The strip happens first so the check runs on what actually goes out.
+    // Were it the other way round, one ticked box among two entrants would
+    // read as a ragged array and block a write that is perfectly fine.
+    const { s, calls, ready } = loggedIn()
+    await ready
+    const fields = parseForm(fakeEventForm({ entrants: [entrant("a"), entrant("b")] })).fields
+    fields.push({ name: "EntryList.OverwriteAllEvents", value: "1" })
+
+    await expect(s.postForm("/championship/abc/event/submit", fields)).resolves.toBeDefined()
+    expect(calls).toHaveLength(2)
+  })
 })
 
 describe("import mechanism detection", () => {
