@@ -124,7 +124,8 @@ CREATE TABLE IF NOT EXISTS snapshot (
   body            BLOB NOT NULL
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS snapshot_history ON snapshot (championship_id, id);
+CREATE INDEX IF NOT EXISTS snapshot_history
+  ON snapshot (championship_id, fetched_at, id);
 `
 
 export interface OpenOptions {
@@ -199,12 +200,18 @@ export class SqliteArchiveStore implements ArchiveStore {
         )
         .run(championshipId, when, when)
 
-      // Latest by insertion order, not by fetched_at: the question dedup asks
-      // is "what did we last store", and with two writers those can differ.
+      // Latest by *fetch* time, with the surrogate id only breaking ties.
+      //
+      // Ordering by id alone is commit order, and the two differ exactly when
+      // it matters: an older fetch that waited behind a newer writer commits
+      // last, so it became the baseline, and the next ordinary run then stored
+      // the newer body again as though the championship had reverted. Fetch
+      // time is what "the most recent state of this championship" means; id
+      // settles two fetches in the same millisecond.
       const previous = this.#db
         .prepare(
           `SELECT id, fetched_at, sha256, bytes, name FROM snapshot
-           WHERE championship_id = ? ORDER BY id DESC LIMIT 1`,
+           WHERE championship_id = ? ORDER BY fetched_at DESC, id DESC LIMIT 1`,
         )
         .get(championshipId) as unknown as SnapshotRow | undefined
 
@@ -254,8 +261,11 @@ export class SqliteArchiveStore implements ArchiveStore {
 
     const rows = this.#db
       .prepare(
+        // Chronological, for the same reason: `status` reads the championship's
+        // current name off the last entry, and in commit order that can be an
+        // older fetch's name.
         `SELECT id, fetched_at, sha256, bytes, name FROM snapshot
-         WHERE championship_id = ? ORDER BY id ASC`,
+         WHERE championship_id = ? ORDER BY fetched_at ASC, id ASC`,
       )
       .all(championshipId) as unknown as SnapshotRow[]
 

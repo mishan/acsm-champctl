@@ -142,7 +142,12 @@ async function ingestOne(
   const named = name === undefined ? {} : { name }
 
   if (options.skipCheckedSince) {
-    const existing = await store.read(championshipId).catch(() => undefined)
+    // Not swallowed. This used to be `.catch(() => undefined)`, which reads a
+    // locked or corrupt archive as "never seen before" and quietly refetches —
+    // so the one signal that the archive is broken became a slightly slower
+    // run that exits 0. `read`'s own contract is that it distinguishes absent
+    // from unreadable, and catching everything here threw that away.
+    const existing = await store.read(championshipId)
     const last = existing?.lastCheckedAt
     if (last && new Date(last) >= options.skipCheckedSince) {
       return {
@@ -154,15 +159,24 @@ async function ingestOne(
     }
   }
 
+  // Only the *export* is caught. A championship ACSM won't serve is one bad
+  // championship, and the run should carry on and report it — that is the
+  // point of a nightly job. A championship the archive won't store is a broken
+  // archive: disk full, database corrupt, lock timeout. Those were caught here
+  // too and downgraded to a per-championship failure, so a full disk exited 2
+  // ("some championships failed") rather than the documented 3 ("the run
+  // failed"), and a cron job watching exit codes would keep going all week.
+  let body: Buffer
   try {
-    const body = await reader.exportChampionshipRaw(championshipId)
-    const result = await store.put(championshipId, body, now(), name)
-    return result.stored
-      ? { kind: "stored", championshipId, ...named, result }
-      : { kind: "unchanged", championshipId, ...named, result }
+    body = await reader.exportChampionshipRaw(championshipId)
   } catch (e) {
     return { kind: "failed", championshipId, ...named, error: asMessage(e) }
   }
+
+  const result = await store.put(championshipId, body, now(), name)
+  return result.stored
+    ? { kind: "stored", championshipId, ...named, result }
+    : { kind: "unchanged", championshipId, ...named, result }
 }
 
 function asMessage(e: unknown): string {

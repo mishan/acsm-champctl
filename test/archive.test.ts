@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { AcsmError, HttpAcsmReader, type AcsmReader } from "../src/acsm/client.js"
 import type { Championship, ChampionshipSummary } from "../src/acsm/types.js"
 import { ingest, IngestError, type IngestReport } from "../src/archive/ingest.js"
+import type { ArchiveStore } from "../src/archive/store.js"
 import {
   main as archiveMain,
   describe as describeOutcome,
@@ -214,6 +215,40 @@ describe("archive store", () => {
     expect((await s.read(ID))?.snapshots).toHaveLength(2)
     expect((await s.readSnapshot(ID, first.snapshot.id)).toString()).toBe('{"a":1}')
     expect((await s.readSnapshot(ID, second.snapshot.id)).toString()).toBe('{"a":2}')
+  })
+
+  it("dedupes against the latest fetch, not the latest commit", async () => {
+    // Ordering by the surrogate id is commit order, and the two differ exactly
+    // when it matters: an older fetch that waited behind a newer writer commits
+    // last. As the baseline it made the next ordinary run store the newer body
+    // *again*, reading as a revert that never happened.
+    //
+    // Simulated by committing out of fetch order, which is what the lock
+    // produces: newer body first, then an older fetch.
+    const s = await newStore()
+    await s.put(ID, b('{"new":1}'), at("2026-08-25T17:00:00Z"))
+    await s.put(ID, b('{"old":1}'), at("2026-08-20T17:00:00Z"))
+
+    // The newest *fetch* is still the 25th, so re-storing it is a no-op.
+    const again = await s.put(ID, b('{"new":1}'), at("2026-08-26T17:00:00Z"))
+    expect(again.stored, "re-storing the newest body must not look like a change").toBe(false)
+    expect((await s.read(ID))?.snapshots).toHaveLength(2)
+  })
+
+  it("returns the history in fetch order, so status reads the current name", async () => {
+    // `status` takes the championship's name off the last entry. In commit
+    // order that can be an older fetch's name, so a renamed championship would
+    // show under whatever it used to be called.
+    const s = await newStore()
+    await s.put(ID, b('{"a":2}'), at("2026-08-25T17:00:00Z"), "September")
+    await s.put(ID, b('{"a":1}'), at("2026-08-20T17:00:00Z"), "August")
+
+    const index = await s.read(ID)
+    expect(index?.snapshots.map((x) => x.fetchedAt)).toEqual([
+      "2026-08-20T17:00:00.000Z",
+      "2026-08-25T17:00:00.000Z",
+    ])
+    expect(index?.snapshots.at(-1)?.name).toBe("September")
   })
 
   it("keeps lastCheckedAt and firstSeen monotonic when writers land out of order", async () => {
@@ -647,6 +682,56 @@ describe("ingest", () => {
     const index = await store.read(ID)
     const id = index?.snapshots[0]?.id as number
     expect((await store.readSnapshot(ID, id)).toString("utf8")).toBe(body)
+  })
+
+  it("fails the run when the archive won't store, not just the championship", async () => {
+    // A championship ACSM won't serve is one bad championship and the run
+    // carries on — that is the point of a nightly job. A championship the
+    // *archive* won't store is a broken archive: disk full, corrupt database,
+    // lock timeout. Both were caught in the same try, so a full disk reported
+    // "some championships failed" and exited 2 rather than the documented 3,
+    // and a cron job watching exit codes would keep going all week.
+    const reader = fakeReader({ summaries: [{ ID }, { ID: OTHER }] })
+    const store = await newStore()
+    const broken: ArchiveStore = {
+      ...store,
+      put: async () => {
+        throw new Error("SQLITE_FULL: database or disk is full")
+      },
+      read: (id: string) => store.read(id),
+      list: () => store.list(),
+    }
+
+    await expect(ingest(reader, broken, { now: clock("2026-08-24T17:00:00Z") })).rejects.toThrow(
+      /disk is full/,
+    )
+    // And it stopped rather than working through the rest.
+    expect(reader.fetched).toEqual([ID])
+  })
+
+  it("surfaces an unreadable archive instead of refetching everything", async () => {
+    // --since asks the archive what it already has. That read used to be
+    // wrapped in .catch(() => undefined), which reads a locked or corrupt
+    // database as "never seen before" — so the one signal the archive is
+    // broken became a slightly slower run that exits 0.
+    const reader = fakeReader({ summaries: [{ ID }] })
+    const store = await newStore()
+    const broken: ArchiveStore = {
+      ...store,
+      put: (id, body, at, name) => store.put(id, body, at, name),
+      read: async () => {
+        throw new Error("SQLITE_BUSY: database is locked")
+      },
+      list: () => store.list(),
+    }
+
+    await expect(
+      ingest(reader, broken, {
+        now: clock("2026-08-24T17:00:00Z"),
+        skipCheckedSince: new Date("2026-08-01T00:00:00Z"),
+      }),
+    ).rejects.toThrow(/database is locked/)
+    expect(reader.fetched).toEqual([])
   })
 
   it("does not let a later success hide an earlier failure", async () => {
