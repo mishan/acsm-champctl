@@ -28,9 +28,12 @@ import type { RaceFormat, RaceLength } from "../finalize/format.js"
 import { readFormat } from "../finalize/format.js"
 import { FinalizeError, planFinalize, type FinalizePlan } from "../finalize/plan.js"
 import { ScheduleError } from "../finalize/schedule.js"
-import { loadPitTable, EMPTY_PIT_TABLE, type PitTable } from "../pits/table.js"
 import { loadProfile } from "../profile/load.js"
-import { resolve } from "node:path"
+import { loadPits, reportUsageError, runCli, UsageError } from "./args.js"
+
+// Re-exported so callers and tests have one obvious place to import it from,
+// while there is still only one class.
+export { UsageError }
 
 const USAGE = `champctl-finalize — set a race's format and push it
 
@@ -69,13 +72,6 @@ Exit codes:
   2  gridmom blocked it, or the entry list changed under us
   3  champctl itself failed
 `
-
-export class UsageError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "UsageError"
-  }
-}
 
 interface Args {
   championshipId?: string
@@ -282,19 +278,6 @@ export function renderPlan(plan: FinalizePlan): string {
   return lines.join("\n")
 }
 
-async function loadPits(path: string | undefined): Promise<PitTable> {
-  const target = path ?? resolve(process.cwd(), "data/track-pits.json")
-  try {
-    return await loadPitTable(target)
-  } catch (e) {
-    // An explicit --pits that won't load is a mistake worth reporting; the
-    // default may simply not exist yet.
-    if (path) throw e
-    void e
-    return EMPTY_PIT_TABLE
-  }
-}
-
 /**
  * Asks, when there is someone to ask.
  *
@@ -325,12 +308,9 @@ export async function confirm(question: string): Promise<boolean> {
 
 export async function main(argv: readonly string[]): Promise<number> {
   try {
-    return await run(argv)
+    return await runCommand(argv)
   } catch (e) {
-    if (e instanceof UsageError) {
-      process.stderr.write(`${e.message}\n\n${USAGE}`)
-      return 3
-    }
+    if (e instanceof UsageError) return reportUsageError(e, USAGE)
     if (e instanceof EntryListChangedError) {
       process.stderr.write(`${e.message}\n`)
       return 2
@@ -347,7 +327,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
 }
 
-async function run(argv: readonly string[]): Promise<number> {
+async function runCommand(argv: readonly string[]): Promise<number> {
   const args = parseArgs(argv)
   if (args.help) {
     process.stdout.write(USAGE)
@@ -469,15 +449,10 @@ function replacer(key: string, value: unknown): unknown {
 }
 
 /** Entry point for `bin/champctl-finalize.js` and `npm run finalize`. */
-export async function runCli(argv: readonly string[]): Promise<void> {
-  try {
-    process.exitCode = await main(argv)
-  } catch (e) {
-    process.stderr.write(`champctl-finalize couldn't run: ${e instanceof Error ? e.message : e}\n`)
-    process.exitCode = 3
-  }
+export async function run(argv: readonly string[]): Promise<void> {
+  await runCli({ name: "champctl-finalize", usage: USAGE, main }, argv)
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  await runCli(process.argv.slice(2))
+  await run(process.argv.slice(2))
 }

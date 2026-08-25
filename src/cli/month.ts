@@ -30,8 +30,12 @@ import { cloneMonth, specFromChampionship } from "../emit/clone.js"
 import { EmitError, emitMonth, type EmitResult, type MonthSpec } from "../emit/month.js"
 import { ScheduleError } from "../finalize/schedule.js"
 import { check } from "../gridmom/index.js"
-import { EMPTY_PIT_TABLE, loadPitTable, type PitTable } from "../pits/table.js"
 import { loadProfile } from "../profile/load.js"
+import { loadPits, reportUsageError, runCli, UsageError } from "./args.js"
+
+// Re-exported so callers and tests have one obvious place to import it from,
+// while there is still only one class.
+export { UsageError }
 
 const USAGE = `champctl-month — create a month of racing
 
@@ -63,13 +67,6 @@ Exit codes:
   2  gridmom found an error in the generated month
   3  champctl itself failed
 `
-
-export class UsageError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "UsageError"
-  }
-}
 
 interface Args {
   command: string
@@ -190,17 +187,6 @@ export function renderResult(result: EmitResult): string {
   return lines.join("\n")
 }
 
-async function loadPits(path: string | undefined): Promise<PitTable> {
-  const target = path ?? resolve(process.cwd(), "data/track-pits.json")
-  try {
-    return await loadPitTable(target)
-  } catch (e) {
-    if (path) throw e
-    void e
-    return EMPTY_PIT_TABLE
-  }
-}
-
 async function readJson<T>(path: string, what: string): Promise<T> {
   let text: string
   try {
@@ -273,12 +259,9 @@ export async function confirm(question: string): Promise<boolean> {
 
 export async function main(argv: readonly string[]): Promise<number> {
   try {
-    return await run(argv)
+    return await runCommand(argv)
   } catch (e) {
-    if (e instanceof UsageError) {
-      process.stderr.write(`${e.message}\n\n${USAGE}`)
-      return 3
-    }
+    if (e instanceof UsageError) return reportUsageError(e, USAGE)
     if (e instanceof EmitError || e instanceof ScheduleError) {
       process.stderr.write(`${e.message}\n`)
       return 3
@@ -291,7 +274,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
 }
 
-async function run(argv: readonly string[]): Promise<number> {
+async function runCommand(argv: readonly string[]): Promise<number> {
   const args = parseArgs(argv)
   if (args.help || !args.command) {
     process.stdout.write(USAGE)
@@ -425,17 +408,12 @@ function specOverrides(args: Args): Partial<MonthSpec> {
 }
 
 /** Entry point for `bin/champctl-month.js` and `npm run month`. */
-export async function runCli(argv: readonly string[]): Promise<void> {
-  try {
-    process.exitCode = await main(argv)
-  } catch (e) {
-    process.stderr.write(`champctl-month couldn't run: ${e instanceof Error ? e.message : e}\n`)
-    process.exitCode = 3
-  }
+export async function run(argv: readonly string[]): Promise<void> {
+  await runCli({ name: "champctl-month", usage: USAGE, main }, argv)
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  await runCli(process.argv.slice(2))
+  await run(process.argv.slice(2))
 }
 
 export { specFromChampionship }
