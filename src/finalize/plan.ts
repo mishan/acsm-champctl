@@ -43,6 +43,8 @@ import {
   formFieldsFor,
   readFormat,
   sameFormat,
+  type Change,
+  type FormFieldChange,
   type RaceFormat,
 } from "./format.js"
 import {
@@ -61,19 +63,11 @@ export class FinalizeError extends Error {
   }
 }
 
-/** One human-readable difference. */
-export interface Change {
-  label: string
-  before: string
-  after: string
-}
-
-/** One form field that will be posted with a different value. */
-export interface FormFieldChange {
-  name: string
-  before: string | undefined
-  after: string
-}
+// `Change` and `FormFieldChange` are declared in `format.ts` and re-exported
+// here, where they are produced. They moved because the browser needs them and
+// this module imports `node:crypto`; `format.ts` imports only the export's own
+// types, so a client can follow the type and stop there.
+export type { Change, FormFieldChange }
 
 export interface FinalizePlan {
   championshipId: string
