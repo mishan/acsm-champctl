@@ -23,8 +23,8 @@ import { AcsmError, HttpAcsmReader } from "../acsm/client.js"
 import { AcsmSession } from "../acsm/session.js"
 import { events } from "../acsm/view.js"
 import { applyFinalize, EntryListChangedError, PartialWriteError } from "../finalize/apply.js"
-import type { RaceFormat, RaceLength } from "../finalize/format.js"
-import { readFormat } from "../finalize/format.js"
+import type { RaceFormat } from "../finalize/format.js"
+import { readFormat, withOverrides } from "../finalize/format.js"
 import { FinalizeError, planFinalize, type FinalizePlan } from "../finalize/plan.js"
 import { ScheduleError } from "../finalize/schedule.js"
 import { loadProfile } from "../profile/load.js"
@@ -249,24 +249,25 @@ export function parseArgs(argv: readonly string[]): Args {
 /**
  * Builds the desired format from the current one plus whatever was asked for.
  *
- * Starting from the current format rather than from defaults is the whole
- * point: `--laps 18` means "make it 18 laps", not "make it 18 laps and reset
- * everything else I didn't mention".
+ * Only the spelling is CLI business — `--reversed` and `--pit` against the
+ * domain's `reversedGridPositions` and `mandatoryPit`. The rule itself, that
+ * `--laps 18` means "make it 18 laps" and not "and reset everything else I
+ * didn't mention", lives in `withOverrides` because the web UI sends the same
+ * kind of partial answer and has to obey the same rule.
+ *
+ * The conditional spreads are not decoration. `exactOptionalPropertyTypes` is
+ * on, so `{ laps: undefined }` is a different thing from `{}` — and passing the
+ * former would mean "explicitly no laps", which is not what an unmentioned flag
+ * means.
  */
 export function formatFrom(current: RaceFormat, args: Partial<Args>): RaceFormat {
-  const length: RaceLength =
-    args.laps !== undefined
-      ? { kind: "laps", laps: args.laps }
-      : args.minutes !== undefined
-        ? { kind: "minutes", minutes: args.minutes }
-        : current.length
-
-  return {
-    length,
-    reversedGridPositions: args.reversed ?? current.reversedGridPositions,
-    mandatoryPit: args.pit ?? current.mandatoryPit,
-    extraLap: args.extraLap ?? current.extraLap,
-  }
+  return withOverrides(current, {
+    ...(args.laps !== undefined ? { laps: args.laps } : {}),
+    ...(args.minutes !== undefined ? { minutes: args.minutes } : {}),
+    ...(args.reversed !== undefined ? { reversedGridPositions: args.reversed } : {}),
+    ...(args.pit !== undefined ? { mandatoryPit: args.pit } : {}),
+    ...(args.extraLap !== undefined ? { extraLap: args.extraLap } : {}),
+  })
 }
 
 export function renderPlan(plan: FinalizePlan): string {

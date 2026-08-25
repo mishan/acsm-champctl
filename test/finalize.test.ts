@@ -11,6 +11,7 @@ import {
   formFieldsFor,
   readFormat,
   sameFormat,
+  withOverrides,
   type RaceFormat,
 } from "../src/finalize/format.js"
 import {
@@ -28,6 +29,11 @@ import {
   scheduleFormValues,
   ScheduleError,
 } from "../src/finalize/schedule.js"
+import {
+  eventFormHtml as eventForm,
+  scheduleFormHtml as scheduleForm,
+  type FormEntrant,
+} from "./support/acsm-html.js"
 import {
   championship,
   driver,
@@ -508,57 +514,16 @@ describe("schedule maths", () => {
 const EVENT_ID = "event-1"
 const CHAMP_ID = "11111111-2222-3333-4444-555555555555"
 
-function eventFormHtml(
-  entrants: { name: string; guid: string; pit: number }[],
+// Both fixtures live in test/support/acsm-html.ts, because web.test.ts drives
+// the same two endpoints through the same engine. These wrappers keep this
+// file's call sites unchanged and pin the ids and zone it uses throughout.
+const eventFormHtml = (
+  entrants: readonly FormEntrant[],
   over: Record<string, string> = {},
-): string {
-  const base: Record<string, string> = {
-    Track: "suzuka",
-    "Race.Laps": "20",
-    "Race.Time": "0",
-    RacePitWindowStart: "0",
-    ReversedGridRacePositions: "0",
-    RaceExtraLap: "0",
-    MaxClients: "18",
-    ...over,
-  }
-  const scalars = Object.entries(base)
-    .map(([k, v]) => `<input name="${k}" value="${v}">`)
-    .join("")
-  const list = entrants
-    .map(
-      (e) =>
-        `<input name="EntryList.EntrantID" value="${e.pit}">` +
-        `<input name="EntryList.Name" value="${e.name}">` +
-        `<input name="EntryList.GUID" value="${e.guid}">` +
-        `<input name="EntryList.Car" value="rss_formula_hybrid_2021">` +
-        `<input name="EntryList.Skin" value="${e.name.toLowerCase()}_01">` +
-        `<input name="EntryList.Team" value="">` +
-        `<input name="EntryList.Ballast" value="0">` +
-        `<input name="EntryList.Restrictor" value="0">` +
-        `<input name="EntryList.FixedSetup" value="">` +
-        `<input name="EntryList.InternalUUID" value="uuid-${e.pit}">`,
-    )
-    .join("")
-  return `<html><body>
-    <form action="/search" method="GET"><input name="q" value=""></form>
-    <form action="/championship/${CHAMP_ID}/event/submit" method="POST">
-      ${scalars}${list}
-      <input name="EntryList.NumEntrants" value="${entrants.length}">
-    </form>
-  </body></html>`
-}
+): string => eventForm(CHAMP_ID, entrants, over)
 
 const scheduleFormHtml = (recurrence = ""): string =>
-  `<html><body>
-    <form action="/search" method="GET"><input name="q" value=""></form>
-    <form action="/championship/${CHAMP_ID}/event/${EVENT_ID}/schedule" method="POST">
-      <input name="event-schedule-date" value="2026-09-02">
-      <input name="event-schedule-time" value="19:00">
-      <input name="event-schedule-timezone" value="${ZONE}">
-      <input name="event-schedule-recurrence" value="${recurrence}">
-    </form>
-  </body></html>`
+  scheduleForm(CHAMP_ID, EVENT_ID, ZONE, recurrence)
 
 const TWO = [
   { name: "Ada", guid: "76561198000000001", pit: 0 },
@@ -1147,5 +1112,117 @@ describe("applying a finalize", () => {
     const h = await harness({ submitStatus: 200 })
     const plan = await planFor(h)
     await expect(applyFinalize(h.session, plan)).rejects.toThrow(/didn't accept the event save/)
+  })
+})
+
+describe("numbers on their way into a form", () => {
+  const base: RaceFormat = {
+    length: { kind: "laps", laps: 18 },
+    reversedGridPositions: 0,
+    mandatoryPit: true,
+    extraLap: false,
+  }
+
+  it("refuses a value that would reach ACSM in exponential notation", () => {
+    // `String(1e30)` is "1e+30", which ACSM parses as 1 — so this would not
+    // fail, it would quietly set a one-lap race. Every caller validates first;
+    // this is the backstop that means staying true isn't something to
+    // remember.
+    expect(() => formFieldsFor({ ...base, length: { kind: "laps", laps: 1e30 } })).toThrow(
+      /whole number between 0 and 2000/,
+    )
+  })
+
+  it("refuses a fractional or negative count", () => {
+    expect(() => formFieldsFor({ ...base, length: { kind: "laps", laps: 18.5 } })).toThrow(
+      RangeError,
+    )
+    expect(() => formFieldsFor({ ...base, reversedGridPositions: -1 })).toThrow(RangeError)
+  })
+
+  it("passes everything a league would actually ask for", () => {
+    expect(formFieldsFor({ ...base, reversedGridPositions: 5 })).toMatchObject({
+      "Race.Laps": "18",
+      ReversedGridRacePositions: "5",
+    })
+  })
+})
+
+describe("laying overrides over the current format", () => {
+  const current: RaceFormat = {
+    length: { kind: "minutes", minutes: 40 },
+    reversedGridPositions: 0,
+    mandatoryPit: true,
+    extraLap: false,
+    note: "voted 40 minutes, 8/25",
+  }
+
+  it("changes only what was named", () => {
+    expect(withOverrides(current, { laps: 18 })).toEqual({
+      ...current,
+      length: { kind: "laps", laps: 18 },
+    })
+  })
+
+  it("keeps the note, which nothing can override", () => {
+    // The audit trail of how the format was decided. Rebuilding the object
+    // field by field dropped it, so `--laps 18` quietly threw away the record
+    // of the vote that set the length in the first place.
+    const out = withOverrides(current, { laps: 18, reversedGridPositions: 5 })
+    expect(out.note).toBe("voted 40 minutes, 8/25")
+  })
+
+  it("returns the current format unchanged when nothing was named", () => {
+    expect(withOverrides(current, {})).toEqual(current)
+  })
+
+  it("hands back the very same object when nothing was named", () => {
+    // `champctl-finalize <id> <round> --yes` with no format flags — confirming
+    // the round as it stands — so it is the ordinary case rather than an edge
+    // one, and a caller can answer "did the vote change anything?" with `===`.
+    //
+    // Only `{}` is testable here: `exactOptionalPropertyTypes` makes
+    // `{ laps: undefined }` a different type, which is exactly why
+    // `formatFrom` builds its overrides with conditional spreads. The runtime
+    // check still covers all five keys, for a caller assembling the object
+    // dynamically rather than through that path.
+    expect(withOverrides(current, {})).toBe(current)
+  })
+
+  it("builds a new format the moment anything is named", () => {
+    // Including a value identical to the current one: the caller asked, and
+    // `withOverrides` is not the place to decide the answer was uninteresting.
+    expect(withOverrides(current, { mandatoryPit: true })).not.toBe(current)
+    expect(withOverrides(current, { mandatoryPit: true })).toEqual(current)
+  })
+
+  it("does not mutate the format it was given", () => {
+    const before = structuredClone(current)
+    withOverrides(current, { laps: 18, mandatoryPit: false })
+    expect(current).toEqual(before)
+  })
+
+  it("takes false and zero rather than treating them as absent", () => {
+    // `||` here would read `mandatoryPit: false` and `reversedGridPositions: 0`
+    // as "not specified" and keep the current values, which is the whole
+    // difference between turning the pit window off and failing to.
+    const out = withOverrides(current, { mandatoryPit: false, reversedGridPositions: 0 })
+    expect(out.mandatoryPit).toBe(false)
+    expect(out.reversedGridPositions).toBe(0)
+  })
+
+  it("prefers laps when both lengths arrive, matching readFormat", () => {
+    // Callers reject the combination first, with a message about why a race is
+    // measured one way or the other. This only pins the fallthrough so it can
+    // never disagree with `readFormat`.
+    expect(withOverrides(current, { laps: 18, minutes: 30 }).length).toEqual({
+      kind: "laps",
+      laps: 18,
+    })
+  })
+
+  it("switches a lap race to a timed one", () => {
+    const laps: RaceFormat = { ...current, length: { kind: "laps", laps: 18 } }
+    expect(withOverrides(laps, { minutes: 40 }).length).toEqual({ kind: "minutes", minutes: 40 })
   })
 })
