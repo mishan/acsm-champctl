@@ -20,6 +20,7 @@
  * shared part is the error type and the IO, not the parsing.
  */
 
+import { createInterface } from "node:readline/promises"
 import { resolve } from "node:path"
 
 import { EMPTY_PIT_TABLE, loadPitTable, type PitTable } from "../pits/table.js"
@@ -90,5 +91,33 @@ export async function runCli(
     const msg = e instanceof Error ? e.message : String(e)
     process.stderr.write(`${options.name} couldn't run: ${msg}\n`)
     process.exitCode = 3
+  }
+}
+
+/**
+ * Asks a yes/no question on the terminal. Anything but yes is no.
+ *
+ * Refuses rather than waits when stdin isn't a terminal. A confirmation prompt
+ * with nobody to answer it is a job that hangs until something kills it, which
+ * from cron looks like the tool being slow rather than the tool being wrong.
+ * `--yes` is how a script says so up front.
+ *
+ * Shared because both write commands ask before doing something destructive,
+ * and they had byte-identical copies of it — including the refusal, which is
+ * the part that would be quietly worth getting wrong in only one of them.
+ */
+export async function confirm(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) {
+    throw new UsageError(
+      "Refusing to ask for confirmation with nothing attached to stdin — there is no one to " +
+        "answer, and waiting would hang. Pass --yes to confirm up front.",
+    )
+  }
+  const rl = createInterface({ input: process.stdin, output: process.stderr })
+  try {
+    const answer = await rl.question(`${question} [y/N] `)
+    return /^y(es)?$/i.test(answer.trim())
+  } finally {
+    rl.close()
   }
 }

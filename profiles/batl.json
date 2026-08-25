@@ -16,6 +16,23 @@
     "reservedPitBoxes": []
   },
 
+  "formats": [
+    {
+      "name": "1x40",
+      "length": { "kind": "minutes", "minutes": 40 },
+      "reversedGridPositions": 0,
+      "mandatoryPit": true,
+      "extraLap": false
+    },
+    {
+      "name": "2x20",
+      "length": { "kind": "minutes", "minutes": 20 },
+      "reversedGridPositions": 5,
+      "mandatoryPit": false,
+      "extraLap": false
+    }
+  ],
+
   "baseline": {
     "raceSetup": {
       "EntryListType": 1,

@@ -159,6 +159,85 @@ export function fakeImportPage(
   </body></html>`
 }
 
+/**
+ * The event edit form, reduced to what finalize actually reads.
+ *
+ * Distinct from `fakeEventForm` above, which reproduces ACSM's own markup so
+ * the *parser* has something realistic to cope with. This one is a script for
+ * the plan/apply path: the scalar fields it mutates, an entry list long enough
+ * for the fingerprint to have something to say, and the navbar search form in
+ * front — because "the first form on the page" is how form-finding went wrong
+ * the first time.
+ *
+ * Shared by `finalize.test.ts` and `web.test.ts` on purpose. Both drive the
+ * same engine through the same endpoint, and two fixtures for one form is one
+ * that gets corrected when ACSM changes and one that quietly stops matching.
+ */
+export interface FormEntrant {
+  name: string
+  guid: string
+  pit: number
+}
+
+export function eventFormHtml(
+  championshipId: string,
+  entrants: readonly FormEntrant[],
+  over: Record<string, string> = {},
+): string {
+  const base: Record<string, string> = {
+    Track: "suzuka",
+    "Race.Laps": "20",
+    "Race.Time": "0",
+    RacePitWindowStart: "0",
+    ReversedGridRacePositions: "0",
+    RaceExtraLap: "0",
+    MaxClients: "18",
+    ...over,
+  }
+  const scalars = Object.entries(base)
+    .map(([k, v]) => `<input name="${k}" value="${v}">`)
+    .join("")
+  const list = entrants
+    .map(
+      (e) =>
+        `<input name="EntryList.EntrantID" value="${e.pit}">` +
+        `<input name="EntryList.Name" value="${e.name}">` +
+        `<input name="EntryList.GUID" value="${e.guid}">` +
+        `<input name="EntryList.Car" value="rss_formula_hybrid_2021">` +
+        `<input name="EntryList.Skin" value="${e.name.toLowerCase()}_01">` +
+        `<input name="EntryList.Team" value="">` +
+        `<input name="EntryList.Ballast" value="0">` +
+        `<input name="EntryList.Restrictor" value="0">` +
+        `<input name="EntryList.FixedSetup" value="">` +
+        `<input name="EntryList.InternalUUID" value="uuid-${e.pit}">`,
+    )
+    .join("")
+  return `<html><body>
+    <form action="/search" method="GET"><input name="q" value=""></form>
+    <form action="/championship/${championshipId}/event/submit" method="POST">
+      ${scalars}${list}
+      <input name="EntryList.NumEntrants" value="${entrants.length}">
+    </form>
+  </body></html>`
+}
+
+export function scheduleFormHtml(
+  championshipId: string,
+  eventId: string,
+  zone = "America/Los_Angeles",
+  recurrence = "",
+): string {
+  return `<html><body>
+    <form action="/search" method="GET"><input name="q" value=""></form>
+    <form action="/championship/${championshipId}/event/${eventId}/schedule" method="POST">
+      <input name="event-schedule-date" value="2026-09-02">
+      <input name="event-schedule-time" value="19:00">
+      <input name="event-schedule-timezone" value="${zone}">
+      <input name="event-schedule-recurrence" value="${recurrence}">
+    </form>
+  </body></html>`
+}
+
 export function entrant(name: string, over: Partial<FakeEntrant> = {}): FakeEntrant {
   return {
     name,

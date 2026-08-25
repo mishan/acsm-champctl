@@ -25,7 +25,7 @@ import {
   type Slot,
 } from "../../acsm/view.js"
 import type { Check, CheckContext, Emit } from "../context.js"
-import { humanList, pluralize } from "../finding.js"
+import { cap, humanList, pluralize } from "../finding.js"
 
 /** Groups slots by a key, returning only the keys with more than one slot. */
 function duplicates<K>(items: Slot[], keyOf: (s: Slot) => K | undefined): Map<K, Slot[]> {
@@ -610,10 +610,6 @@ export const unclaimedSlotNotSentinel: Check = {
       )
     }
   },
-}
-
-function cap(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
 export const entryChecks: readonly Check[] = [

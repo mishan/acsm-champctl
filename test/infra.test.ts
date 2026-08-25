@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { HttpAcsmReader, AcsmError, StaticAcsmReader } from "../src/acsm/client.js"
+import { asMessage, HttpAcsmReader, AcsmError, StaticAcsmReader } from "../src/acsm/client.js"
 import { RateLimiter } from "../src/acsm/rate-limit.js"
 import { InMemoryPitTable } from "../src/pits/table.js"
 import { validateProfile } from "../src/profile/load.js"
@@ -185,6 +185,29 @@ describe("HTTP reader", () => {
   })
 })
 
+describe("turning a thrown thing into a sentence", () => {
+  it("calls an abort a timeout, which is what it was", () => {
+    // `AbortError` is what a fetch timeout throws, and its own message —
+    // "The operation was aborted" — reads like something champctl chose to do
+    // rather than something that happened to it. The message ends up in
+    // "Request to /championships failed: ...", where the difference is whether
+    // a league admin goes looking at their own network or at champctl.
+    const e = new Error("The operation was aborted")
+    e.name = "AbortError"
+    expect(asMessage(e)).toBe("timed out")
+  })
+
+  it("leaves every other error to say what it says", () => {
+    expect(asMessage(new TypeError("fetch failed"))).toBe("fetch failed")
+    expect(asMessage(new AcsmError("ACSM returned 503"))).toBe("ACSM returned 503")
+  })
+
+  it("stringifies whatever was thrown when it wasn't an Error", () => {
+    expect(asMessage("boom")).toBe("boom")
+    expect(asMessage(undefined)).toBe("undefined")
+  })
+})
+
 describe("static reader", () => {
   it("serves exports already on disk", async () => {
     const r = new StaticAcsmReader([championship({ ID: "a", Name: "A" })])
@@ -250,6 +273,47 @@ describe("profile validation", () => {
         entryList: { targetSlots: 10 },
       }),
     ).toThrow(/weekday/)
+  })
+
+  /**
+   * A preset is a button, and a button that can only ever produce a 400 is
+   * worse than no button. The plan endpoint bounds laps, minutes and reversed
+   * positions; profile validation used to bound only the low end, so
+   * `laps: 1e30` started the service cleanly and failed at the moment someone
+   * clicked it. Both now read the same constants — see MAX_LAPS in
+   * finalize/format.ts.
+   */
+  it("rejects a preset the plan endpoint would refuse anyway", () => {
+    const withPreset = (preset: unknown) => () =>
+      validateProfile({
+        id: "x",
+        name: "X",
+        schedule: {
+          weekday: 3,
+          qualiStart: "20:00",
+          timezone: "UTC",
+          practiceMinutes: 60,
+          qualiMinutes: 20,
+        },
+        entryList: { targetSlots: 10 },
+        formats: [{ name: "Silly", ...(preset as object) }],
+      })
+
+    const ok = {
+      length: { kind: "laps", laps: 18 },
+      reversedGridPositions: 5,
+      mandatoryPit: true,
+      extraLap: false,
+    }
+    expect(withPreset(ok)).not.toThrow()
+
+    expect(withPreset({ ...ok, length: { kind: "laps", laps: 1e30 } })).toThrow(/between 1 and/)
+    expect(withPreset({ ...ok, length: { kind: "minutes", minutes: 100_000 } })).toThrow(
+      /between 1 and/,
+    )
+    expect(withPreset({ ...ok, reversedGridPositions: 1e30 })).toThrow(/between 0 and/)
+    // The low end still holds.
+    expect(withPreset({ ...ok, length: { kind: "laps", laps: 0 } })).toThrow(/between 1 and/)
   })
 
   it("rejects a timezone this system doesn't know", () => {

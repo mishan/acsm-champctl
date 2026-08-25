@@ -8,8 +8,7 @@
 
 import * as cheerio from "cheerio"
 
-/** The championships listing page. */
-export const CHAMPIONSHIPS_PATH = "/championships"
+import { CHAMPIONSHIPS_PATH } from "./paths.js"
 
 const MAX_PAGES = 20
 
@@ -46,15 +45,16 @@ export function championshipIdsFrom(html: string): string[] {
  *
  * Measured on 2.4.5 with 24 championships, and on ac.batlracing.com itself,
  * whose listing reaches back to 2023: one page, no pagination links, even
- * though the template ships pagination markup. So this returns nothing today —
+ * though the template ships pagination markup. So this returns nothing today,
  * and the archive's existing history is complete rather than truncated. That
  * mattered enough to check, since a silently short listing would have been
  * invisible in everything the archive had already collected.
- * which is exactly why it is written to find links rather than to construct
- * them. Guessing that the parameter is `?page=` and looping until a page comes
- * back empty would be a guess about a shape nobody has seen, and it would look
- * like it worked too. Any anchor back to the listing with a different query is
- * a further page whatever the parameter turns out to be called.
+ *
+ * Returning nothing is also why it is written to find links rather than to
+ * construct them. Guessing at `?page=` and looping until a page came back
+ * empty would be a guess about a shape nobody has seen, and it would look like
+ * it worked too. Any anchor back to the listing with a different query is a
+ * further page, whatever the parameter turns out to be called.
  */
 export function championshipPageLinks(html: string, currentPath = CHAMPIONSHIPS_PATH): string[] {
   const here = new URL(currentPath, BASE)

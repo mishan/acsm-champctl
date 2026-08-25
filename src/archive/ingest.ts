@@ -13,7 +13,7 @@
  * reported; they don't abort.
  */
 
-import type { AcsmReader } from "../acsm/client.js"
+import { asMessage, type AcsmReader } from "../acsm/client.js"
 import type { ArchiveStore, StoreResult } from "./store.js"
 
 export interface IngestOptions {
@@ -198,8 +198,4 @@ async function ingestOne(
   return result.stored
     ? { kind: "stored", championshipId, ...named, result }
     : { kind: "unchanged", championshipId, ...named, result }
-}
-
-function asMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
 }

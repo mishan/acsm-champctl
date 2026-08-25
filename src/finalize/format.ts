@@ -24,6 +24,36 @@ import { session } from "../acsm/view.js"
 /** Laps or minutes; both are legitimate and both get voted on. */
 export type RaceLength = { kind: "laps"; laps: number } | { kind: "minutes"; minutes: number }
 
+/**
+ * One human-readable difference. "Race length: 40 minutes → 18 laps."
+ *
+ * Here rather than in `plan.ts`, which is where it is produced and used, for a
+ * reason that is entirely about dependencies: the browser needs this type, and
+ * `plan.ts` imports `node:crypto` and the write session. This module reaches
+ * no further than the export's own types and `acsm/view.ts`, neither of which
+ * touches a Node-only module — so a client can follow the type here and stop.
+ * That is the constraint to preserve: not "types only", but nothing a browser
+ * bundle cannot resolve.
+ */
+export interface Change {
+  label: string
+  before: string
+  after: string
+}
+
+/**
+ * One form field that will be posted with a different value.
+ *
+ * `before` is optional rather than `string | null` because a field the form
+ * doesn't currently carry is genuinely absent; `postedField` in `web/view.ts`
+ * is where that becomes JSON's `null`.
+ */
+export interface FormFieldChange {
+  name: string
+  before: string | undefined
+  after: string
+}
+
 export interface RaceFormat {
   length: RaceLength
   /** 0 = single race. BATL uses 5 for a 2x20. */
@@ -34,6 +64,29 @@ export interface RaceFormat {
   /** Audit trail — "voted 22 laps, 8/25". Never written to ACSM. */
   note?: string
 }
+
+/**
+ * Bounds that are absurd for a race and safe for `String()`.
+ *
+ * 2000 laps is longer than any endurance race a league runs weekly, and 2000
+ * minutes is a day and a half. Neither is a judgement about what a league might
+ * want; they are the point past which the value is a mistake or an attack, and
+ * having *a* bound is what keeps an integer out of exponential notation before
+ * it becomes a form value.
+ *
+ * Here rather than in the web layer because more than one place has to enforce
+ * them and they must not drift. `formFieldsFor` below is the backstop — it is
+ * where a number becomes a form value, so nothing can reach ACSM in
+ * exponential notation whatever route it arrived by. Profile validation
+ * rejects a *preset* past them at load, which is earlier and kinder: a profile
+ * carrying `laps: 1e30` would otherwise start the service cleanly and present
+ * a preset button whose only possible outcome was a refusal — configuration
+ * that fails at the moment someone clicks it rather than at the moment it is
+ * read.
+ */
+export const MAX_LAPS = 2000
+export const MAX_MINUTES = 2000
+export const MAX_REVERSED = 1000
 
 /**
  * `mandatoryPit` is not a boolean in ACSM. It is `RacePitWindowStart`, the lap
@@ -159,11 +212,106 @@ export function formFieldsFor(format: RaceFormat): Record<string, string> {
   const minutes = format.length.kind === "minutes" ? format.length.minutes : 0
 
   return {
-    [FIELD.raceLaps]: String(laps),
-    [FIELD.raceTime]: String(minutes),
+    [FIELD.raceLaps]: formNumber(laps, MAX_LAPS, "Race length in laps"),
+    [FIELD.raceTime]: formNumber(minutes, MAX_MINUTES, "Race length in minutes"),
     [FIELD.pitWindowStart]: String(pitWindowStartFor(format.mandatoryPit)),
-    [FIELD.reversedGrid]: String(format.reversedGridPositions),
+    [FIELD.reversedGrid]: formNumber(
+      format.reversedGridPositions,
+      MAX_REVERSED,
+      "Reversed grid positions",
+    ),
     [FIELD.extraLap]: format.extraLap ? "1" : "0",
+  }
+}
+
+/** Whether an overrides object actually asks for something. */
+function namesAnything(over: FormatOverrides): boolean {
+  return (
+    over.laps !== undefined ||
+    over.minutes !== undefined ||
+    over.reversedGridPositions !== undefined ||
+    over.mandatoryPit !== undefined ||
+    over.extraLap !== undefined
+  )
+}
+
+/**
+ * A number on its way to becoming a form value, or a refusal.
+ *
+ * The last point at which a bad number is still a number rather than a string
+ * in an HTTP body. `String(1e30)` is `"1e+30"`, which ACSM parses as 1 — so a
+ * value that slipped past validation would not fail, it would quietly set a
+ * one-lap race. Every caller today validates first; this exists so that
+ * staying true is not a thing anyone has to remember.
+ */
+function formNumber(value: number, max: number, what: string): string {
+  if (!Number.isInteger(value) || value < 0 || value > max) {
+    throw new RangeError(
+      `${what} must be a whole number between 0 and ${max}, and this one is ${value}. ` +
+        `Nothing was written. This is a bug rather than a bad request — every path here ` +
+        `checks its input first.`,
+    )
+  }
+  return String(value)
+}
+
+/**
+ * A partial answer to "what did the vote change?".
+ *
+ * Every field optional, because that is the whole semantic: naming one is an
+ * instruction about that field and a promise about none of the others.
+ */
+export interface FormatOverrides {
+  laps?: number
+  minutes?: number
+  reversedGridPositions?: number
+  mandatoryPit?: boolean
+  extraLap?: boolean
+}
+
+/**
+ * The current format with whatever was asked for laid over it.
+ *
+ * Starting from the current format rather than from defaults is the point:
+ * "18 laps" means "make it 18 laps", not "make it 18 laps and reset everything
+ * I didn't mention". That rule is documented in the README as CLI behaviour,
+ * but it is not a CLI concern — the web UI sends exactly the same kind of
+ * partial answer, and two implementations of "only the fields you name change"
+ * is one that gets fixed and one that doesn't.
+ *
+ * `laps` wins over `minutes` when both arrive. Callers are expected to have
+ * rejected that combination already, with a message about why a race is
+ * measured one way or the other; this only makes the fallthrough match
+ * `readFormat`, which also prefers laps, rather than inventing a third rule.
+ */
+export function withOverrides(current: RaceFormat, over: FormatOverrides): RaceFormat {
+  // Nothing named, nothing to do — and `current` itself rather than a copy of
+  // it. `--yes` with no format flags parses to an object of undefineds rather
+  // than to an empty one, so this is the ordinary shape of "confirm what is
+  // already there", not an edge case. Returning the same reference lets a
+  // caller compare with `===` to answer "did the vote change anything?"
+  // without walking the fields.
+  if (!namesAnything(over)) return current
+
+  const length: RaceLength =
+    over.laps !== undefined
+      ? { kind: "laps", laps: over.laps }
+      : over.minutes !== undefined
+        ? { kind: "minutes", minutes: over.minutes }
+        : current.length
+
+  // Spread `current` first so anything not named in `FormatOverrides` survives.
+  // `note` is the one that exists today — the audit trail of how a format was
+  // decided, "voted 22 laps, 8/25" — and rebuilding the object field by field
+  // dropped it, so overriding the laps silently threw away why the laps were
+  // what they were. Listing the fields explicitly would go wrong again the next
+  // time RaceFormat grows one.
+  return {
+    ...current,
+    length,
+    reversedGridPositions: over.reversedGridPositions ?? current.reversedGridPositions,
+    mandatoryPit: over.mandatoryPit ?? current.mandatoryPit,
+    extraLap: over.extraLap ?? current.extraLap,
   }
 }
 

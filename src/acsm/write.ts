@@ -11,43 +11,19 @@ import { randomUUID } from "node:crypto"
 
 import { findFormByAction } from "./form.js"
 import { walkChampionshipIds } from "./listing.js"
+import {
+  CHAMPIONSHIPS_PATH,
+  IMPORT_PATH,
+  championshipPath,
+  entrantStatusPath,
+  eventEditPath,
+  eventSchedulePath,
+  eventSubmitPath,
+  exportPath,
+} from "./paths.js"
 import { AcsmWriteError, isRedirectStatus, type AcsmSession } from "./session.js"
 import type { Championship } from "./types.js"
 import { GO_ZERO_TIME, eventHasStarted, events, isZeroTime } from "./view.js"
-
-/** Path to a championship's export, for reader and session alike. */
-export function exportPath(championshipId: string): string {
-  return `/championship/${encodeURIComponent(championshipId)}/export`
-}
-
-export function eventEditPath(championshipId: string, eventId: string, server = 0): string {
-  return `/championship/${encodeURIComponent(championshipId)}/event/${encodeURIComponent(eventId)}/edit?server=${server}`
-}
-
-export function eventSubmitPath(championshipId: string): string {
-  return `/championship/${encodeURIComponent(championshipId)}/event/submit`
-}
-
-export function eventSchedulePath(championshipId: string, eventId: string): string {
-  return `/championship/${encodeURIComponent(championshipId)}/event/${encodeURIComponent(eventId)}/schedule`
-}
-
-/**
- * The championship overview page, which is where the schedule form is rendered.
- *
- * Worth stating because the obvious guess is wrong: the schedule form's
- * *action* is `eventSchedulePath`, but that route is POST-only — a GET of it
- * returns 405 on 2.4.x. The form itself lives here, one per event.
- */
-export function championshipPath(championshipId: string): string {
-  return `/championship/${encodeURIComponent(championshipId)}`
-}
-
-export function entrantStatusPath(championshipId: string, entrantGuid: string): string {
-  return `/championship/${encodeURIComponent(championshipId)}/entrant/${encodeURIComponent(entrantGuid)}`
-}
-
-export const IMPORT_PATH = "/championship/import"
 
 /** Championship IDs from the listing pages, for an authenticated session. */
 export async function listChampionshipIds(session: AcsmSession): Promise<string[]> {
@@ -462,3 +438,16 @@ export function startedRounds(championship: Championship): number[] {
 }
 
 export { isZeroTime }
+
+// Re-exported so callers keep one import for "the ACSM write path". The paths
+// themselves live in paths.js, which imports nothing — see the note there.
+export {
+  CHAMPIONSHIPS_PATH,
+  IMPORT_PATH,
+  championshipPath,
+  entrantStatusPath,
+  eventEditPath,
+  eventSchedulePath,
+  eventSubmitPath,
+  exportPath,
+}
