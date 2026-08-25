@@ -168,6 +168,33 @@ describe("archive store", () => {
   it("still treats a missing index as simply absent", async () => {
     expect(await new FileArchiveStore(root).read(ID)).toBeUndefined()
   })
+
+  it("skips directories that aren't ours rather than choking on them", async () => {
+    // The archive root is an ordinary directory somebody may keep other things
+    // in. Returning these made `status` throw UnsafeArchivePath on a folder
+    // nobody ever claimed was a championship.
+    const store = new FileArchiveStore(root)
+    await store.put(ID, '{"a":1}', at("2026-08-24T17:00:00Z"))
+    for (const junk of ["lost+found", ".tmp", ".git", "index.json"]) {
+      await mkdir(join(root, junk), { recursive: true })
+    }
+
+    expect(await store.list()).toEqual([ID])
+  })
+
+  it("everything list() returns can be passed straight to read()", async () => {
+    // This is the contract `status` depends on.
+    const store = new FileArchiveStore(root)
+    await store.put(ID, '{"a":1}', at("2026-08-24T17:00:00Z"))
+    await store.put(OTHER, '{"a":2}', at("2026-08-24T17:00:00Z"))
+    await mkdir(join(root, "lost+found"), { recursive: true })
+
+    const ids = await store.list()
+    expect(ids).toHaveLength(2)
+    for (const id of ids) {
+      await expect(store.read(id)).resolves.toBeDefined()
+    }
+  })
 })
 
 describe("the reader parses each response once", () => {

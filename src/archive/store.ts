@@ -112,19 +112,26 @@ export class UnsafeArchivePath extends Error {
   }
 }
 
+/**
+ * Whether `value` is usable as one path segment inside the archive.
+ *
+ * `index.json` is excluded because it would collide with the per-championship
+ * index file.
+ *
+ * The `..` test is defence in depth and nothing more: the pattern already
+ * forbids `/` and `\`, so a value that passes it cannot traverse, and "." and
+ * ".." alone fail its first character class. It is here so that widening the
+ * pattern later — to allow a separator, say — can't quietly reintroduce
+ * traversal. The price is refusing a harmless name like "a..b", which no
+ * championship ID or snapshot filename looks like.
+ */
+export function isSafePathSegment(value: string): boolean {
+  return SAFE_PATH_SEGMENT.test(value) && value !== INDEX_FILE && !value.includes("..")
+}
+
 /** Throws unless `value` is usable as one path segment inside the archive. */
 export function assertSafePathSegment(value: string, what: string): void {
-  // `index.json` would collide with the per-championship index file.
-  //
-  // The `..` test is defence in depth and nothing more: the pattern already
-  // forbids `/` and `\`, so a value that passes it cannot traverse, and "."
-  // and ".." alone fail its first character class. It is here so that widening
-  // the pattern later — to allow a separator, say — can't quietly reintroduce
-  // traversal. The price is refusing a harmless name like "a..b", which no
-  // championship ID or snapshot filename looks like.
-  if (!SAFE_PATH_SEGMENT.test(value) || value === INDEX_FILE || value.includes("..")) {
-    throw new UnsafeArchivePath(value, what)
-  }
+  if (!isSafePathSegment(value)) throw new UnsafeArchivePath(value, what)
 }
 
 export function assertSafeChampionshipId(id: string): void {
@@ -226,7 +233,8 @@ export class FileArchiveStore implements ArchiveStore {
   }
 
   /**
-   * Championship directories present.
+   * Championship directories present, filtered to names this store would
+   * accept — so every result is safe to pass straight to `read`.
    *
    * An archive that doesn't exist yet is empty, which is the normal state on a
    * first run. An archive that exists and can't be read is a problem, and says
@@ -238,6 +246,17 @@ export class FileArchiveStore implements ArchiveStore {
       return entries
         .filter((e) => e.isDirectory())
         .map((e) => e.name)
+        // Only names that are safe to hand straight back to `read`. Anything
+        // else under the archive root is not ours: `lost+found`, a `.tmp` left
+        // by an interrupted copy, an editor's scratch directory. Returning
+        // those made `status` throw UnsafeArchivePath on a directory nobody
+        // ever claimed was a championship — the guard firing on the wrong
+        // target, and the whole command unusable because of it.
+        //
+        // Filtering rather than refusing, because this is the one place an
+        // unrecognised name is expected rather than suspicious: the archive
+        // root is an ordinary directory someone may keep other things in.
+        .filter(isSafePathSegment)
         .sort()
     } catch (e) {
       if (isNotFound(e)) return []

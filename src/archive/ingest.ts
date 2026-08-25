@@ -17,7 +17,13 @@ import type { AcsmReader } from "../acsm/client.js"
 import type { ArchiveStore, StoreResult } from "./store.js"
 
 export interface IngestOptions {
-  /** Injectable for tests and for `--now`. */
+  /**
+   * Injectable for tests only. There is deliberately no `--now` flag, unlike
+   * gridmom's: a snapshot's `fetchedAt` records when the bytes were actually
+   * fetched, and an option to lie about that would corrupt the one thing the
+   * archive exists to be trusted on. gridmom has `--now` because its schedule
+   * checks reason about the future; nothing here does.
+   */
   now?: () => Date
   /** Called as each championship resolves, for progress output. */
   onProgress?: (outcome: IngestOutcome) => void
