@@ -178,8 +178,14 @@ function isWrongPassword(e: unknown): boolean {
  * because its own reads went through an authenticated session.
  *
  * `/accounts/toggle-open` is a GET and it *toggles*, so calling it blindly on
- * an already-open manager would close it. The page says which way it is set,
- * so read first.
+ * an already-open manager would close it — hence the check first.
+ *
+ * That check is `publicAccessEnabled`, which asks the question the harness
+ * actually cares about: can a logged-out reader get the championship list? It
+ * used to read the accounts page and match 2.4.x's wording, which on 1.7.9
+ * matched nothing and reported "already enabled" for a manager that was still
+ * shut. Effective access is the same question on both builds and needs no
+ * knowledge of either.
  *
  * Returns whether this call changed anything.
  */
@@ -223,9 +229,24 @@ async function allowPublicAccess(session: AcsmSession, baseUrl: string): Promise
  */
 async function publicAccessEnabled(baseUrl: string): Promise<boolean> {
   const res = await fetch(new URL(CHAMPIONSHIPS_PATH, baseUrl), { redirect: "manual" })
-  // A logged-out read of a protected page redirects to the login form; with
-  // public access on it is served.
-  return res.status === 200
+  if (res.status !== 200) return false
+
+  // A 200 is necessary and not sufficient. Both builds here answer a logged-out
+  // read with a 302 to /login — measured on 1.7.9 and 2.4.5 — but ACSM is known
+  // to serve the login form with a 200 elsewhere, which is why the reader has
+  // to warn about "got HTML" when parsing JSON (client.ts). If it ever does so
+  // here, a status check alone reads the login page as success: provisioning
+  // then skips the toggle, and every credential-free read fails later with an
+  // error about Public Access that provisioning has just said is fine.
+  //
+  // Costs one string check, and the failure it prevents is silent.
+  const body = await res.text()
+  return !looksLikeLoginPage(body)
+}
+
+/** A page whose main business is asking for a password. */
+export function looksLikeLoginPage(html: string): boolean {
+  return /<form[^>]+action=["'][^"']*\/login["']/i.test(html) || /name=["']Password["']/i.test(html)
 }
 
 main().catch((e: unknown) => {

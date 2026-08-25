@@ -37,8 +37,11 @@ Two entries are worth expanding.
 sentence. On 1.7.9 there is no such sentence, so it concluded "already enabled"
 while every credential-free read still returned the login page — and the CLI
 tests failed with "was not JSON (got HTML)". It now makes an unauthenticated
-request to `/championships` and looks at the status, which is the property that
-actually matters and needs no knowledge of either build.
+request to `/championships` and requires both a 200 *and* a body that is not a
+login form — the status alone is not enough, because ACSM serves the login page
+with a 200 rather than a redirect, which is the same trap in a different shape.
+That is the property that actually matters, and it needs no knowledge of either
+build.
 
 **The import path already worked.** `detectImportMechanism` reads the page, so
 champctl drove 1.7.9's textarea import correctly the first time it was pointed
