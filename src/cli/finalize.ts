@@ -70,7 +70,7 @@ Exit codes:
   0  previewed cleanly, or pushed
   1  nothing to do — the event already matches
   2  gridmom blocked it, or the entry list changed under us
-  3  champctl itself failed
+  3  a usage mistake, or champctl itself failed
 `
 
 interface Args {
@@ -315,7 +315,15 @@ export async function main(argv: readonly string[]): Promise<number> {
       process.stderr.write(`${e.message}\n`)
       return 2
     }
-    if (e instanceof FinalizeError || e instanceof ScheduleError) {
+    // A ScheduleError is something the person typed: a malformed --quali, a
+    // wall-clock time the zone doesn't have, a timezone the profile got wrong.
+    // Grouping it with FinalizeError gave it exit 2 and no usage block, so a
+    // date typo looked exactly like "gridmom blocked this" or "someone changed
+    // the entry list" — a refusal to act on a correct request, rather than a
+    // request that needs retyping. The message already says what to do; the
+    // usage block says what the flag looks like.
+    if (e instanceof ScheduleError) return reportUsageError(new UsageError(e.message), USAGE)
+    if (e instanceof FinalizeError) {
       process.stderr.write(`${e.message}\n`)
       return 2
     }

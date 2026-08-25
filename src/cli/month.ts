@@ -262,7 +262,12 @@ export async function main(argv: readonly string[]): Promise<number> {
     return await runCommand(argv)
   } catch (e) {
     if (e instanceof UsageError) return reportUsageError(e, USAGE)
-    if (e instanceof EmitError || e instanceof ScheduleError) {
+    // Same split as champctl-finalize: a ScheduleError is a date or time the
+    // person typed, so it gets the usage block that documents the flag. An
+    // EmitError is about the *contents* of a spec or template file, where the
+    // message is long and specific and the usage block adds nothing.
+    if (e instanceof ScheduleError) return reportUsageError(new UsageError(e.message), USAGE)
+    if (e instanceof EmitError) {
       process.stderr.write(`${e.message}\n`)
       return 3
     }

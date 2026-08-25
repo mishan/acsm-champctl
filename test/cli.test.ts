@@ -309,6 +309,40 @@ describe("champctl-month arguments", () => {
     expect(stderr()).toMatch(/clone abc-123/)
   })
 
+  it("treats a bad date as a usage mistake, not a refusal", async () => {
+    // A ScheduleError is something the person typed. Grouped with EmitError it
+    // exited 3 with no usage block; grouped with FinalizeError in the other CLI
+    // it exited 2, which is the code for "gridmom blocked this" — a refusal to
+    // act on a correct request rather than a request that needs retyping.
+    const dir = await mkdtemp(join(tmpdir(), "champctl-cli-"))
+    try {
+      const specPath = join(dir, "spec.json")
+      const templatePath = join(dir, "template.json")
+      await writeFile(
+        specPath,
+        JSON.stringify({ name: "M", cars: ["a"], rounds: [{ track: "spa" }] }),
+        "utf8",
+      )
+      await writeFile(templatePath, JSON.stringify({ Name: "t", Events: [] }), "utf8")
+
+      captured = ""
+      const code = await monthMain([
+        "build",
+        "--spec",
+        specPath,
+        "--template",
+        templatePath,
+        "--start",
+        "not-a-date",
+      ])
+      expect(code).toBe(3)
+      expect(stderr()).toMatch(/not a usable start date/)
+      expect(stderr()).toContain("Usage:")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it("says what is wrong with a spec rather than dying on it", async () => {
     // readJson<MonthSpec> is a cast, not a check: parsing proves the bytes were
     // JSON and nothing more. `{}` reached emitMonth's `spec.rounds.length` and
