@@ -289,22 +289,39 @@ describe.skipIf(!LIVE)("ACSM harness", () => {
   })
 
   // -------------------------------------------------------------- plan §3.1
-  describe("premium-only endpoints", () => {
-    it("reports whether this build has the list endpoint", async () => {
-      const reader = new HttpAcsmReader({ baseUrl: liveConfig()!.baseUrl, rateLimit: false })
-      try {
-        const list = await reader.listChampionships()
-        // eslint-disable-next-line no-console
-        console.log(`/api/championships/list.json present — ${list.length} championships.`)
-        expect(Array.isArray(list)).toBe(true)
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.log(
-          `/api/championships/list.json unavailable on this build: ${
-            e instanceof Error ? e.message : String(e)
-          }`,
-        )
-      }
+  describe("enumerating championships", () => {
+    /**
+     * This used to log "list.json present — N championships" whenever
+     * `listChampionships()` resolved, which stopped being true the moment the
+     * reader learned to fall back to the listing page: it then said "present"
+     * for a build that answers 404, on every run, in the recon output people
+     * read to find out what a build does.
+     *
+     * So the endpoint is asked about directly, and the reader is checked for
+     * the thing that actually matters — that it comes back with championships
+     * either way.
+     */
+    it("finds championships whether or not the JSON endpoint exists", async () => {
+      const baseUrl = liveConfig()!.baseUrl
+      const reader = new HttpAcsmReader({ baseUrl, rateLimit: false })
+
+      const direct = await fetch(new URL("/api/championships/list.json", baseUrl), {
+        redirect: "manual",
+      })
+      // eslint-disable-next-line no-console
+      console.log(
+        direct.status === 200
+          ? "/api/championships/list.json: present"
+          : `/api/championships/list.json: absent (HTTP ${direct.status}), reading the listing page`,
+      )
+
+      const list = await reader.listChampionships()
+      expect(Array.isArray(list)).toBe(true)
+      // There is at least the seed this file imported, so an empty list means
+      // the enumeration path is broken rather than that the server is empty —
+      // which is exactly how the archive came to exit 0 having archived
+      // nothing.
+      expect(list.length, "the reader must find the championships that exist").toBeGreaterThan(0)
     })
   })
 
