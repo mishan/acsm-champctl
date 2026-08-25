@@ -23,7 +23,7 @@ function plan(round = 1): FinalizePlan {
 
 function store(over: { ttlMs?: number; maxPlans?: number } = {}) {
   let now = 1_000_000
-  const s = new PlanStore({
+  const s = new PlanStore<FinalizePlan>({
     ttlMs: over.ttlMs ?? 60_000,
     maxPlans: over.maxPlans ?? 2000,
     now: () => now,

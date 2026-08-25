@@ -24,6 +24,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import { StaticAcsmReader } from "../src/acsm/client.js"
 import { AcsmSession } from "../src/acsm/session.js"
 import type { Championship } from "../src/acsm/types.js"
+import type { FinalizePlan } from "../src/finalize/plan.js"
 import { PlanStore } from "../src/web/plans.js"
 import { buildServer } from "../src/web/server.js"
 import { SessionStore } from "../src/web/sessions.js"
@@ -73,7 +74,7 @@ interface HarnessOptions {
   /** Fail the login POST the way an unwell ACSM does, rather than a wrong password. */
   loginOutage?: "5xx" | "transport"
   sessions?: SessionStore
-  plans?: PlanStore
+  plans?: PlanStore<FinalizePlan>
   throttle?: LoginThrottle
   /**
    * Held open until the test resolves it, so two requests can be in the write
@@ -670,7 +671,7 @@ describe("pushing a change", () => {
 
   it("won't spend a plan belonging to another session", async () => {
     const sessions = new SessionStore()
-    const plans = new PlanStore()
+    const plans = new PlanStore<FinalizePlan>()
     const a = harness({ sessions, plans })
     const b = harness({ sessions, plans })
     await a.login("ada")
