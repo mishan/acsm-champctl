@@ -49,3 +49,6 @@ docker/premium/*
 # Belt and braces: a Server Manager release zip, wherever it is copied.
 docker/premium/*.zip
 *.zip
+
+# Working notes, not deliverables.
+docs/review-*.md
