@@ -203,12 +203,23 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     throw new UsageError(`Unknown command ${args.command}`)
   }
 
-  // One database file rather than a directory of them, so --dir became --db.
-  const store = await SqliteArchiveStore.open(
-    args.db ?? resolve(process.cwd(), "data/archive/archive.db"),
-  )
+  // Everything that can refuse the command happens before the database is
+  // opened, and every opened database is closed in a `finally`.
+  //
+  // Both matter for the same reason: `main` is exported and the tests call it
+  // in-process, so a leaked DatabaseSync is a live handle and a held lock for
+  // the rest of the process. Opening first also meant a missing base URL —
+  // a usage error — left a database file behind on the way out.
+  const dbPath = args.db ?? resolve(process.cwd(), "data/archive/archive.db")
 
-  if (args.command === "status") return status(store, args)
+  if (args.command === "status") {
+    const store = await SqliteArchiveStore.open(dbPath)
+    try {
+      return await status(store, args)
+    } finally {
+      store.close()
+    }
+  }
 
   const profile = await loadProfile(args.profile)
   const baseUrl = args.baseUrl ?? profile.acsmBaseUrl
@@ -231,17 +242,22 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     userAgent: ARCHIVE_USER_AGENT,
   })
 
-  const report = await ingest(reader, store, {
-    ...(args.since === undefined ? {} : { skipCheckedSince: args.since }),
-    ...(args.json ? {} : { onProgress: (o) => process.stdout.write(`${describe(o)}\n`) }),
-  })
+  const store = await SqliteArchiveStore.open(dbPath)
+  try {
+    const report = await ingest(reader, store, {
+      ...(args.since === undefined ? {} : { skipCheckedSince: args.since }),
+      ...(args.json ? {} : { onProgress: (o) => process.stdout.write(`${describe(o)}\n`) }),
+    })
 
-  if (args.json) {
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
-  } else {
-    process.stdout.write(`\n${summarise(report)}\n`)
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+    } else {
+      process.stdout.write(`\n${summarise(report)}\n`)
+    }
+    return exitCodeFor(report)
+  } finally {
+    store.close()
   }
-  return exitCodeFor(report)
 }
 
 async function status(store: SqliteArchiveStore, args: Args): Promise<number> {

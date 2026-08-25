@@ -33,6 +33,23 @@ export class RateLimiter {
   constructor(options: RateLimiterOptions = {}) {
     this.#limit = options.limit ?? ACSM_RATE_LIMIT.limit
     this.#windowMs = options.windowMs ?? ACSM_RATE_LIMIT.windowMs
+
+    // A limit of zero is not "block everything", it is a hang: the wait loop
+    // reads `#timestamps[0]` to decide how long to sleep, and with nothing
+    // ever admitted that is undefined, so the sleep is NaN and the loop spins
+    // as fast as the event loop allows. Whatever a caller meant by 0, they did
+    // not mean that — and a limiter is exactly the thing nobody watches while
+    // it works.
+    if (!Number.isInteger(this.#limit) || this.#limit < 1) {
+      throw new RangeError(
+        `A rate limit must be a whole number of requests per window, at least 1; got ` +
+          `${String(options.limit)}. To turn limiting off, pass rateLimit: false to the reader ` +
+          `or session being constructed rather than a limit of 0 here.`,
+      )
+    }
+    if (!Number.isFinite(this.#windowMs) || this.#windowMs <= 0) {
+      throw new RangeError(`A rate-limit window must be a positive number of milliseconds`)
+    }
     this.#now = options.now ?? (() => Date.now())
     this.#sleep = options.sleep ?? defaultSleep
   }
