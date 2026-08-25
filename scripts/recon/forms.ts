@@ -99,7 +99,7 @@ async function main(): Promise<void> {
 
   const version = await serverVersion(session)
   log(`Server Manager version: ${version ?? "unknown"}`)
-  if (version && version.startsWith("1.")) {
+  if (version?.startsWith("1.")) {
     log(`  Note: BATL runs 2.4.5. Treat the EntrantID and premium-endpoint`)
     log(`  answers below as provisional — see docs/acsm-write-path.md §0.`)
   }
@@ -284,8 +284,10 @@ function findScheduleForm(
 function entrantStatusLinks(html: string): string[] {
   const out = new Set<string>()
   const re = /href=["']([^"']*\/entrant\/[^"']+)["']/gi
-  let m: RegExpExecArray | null
-  while ((m = re.exec(html)) !== null) out.add(m[1]!)
+  for (const m of html.matchAll(re)) {
+    const href = m[1]
+    if (href) out.add(href)
+  }
   return [...out]
 }
 
