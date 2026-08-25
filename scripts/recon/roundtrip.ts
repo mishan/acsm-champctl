@@ -19,7 +19,14 @@ import { IMPORT_HOUSEKEEPING, type Change, diff, formatChanges } from "../../src
 import type { Championship } from "../../src/acsm/types.js"
 import { events, sessionKeysUsed, slots } from "../../src/acsm/view.js"
 import { exportPath, importChampionship } from "../../src/acsm/write.js"
-import { connect, log, runRecon, seedChampionship, writeArtefact } from "./env.js"
+import {
+  connect,
+  log,
+  runRecon,
+  seedChampionship,
+  stableUrl,
+  writeArtefact,
+} from "./env.js"
 
 const DEFAULT_FIXTURE = "fixtures/synthetic/recon-seed.json"
 
@@ -119,8 +126,10 @@ async function main(): Promise<void> {
 
   await writeArtefact("roundtrip.json", {
     capturedAt: new Date().toISOString(),
-    source: seedSource,
-    championshipId,
+    // Masked: the ids are new every run, and a throwaway container's id is
+    // meaningless a day later. The console prints them at run time.
+    source: stableUrl(seedSource),
+    championshipId: stableUrl(championshipId),
     idsPreserved,
     differences: redact(all),
     substantiveDifferences: redact(substantive),

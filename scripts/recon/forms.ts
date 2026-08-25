@@ -32,6 +32,7 @@ import {
   redactBaseUrl,
   runRecon,
   seedChampionship,
+  stableUrl,
   writeArtefact,
 } from "./env.js"
 
@@ -51,8 +52,10 @@ interface FormSnapshot {
 function snapshot(path: string, html: string, pageUrl: string, selector?: string): FormSnapshot {
   const form = parseForm(html, { ...(selector ? { selector } : {}), pageUrl })
   return {
-    path,
-    action: form.action,
+    // Masked: actions resolve to absolute URLs, so they carry the host, and
+    // the championship/event UUIDs are new on every run. See stableUrl.
+    path: stableUrl(path),
+    action: stableUrl(form.action),
     method: form.method,
     enctype: form.enctype,
     shape: shape(form.fields),
@@ -182,7 +185,7 @@ async function main(): Promise<void> {
   const schedulePath = eventSchedulePath(championshipId, eventId)
   const scheduleForm = findScheduleForm(viewHtml, session.url(viewPath), eventId)
   if (scheduleForm) {
-    snapshots.push({ ...scheduleForm, path: schedulePath })
+    snapshots.push({ ...scheduleForm, path: stableUrl(schedulePath) })
     log("")
     log(`Schedule form fields: ${scheduleForm.order.join(", ")}`)
   } else {
@@ -199,7 +202,12 @@ async function main(): Promise<void> {
     const links = entrantStatusLinks(entrantsHtml)
     log("")
     log(`Entrants page: ${links.length} status links${links[0] ? `, e.g. ${links[0]}` : ""}`)
-    await writeArtefact("entrant-status-links.json", { path: entrantsPath, links })
+    // Approve/reject links carry the entrant's Steam GUID; the URL shape is
+    // what recon item 5 is about, not who is in the list.
+    await writeArtefact("entrant-status-links.json", {
+      path: stableUrl(entrantsPath),
+      links: links.map(stableUrl),
+    })
   } catch (e) {
     log(`Entrants page unavailable: ${e instanceof Error ? e.message : String(e)}`)
   }
@@ -230,7 +238,7 @@ async function main(): Promise<void> {
     baseUrl: redactBaseUrl(session.baseUrl),
     // How this build takes a championship. 1.7.9 pastes JSON into a textarea;
     // 2.4.5 uploads a file. Recorded because it changed between them.
-    seedSource: source,
+    seedSource: stableUrl(source),
     sessionKeys: sessionKeysUsed(exported),
     importMechanism: mechanism.kind,
     importField: mechanism.field,
@@ -238,7 +246,7 @@ async function main(): Promise<void> {
     entrantIdRendered: entrantIdCount > 0,
     entrantCount: nameCount,
     forms: snapshots,
-    trackInfoPath: trackPath,
+    trackInfoPath: stableUrl(trackPath),
     trackInfo,
   })
 

@@ -109,6 +109,34 @@ export function redactBaseUrl(baseUrl: string): string {
   }
 }
 
+const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
+const STEAM_GUID = /\b7656119\d{10}\b/g
+
+/**
+ * A URL reduced to the part worth committing: path only, identifiers masked.
+ *
+ * Two reasons, and both matter for a file that gets checked in.
+ *
+ * Privacy: form actions are resolved to absolute URLs, so they carry the host
+ * — which is how a LAN address ends up in a public artefact even after the
+ * `baseUrl` field is redacted. Entrant links carry Steam GUIDs outright.
+ *
+ * Stability: the championship and event UUIDs are new on every run, so an
+ * un-masked capture differs from the previous one everywhere, every time. The
+ * whole point of committing these is that the diff on the next ACSM upgrade
+ * shows what actually changed.
+ */
+export function stableUrl(url: string): string {
+  let out = url
+  try {
+    const u = new URL(url, "http://placeholder")
+    out = u.pathname + u.search
+  } catch {
+    // Already a path, or something unparseable; mask it as-is.
+  }
+  return out.replace(UUID_ANYWHERE, "{id}").replace(STEAM_GUID, "{guid}")
+}
+
 /**
  * A championship to experiment on.
  *
