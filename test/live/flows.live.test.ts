@@ -33,7 +33,11 @@ import { LIVE, SEED, deleteChampionship, liveSession, loadFixture } from "./harn
 const PROFILE = testProfile()
 
 describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
-  let session: AcsmSession
+  // Optional, because vitest still runs afterAll when beforeAll throws. Typed
+  // as always-present, the cleanup loop would then fail on an undefined
+  // session and bury the real error — the one that says why the harness
+  // wasn't reachable — under a TypeError from the teardown.
+  let session: AcsmSession | undefined
   const created: string[] = []
 
   beforeAll(async () => {
@@ -41,14 +45,29 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
   }, 60_000)
 
   afterAll(async () => {
-    for (const id of created) await deleteChampionship(session, id)
+    if (!session) return
+    // These are championships this file created on a throwaway container, so
+    // a failure to delete one must not stop the others being cleaned up.
+    for (const id of created) {
+      try {
+        await deleteChampionship(live(), id)
+      } catch (e) {
+        console.warn(`could not delete ${id}: ${e instanceof Error ? e.message : e}`)
+      }
+    }
   })
 
+  /** The session, once beforeAll has run. Narrows the optional for the tests. */
+  const live = (): AcsmSession => {
+    if (!session) throw new Error("no live session; beforeAll did not complete")
+    return session
+  }
+
   const importFixture = async (source: Championship): Promise<{ id: string; export: Championship }> => {
-    const { championshipId } = await importChampionship(session, source)
+    const { championshipId } = await importChampionship(live(), source)
     expect(championshipId, "import should redirect to the new championship").toBeTruthy()
     created.push(championshipId as string)
-    const exported = await session.getJson<Championship>(
+    const exported = await live().getJson<Championship>(
       `/championship/${championshipId}/export`,
     )
     return { id: championshipId as string, export: exported }
@@ -72,7 +91,7 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       const { id, export: champ } = await seeded()
       const eventId = events(champ)[0]?.ID as string
 
-      const plan = await planFinalize(session, {
+      const plan = await planFinalize(live(), {
         championship: champ,
         championshipId: id,
         eventId,
@@ -81,10 +100,10 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       })
       expect(plan.formChanges.length, "the seed should differ from what we asked for").toBeGreaterThan(0)
 
-      await applyFinalize(session, plan, { acknowledgeWarnings: true })
+      await applyFinalize(live(), plan, { acknowledgeWarnings: true })
 
       // Read it back from ACSM rather than trusting the POST's redirect.
-      const after = await session.getJson<Championship>(`/championship/${id}/export`)
+      const after = await live().getJson<Championship>(`/championship/${id}/export`)
       const ev = events(after)[0]
       expect(readFormat(ev!)).toEqual(wanted)
     }, 60_000)
@@ -95,16 +114,16 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       const { id, export: champ } = await seeded()
       const eventId = events(champ)[0]?.ID as string
 
-      const plan = await planFinalize(session, {
+      const plan = await planFinalize(live(), {
         championship: champ,
         championshipId: id,
         eventId,
         format: { ...wanted, length: { kind: "laps", laps: 13 } },
         profile: PROFILE,
       })
-      await applyFinalize(session, plan, { acknowledgeWarnings: true })
+      await applyFinalize(live(), plan, { acknowledgeWarnings: true })
 
-      const after = await session.getJson<Championship>(`/championship/${id}/export`)
+      const after = await live().getJson<Championship>(`/championship/${id}/export`)
       const race = sessionConfig(events(after)[0]!, "Race")
       expect(race?.Laps).toBe(13)
       // And the other half of the decision was zeroed.
@@ -118,16 +137,16 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       const eventId = events(champ)[0]?.ID as string
       const before = events(champ)[0]?.EntryList
 
-      const plan = await planFinalize(session, {
+      const plan = await planFinalize(live(), {
         championship: champ,
         championshipId: id,
         eventId,
         format: wanted,
         profile: PROFILE,
       })
-      await applyFinalize(session, plan, { acknowledgeWarnings: true })
+      await applyFinalize(live(), plan, { acknowledgeWarnings: true })
 
-      const after = await session.getJson<Championship>(`/championship/${id}/export`)
+      const after = await live().getJson<Championship>(`/championship/${id}/export`)
       expect(events(after)[0]?.EntryList).toEqual(before)
     }, 60_000)
 
@@ -138,7 +157,7 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       const { id, export: champ } = await seeded()
       const eventId = events(champ)[0]?.ID as string
 
-      const plan = await planFinalize(session, {
+      const plan = await planFinalize(live(), {
         championship: champ,
         championshipId: id,
         eventId,
@@ -149,19 +168,19 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       // Now change the entry list behind the plan's back, exactly as another
       // admin would: fetch the same form, rename an entrant, post it.
       const path = eventEditPath(id, eventId)
-      const form = parseForm(await session.getText(path), { pageUrl: session.url(path) })
+      const form = parseForm(await live().getText(path), { pageUrl: live().url(path) })
       const meddled = [...form.fields]
       setAt(meddled, "EntryList.Name", 0, "Someone Else")
-      await session.postForm(eventSubmitPath(id), meddled)
+      await live().postForm(eventSubmitPath(id), meddled)
 
-      await expect(applyFinalize(session, plan, { acknowledgeWarnings: true })).rejects.toBeInstanceOf(
+      await expect(applyFinalize(live(), plan, { acknowledgeWarnings: true })).rejects.toBeInstanceOf(
         EntryListChangedError,
       )
 
       // And nothing was written: the meddled name is still there, unchanged.
-      const after = await session.getJson<Championship>(`/championship/${id}/export`)
+      const after = await live().getJson<Championship>(`/championship/${id}/export`)
       const names = getAll(
-        parseForm(await session.getText(path), { pageUrl: session.url(path) }).fields,
+        parseForm(await live().getText(path), { pageUrl: live().url(path) }).fields,
         "EntryList.Name",
       )
       expect(names[0]).toBe("Someone Else")
@@ -174,7 +193,7 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       const { id, export: champ } = await seeded()
       const eventId = events(champ)[0]?.ID as string
 
-      const plan = await planFinalize(session, {
+      const plan = await planFinalize(live(), {
         championship: champ,
         championshipId: id,
         eventId,
@@ -184,10 +203,10 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       })
       expect(plan.schedule, "asking for a new quali time should plan a schedule save").toBeTruthy()
 
-      const result = await applyFinalize(session, plan, { acknowledgeWarnings: true })
+      const result = await applyFinalize(live(), plan, { acknowledgeWarnings: true })
       expect(result.scheduleSaved).toBe(true)
 
-      const after = await session.getJson<Championship>(`/championship/${id}/export`)
+      const after = await live().getJson<Championship>(`/championship/${id}/export`)
       const scheduled = events(after)[0]?.Scheduled ?? ""
       // Scheduled is practice start: 20:00 quali minus 60 minutes of practice.
       expect(scheduled).toContain("2027-03-10")

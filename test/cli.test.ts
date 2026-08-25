@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
   formatFrom,
@@ -7,6 +7,7 @@ import {
   UsageError as FinalizeUsageError,
 } from "../src/cli/finalize.js"
 import {
+  main as monthMain,
   parseArgs as parseMonthArgs,
   renderResult,
   UsageError as MonthUsageError,
@@ -14,6 +15,22 @@ import {
 import type { RaceFormat } from "../src/finalize/format.js"
 import type { FinalizePlan } from "../src/finalize/plan.js"
 import type { EmitResult } from "../src/emit/month.js"
+
+/** Captures stderr so a CLI's own error text can be asserted. */
+let captured = ""
+const stderr = (): string => captured
+
+beforeEach(() => {
+  captured = ""
+  vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+    captured += String(chunk)
+    return true
+  })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 const current: RaceFormat = {
   length: { kind: "minutes", minutes: 40 },
@@ -200,6 +217,16 @@ describe("champctl-month arguments", () => {
     expect(() => parseMonthArgs(["clone", "a", "b"])).toThrow(MonthUsageError)
     expect(() => parseMonthArgs(["build", "--nope"])).toThrow(/Unknown option/)
     expect(() => parseMonthArgs(["build", "--spec"])).toThrow(/needs a value/)
+  })
+
+  it("refuses a positional after build", async () => {
+    // parseArgs allows one positional so `clone <id>` works, which left
+    // `build <id> --spec ...` running against the spec while silently
+    // ignoring the id someone clearly meant something by.
+    const code = await monthMain(["build", "abc-123", "--spec", "s.json", "--template", "t.json"])
+    expect(code).toBe(3)
+    expect(stderr()).toMatch(/build takes no positional argument.*"abc-123"/s)
+    expect(stderr()).toMatch(/clone abc-123/)
   })
 })
 

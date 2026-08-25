@@ -369,11 +369,15 @@ does.
 
 ```
 champctl-month build --spec <spec.json> --template <export.json> [options]
-champctl-month clone <championship-id> --name <name> --start <yyyy-mm-dd>
+champctl-month clone <championship-id> [options]
 
-  --tracks <a,b,c>   override the track list
-  --out <path>       write the championship JSON here
-  --import           send it to ACSM. Without this, nothing is written.
+  --name <name>          override the month name; a clone reuses last
+                         month's name without it
+  --start <yyyy-mm-dd>   first race night; without it, the next occurrence
+                         of the league's race weekday
+  --tracks <a,b,c>       override the track list
+  --out <path>           write the championship JSON here
+  --import               send it to ACSM. Without this, nothing is written.
 ```
 
 ```

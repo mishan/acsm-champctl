@@ -281,7 +281,10 @@ async function run(argv: readonly string[]): Promise<number> {
     )
   }
 
-  // The export is public, so a preview needs no credentials at all.
+  // The export itself is public, which is why *this* read needs no
+  // credentials. The preview as a whole still does — see `login` below, which
+  // runs whether or not --push was given, because planFinalize reads the event
+  // edit form and ACSM serves that only to a logged-in session.
   const reader = new HttpAcsmReader({ baseUrl })
   const championship = await reader.exportChampionship(args.championshipId)
   const ev = events(championship)[args.round - 1]

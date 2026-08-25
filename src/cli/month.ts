@@ -5,11 +5,12 @@
  * The phase 4 emitter with a face on it.
  *
  * This one creates championships, so the safety ordering is stricter than
- * `champctl-finalize`'s: it emits to **stdout or a file by default** and needs
- * an explicit `--import` to send anything. An accidental extra import is
- * recoverable — delete it — but only if you notice, and a championship that
- * appears without anyone meaning it to is exactly the sort of thing nobody
- * notices until sign-ups are split across two of them.
+ * `champctl-finalize`'s. By default it **prints a summary and writes nothing
+ * at all**: the championship JSON goes to a file only with `--out` (or to
+ * stdout with `--json`), and reaches ACSM only with `--import`. An accidental
+ * extra import is recoverable — delete it — but only if you notice, and a
+ * championship that appears without anyone meaning it to is exactly the sort
+ * of thing nobody notices until sign-ups are split across two of them.
  */
 
 import { readFile, writeFile } from "node:fs/promises"
@@ -32,13 +33,15 @@ const USAGE = `champctl-month — create a month of racing
 
 Usage:
   champctl-month build --spec <spec.json> --template <export.json> [options]
-  champctl-month clone <championship-id> --name <name> --start <yyyy-mm-dd> [options]
+  champctl-month clone <championship-id> [options]
 
 Options:
-  --spec <path>         month spec JSON (see README)
-  --template <path>     golden template export; required for build
-  --name <name>         override the month name
-  --start <yyyy-mm-dd>  first race night
+  --spec <path>         month spec JSON (see README). Required for build.
+  --template <path>     golden template export. Required for build.
+  --name <name>         override the month name. For clone, without this the
+                        new month reuses last month's name.
+  --start <yyyy-mm-dd>  first race night. Without it, the next occurrence of
+                        the league's race weekday.
   --tracks <a,b,c>      override the track list
   --out <path>          write the championship JSON here
   --import              send it to ACSM. Without this, nothing is written.
@@ -221,6 +224,15 @@ async function run(argv: readonly string[]): Promise<number> {
 
   let result: EmitResult
   if (args.command === "build") {
+    // build takes no positional: parseArgs allows one so `clone <id>` works,
+    // which would otherwise let `build <id> --spec ...` run against the spec
+    // while silently ignoring the id someone clearly meant something by.
+    if (args.source !== undefined) {
+      throw new UsageError(
+        `build takes no positional argument, but got ${JSON.stringify(args.source)}. ` +
+          `Did you mean \`clone ${args.source}\`, or to pass it to --spec or --template?`,
+      )
+    }
     if (!args.spec || !args.template) {
       throw new UsageError("build needs --spec and --template.")
     }
