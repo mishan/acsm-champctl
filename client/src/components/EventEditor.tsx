@@ -17,8 +17,14 @@ import { Findings } from "./Findings"
 import { Message } from "./Message"
 
 /**
+ * One event of a championship — ACSM's word for a race night, and the object
+ * this screen reads and writes.
+ *
  * The weekly flow (plan §5.2): set the format the racers voted for, see exactly
- * what changes, push it.
+ * what changes, push it. *Finalizing* is the verb for that job and stays the
+ * verb — `champctl-finalize` does it from a terminal — but the noun on screen
+ * is the event, so that someone checking champctl's work against Server
+ * Manager is looking for the same word in both.
  *
  * The target is under a minute, on a phone, from a Discord poll result, which
  * is what shapes almost every decision below — presets before fields, the
@@ -40,7 +46,7 @@ import { Message } from "./Message"
  * says so before the push and reports which halves went through after it.
  */
 
-interface FinalizeProps {
+interface EventEditorProps {
   championshipId: string
   round: number
   config: Config
@@ -86,13 +92,13 @@ function applyPreset(draft: Draft, preset: FormatPreset): Draft {
 /** Long enough to finish typing "18", short enough to feel live. */
 const PREVIEW_DEBOUNCE_MS = 350
 
-export function Finalize({
+export function EventEditor({
   championshipId,
   round,
   config,
   onBack,
   onAuthLost,
-}: FinalizeProps): React.JSX.Element {
+}: EventEditorProps): React.JSX.Element {
   const [current, setCurrent] = useState<RoundView | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [plan, setPlan] = useState<PlanView | null>(null)
@@ -226,7 +232,7 @@ export function Finalize({
     return (
       <>
         <BackLink onBack={onBack} />
-        <Message kind="error" title="Couldn't open that round" body={error} />
+        <Message kind="error" title="Couldn't open that event" body={error} />
       </>
     )
   }
@@ -317,16 +323,23 @@ export function Finalize({
         {current.track || "no track set"}
       </h1>
       <p className="muted">
-        Currently {describeFormat(current.format)}
+        {/*
+          "Event" because that is what ACSM calls this object, and someone
+          checking champctl's work against the manager should be looking for
+          the same word in both. The round number stays because it is how a
+          league counts — round 3 of the championship — and the two are the
+          same thing seen from either end.
+        */}
+        Event · currently {describeFormat(current.format)}
         {current.quali ? ` · quali ${current.quali.display}` : " · unscheduled"}
-        {current.started && " · this round has already run"}
+        {current.started && " · already run"}
       </p>
 
       {current.started && (
         <Message
           kind="error"
-          title="This round has already been run"
-          body="Changing its format now edits history rather than a race night, and the results are already recorded against it. Check you meant this round."
+          title="This event has already been run"
+          body="Changing its format now edits history rather than a race night, and the results are already recorded against it. Check you meant this event."
         />
       )}
 
