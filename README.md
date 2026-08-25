@@ -43,11 +43,9 @@ npm test
 npm run gridmom -- check --file fixtures/synthetic/suzuka-duplicate-pitboxes.json
 ```
 
-`npm run lint` and `npm run typecheck` are what CI enforces, alongside the
-tests on Node 20.19, 22 and 24. Formatting is configured in `biome.json` but
-deliberately not enforced: turning it on would reformat the whole tree, which
-is a poor trade while branches are in flight. `npm run format` applies it if
-you want it.
+`npm run lint`, `npm run format:check` and `npm run typecheck` are what CI
+enforces, alongside the tests on Node 20.19, 22 and 24. `npm run format`
+applies the formatting if a change has drifted from it.
 
 Against a live manager (no credentials needed — Public Access is enabled):
 

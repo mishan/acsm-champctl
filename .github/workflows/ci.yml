@@ -34,8 +34,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      # Formatting is deliberately not enforced yet — see biome.json. Run
-      # `npm run format` locally if you want it applied.
+      # Enforced from the commit that swept the tree. It was left off while the
+      # backlog grew, which is exactly how it reached 25 files — the gate is
+      # cheap only while nothing has drifted past it. `npm run format` fixes.
+      - name: Format
+        run: npm run format:check
 
       - name: Typecheck
         run: npm run typecheck
