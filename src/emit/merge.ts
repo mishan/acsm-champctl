@@ -31,39 +31,14 @@
  * for every later merge in the same process.
  */
 
+import { FORBIDDEN_KEYS } from "../acsm/write.js"
+
 /** Plain object, as distinct from an array, null, or a class instance. */
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return false
   const proto = Object.getPrototypeOf(v) as unknown
   return proto === Object.prototype || proto === null
 }
-
-/**
- * Keys that must never be carried across a merge from a hostile source.
- *
- * The overlays champctl builds are its own, but an overlay can also come from
- * parsed JSON — a saved month spec, a request body — and `__proto__` in parsed
- * JSON is a prototype-pollution attempt. `JSON.parse` keeps it as an ordinary
- * own property, which is exactly what makes a naive recursive merge assign it.
- */
-/**
- * Keys that must never be assigned onto a rebuilt object.
- *
- * `out[k] = value` where the key is `__proto__` reparents the object rather
- * than adding a field, and a spec or template is parsed JSON, where the key
- * survives as an ordinary own property.
- *
- * Exported because `deepMerge` is not the only place in this directory that
- * rebuilds an object — `replaceExactString` in `month.ts` does too, and two
- * copies of the list is one that gets updated and one that doesn't. The id
- * sweep in `acsm/write.ts` needs the same rule and currently keeps its own
- * copy; the two should become one once both branches have landed.
- */
-export const FORBIDDEN_KEYS: ReadonlySet<string> = new Set([
-  "__proto__",
-  "constructor",
-  "prototype",
-])
 
 /**
  * Deep-merges `overlay` onto `base`, returning a new value.

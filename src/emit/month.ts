@@ -34,14 +34,14 @@ import {
   type RaceSetup,
   type SignUpForm,
 } from "../acsm/types.js"
-import { regenerateIds } from "../acsm/write.js"
+import { FORBIDDEN_KEYS, regenerateIds } from "../acsm/write.js"
 import { classes, events } from "../acsm/view.js"
 import type { RaceFormat } from "../finalize/format.js"
 import { applyFormat } from "../finalize/format.js"
 import { practiceMinutesFor } from "../finalize/schedule.js"
 import type { PitTable } from "../pits/table.js"
 import type { LeagueProfile } from "../profile/types.js"
-import { deepMerge, FORBIDDEN_KEYS, mergeAll } from "./merge.js"
+import { deepMerge, mergeAll } from "./merge.js"
 import { gridCap, type GridCap } from "./grid.js"
 import { monthSchedule, type RoundSchedule } from "./schedule.js"
 

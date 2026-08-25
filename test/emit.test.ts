@@ -7,6 +7,7 @@ import { ANY_CAR_MODEL as CANONICAL_ANY_CAR_MODEL } from "../src/acsm/types.js"
 import { events, isAnyCarModel, session, slots } from "../src/acsm/view.js"
 import { gridCap } from "../src/emit/grid.js"
 import { deepMerge, definedOnly, mergeAll } from "../src/emit/merge.js"
+import { FORBIDDEN_KEYS } from "../src/acsm/write.js"
 import {
   ANY_CAR_MODEL,
   derivedCars,
@@ -113,6 +114,31 @@ describe("deep merge", () => {
     expect(merged["polluted"]).toBeUndefined()
     expect(Object.getPrototypeOf(merged)).toBe(Object.prototype)
     expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined()
+  })
+
+  it("refuses every key the canonical list names, not a copy of it", () => {
+    // This module used to keep its own FORBIDDEN_KEYS beside the one in
+    // acsm/write.ts. Two lists is one that gets updated and one that doesn't,
+    // and the one that doesn't guards a merge fed by parsed JSON.
+    //
+    // Driving the assertion off the imported set rather than a literal is the
+    // point: a key added there has to be refused here, or this fails.
+    for (const key of FORBIDDEN_KEYS) {
+      const overlay = JSON.parse(`{"${key}":{"polluted":true},"Name":"ok"}`) as object
+      const merged = deepMerge({ Name: "before" }, overlay) as Record<string, unknown>
+
+      expect(merged["Name"], `${key} overlay still merged the rest`).toBe("ok")
+      expect(merged["polluted"], `${key} leaked a field`).toBeUndefined()
+      expect(Object.getPrototypeOf(merged), `${key} reparented the result`).toBe(Object.prototype)
+    }
+  })
+
+  it("doesn't keep a list of its own to drift from", async () => {
+    // The behavioural test above only fires once the two lists *disagree*, so
+    // a freshly re-added identical copy would sail past it and then rot. This
+    // fires the moment one exists.
+    const merge = await import("../src/emit/merge.js")
+    expect(Object.keys(merge)).not.toContain("FORBIDDEN_KEYS")
   })
 
   it("applies a chain left to right", () => {
