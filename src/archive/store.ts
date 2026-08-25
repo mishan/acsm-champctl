@@ -47,9 +47,10 @@
  */
 
 import { createHash } from "node:crypto"
-import { chmod, mkdir } from "node:fs/promises"
+import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
+import { restrictToOwner } from "../sqlite.js"
 
 /** One stored copy of an export. */
 export interface Snapshot {
@@ -305,25 +306,6 @@ export class SqliteArchiveStore implements ArchiveStore {
 
   close(): void {
     this.#db.close()
-  }
-}
-
-/**
- * 0600 on the database and its WAL sidecars.
- *
- * The sidecars matter as much as the database: `-wal` holds pages not yet
- * checkpointed, so it is archive content, and SQLite creates both at the
- * umask default rather than inheriting the database's mode — measured at 0644
- * against a 0600 database. They are removed on a clean close and left behind
- * on a kill, which is exactly when nobody is watching.
- *
- * Best effort. A filesystem without POSIX modes, or a database the operator
- * deliberately owns differently, should not stop an archive run — the
- * directory mode above is the containment that matters.
- */
-async function restrictToOwner(path: string): Promise<void> {
-  for (const f of [path, `${path}-wal`, `${path}-shm`]) {
-    await chmod(f, 0o600).catch(() => undefined)
   }
 }
 

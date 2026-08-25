@@ -16,7 +16,7 @@ import { DateTime } from "luxon"
 import type { ChampionshipEvent } from "../../acsm/types.js"
 import { eventHasStarted, eventLabel, events, isZeroTime, session } from "../../acsm/view.js"
 import type { Check, CheckContext } from "../context.js"
-import { MESSAGE_LOCALE, humanList } from "../finding.js"
+import { cap, MESSAGE_LOCALE, humanList } from "../finding.js"
 
 /** Parses `Scheduled` into the league zone, preserving the instant. */
 function scheduledAt(ev: ChampionshipEvent, zone: string): DateTime | undefined {
@@ -224,10 +224,6 @@ function formatOffset(minutes: number): string {
   const sign = minutes < 0 ? "-" : "+"
   const abs = Math.abs(minutes)
   return `${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`
-}
-
-function cap(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
 export const scheduleChecks: readonly Check[] = [

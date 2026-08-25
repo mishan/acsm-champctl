@@ -17,7 +17,6 @@
  * credential-free look at a championship, use gridmom — the export is public.
  */
 
-import { createInterface } from "node:readline/promises"
 import { pathToFileURL } from "node:url"
 
 import { AcsmError, HttpAcsmReader } from "../acsm/client.js"
@@ -29,7 +28,7 @@ import { readFormat } from "../finalize/format.js"
 import { FinalizeError, planFinalize, type FinalizePlan } from "../finalize/plan.js"
 import { ScheduleError } from "../finalize/schedule.js"
 import { loadProfile } from "../profile/load.js"
-import { loadPits, reportUsageError, runCli, UsageError } from "./args.js"
+import { confirm, loadPits, reportUsageError, runCli, UsageError } from "./args.js"
 
 // Re-exported so callers and tests have one obvious place to import it from,
 // while there is still only one class.
@@ -295,34 +294,6 @@ export function renderPlan(plan: FinalizePlan): string {
     for (const f of plan.gridmom.findings) lines.push(`    [${f.severity}] ${f.message}`)
   }
   return lines.join("\n")
-}
-
-/**
- * Asks, when there is someone to ask.
- *
- * The TTY check is not politeness. With stdin at EOF — cron, a closed fd,
- * `< /dev/null` — `rl.question` never settles, so the process hangs and then
- * exits **13** on Node's unsettled-top-level-await warning. `run` never
- * returns, so the documented 0/1/2/3 contract is never reached, and a nightly
- * job looks like an infrastructure failure rather than a missing `--yes`.
- *
- * The prompt goes to stderr because stdout may be carrying `--json`, and a
- * question appended to a JSON document makes it unparseable.
- */
-export async function confirm(question: string): Promise<boolean> {
-  if (!process.stdin.isTTY) {
-    throw new UsageError(
-      "Refusing to ask for confirmation with nothing attached to stdin — there is no one to " +
-        "answer, and waiting would hang. Pass --yes to confirm up front.",
-    )
-  }
-  const rl = createInterface({ input: process.stdin, output: process.stderr })
-  try {
-    const answer = await rl.question(`${question} [y/N] `)
-    return /^y(es)?$/i.test(answer.trim())
-  } finally {
-    rl.close()
-  }
 }
 
 export async function main(argv: readonly string[]): Promise<number> {

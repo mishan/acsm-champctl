@@ -111,3 +111,14 @@ export function humanList(items: readonly (string | number)[]): string {
 export function pluralize(n: number, one: string, many = `${one}s`): string {
   return n === 1 ? one : many
 }
+
+/**
+ * Capitalises the first letter, for a label used at the start of a sentence.
+ *
+ * Shared rather than repeated. Three check files had the same three lines, and
+ * a finding's first word is the most visible thing gridmom produces — the kind
+ * of detail that gets fixed in one copy.
+ */
+export function cap(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}

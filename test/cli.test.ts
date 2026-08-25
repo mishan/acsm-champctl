@@ -4,19 +4,18 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
-  confirm as finalizeConfirm,
   formatFrom,
   parseArgs as parseFinalizeArgs,
   renderPlan,
   UsageError as FinalizeUsageError,
 } from "../src/cli/finalize.js"
 import {
-  confirm as monthConfirm,
   main as monthMain,
   parseArgs as parseMonthArgs,
   renderResult,
   UsageError as MonthUsageError,
 } from "../src/cli/month.js"
+import { confirm, UsageError } from "../src/cli/args.js"
 import type { RaceFormat } from "../src/finalize/format.js"
 import type { FinalizePlan } from "../src/finalize/plan.js"
 import type { EmitResult } from "../src/emit/month.js"
@@ -156,9 +155,12 @@ describe("confirming a destructive action", () => {
     // documented 0/1/2/3 contract is never reached and a nightly job looks
     // like an infrastructure failure rather than a missing --yes.
     await withTty(undefined, async () => {
-      await expect(finalizeConfirm("Push this?")).rejects.toThrow(FinalizeUsageError)
-      await expect(finalizeConfirm("Push this?")).rejects.toThrow(/--yes/)
-      await expect(monthConfirm("Create this?")).rejects.toThrow(MonthUsageError)
+      // One implementation now. This used to import the finalize and month
+      // copies under separate aliases and assert against each, which is what
+      // testing a duplicate looks like: two names for one behaviour, and no
+      // test at all for the day they stopped agreeing.
+      await expect(confirm("Push this?")).rejects.toThrow(UsageError)
+      await expect(confirm("Push this?")).rejects.toThrow(/--yes/)
     })
   })
 
@@ -166,7 +168,7 @@ describe("confirming a destructive action", () => {
     // The point of throwing UsageError rather than anything else: main() maps
     // it to 3 and prints the usage block, instead of hanging.
     await withTty(undefined, async () => {
-      await expect(finalizeConfirm("Push this?")).rejects.toBeInstanceOf(FinalizeUsageError)
+      await expect(confirm("Push this?")).rejects.toBeInstanceOf(UsageError)
     })
   })
 })

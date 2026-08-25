@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { HttpAcsmReader, AcsmError, StaticAcsmReader } from "../src/acsm/client.js"
+import { asMessage, HttpAcsmReader, AcsmError, StaticAcsmReader } from "../src/acsm/client.js"
 import { RateLimiter } from "../src/acsm/rate-limit.js"
 import { InMemoryPitTable } from "../src/pits/table.js"
 import { validateProfile } from "../src/profile/load.js"
@@ -182,6 +182,29 @@ describe("HTTP reader", () => {
     })
     await r.exportChampionship("abc def")
     expect(url).toBe("https://acsm.example/championship/abc%20def/export")
+  })
+})
+
+describe("turning a thrown thing into a sentence", () => {
+  it("calls an abort a timeout, which is what it was", () => {
+    // `AbortError` is what a fetch timeout throws, and its own message —
+    // "The operation was aborted" — reads like something champctl chose to do
+    // rather than something that happened to it. The message ends up in
+    // "Request to /championships failed: ...", where the difference is whether
+    // a league admin goes looking at their own network or at champctl.
+    const e = new Error("The operation was aborted")
+    e.name = "AbortError"
+    expect(asMessage(e)).toBe("timed out")
+  })
+
+  it("leaves every other error to say what it says", () => {
+    expect(asMessage(new TypeError("fetch failed"))).toBe("fetch failed")
+    expect(asMessage(new AcsmError("ACSM returned 503"))).toBe("ACSM returned 503")
+  })
+
+  it("stringifies whatever was thrown when it wasn't an Error", () => {
+    expect(asMessage("boom")).toBe("boom")
+    expect(asMessage(undefined)).toBe("undefined")
   })
 })
 

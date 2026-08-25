@@ -30,9 +30,10 @@
  * ever fetched sitting there, which is a different thing from a cache.
  */
 
-import { chmod, mkdir } from "node:fs/promises"
+import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
+import { restrictToOwner } from "../sqlite.js"
 
 import type { ResponseCache } from "./client.js"
 
@@ -119,19 +120,6 @@ export class SqliteCache implements ResponseCache {
 
   close(): void {
     this.#db.close()
-  }
-}
-
-/**
- * Owner-only on the database and its sidecars.
- *
- * Best effort. A filesystem without POSIX modes, or a file the operator
- * deliberately owns differently, should not stop a run — the directory mode
- * above is the containment that matters.
- */
-async function restrictToOwner(path: string): Promise<void> {
-  for (const f of [path, `${path}-wal`, `${path}-shm`]) {
-    await chmod(f, 0o600).catch(() => undefined)
   }
 }
 
