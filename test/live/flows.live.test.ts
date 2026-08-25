@@ -16,6 +16,7 @@
  * stale-entry-list guard fires against a list changed by someone else.
  */
 
+import { DateTime } from "luxon"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { getAll, parseForm, setAt } from "../../src/acsm/form.js"
@@ -27,6 +28,7 @@ import { emitMonth } from "../../src/emit/month.js"
 import { applyFinalize, EntryListChangedError } from "../../src/finalize/apply.js"
 import { readFormat, type RaceFormat } from "../../src/finalize/format.js"
 import { planFinalize } from "../../src/finalize/plan.js"
+import { practiceMinutesFor } from "../../src/finalize/schedule.js"
 import { testProfile } from "../support/build.js"
 import { LIVE, SEED, deleteChampionship, liveSession, loadFixture } from "./harness.js"
 
@@ -63,14 +65,42 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
     return session
   }
 
-  const importFixture = async (source: Championship): Promise<{ id: string; export: Championship }> => {
+  const importFixture = async (
+    source: Championship,
+  ): Promise<{ id: string; export: Championship }> => {
     const { championshipId } = await importChampionship(live(), source)
-    expect(championshipId, "import should redirect to the new championship").toBeTruthy()
-    created.push(championshipId as string)
-    const exported = await live().getJson<Championship>(
-      `/championship/${championshipId}/export`,
-    )
-    return { id: championshipId as string, export: exported }
+
+    // Registered for teardown *before* the check, not after. If the redirect
+    // doesn't parse — exactly what the check is here to catch — the
+    // championship still exists on the server, and registering afterwards left
+    // the one case worth cleaning up as the one that leaked.
+    if (championshipId) created.push(championshipId)
+    if (!championshipId) {
+      throw new Error(
+        "Import did not redirect to a new championship, so there is no id to work with. " +
+          "It may still have been created — check the container.",
+      )
+    }
+
+    const exported = await live().getJson<Championship>(`/championship/${championshipId}/export`)
+    return { id: championshipId, export: exported }
+  }
+
+  /**
+   * The first event's id, or a failure that says the fixture is at fault.
+   *
+   * `as string` here turned a bad seed into `undefined` flowing into a URL, and
+   * a confusing 404 several lines later instead of "the fixture has no event".
+   */
+  const firstEventId = (champ: Championship): string => {
+    const id = events(champ)[0]?.ID
+    if (!id) {
+      throw new Error(
+        "The seed export has no first event with an ID, so this test has nothing to drive. " +
+          "The fixture is wrong, not the code under test.",
+      )
+    }
+    return id
   }
 
   const seeded = async () => importFixture(await loadFixture(SEED))
@@ -89,7 +119,7 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
 
     it("lands the format it previewed", async () => {
       const { id, export: champ } = await seeded()
-      const eventId = events(champ)[0]?.ID as string
+      const eventId = firstEventId(champ)
 
       const plan = await planFinalize(live(), {
         championship: champ,
@@ -98,7 +128,10 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
         format: wanted,
         profile: PROFILE,
       })
-      expect(plan.formChanges.length, "the seed should differ from what we asked for").toBeGreaterThan(0)
+      expect(
+        plan.formChanges.length,
+        "the seed should differ from what we asked for",
+      ).toBeGreaterThan(0)
 
       await applyFinalize(live(), plan, { acknowledgeWarnings: true })
 
@@ -112,7 +145,7 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       // The form says Race.Laps; the export says Sessions.RACE.Laps. This is
       // the seam a scripted fetch can't check.
       const { id, export: champ } = await seeded()
-      const eventId = events(champ)[0]?.ID as string
+      const eventId = firstEventId(champ)
 
       const plan = await planFinalize(live(), {
         championship: champ,
@@ -134,7 +167,7 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       // The whole reason the write round-trips the form. A save that quietly
       // reshuffles or drops entrants is the failure mode that matters.
       const { id, export: champ } = await seeded()
-      const eventId = events(champ)[0]?.ID as string
+      const eventId = firstEventId(champ)
       const before = events(champ)[0]?.EntryList
 
       const plan = await planFinalize(live(), {
@@ -155,7 +188,7 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       // sign-up in ACSM while a preview is open; the save would silently
       // delete them.
       const { id, export: champ } = await seeded()
-      const eventId = events(champ)[0]?.ID as string
+      const eventId = firstEventId(champ)
 
       const plan = await planFinalize(live(), {
         championship: champ,
@@ -173,9 +206,9 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       setAt(meddled, "EntryList.Name", 0, "Someone Else")
       await live().postForm(eventSubmitPath(id), meddled)
 
-      await expect(applyFinalize(live(), plan, { acknowledgeWarnings: true })).rejects.toBeInstanceOf(
-        EntryListChangedError,
-      )
+      await expect(
+        applyFinalize(live(), plan, { acknowledgeWarnings: true }),
+      ).rejects.toBeInstanceOf(EntryListChangedError)
 
       // And nothing was written: the meddled name is still there, unchanged.
       const after = await live().getJson<Championship>(`/championship/${id}/export`)
@@ -191,7 +224,7 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       // The event submit form does not carry Scheduled (plan §5.2), so this
       // proves the separate POST works rather than silently doing nothing.
       const { id, export: champ } = await seeded()
-      const eventId = events(champ)[0]?.ID as string
+      const eventId = firstEventId(champ)
 
       const plan = await planFinalize(live(), {
         championship: champ,
@@ -208,11 +241,19 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
 
       const after = await live().getJson<Championship>(`/championship/${id}/export`)
       const scheduled = events(after)[0]?.Scheduled ?? ""
-      // Scheduled is practice start: 20:00 quali minus 60 minutes of practice.
+
+      // Scheduled is practice start: 20:00 quali minus the practice length.
+      // The expected instant is derived in the league's zone rather than
+      // written as a fixed offset. Hard-coding -07:00 was wrong twice over: US
+      // DST starts on 14 March in 2027, so this date is PST (-08:00) and the
+      // assertion was an hour out — and a test for zone-based scheduling that
+      // hard-codes an offset cannot fail for the reason it exists.
+      const expected = DateTime.fromISO("2027-03-10T20:00", {
+        zone: PROFILE.schedule.timezone,
+      }).minus({ minutes: practiceMinutesFor(events(champ)[0]!, PROFILE.schedule.practiceMinutes) })
+      expect(expected.isValid).toBe(true)
       expect(scheduled).toContain("2027-03-10")
-      expect(new Date(scheduled).getUTCHours()).toBe(
-        new Date("2027-03-10T19:00:00-07:00").getUTCHours(),
-      )
+      expect(DateTime.fromISO(scheduled).toMillis()).toBe(expected.toMillis())
     }, 60_000)
   })
 

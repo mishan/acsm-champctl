@@ -1,12 +1,17 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
+  confirm as finalizeConfirm,
   formatFrom,
   parseArgs as parseFinalizeArgs,
   renderPlan,
   UsageError as FinalizeUsageError,
 } from "../src/cli/finalize.js"
 import {
+  confirm as monthConfirm,
   main as monthMain,
   parseArgs as parseMonthArgs,
   renderResult,
@@ -86,6 +91,69 @@ describe("champctl-finalize arguments", () => {
     expect(parseFinalizeArgs(["a", "1", "--no-pit"]).pit).toBe(false)
     expect(parseFinalizeArgs(["a", "1"]).pit).toBeUndefined()
   })
+
+  it("refuses an empty numeric value rather than reading it as zero", () => {
+    // `Number("")` is 0, so `--laps "$LAPS"` with an unset variable asked for
+    // a zero-lap race. formFieldsFor posts Race.Laps: "0" and Race.Time: "0" —
+    // a race with no end condition — and nothing downstream catches it:
+    // gridmom has no lap check so the plan isn't blocked, and it isn't a noop
+    // either, so --push sends it.
+    for (const empty of ["", " ", "\t"]) {
+      expect(() => parseFinalizeArgs(["a", "1", "--laps", empty]), JSON.stringify(empty)).toThrow(
+        /value was empty/,
+      )
+    }
+  })
+
+  it("refuses a race length of zero, and a fractional one", () => {
+    expect(() => parseFinalizeArgs(["a", "1", "--laps", "0"])).toThrow(/whole number of 1 or more/)
+    expect(() => parseFinalizeArgs(["a", "1", "--minutes", "0"])).toThrow(/whole number/)
+    for (const bad of ["1.5", "0x10", "1e3", "nope", "Infinity"]) {
+      expect(() => parseFinalizeArgs(["a", "1", "--laps", bad]), bad).toThrow(/whole number/)
+    }
+  })
+
+  it("allows zero reversed grid places, which means no reversed grid", () => {
+    // The one numeric option where 0 is the ordinary answer rather than a
+    // mistake, so it can't share a floor with --laps.
+    expect(parseFinalizeArgs(["a", "1", "--reversed", "0"]).reversed).toBe(0)
+    expect(parseFinalizeArgs(["a", "1", "--reversed", "5"]).reversed).toBe(5)
+    expect(() => parseFinalizeArgs(["a", "1", "--reversed", "-1"])).toThrow(/whole number/)
+    expect(() => parseFinalizeArgs(["a", "1", "--reversed", "1.7"])).toThrow(/whole number/)
+  })
+})
+
+describe("confirming a destructive action", () => {
+  const withTty = async (isTTY: boolean | undefined, fn: () => Promise<void>): Promise<void> => {
+    const original = process.stdin.isTTY
+    Object.defineProperty(process.stdin, "isTTY", { value: isTTY, configurable: true })
+    try {
+      await fn()
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", { value: original, configurable: true })
+    }
+  }
+
+  it("refuses to prompt when nothing is attached to stdin", async () => {
+    // Not politeness. With stdin at EOF — cron, a closed fd, `< /dev/null` —
+    // readline's question() never settles: the process hangs, then exits 13 on
+    // Node's unsettled-top-level-await warning. run() never returns, so the
+    // documented 0/1/2/3 contract is never reached and a nightly job looks
+    // like an infrastructure failure rather than a missing --yes.
+    await withTty(undefined, async () => {
+      await expect(finalizeConfirm("Push this?")).rejects.toThrow(FinalizeUsageError)
+      await expect(finalizeConfirm("Push this?")).rejects.toThrow(/--yes/)
+      await expect(monthConfirm("Create this?")).rejects.toThrow(MonthUsageError)
+    })
+  })
+
+  it("is a usage error, so it lands on the documented exit code", async () => {
+    // The point of throwing UsageError rather than anything else: main() maps
+    // it to 3 and prints the usage block, instead of hanging.
+    await withTty(undefined, async () => {
+      await expect(finalizeConfirm("Push this?")).rejects.toBeInstanceOf(FinalizeUsageError)
+    })
+  })
 })
 
 describe("building the desired format", () => {
@@ -117,8 +185,13 @@ describe("building the desired format", () => {
   it("treats zero as a value rather than as absent", () => {
     // `?? current` would be right here but `|| current` would not: 0 reversed
     // positions means a single race, and is the most common setting there is.
+    //
+    // Only --reversed is pinned. This also used to assert that
+    // `formatFrom(current, { laps: 0 })` produced a zero-lap race, which
+    // parseArgs now refuses outright — a suite that asserts a state the parser
+    // rejects is documenting a bug as a feature.
     expect(formatFrom(current, { reversed: 0 }).reversedGridPositions).toBe(0)
-    expect(formatFrom(current, { laps: 0 }).length).toEqual({ kind: "laps", laps: 0 })
+    expect(formatFrom(current, { reversed: 0 }).length).toEqual(current.length)
   })
 })
 
@@ -136,7 +209,14 @@ describe("rendering a plan", () => {
       blocked: false,
       noop: false,
       entryListFingerprint: "x",
-      form: { action: "", method: "POST", enctype: "", fields: [], fileFields: [], textAreaFields: [] },
+      form: {
+        action: "",
+        method: "POST",
+        enctype: "",
+        fields: [],
+        fileFields: [],
+        textAreaFields: [],
+      },
       ...over,
     }) as FinalizePlan
 
@@ -228,16 +308,45 @@ describe("champctl-month arguments", () => {
     expect(stderr()).toMatch(/build takes no positional argument.*"abc-123"/s)
     expect(stderr()).toMatch(/clone abc-123/)
   })
+
+  it("says what is wrong with a spec rather than dying on it", async () => {
+    // readJson<MonthSpec> is a cast, not a check: parsing proves the bytes were
+    // JSON and nothing more. `{}` reached emitMonth's `spec.rounds.length` and
+    // came out as "Cannot read properties of undefined (reading 'length')",
+    // which reads as champctl breaking rather than as a bad file. The
+    // --template path already failed properly, so this only levels them up.
+    const dir = await mkdtemp(join(tmpdir(), "champctl-cli-"))
+    try {
+      const specPath = join(dir, "spec.json")
+      const templatePath = join(dir, "template.json")
+      await writeFile(templatePath, JSON.stringify({ Name: "t", Events: [] }), "utf8")
+
+      for (const [body, expected] of [
+        ["{}", /has no `name`/],
+        ['"nope"', /is not a JSON object/],
+        ['{"name":"M"}', /has no `cars` array/],
+        ['{"name":"M","cars":["a"]}', /has no `rounds` array/],
+        ['{"name":"M","cars":["a"],"rounds":["spa"]}', /round 1 that is not an object/],
+      ] as const) {
+        captured = ""
+        await writeFile(specPath, body, "utf8")
+        const code = await monthMain(["build", "--spec", specPath, "--template", templatePath])
+        expect(code, body).toBe(3)
+        expect(stderr(), body).toMatch(expected)
+        // Never the raw TypeError this used to produce.
+        expect(stderr(), body).not.toMatch(/Cannot read properties/)
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe("rendering a month", () => {
   const result: EmitResult = {
     championship: {
       Name: "September 2026",
-      Events: [
-        { RaceSetup: { Track: "spa" } },
-        { RaceSetup: { Track: "suzuka" } },
-      ],
+      Events: [{ RaceSetup: { Track: "spa" } }, { RaceSetup: { Track: "suzuka" } }],
     },
     grid: {
       maxClients: 24,

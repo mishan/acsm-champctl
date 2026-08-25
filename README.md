@@ -90,7 +90,8 @@ npm run harness:reset      # back to an empty manager
 ```
 
 `npm test` never needs the container; the live suite has its own config and
-skips without `CHAMPCTL_LIVE_URL`.
+skips unless *both* `CHAMPCTL_LIVE_URL` and `CHAMPCTL_LIVE_PASSWORD` are set.
+Setting only one skips everything while looking configured.
 
 `test/live/flows.live.test.ts` drives the finalize and month flows end to end —
 that the format lands where ACSM actually reads it, that the schedule really is

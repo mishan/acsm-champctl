@@ -6,11 +6,15 @@
  *
  * This one creates championships, so the safety ordering is stricter than
  * `champctl-finalize`'s. By default it **prints a summary and writes nothing
- * at all**: the championship JSON goes to a file only with `--out` (or to
- * stdout with `--json`), and reaches ACSM only with `--import`. An accidental
- * extra import is recoverable — delete it — but only if you notice, and a
- * championship that appears without anyone meaning it to is exactly the sort
- * of thing nobody notices until sign-ups are split across two of them.
+ * at all**: the championship JSON reaches a file only with `--out`, and ACSM
+ * only with `--import`. An accidental extra import is recoverable — delete it
+ * — but only if you notice, and a championship that appears without anyone
+ * meaning it to is exactly the sort of thing nobody notices until sign-ups are
+ * split across two of them.
+ *
+ * `--json` is a *summary*, not an export: it wraps the championship alongside
+ * the grid cap, schedule and gridmom report, so piping it to a file does not
+ * produce something importable. `--out` is the one that writes an export.
  */
 
 import { readFile, writeFile } from "node:fs/promises"
@@ -105,21 +109,48 @@ export function parseArgs(argv: readonly string[]): Args {
     }
     switch (a) {
       case "-h":
-      case "--help": args.help = true; break
-      case "--spec": args.spec = next(); break
-      case "--template": args.template = next(); break
-      case "--name": args.name = next(); break
-      case "--start": args.start = next(); break
-      case "--tracks":
-        args.tracks = next().split(",").map((t) => t.trim()).filter(Boolean)
+      case "--help":
+        args.help = true
         break
-      case "--out": args.out = next(); break
-      case "--import": args.doImport = true; break
-      case "--yes": args.yes = true; break
-      case "--profile": args.profile = next(); break
-      case "--pits": args.pits = next(); break
-      case "--base-url": args.baseUrl = next(); break
-      case "--json": args.json = true; break
+      case "--spec":
+        args.spec = next()
+        break
+      case "--template":
+        args.template = next()
+        break
+      case "--name":
+        args.name = next()
+        break
+      case "--start":
+        args.start = next()
+        break
+      case "--tracks":
+        args.tracks = next()
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
+        break
+      case "--out":
+        args.out = next()
+        break
+      case "--import":
+        args.doImport = true
+        break
+      case "--yes":
+        args.yes = true
+        break
+      case "--profile":
+        args.profile = next()
+        break
+      case "--pits":
+        args.pits = next()
+        break
+      case "--base-url":
+        args.baseUrl = next()
+        break
+      case "--json":
+        args.json = true
+        break
       default:
         if (a.startsWith("-")) throw new UsageError(`Unknown option ${a}`)
         rest.push(a)
@@ -131,7 +162,10 @@ export function parseArgs(argv: readonly string[]): Args {
   if (rest.length > 2) {
     throw new UsageError(
       `${args.command} takes at most one argument, but got ` +
-        `${rest.slice(1).map((r) => JSON.stringify(r)).join(", ")}`,
+        `${rest
+          .slice(1)
+          .map((r) => JSON.stringify(r))
+          .join(", ")}`,
     )
   }
   return args
@@ -181,8 +215,54 @@ async function readJson<T>(path: string, what: string): Promise<T> {
   }
 }
 
-async function confirm(question: string): Promise<boolean> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout })
+/**
+ * Checks the shape `emitMonth` actually indexes into, before it does.
+ *
+ * `readJson<MonthSpec>` is a cast, not a check — parsing tells you the bytes
+ * were JSON, nothing more. A spec of `{}` got as far as `spec.rounds.length`
+ * and died with "Cannot read properties of undefined (reading 'length')" and
+ * exit 3, which reads as champctl breaking rather than as a bad file. The
+ * `--template` path already fails properly, with an EmitError naming the
+ * problem, so this only brings `--spec` up to the same standard.
+ *
+ * Deliberately shallow: emitMonth validates the *contents* — empty rounds,
+ * empty cars, blank tracks — with messages better than anything here. This
+ * covers only the fields that would throw a TypeError before reaching it.
+ */
+function assertMonthSpec(value: unknown, path: string): asserts value is MonthSpec {
+  const bad = (why: string): never => {
+    throw new UsageError(`The month spec at ${path} ${why}.`)
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    bad("is not a JSON object")
+  }
+  const v = value as Record<string, unknown>
+  if (typeof v["name"] !== "string") bad("has no `name`, which the month is called")
+  if (!Array.isArray(v["cars"])) bad("has no `cars` array — RaceSetup.Cars is derived from it")
+  if (!Array.isArray(v["rounds"])) bad("has no `rounds` array, so there is nothing to generate")
+  for (const [i, r] of (v["rounds"] as unknown[]).entries()) {
+    if (typeof r !== "object" || r === null || Array.isArray(r)) {
+      bad(`has a round ${i + 1} that is not an object`)
+    }
+  }
+}
+
+/**
+ * Asks, when there is someone to ask. Twin of the one in `finalize.ts`.
+ *
+ * With stdin at EOF — cron, a closed fd, `< /dev/null` — `rl.question` never
+ * settles: the process hangs and then exits **13** on Node's unsettled
+ * top-level await warning, outside the documented 0/1/2/3 contract. The prompt
+ * goes to stderr so it cannot corrupt a `--json` document on stdout.
+ */
+export async function confirm(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) {
+    throw new UsageError(
+      "Refusing to ask for confirmation with nothing attached to stdin — there is no one to " +
+        "answer, and waiting would hang. Pass --yes to confirm up front.",
+    )
+  }
+  const rl = createInterface({ input: process.stdin, output: process.stderr })
   try {
     const answer = await rl.question(`${question} [y/N] `)
     return /^y(es)?$/i.test(answer.trim())
@@ -236,7 +316,8 @@ async function run(argv: readonly string[]): Promise<number> {
     if (!args.spec || !args.template) {
       throw new UsageError("build needs --spec and --template.")
     }
-    const spec = await readJson<MonthSpec>(args.spec, "the month spec")
+    const spec = await readJson<unknown>(args.spec, "the month spec")
+    assertMonthSpec(spec, args.spec)
     const template = await readJson<Championship>(args.template, "the golden template")
     result = emitMonth({ template, spec: { ...spec, ...overrides }, profile, pits })
   } else if (args.command === "clone") {
@@ -256,9 +337,7 @@ async function run(argv: readonly string[]): Promise<number> {
   const report = check(result.championship, profile, { pits })
 
   if (args.json) {
-    process.stdout.write(
-      `${JSON.stringify({ ...result, gridmom: report }, null, 2)}\n`,
-    )
+    process.stdout.write(`${JSON.stringify({ ...result, gridmom: report }, null, 2)}\n`)
   } else {
     process.stdout.write(`${renderResult(result)}\n`)
     if (report.findings.length > 0) {
@@ -311,8 +390,21 @@ async function importIt(
     )
   }
 
-  if (!args.yes && !(await confirm(`\nCreate "${championship.Name}" on ${baseUrl}?`))) {
-    process.stdout.write("Nothing sent.\n")
+  // Named, or described. A partial export with no Name would otherwise ask
+  // `Create "undefined" on ...?`, which is the one moment the prompt has to be
+  // clear about what is going to be created.
+  const what = championship.Name ? `"${championship.Name}"` : "this unnamed championship"
+
+  // Under --json, stdout is a JSON document; prose appended to it makes the
+  // document unparseable. The prompt already goes to stderr, and these two
+  // lines have to follow it for the same reason.
+  const say = (line: string): void => {
+    if (args.json) process.stderr.write(line)
+    else process.stdout.write(line)
+  }
+
+  if (!args.yes && !(await confirm(`\nCreate ${what} on ${baseUrl}?`))) {
+    say("Nothing sent.\n")
     return
   }
 
@@ -321,7 +413,7 @@ async function importIt(
   // freshIds is the default; the emitter already regenerated them, and this
   // regenerates again, which is harmless and keeps the safety rail on.
   const { championshipId } = await importChampionship(session, championship)
-  process.stdout.write(`Created ${championshipId}\n`)
+  say(`Created ${championshipId}\n`)
 }
 
 function specOverrides(args: Args): Partial<MonthSpec> {

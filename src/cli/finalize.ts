@@ -6,10 +6,15 @@
  * `src/finalize/`; this reads arguments, prints a preview, and asks before
  * writing.
  *
- * **Writes require credentials and an explicit `--push`.** The default is a
- * preview: fetch the event, show what would change, run gridmom, and stop.
- * That ordering is deliberate — the destructive option should be the one you
- * have to type, not the one you forget to turn off.
+ * **Writing requires an explicit `--push`.** The default is a preview: fetch
+ * the event, show what would change, run gridmom, and stop. That ordering is
+ * deliberate — the destructive option should be the one you have to type, not
+ * the one you forget to turn off.
+ *
+ * Credentials are needed either way, including for the preview: it reads the
+ * event *edit form*, which ACSM only serves to a logged-in session, and that
+ * form is what makes the preview honest about the fields it would post. For a
+ * credential-free look at a championship, use gridmom — the export is public.
  */
 
 import { createInterface } from "node:readline/promises"
@@ -109,29 +114,90 @@ export function parseArgs(argv: readonly string[]): Args {
       if (v === undefined) throw new UsageError(`${a} needs a value`)
       return v
     }
-    const num = (): number => {
-      const v = Number(next())
-      if (!Number.isFinite(v) || v < 0) throw new UsageError(`${a} needs a non-negative number`)
+    /**
+     * A whole number of laps, minutes or grid places.
+     *
+     * `Number()` was doing all the work, and it is far too willing.
+     * `Number("")` and `Number(" ")` are both `0`, so `--laps "$LAPS"` with an
+     * unset shell variable asked for a zero-lap race — and `formFieldsFor`
+     * posts `Race.Laps: "0"` *and* `Race.Time: "0"`, a race with no end
+     * condition that nothing downstream rejects: gridmom has no lap check, so
+     * the plan isn't blocked, and it isn't a noop either, so `--push` sends it.
+     * It also accepted `1.5`, `0x10` and `1e3` for fields that are Go ints on
+     * the other side.
+     *
+     * `min` is a parameter because `--laps 0` is meaningless while
+     * `--reversed 0` is the normal way to say "no reversed grid".
+     */
+    const num = (min: number): number => {
+      const raw = next()
+      if (raw.trim() === "") {
+        throw new UsageError(`${a} needs a number, but the value was empty.`)
+      }
+      // Plain decimal digits, checked as a string before Number sees it.
+      // `Number` also accepts "0x10" (16) and "1e3" (1000), both of which are
+      // integers and neither of which anyone meant to type as a lap count.
+      if (!/^-?\d+$/.test(raw.trim())) {
+        throw new UsageError(`${a} needs a whole number, not ${JSON.stringify(raw)}.`)
+      }
+      const v = Number(raw)
+      if (!Number.isInteger(v) || v < min) {
+        throw new UsageError(
+          `${a} needs a whole number of ${min} or more, not ${JSON.stringify(raw)}.`,
+        )
+      }
       return v
     }
     switch (a) {
       case "-h":
-      case "--help": args.help = true; break
-      case "--laps": args.laps = num(); break
-      case "--minutes": args.minutes = num(); break
-      case "--reversed": args.reversed = num(); break
-      case "--pit": args.pit = true; break
-      case "--no-pit": args.pit = false; break
-      case "--extra-lap": args.extraLap = true; break
-      case "--no-extra-lap": args.extraLap = false; break
-      case "--quali": args.quali = { date: next(), time: next() }; break
-      case "--profile": args.profile = next(); break
-      case "--pits": args.pits = next(); break
-      case "--base-url": args.baseUrl = next(); break
-      case "--push": args.push = true; break
-      case "--yes": args.yes = true; break
-      case "--accept-warnings": args.acceptWarnings = true; break
-      case "--json": args.json = true; break
+      case "--help":
+        args.help = true
+        break
+      case "--laps":
+        args.laps = num(1)
+        break
+      case "--minutes":
+        args.minutes = num(1)
+        break
+      case "--reversed":
+        args.reversed = num(0)
+        break
+      case "--pit":
+        args.pit = true
+        break
+      case "--no-pit":
+        args.pit = false
+        break
+      case "--extra-lap":
+        args.extraLap = true
+        break
+      case "--no-extra-lap":
+        args.extraLap = false
+        break
+      case "--quali":
+        args.quali = { date: next(), time: next() }
+        break
+      case "--profile":
+        args.profile = next()
+        break
+      case "--pits":
+        args.pits = next()
+        break
+      case "--base-url":
+        args.baseUrl = next()
+        break
+      case "--push":
+        args.push = true
+        break
+      case "--yes":
+        args.yes = true
+        break
+      case "--accept-warnings":
+        args.acceptWarnings = true
+        break
+      case "--json":
+        args.json = true
+        break
       default:
         // A leading "-" followed by a digit is a mistyped value, not a flag —
         // champctl has no numeric options. Letting it fall through to the
@@ -229,8 +295,26 @@ async function loadPits(path: string | undefined): Promise<PitTable> {
   }
 }
 
-async function confirm(question: string): Promise<boolean> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout })
+/**
+ * Asks, when there is someone to ask.
+ *
+ * The TTY check is not politeness. With stdin at EOF — cron, a closed fd,
+ * `< /dev/null` — `rl.question` never settles, so the process hangs and then
+ * exits **13** on Node's unsettled-top-level-await warning. `run` never
+ * returns, so the documented 0/1/2/3 contract is never reached, and a nightly
+ * job looks like an infrastructure failure rather than a missing `--yes`.
+ *
+ * The prompt goes to stderr because stdout may be carrying `--json`, and a
+ * question appended to a JSON document makes it unparseable.
+ */
+export async function confirm(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) {
+    throw new UsageError(
+      "Refusing to ask for confirmation with nothing attached to stdin — there is no one to " +
+        "answer, and waiting would hang. Pass --yes to confirm up front.",
+    )
+  }
+  const rl = createInterface({ input: process.stdin, output: process.stderr })
   try {
     const answer = await rl.question(`${question} [y/N] `)
     return /^y(es)?$/i.test(answer.trim())
@@ -325,15 +409,24 @@ async function run(argv: readonly string[]): Promise<number> {
     return 0
   }
 
+  // Progress lines go to stderr under --json, for the same reason the prompt
+  // does: stdout is carrying a JSON document, and prose appended to it makes
+  // the document unparseable. The prompt itself was fixed and these two were
+  // not, which left `--json --push` still able to emit trailing text.
+  const say = (line: string): void => {
+    if (args.json) process.stderr.write(line)
+    else process.stdout.write(line)
+  }
+
   if (!args.yes && !(await confirm("\nPush this?"))) {
-    process.stdout.write("Nothing sent.\n")
+    say("Nothing sent.\n")
     return 0
   }
 
   const result = await applyFinalize(session, plan, {
     acknowledgeWarnings: args.acceptWarnings,
   })
-  process.stdout.write(
+  say(
     `Pushed: ${result.eventSaved ? "event saved" : "event unchanged"}` +
       `${result.scheduleSaved ? ", schedule saved" : ""}.\n`,
   )
