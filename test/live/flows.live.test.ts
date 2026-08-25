@@ -163,12 +163,65 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       expect(race?.Time ?? 0).toBe(0)
     }, 60_000)
 
-    it("leaves the entry list exactly as it found it", async () => {
-      // The whole reason the write round-trips the form. A save that quietly
-      // reshuffles or drops entrants is the failure mode that matters.
+    /**
+     * The sharpest failure this suite has caught, and the reason it exists.
+     *
+     * ACSM rewrites every checkbox to an explicit "1"/"0" in a submit handler,
+     * so its Go side reads the browser's "on" as false. champctl echoed the
+     * form back the way a browser would, `Race.Enabled=on` came back false, and
+     * a single finalize took the event from three sessions to none — while
+     * `applyFinalize` reported `eventSaved: true`. Nothing in 300-odd unit
+     * tests against a scripted fetch could see it.
+     *
+     * Asserts the sessions and their contents, not just the count: dropping the
+     * practice length while keeping the key would be the same class of bug.
+     */
+    it("keeps every session, rather than turning them off by echoing 'on'", async () => {
       const { id, export: champ } = await seeded()
       const eventId = firstEventId(champ)
-      const before = events(champ)[0]?.EntryList
+      const before = events(champ)[0]!
+
+      const plan = await planFinalize(live(), {
+        championship: champ,
+        championshipId: id,
+        eventId,
+        format: wanted,
+        profile: PROFILE,
+      })
+      await applyFinalize(live(), plan, { acknowledgeWarnings: true })
+
+      const after = events(await live().getJson<Championship>(`/championship/${id}/export`))[0]!
+
+      expect(
+        Object.keys(after.RaceSetup?.Sessions ?? {}).sort(),
+        "a finalize must not drop sessions",
+      ).toEqual(Object.keys(before.RaceSetup?.Sessions ?? {}).sort())
+
+      // The lengths champctl was not asked to change survive untouched.
+      expect(sessionConfig(after, "Practice")?.Time).toBe(sessionConfig(before, "Practice")?.Time)
+      expect(sessionConfig(after, "Qualifying")?.Time).toBe(
+        sessionConfig(before, "Qualifying")?.Time,
+      )
+    }, 60_000)
+
+    it("keeps every entrant, with their own car and skin", async () => {
+      // The whole reason the write round-trips the form. A save that quietly
+      // drops entrants, or hands one person another's car, is the failure mode
+      // that matters.
+      //
+      // Compared as a set keyed by GUID, and without PitBox. Both builds render
+      // the entrants in a different order on every request and renumber pit
+      // boxes by render position, so a deep-equal on the whole EntryList was
+      // asserting two things ACSM does not offer and BATL does not rely on —
+      // and it failed for those rather than for anything about entrants. See
+      // docs/acsm-2.4.15.md §5.
+      const { id, export: champ } = await seeded()
+      const eventId = firstEventId(champ)
+      const identity = (list: Record<string, Record<string, unknown>> | undefined) =>
+        Object.values(list ?? {})
+          .map((e) => ({ GUID: e["GUID"], Name: e["Name"], Model: e["Model"], Skin: e["Skin"] }))
+          .sort((a, b) => String(a.GUID).localeCompare(String(b.GUID)))
+      const before = identity(events(champ)[0]?.EntryList)
 
       const plan = await planFinalize(live(), {
         championship: champ,
@@ -180,7 +233,7 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       await applyFinalize(live(), plan, { acknowledgeWarnings: true })
 
       const after = await live().getJson<Championship>(`/championship/${id}/export`)
-      expect(events(after)[0]?.EntryList).toEqual(before)
+      expect(identity(events(after)[0]?.EntryList)).toEqual(before)
     }, 60_000)
 
     it("refuses the write when the entry list changed underneath it", async () => {
@@ -199,24 +252,34 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       })
 
       // Now change the entry list behind the plan's back, exactly as another
-      // admin would: fetch the same form, rename an entrant, post it.
+      // admin would: fetch the same form, change an entrant, post it.
+      //
+      // Ballast rather than Name. The championship event form renders Name,
+      // Team and GUID readonly and ACSM ignores them on save, so renaming an
+      // entrant here changed nothing at all — the guard then correctly did not
+      // fire, and this test failed for the meddling not working rather than for
+      // the guard being wrong. Ballast is per-entrant, writable, and in the
+      // fingerprint.
       const path = eventEditPath(id, eventId)
       const form = parseForm(await live().getText(path), { pageUrl: live().url(path) })
       const meddled = [...form.fields]
-      setAt(meddled, "EntryList.Name", 0, "Someone Else")
+      setAt(meddled, "EntryList.Ballast", 0, "42")
+      const meddledGuid = getAll(meddled, "EntryList.GUID")[0]!
       await live().postForm(eventSubmitPath(id), meddled)
+
+      // Confirm the meddling actually took, so a no-op cannot pass as a pass.
+      const meddledNow = await live().getJson<Championship>(`/championship/${id}/export`)
+      const ballastOf = (c: Championship, guid: string) =>
+        Object.values(events(c)[0]?.EntryList ?? {}).find((e) => e.GUID === guid)?.Ballast
+      expect(ballastOf(meddledNow, meddledGuid), "the meddling must have landed").toBe(42)
 
       await expect(
         applyFinalize(live(), plan, { acknowledgeWarnings: true }),
       ).rejects.toBeInstanceOf(EntryListChangedError)
 
-      // And nothing was written: the meddled name is still there, unchanged.
+      // And nothing was written: the meddled value is still there, unchanged.
       const after = await live().getJson<Championship>(`/championship/${id}/export`)
-      const names = getAll(
-        parseForm(await live().getText(path), { pageUrl: live().url(path) }).fields,
-        "EntryList.Name",
-      )
-      expect(names[0]).toBe("Someone Else")
+      expect(ballastOf(after, meddledGuid)).toBe(42)
       expect(readFormat(events(after)[0]!)).not.toEqual(wanted)
     }, 60_000)
 

@@ -47,10 +47,48 @@ describe("parsing an ACSM event form", () => {
     expect(names.filter((n) => !n)).toHaveLength(0)
   })
 
-  it("omits unchecked checkboxes and keeps checked ones", () => {
+  /**
+   * Not "on", and not absent. ACSM's global submit handler rewrites every
+   * checkbox to an explicit "1" or "0" before the browser serialises the form,
+   * so "1"/"0" is the only shape its Go side has ever been handed, and it reads
+   * "on" as false.
+   *
+   * This test used to assert browser behaviour — unchecked omitted, checked as
+   * "on" — and it was that faithfulness that made a finalize destructive:
+   * echoing `Race.Enabled=on` back turned the session off, and a save took the
+   * event from three sessions to none while reporting success.
+   */
+  it("sends every checkbox as 1 or 0, the way ACSM's own submit handler does", () => {
     const fields = form().fields
-    expect(getOne(fields, "RaceExtraLap")).toBeUndefined()
-    expect(getOne(fields, "AllowDuplicateSkinChoices")).toBe("on")
+    expect(getOne(fields, "RaceExtraLap"), "unchecked").toBe("0")
+    expect(getOne(fields, "AllowDuplicateSkinChoices"), "checked").toBe("1")
+  })
+
+  /**
+   * Measured against 2.4.15, not reasoned about. The event form renders one
+   * skin `<select>` per entrant, and the ones belonging to `any_car_model`
+   * slots come back with no options at all, because ACSM populates them from
+   * JavaScript that champctl doesn't run. Six entrants gave two skins; forcing
+   * that POST through by hand got an HTTP 500 out of ACSM, which indexes these
+   * arrays in parallel without a length check. Padding turned it into a 302
+   * with every skin still attached to its own car.
+   */
+  it("submits an empty value for a select with no options, unlike a browser", () => {
+    const fields = parseForm(
+      fakeEventForm({
+        entrants: [
+          entrant("alice"),
+          entrant("bob", { model: "any_car_model", skin: "" }),
+          entrant("carol", { model: "any_car_model", skin: "" }),
+        ],
+      }),
+    ).fields
+
+    // One per entrant, not one per entrant that has a skin to choose from.
+    expect(count(fields, "EntryList.Skin")).toBe(count(fields, "EntryList.Name"))
+    expect(getAll(fields, "EntryList.Skin")).toEqual(["alice_01", "", ""])
+    // And so it is a payload postForm will actually agree to send.
+    expect(checkEntryListShape(fields)).toEqual([])
   })
 
   it("omits buttons and file inputs", () => {
@@ -118,9 +156,21 @@ describe("entry list shape checking", () => {
     expect(checkEntryListShape(f.fields)).toEqual([])
   })
 
-  it("ignores the unpaired checkboxes ACSM renders", () => {
-    // Only the middle entrant has it ticked, so exactly one value is submitted
-    // for three entrants. That's ACSM's bug, not a payload we built wrong.
+  /**
+   * These were called unpaired because a browser drops the unchecked ones,
+   * leaving one value for three entrants — which ACSM then applies to the
+   * wrong entrant (docs/acsm-write-path.md §4). That is true of a *plain*
+   * browser and false of this one: ACSM's submit handler gives every checkbox
+   * an explicit 0 or 1 first, so a real browser sends all three, correctly
+   * paired, and the feature works.
+   *
+   * champctl now produces the same three values. It still strips them before
+   * POST, which is unchanged behaviour and still safe — absent reads as false
+   * for everyone. Sending them faithfully would preserve a genuinely ticked
+   * one, and is worth doing once someone has measured it against a live
+   * manager rather than inferring it from the handler.
+   */
+  it("pairs the per-entrant checkboxes once ACSM's 1/0 rewrite is accounted for", () => {
     const f = parseForm(
       fakeEventForm({
         entrants: [
@@ -130,7 +180,8 @@ describe("entry list shape checking", () => {
         ],
       }),
     )
-    expect(count(f.fields, "EntryList.OverwriteAllEvents")).toBe(1)
+    expect(count(f.fields, "EntryList.OverwriteAllEvents")).toBe(3)
+    expect(getAll(f.fields, "EntryList.OverwriteAllEvents")).toEqual(["0", "1", "0"])
     expect(checkEntryListShape(f.fields)).toEqual([])
   })
 

@@ -103,7 +103,18 @@ export interface RaceSetup extends Unknowns {
    *  — this is the mandatory-pit switch (plan §4.2). */
   RacePitWindowStart?: number
   RacePitWindowEnd?: number
-  RaceExtraLap?: boolean
+
+  /**
+   * An int on the wire, not a bool, despite reading as a yes/no question.
+   *
+   * Measured against 2.4.15, which refuses the whole import with
+   * `json: cannot unmarshal bool into Go struct field
+   * CurrentRaceConfig.Events.RaceSetup.RaceExtraLap of type int`. Typed as
+   * either because an export is the only thing that says which a given build
+   * sends, and reads must survive both — see `readFormat`. Writes go out as a
+   * number.
+   */
+  RaceExtraLap?: number | boolean
 
   ReversedGridRacePositions?: number
   SecondRaceMultiplier?: number
@@ -254,8 +265,16 @@ export interface Championship extends Unknowns {
 
   ACSR?: boolean
   ExportSecondRaceToACSR?: boolean
-  ACSRSkillGate?: string
-  ACSRSafetyGate?: string
+  /**
+   * The two gates are not the same type on the wire, however much they look
+   * like a pair. Measured against 2.4.15: the skill gate is a string, and the
+   * safety gate is an int that rejects `""` with
+   * `json: cannot unmarshal string into Go struct field
+   * Championship.ACSRSafetyGate of type int`. Both stay loose because that
+   * asymmetry is exactly the kind of thing that drifts between builds.
+   */
+  ACSRSkillGate?: string | number | null
+  ACSRSafetyGate?: number | string | null
 
   StartNextPracticeOnEventComplete?: boolean
 }

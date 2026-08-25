@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest"
 
 import { assertDisposable, isDisposableHost } from "../src/acsm/disposable.js"
 import type { Championship } from "../src/acsm/types.js"
-import { AcsmAuthError, AcsmSession, CookieJar } from "../src/acsm/session.js"
+import {
+  AcsmAuthError,
+  AcsmSession,
+  CookieJar,
+  PasswordChangeRequiredError,
+} from "../src/acsm/session.js"
 import { parseForm } from "../src/acsm/form.js"
 import { IMPORT_HOUSEKEEPING, diff, formatChanges } from "../src/acsm/diff.js"
 import {
@@ -200,6 +205,40 @@ describe("login", () => {
   it("reports a server error distinctly from a bad password", async () => {
     const { s } = session(() => new Response("boom", { status: 500 }))
     await expect(s.login({ username: "admin", password: "x" })).rejects.toThrow(/server error/)
+  })
+
+  it("explains a 429 as ACSM's own login limiter", async () => {
+    // Generic "unexpected HTTP 429" told nobody what to do. ACSM allows about
+    // five login requests per 20 seconds, and champctl's rate limiter cannot
+    // prevent it because every command builds a fresh session — so a handful of
+    // commands in a row is enough, and the message has to say so.
+    const { s } = session(() => new Response("slow down", { status: 429 }))
+    await expect(s.login({ username: "admin", password: "x" })).rejects.toThrow(/rate-limiting/)
+    await expect(s.login({ username: "admin", password: "x" })).rejects.toThrow(
+      /5 requests per 20 seconds/,
+    )
+  })
+
+  it("gives the forced password change its own type, so a caller can act on it", async () => {
+    // The one login failure that is actionable rather than only reportable: the
+    // session cookie is set, and posting the new-password form completes it.
+    // A caller that catches a plain AcsmAuthError and retries with the shipped
+    // default lands here again — which is how harness provisioning came to have
+    // a first-run path that could never run.
+    const { s } = session(
+      () =>
+        new Response("", {
+          status: 302,
+          headers: { location: "/account/new-password", "set-cookie": "_acsm_data=x; Path=/" },
+        }),
+    )
+    await expect(s.login({ username: "admin", password: "x" })).rejects.toBeInstanceOf(
+      PasswordChangeRequiredError,
+    )
+    // Still an AcsmAuthError, so existing handling keeps working.
+    await expect(s.login({ username: "admin", password: "x" })).rejects.toBeInstanceOf(
+      AcsmAuthError,
+    )
   })
 
   it("refuses a 3xx that isn't ACSM's redirect to /", async () => {

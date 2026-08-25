@@ -52,8 +52,27 @@ monitoring:
   enabled: false
 
 store:
-  type: boltdb
-  path: db/server_manager.db
+  # json, not boltdb, and this is not a preference.
+  #
+  # Importing a championship with scheduled events into the bolt store kills
+  # 2.4.15 outright — measured, repeatedly, whole process gone:
+  #
+  #   fatal error: fault   [signal SIGSEGV]
+  #   BoltStore.UpsertChampionship -> UpsertData -> addAuditEntry
+  #     -> audit.DiffJSON -> tidwall/pretty.Pretty
+  #
+  # The faulting address is an mmap-backed bolt page, so the audit diff looks
+  # to be reading the previous value after bolt has remapped the file under it.
+  # `server.audit_logging: false` does NOT avoid it: that entry is written at
+  # the store layer whatever the flag says. On the json store the same imports
+  # succeed and the whole live suite passes.
+  #
+  # Worth knowing beyond the harness — a league running boltdb is one
+  # championship import away from the same crash. Re-check after any upgrade.
+  # Note the path changes shape with the type: a file for boltdb, a directory
+  # for json.
+  type: json
+  path: db/store
   shared_data_path:
   scheduled_event_check_loop: 0s
 

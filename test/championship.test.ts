@@ -122,6 +122,29 @@ describe("ACSR", () => {
     expect(f?.message).toContain("the safety gate has no value set")
   })
 
+  it("reads a numeric zero safety gate as unset, which is what 2.4.x sends", () => {
+    // The exact bug: `?? ""` compared against the empty string, so the int 0
+    // read as a configured gate and the check stayed quiet about the one
+    // championship it exists for. Skill gate populated so the finding can only
+    // be about the safety gate.
+    const c = championship({ ACSR: true, ACSRSkillGate: "1500", ACSRSafetyGate: 0 })
+    const f = run(c).findings.find((x) => x.code === "champ.acsr-gates")
+    expect(f, "a zero safety gate is no gate").toBeTruthy()
+    expect(f?.message).toContain("the safety gate has no value set")
+    expect(f?.data).toMatchObject({ gates: ["ACSRSafetyGate"] })
+  })
+
+  it("still reads null and a stringified zero as unset", () => {
+    // Spelling the cases out must not lose what `?? ""` covered: null was one
+    // of them, and a build serialising the int as a string is the other shape
+    // "no gate" plausibly arrives in.
+    for (const ACSRSafetyGate of [null, "0"] as const) {
+      const c = championship({ ACSR: true, ACSRSkillGate: "1500", ACSRSafetyGate })
+      const f = run(c).findings.find((x) => x.code === "champ.acsr-gates")
+      expect(f, `${JSON.stringify(ACSRSafetyGate)} is no gate`).toBeTruthy()
+    }
+  })
+
   it("is quiet when both gates carry a value", () => {
     const c = championship({ ACSR: true, ACSRSkillGate: "1500", ACSRSafetyGate: "95" })
     expect(codes(c)).not.toContain("champ.acsr-gates")

@@ -95,9 +95,19 @@ export const acsrContradiction: Check = {
       )
     }
     if (c.ACSR === true) {
-      const gates = (["ACSRSkillGate", "ACSRSafetyGate"] as const).filter(
-        (k) => (c[k] ?? "") === "",
-      )
+      // "No gate" is `""` on the skill gate and `0` on the safety gate, which
+      // is an int on 2.4.15. Comparing against `""` alone read a numeric 0 as
+      // a configured gate, so the one championship this check exists for —
+      // ACSR on, gates never filled in — is the one it stayed quiet about.
+      const gates = (["ACSRSkillGate", "ACSRSafetyGate"] as const).filter((k) => {
+        const v = c[k]
+        // Every shape "no gate" arrives in. `?? ""` used to cover undefined and
+        // null and miss the numeric zero 2.4.x sends for the safety gate;
+        // spelling out the cases must not lose the two it did cover, and "0"
+        // is here because a build that serialises the int as a string would
+        // otherwise read as a configured gate.
+        return v === undefined || v === null || v === "" || v === "0" || v === 0
+      })
       if (gates.length > 0) {
         emit(
           "INFO",

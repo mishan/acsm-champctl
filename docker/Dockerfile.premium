@@ -10,14 +10,11 @@
 #
 # The zip is gitignored. Do not commit it — it is licensed software.
 #
-# steamcmd is installed because Server Manager runs it whenever the install
-# path has no executable in it, regardless of whether credentials are set.
+# steamcmd is still installed because 1.7.x needs it, but 2.4.x does not: with
+# no credentials it falls back to a barebones install on its own, which is
+# enough for recon and the live suite. See docker/README.md.
 #
-# There is no content-free mode. On a fresh volume the container refuses to
-# start until an Assetto Corsa server is present — either because credentials
-# in docker/.env let Server Manager install one, or because
-# `npm run harness:steam-login-qr` has already downloaded it into the volume.
-# See docker/README.md.
+# ACSM.License is required on 2.4.x and is copied in below.
 
 FROM debian:bookworm-slim
 
@@ -100,22 +97,50 @@ RUN set -eux; \
 
 WORKDIR /home/assetto/server-manager
 
-# Unpack the release zip. The wildcard keeps the Dockerfile from pinning a
-# version you'd have to edit on every ACSM upgrade — but there must be exactly
-# one, because which build ends up in the image is the whole question this
-# harness exists to answer.
+# Unpack the release zip.
+#
+# Which build ends up in the image is the whole question this harness exists to
+# answer, so it is never guessed. With one zip in docker/premium/ that one is
+# used; with several, ACSM_VERSION picks — `npm run harness:build` passes it
+# through, and docker/.env sets it. Ambiguity is still a build failure.
+ARG ACSM_VERSION=
+# The licence file, which 2.4.x refuses to start without:
+#
+#   level=fatal msg="Failed to validate license"
+#   error="open ACSM.License: no such file or directory"
+#
+# It is per-purchase and is not inside the release zip — it arrives by email,
+# or from emperorservers.com. docker/premium/ is gitignored in full, so it is
+# safe to keep next to the zip, and it must never be committed.
+COPY premium/ACSM.License /home/assetto/server-manager/ACSM.License
+
 COPY premium/*.zip /tmp/acsm/
 RUN set -eux; \
     zips="$(find /tmp/acsm -maxdepth 1 -name '*.zip' | sort)"; \
     count="$(printf '%s\n' "$zips" | grep -c . || true)"; \
+    # The selector only applies when there is a choice to make. .env.example
+    # ships ACSM_VERSION=2.4.5, so filtering unconditionally meant a user with
+    # only a 2.4.15 zip got "no zip matching" instead of their one release
+    # built. With a single zip there is nothing to disambiguate.
+    if [ "$count" -gt 1 ] && [ -n "${ACSM_VERSION:-}" ]; then \
+      zips="$(printf '%s\n' "$zips" | grep -F "$ACSM_VERSION" || true)"; \
+      count="$(printf '%s\n' "$zips" | grep -c . || true)"; \
+    fi; \
     if [ "$count" -eq 0 ]; then \
-      echo "No release zip in docker/premium/. Put one there and rebuild." >&2; exit 1; \
+      if [ -n "${ACSM_VERSION:-}" ]; then \
+        echo "No zip in docker/premium/ matching ACSM_VERSION=$ACSM_VERSION. Available:" >&2; \
+        find /tmp/acsm -maxdepth 1 -name '*.zip' -exec basename {} \; | sed 's/^/  /' >&2; \
+      else \
+        echo "No release zip in docker/premium/. Put one there and rebuild." >&2; \
+      fi; \
+      exit 1; \
     fi; \
     if [ "$count" -gt 1 ]; then \
-      echo "More than one zip in docker/premium/:" >&2; \
+      echo "More than one zip in docker/premium/ matches:" >&2; \
       printf '%s\n' "$zips" | sed 's/^/  /' >&2; \
-      echo "Leave exactly one — otherwise which version gets built is a coin toss," >&2; \
-      echo "and a harness built from the wrong version answers the wrong questions." >&2; \
+      echo "Set ACSM_VERSION in docker/.env to pick one — otherwise which version" >&2; \
+      echo "gets built is a coin toss, and a harness built from the wrong version" >&2; \
+      echo "answers the wrong questions." >&2; \
       exit 1; \
     fi; \
     zip="$zips"; \

@@ -7,6 +7,7 @@
  * that imports a module nobody emits.
  */
 
+import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { existsSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
@@ -60,5 +61,40 @@ describe("bin entry points", () => {
     // `npm install <git url>` and `npm pack` both run prepare; neither runs
     // build on its own.
     expect(pkg.scripts.prepare).toContain("build")
+  })
+})
+
+/**
+ * The licence and the release zip are licensed software, and the licence is
+ * per-purchase. Both live in `docker/premium/`, which a harness user is told to
+ * copy files into — so the ignore rule covering them is load-bearing, and a
+ * plausible edit to `.gitignore` could quietly stop covering them.
+ *
+ * Asks git rather than re-implementing gitignore matching, since git's answer
+ * is the one that decides what gets committed.
+ */
+describe("secrets stay out of git", () => {
+  const ignored = (relativePath: string): boolean => {
+    const res = spawnSync("git", ["check-ignore", "-q", "--no-index", relativePath], {
+      cwd: root,
+      encoding: "utf8",
+    })
+    // 0 = ignored, 1 = not ignored, anything else = git could not answer.
+    if (res.status !== 0 && res.status !== 1) {
+      throw new Error(`git check-ignore failed for ${relativePath}: ${res.stderr || res.error}`)
+    }
+    return res.status === 0
+  }
+
+  it.each([
+    "docker/premium/ACSM.License",
+    "docker/premium/acsm_v2.4.15_linux-amd64.zip",
+    "docker/.env",
+  ])("ignores %s", (path) => {
+    expect(ignored(path), `${path} is not gitignored — it would be committed`).toBe(true)
+  })
+
+  it("still tracks the placeholder that keeps docker/premium/ in the tree", () => {
+    expect(ignored("docker/premium/.gitkeep")).toBe(false)
   })
 })

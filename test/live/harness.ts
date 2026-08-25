@@ -48,7 +48,13 @@ export const SKIP_REASON = "set CHAMPCTL_LIVE_URL and CHAMPCTL_LIVE_PASSWORD to 
 export async function liveSession(): Promise<AcsmSession> {
   const config = liveConfig()
   if (!config) throw new Error(SKIP_REASON)
-  const session = new AcsmSession({ baseUrl: config.baseUrl })
+  // No rate limiting. The 5-per-20s default exists to be polite to a league's
+  // production manager (plan §3.1); against a throwaway container it only
+  // throttles the suite. It is not a small effect — the write path is several
+  // requests per test, so at 4 seconds each the 21 tests here took over ten
+  // minutes and could not finish inside a CI step. `assertDisposable` above
+  // has already established this is a disposable host.
+  const session = new AcsmSession({ baseUrl: config.baseUrl, rateLimit: false })
   await session.login({ username: config.username, password: config.password })
   return session
 }

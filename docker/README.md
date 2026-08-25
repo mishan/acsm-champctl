@@ -64,9 +64,27 @@ npm run harness:up
 to `docker/` — compose won't rebuild on its own, and a stale image shows up as
 a missing executable at run time rather than anything about the image.
 
-Then open <http://127.0.0.1:8772>, log in with **admin / servermanager**, and set
-a real password when ACSM insists. Put that password in `docker/.env` as
-`CHAMPCTL_LIVE_PASSWORD`.
+Then provision the admin account. No browser needed — pick a password, put it
+in `docker/.env` as `CHAMPCTL_LIVE_PASSWORD`, and run:
+
+```sh
+npm run harness:provision
+```
+
+Three steps, all scriptable, none with a CSRF token, measured on 2.4.15:
+
+1. `POST /login` with `Username=admin&Password=servermanager` → 302
+   `/account/new-password`. (`/account/`, singular — 1.7.9 uses `/accounts/`.)
+2. `POST /account/new-password` with `Password` and `RepeatPassword` → 302
+   `/account/settings`.
+3. **The first-run wizard.** 2.4.x intercepts *every* authenticated page with a
+   302 to `/intro/checks` until it is finished — `/`, `/championships`,
+   `/championship/import`, all of it. Fetching `/intro/server-options` and
+   posting its form straight back finishes it. This does not exist in 1.7.9,
+   which is why nothing in the suite anticipated it, and it presents as a
+   confusing "no form posting to /championship/import on the import page".
+
+You can still do it in a browser if you prefer; the script is idempotent.
 
 The public build needs no zip. Note the `--project-directory`, since these npm
 scripts run from the repo root:
@@ -78,23 +96,58 @@ docker compose --project-directory docker --profile oss up -d   # :8773
 It's worth having around — champctl should degrade sanely on the version most
 other leagues run — but see the caveats below.
 
-## Steam credentials are required
+## The licence file is required
 
-There is no content-free mode. Server Manager runs steamcmd whenever
-`install_path` has no executable in it, and blank credentials don't prevent
-that — they just make it fail with `exit status 4`. An earlier version of this
-harness tried a placeholder `acServer` to satisfy the check; Server Manager ran
-steamcmd anyway.
+2.4.x refuses to start without one, before it ever opens a port:
 
-Anonymous doesn't help either. Tested directly:
+```
+level=fatal msg="Failed to validate license"
+  error="open ACSM.License: no such file or directory"
+```
+
+`ACSM.License` is per-purchase and is **not** inside the release zip — it
+arrives by email, or from emperorservers.com. Put it next to the zip:
+
+```sh
+cp /path/to/ACSM.License docker/premium/
+```
+
+`docker/premium/*` is gitignored in full, so it cannot be committed by
+accident; `git check-ignore -v docker/premium/ACSM.License` shows which rule is
+covering it.
+
+## Steam credentials are optional on 2.4.x
+
+**This section used to say they were required. That was wrong**, and it kept
+the harness off CI for no reason.
+
+Measured on 2.4.15, on a host with no steamcmd installed at all — so nothing
+could have run it:
+
+```
+level=warning msg="Could not find or install Assetto Corsa Server using
+SteamCMD. Creating barebones install."
+```
+
+after which `/healthcheck.json` reports `AssettoIsInstalled: true` and the 178
+stock cars are in place. Server Manager falls back on its own. Championship
+import doesn't validate track or car names, so that is everything the recon
+scripts and the live suite need.
+
+What a barebones install does **not** give you:
+
+- **No `acServer` binary**, so no session can be started. Nothing in the recon
+  or the live suite starts one.
+- **No tracks at all.** Pit counts (plan §4.5) still need the `scan` source —
+  already true with Steam credentials, since BATL runs mod tracks.
+
+Set the credentials below if you want a server that can host a race. If you do,
+the account must **own Assetto Corsa** — anonymous doesn't work:
 
 ```
 $ steamcmd +login anonymous +app_update 302550 +quit
 ERROR! Failed to install app '302550' (No subscription)
 ```
-
-So the account has to **own Assetto Corsa**. The dedicated server is a free
-download, but only to owners.
 
 ### QR sign-in — no password anywhere
 

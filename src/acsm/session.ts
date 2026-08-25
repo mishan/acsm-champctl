@@ -37,6 +37,27 @@ export class AcsmAuthError extends Error {
 }
 
 /**
+ * ACSM wants a new password before this account can do anything.
+ *
+ * Its own type because it is the one login failure a caller can *act* on rather
+ * than only report: the session cookie is set, and posting the new-password
+ * form from here completes the login. `scripts/harness/provision.ts` does
+ * exactly that on a fresh container.
+ *
+ * Distinguishing it matters more than it looks. Catching a plain
+ * `AcsmAuthError` and retrying with the shipped default lands on this same
+ * branch a second time, so a first-run flow written that way never reaches the
+ * password form at all — which is how it was written, and it never ran because
+ * the harness happened to change the password by other means first.
+ */
+export class PasswordChangeRequiredError extends AcsmAuthError {
+  constructor(message: string) {
+    super(message)
+    this.name = "PasswordChangeRequiredError"
+  }
+}
+
+/**
  * A write ACSM refused, or one champctl refused to send.
  *
  * Extends `AcsmError` because that is what it is — a failure talking to ACSM —
@@ -188,6 +209,14 @@ function describeLoginFailure(status: number): string {
       "something answered the login POST with 304 Not Modified, which is a cache talking rather " +
       "than Server Manager — champctl sends no conditional-request headers. Look for a caching " +
       "proxy in front of it"
+    )
+  }
+  if (status === 429) {
+    return (
+      "ACSM is rate-limiting logins — it allows about 5 requests per 20 seconds and answers 429 " +
+      "past that. This is ACSM's own limiter, not champctl's, so champctl's rate limit does not " +
+      "prevent it: every command logs in once, and a handful run back to back is enough. Wait " +
+      "twenty seconds and retry, or space the commands out"
     )
   }
   return `unexpected HTTP ${status}`
@@ -355,7 +384,7 @@ export class AcsmSession {
     // A first login, or one after an admin password reset, lands here and no
     // write will work until it's dealt with in the browser.
     if (isRedirect(res) && location.includes("new-password")) {
-      throw new AcsmAuthError(
+      throw new PasswordChangeRequiredError(
         `${username} must set a new password in ACSM before champctl can use this account. ` +
           `Log in at ${this.#baseUrl} in a browser, set one, and put it in CHAMPCTL_LIVE_PASSWORD.`,
       )

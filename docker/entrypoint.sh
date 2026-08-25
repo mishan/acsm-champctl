@@ -153,26 +153,30 @@ explain_steamcmd_exit() {
 
 if [[ -x "$AC_SERVER" ]]; then
   say "Assetto Corsa server already installed; skipping the download"
+elif [[ -z "${STEAM_USERNAME:-}" || -z "${STEAM_PASSWORD:-}" ]]; then
+  # No credentials, and on 2.4.x that is fine.
+  #
+  # This used to `exit 1`, on the belief that there is no content-free mode.
+  # There is, and refusing to start was blocking a harness that works. Measured
+  # on 2.4.15 with steamcmd not installed on the host at all, so nothing could
+  # have run it: Server Manager tries, fails, and says
+  #
+  #     "Could not find or install Assetto Corsa Server using SteamCMD.
+  #      Creating barebones install."
+  #
+  # then comes up reporting AssettoIsInstalled true with the stock car list.
+  # That is all the recon and the live suite need — championship import does
+  # not validate track or car names.
+  #
+  # What it does not give you is an acServer binary, so no session can be
+  # started, and no tracks, so pit counts (plan §4.5) still need the `scan`
+  # source. Set the credentials if you want either of those.
+  say "No Steam credentials: Server Manager will create a barebones install."
+  say "Stock cars, no tracks, no acServer — enough for recon and the live"
+  say "suite, not enough to run a session. Set STEAM_USERNAME and"
+  say "STEAM_PASSWORD in docker/.env, or run 'npm run harness:steam-login-qr',"
+  say "if you need a server that can actually host a race."
 else
-  if [[ -z "${STEAM_USERNAME:-}" || -z "${STEAM_PASSWORD:-}" ]]; then
-    say "There is no Assetto Corsa server in $ASSETTO_DIR, and no Steam"
-    say "credentials to install one with. Two ways forward:"
-    say ""
-    say "  1. QR sign-in, no password anywhere (recommended):"
-    say ""
-    say "         npm run harness:steam-login-qr"
-    say ""
-    say "     Scan the code with the Steam mobile app. It downloads the server"
-    say "     into this same volume, and then this container starts clean."
-    say ""
-    say "  2. Set STEAM_USERNAME and STEAM_PASSWORD in docker/.env and restart."
-    say ""
-    say "Either way the account must OWN Assetto Corsa. The dedicated server is"
-    say "a free download, but not an anonymous one — appid 302550 answers"
-    say "'No subscription' to an anonymous login."
-    exit 1
-  fi
-
   # Server Manager is about to do this login anyway; doing it here first turns
   # a numeric failure buried in the UI into a sentence in the logs.
   say "checking Steam credentials for '${STEAM_USERNAME}'..."

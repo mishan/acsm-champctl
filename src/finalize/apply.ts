@@ -24,7 +24,12 @@
 
 import { findFormByAction, setOne, type ParsedForm } from "../acsm/form.js"
 import { AcsmWriteError, isRedirectStatus, type AcsmSession } from "../acsm/session.js"
-import { eventEditPath, eventSchedulePath, eventSubmitPath } from "../acsm/write.js"
+import {
+  championshipPath,
+  eventEditPath,
+  eventSchedulePath,
+  eventSubmitPath,
+} from "../acsm/write.js"
 import { formFieldsFor } from "./format.js"
 import { entryListFingerprint, findEventForm, FinalizeError, type FinalizePlan } from "./plan.js"
 import { SCHEDULE_FIELD } from "./schedule.js"
@@ -187,8 +192,14 @@ async function saveSchedule(session: AcsmSession, plan: FinalizePlan): Promise<v
   if (!schedule) return
 
   const path = eventSchedulePath(plan.championshipId, plan.eventId)
-  const html = await session.getText(path)
-  const form = findScheduleForm(html, session.url(path), path)
+
+  // The form is rendered on the championship page, not at its own action.
+  // Fetching the action directly is the obvious guess and it is wrong: that
+  // route is POST-only, and a GET of it is a 405 on 2.4.x — which surfaced as
+  // a failed finalize *after* the event save had already gone through.
+  const page = championshipPath(plan.championshipId)
+  const html = await session.getText(page)
+  const form = findScheduleForm(html, session.url(page), path)
 
   const fields = [...form.fields]
   for (const [name, value] of Object.entries(schedule.values)) {

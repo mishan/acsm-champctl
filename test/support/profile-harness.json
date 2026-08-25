@@ -1,0 +1,20 @@
+{
+  "id": "harness",
+  "name": "champctl test harness",
+  "schedule": {
+    "weekday": 3,
+    "qualiStart": "20:00",
+    "timezone": "America/Los_Angeles",
+    "practiceMinutes": 60,
+    "qualiMinutes": 20
+  },
+  "entryList": {
+    "targetSlots": 6
+  },
+  "baseline": {
+    "raceSetup": {
+      "EntryListType": 1,
+      "RaceExtraLap": 0
+    }
+  }
+}
