@@ -102,6 +102,19 @@ export function parseArgs(argv: readonly string[]): Args {
   }
 
   args.command = rest[0] ?? ""
+
+  // No command here takes a positional target, unlike `gridmom check <id>`.
+  // Accepting extras and ignoring them would let a typo, or a value that
+  // drifted away from the option it belongs to, look like a clean run against
+  // the default archive directory.
+  if (rest.length > 1) {
+    const extra = rest.slice(1).map((a) => JSON.stringify(a))
+    throw new UsageError(
+      `${args.command} takes no arguments, but got ${extra.join(", ")}. ` +
+        `Did that belong to an option, such as --dir?`,
+    )
+  }
+
   return args
 }
 

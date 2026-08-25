@@ -61,6 +61,18 @@ export function sha256(body: string): string {
 }
 
 /**
+ * "This path isn't there", as distinct from "this path can't be read".
+ *
+ * ENOENT only, deliberately. ENOTDIR looks similar — you get it when a path
+ * component is a regular file — but it means the archive layout is wrong
+ * rather than merely empty, and that has to surface. `put` calls `mkdir`
+ * before `read`, so a genuinely-absent directory is already handled by then.
+ */
+function isNotFound(e: unknown): boolean {
+  return (e as { code?: unknown } | null)?.code === "ENOENT"
+}
+
+/**
  * One safe path segment: no separator, no traversal, no leading dot.
  *
  * Championship IDs arrive off the wire and become directory names, so this is
@@ -180,18 +192,46 @@ export class FileArchiveStore implements ArchiveStore {
     return { championshipId, stored: true, sha256: digest, snapshot }
   }
 
+  /**
+   * The index for a championship, or undefined when there isn't a usable one.
+   *
+   * Exactly two things mean "no index": the file isn't there yet, and the file
+   * is there but doesn't parse. Both are recoverable — the caller writes a
+   * fresh snapshot and the archive is none the worse.
+   *
+   * Everything else is rethrown. A permission error, a directory where the
+   * index should be, a failing disk: those are operational problems, and
+   * swallowing them makes a broken archive indistinguishable from an empty
+   * one. The ingest would then report "archived" every night while writing
+   * nothing — the worst outcome available to a tool whose whole job is not
+   * losing data.
+   */
   async read(championshipId: string): Promise<ChampionshipIndex | undefined> {
     assertSafeChampionshipId(championshipId)
+
+    let text: string
     try {
-      const text = await readFile(join(this.#root, championshipId, INDEX_FILE), "utf8")
+      text = await readFile(join(this.#root, championshipId, INDEX_FILE), "utf8")
+    } catch (e) {
+      if (isNotFound(e)) return undefined
+      throw e
+    }
+
+    try {
       return JSON.parse(text) as ChampionshipIndex
     } catch {
-      // No index yet, or an unreadable one. Either way this championship has
-      // nothing to compare against, so the caller stores a fresh snapshot.
+      // Corrupt or half-written. Recoverable, so treat it as absent.
       return undefined
     }
   }
 
+  /**
+   * Championship directories present.
+   *
+   * An archive that doesn't exist yet is empty, which is the normal state on a
+   * first run. An archive that exists and can't be read is a problem, and says
+   * so — see `read` above for why the distinction matters.
+   */
   async list(): Promise<string[]> {
     try {
       const entries = await readdir(this.#root, { withFileTypes: true })
@@ -199,8 +239,9 @@ export class FileArchiveStore implements ArchiveStore {
         .filter((e) => e.isDirectory())
         .map((e) => e.name)
         .sort()
-    } catch {
-      return []
+    } catch (e) {
+      if (isNotFound(e)) return []
+      throw e
     }
   }
 

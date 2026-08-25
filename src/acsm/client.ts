@@ -97,7 +97,7 @@ export class HttpAcsmReader implements AcsmReader {
   }
 
   async exportChampionshipRaw(id: string): Promise<string> {
-    return this.#getText(exportPath(id))
+    return (await this.#fetchJson(exportPath(id))).text
   }
 
   async standings(id: string): Promise<unknown> {
@@ -109,19 +109,26 @@ export class HttpAcsmReader implements AcsmReader {
   }
 
   async #getJson<T>(path: string): Promise<T> {
-    // #getText has already proved this parses, so this cannot throw.
-    return JSON.parse(await this.#getText(path)) as T
+    return (await this.#fetchJson(path)).parsed as T
   }
 
   /**
-   * Fetches a JSON endpoint and returns the response body unchanged.
+   * Fetches a JSON endpoint and returns **both** the exact bytes and the parsed
+   * value, from a single parse.
    *
-   * It is still validated as JSON — a login redirect answers 200 with HTML, so
-   * the check below is what turns "Public Access got switched off" into a
-   * sentence rather than a stored HTML page — but what comes back is the text,
-   * not a re-serialisation of it. See `exportChampionshipRaw`.
+   * Both are needed and neither can be derived from the other cheaply. Callers
+   * want the parsed value; the archive wants the bytes verbatim, because
+   * re-serialising loses key order, the difference between `1` and `1.0`, and
+   * whitespace (see `exportChampionshipRaw`). Parsing is also the validation
+   * step — a login redirect answers 200 with HTML, and that check is what turns
+   * "Public Access got switched off" into a sentence rather than a stored HTML
+   * page.
+   *
+   * So it parses once and hands back the pair. A championship export is the
+   * largest body this client sees, and it is exactly the one the archive fetches
+   * on every run.
    */
-  async #getText(path: string): Promise<string> {
+  async #fetchJson(path: string): Promise<{ text: string; parsed: unknown }> {
     const url = `${this.#baseUrl}${path}`
 
     // Cache reads fail open. A truncated or corrupt entry is a cache miss, not
@@ -130,8 +137,7 @@ export class HttpAcsmReader implements AcsmReader {
     const cached = await this.#cache?.get(url)
     if (cached !== undefined) {
       try {
-        JSON.parse(cached)
-        return cached
+        return { text: cached, parsed: JSON.parse(cached) }
       } catch {
         // Fall through and refetch.
       }
@@ -161,8 +167,9 @@ export class HttpAcsmReader implements AcsmReader {
 
     // A login redirect returns 200 with HTML, so a parse failure here usually
     // means Public Access got switched off rather than a malformed body.
+    let parsed: unknown
     try {
-      JSON.parse(text)
+      parsed = JSON.parse(text)
     } catch {
       const hint = text.trimStart().startsWith("<")
         ? " (got HTML — is Public Access still enabled?)"
@@ -171,7 +178,7 @@ export class HttpAcsmReader implements AcsmReader {
     }
 
     await this.#cache?.set(url, text)
-    return text
+    return { text, parsed }
   }
 }
 

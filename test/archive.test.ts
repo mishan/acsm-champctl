@@ -1,9 +1,9 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
-import { AcsmError, type AcsmReader } from "../src/acsm/client.js"
+import { AcsmError, HttpAcsmReader, type AcsmReader } from "../src/acsm/client.js"
 import type { Championship, ChampionshipSummary } from "../src/acsm/types.js"
 import { ingest, IngestError, type IngestReport } from "../src/archive/ingest.js"
 import {
@@ -144,6 +144,91 @@ describe("archive store", () => {
 
   it("returns an empty list rather than throwing on a missing archive", async () => {
     expect(await new FileArchiveStore(join(root, "nope")).list()).toEqual([])
+  })
+
+  it("surfaces a real IO error rather than reporting an empty archive", async () => {
+    // A broken archive must not look like an empty one. If it did, the ingest
+    // would report "archived" every night while writing nothing — the worst
+    // outcome for a tool whose job is not losing data.
+    await writeFile(join(root, "not-a-directory"), "x", "utf8")
+    const store = new FileArchiveStore(join(root, "not-a-directory"))
+    await expect(store.list()).rejects.toThrow(/ENOTDIR/)
+  })
+
+  it("surfaces an unreadable index rather than treating it as absent", async () => {
+    const store = new FileArchiveStore(root)
+    await store.put(ID, '{"a":1}', at("2026-08-24T17:00:00Z"))
+    // A directory where the index file should be: not ENOENT, not a parse
+    // failure, so it has to be reported.
+    await rm(join(root, ID, "index.json"))
+    await mkdir(join(root, ID, "index.json"))
+    await expect(store.read(ID)).rejects.toThrow(/EISDIR/)
+  })
+
+  it("still treats a missing index as simply absent", async () => {
+    expect(await new FileArchiveStore(root).read(ID)).toBeUndefined()
+  })
+})
+
+describe("the reader parses each response once", () => {
+  const body = JSON.stringify({ ID, Name: "BATL", Events: [] })
+
+  /**
+   * Counts parses *of this body only*. A blanket JSON.parse spy also catches
+   * whatever the test runner does across an await, which is not what is being
+   * measured here.
+   */
+  const counting = () => {
+    const real = JSON.parse
+    let calls = 0
+    JSON.parse = ((...args: Parameters<typeof real>) => {
+      if (args[0] === body) calls++
+      return real(...args)
+    }) as typeof JSON.parse
+    return { calls: () => calls, restore: () => (JSON.parse = real) }
+  }
+
+  const reader = (onFetch?: () => void) =>
+    new HttpAcsmReader({
+      baseUrl: "https://acsm.example",
+      rateLimit: false,
+      fetch: async () => {
+        onFetch?.()
+        return new Response(body, { status: 200 })
+      },
+    })
+
+  it("parses once for the typed export", async () => {
+    // A championship export is the largest body this client sees, and the
+    // archive fetches one per championship per run. Validating by parsing and
+    // then parsing again for the caller doubled that for no gain.
+    const spy = counting()
+    try {
+      await reader().exportChampionship(ID)
+      expect(spy.calls()).toBe(1)
+    } finally {
+      spy.restore()
+    }
+  })
+
+  it("parses once for the raw export too, and returns the exact bytes", async () => {
+    const spy = counting()
+    try {
+      const raw = await reader().exportChampionshipRaw(ID)
+      expect(spy.calls()).toBe(1)
+      expect(raw).toBe(body)
+    } finally {
+      spy.restore()
+    }
+  })
+
+  it("still rejects a non-JSON body, which is how a login redirect shows up", async () => {
+    const html = new HttpAcsmReader({
+      baseUrl: "https://acsm.example",
+      rateLimit: false,
+      fetch: async () => new Response("<html>login</html>", { status: 200 }),
+    })
+    await expect(html.exportChampionshipRaw(ID)).rejects.toThrow(/Public Access/)
   })
 })
 
@@ -442,5 +527,21 @@ describe("archive CLI", () => {
   it("rejects an unknown option instead of ignoring it", () => {
     expect(() => parseArgs(["run", "--dry-run"])).toThrow(UsageError)
     expect(() => parseArgs(["run", "--dir"])).toThrow(/needs a value/)
+  })
+
+  it("rejects extra positional arguments", () => {
+    // No command takes a target, so an extra word is a typo or a value that
+    // drifted off its option. Ignoring it would look like a clean run against
+    // the default archive directory.
+    expect(() => parseArgs(["run", "extra"])).toThrow(UsageError)
+    expect(() => parseArgs(["run", "extra"])).toThrow(/takes no arguments/)
+    expect(() => parseArgs(["status", "/tmp/archive"])).toThrow(/takes no arguments/)
+    expect(() => parseArgs(["run", "a", "b"])).toThrow(/"a", "b"/)
+  })
+
+  it("still accepts a bare command", () => {
+    expect(parseArgs(["run"]).command).toBe("run")
+    expect(parseArgs(["status", "--json"]).command).toBe("status")
+    expect(parseArgs([]).command).toBe("")
   })
 })
