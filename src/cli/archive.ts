@@ -248,9 +248,7 @@ async function status(store: FileArchiveStore, args: Args): Promise<number> {
     const s = r.snapshots === 1 ? "snapshot" : "snapshots"
     process.stdout.write(`${who}\n  ${r.snapshots} ${s}, last checked ${r.lastCheckedAt}\n`)
   }
-  process.stdout.write(
-    `\n${rows.length} championship${rows.length === 1 ? "" : "s"} archived\n`,
-  )
+  process.stdout.write(`\n${rows.length} championship${rows.length === 1 ? "" : "s"} archived\n`)
   return 0
 }
 

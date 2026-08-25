@@ -18,8 +18,8 @@
  * championship actually changed.
  */
 
-import { createHash } from "node:crypto"
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises"
+import { createHash, randomUUID } from "node:crypto"
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 /** One stored copy of an export. */
@@ -51,13 +51,20 @@ export interface StoreResult {
 }
 
 export interface ArchiveStore {
-  put(championshipId: string, body: string, at: Date, name?: string): Promise<StoreResult>
+  put(championshipId: string, body: Buffer, at: Date, name?: string): Promise<StoreResult>
   read(championshipId: string): Promise<ChampionshipIndex | undefined>
   list(): Promise<string[]>
 }
 
-export function sha256(body: string): string {
-  return createHash("sha256").update(body, "utf8").digest("hex")
+/**
+ * The digest of the stored bytes.
+ *
+ * Takes a `Buffer` and not a string on purpose: hashing a decoded-then-
+ * re-encoded copy would describe something other than the file on disk, and
+ * then `sha256` could never be checked against the source or the server.
+ */
+export function sha256(body: Buffer): string {
+  return createHash("sha256").update(body).digest("hex")
 }
 
 /**
@@ -182,12 +189,7 @@ export class FileArchiveStore implements ArchiveStore {
     this.#root = root
   }
 
-  async put(
-    championshipId: string,
-    body: string,
-    at: Date,
-    name?: string,
-  ): Promise<StoreResult> {
+  async put(championshipId: string, body: Buffer, at: Date, name?: string): Promise<StoreResult> {
     assertSafeChampionshipId(championshipId)
     const dir = join(this.#root, championshipId)
     await mkdir(dir, { recursive: true })
@@ -207,14 +209,19 @@ export class FileArchiveStore implements ArchiveStore {
       fetchedAt: when,
       file: snapshotFileName(at),
       sha256: digest,
-      bytes: Buffer.byteLength(body, "utf8"),
+      bytes: body.byteLength,
       ...(name === undefined ? {} : { name }),
     }
 
     // Body first. If the process dies between these two writes, the result is
-    // an orphaned snapshot file, which is recoverable by rehashing. The other
-    // order gives an index pointing at a file that isn't there.
-    await writeFile(join(dir, snapshot.file), body, "utf8")
+    // an orphaned snapshot file: the index doesn't mention it, but no history
+    // is lost and re-running stores it again. The other order gives an index
+    // pointing at a file that isn't there.
+    //
+    // `wx` so a second write in the same millisecond fails loudly rather than
+    // overwriting a body the index already lists. Reachable with an injected
+    // clock, and with two runs overlapping.
+    await writeFile(join(dir, snapshot.file), body, { flag: "wx" })
     await this.#writeIndex(dir, {
       championshipId,
       firstSeen: existing?.firstSeen ?? when,
@@ -280,38 +287,76 @@ export class FileArchiveStore implements ArchiveStore {
   async list(): Promise<string[]> {
     try {
       const entries = await readdir(this.#root, { withFileTypes: true })
-      return entries
-        .filter((e) => e.isDirectory())
-        .map((e) => e.name)
-        // Only names that are safe to hand straight back to `read`. Anything
-        // else under the archive root is not ours: `lost+found`, a `.tmp` left
-        // by an interrupted copy, an editor's scratch directory. Returning
-        // those made `status` throw UnsafeArchivePath on a directory nobody
-        // ever claimed was a championship — the guard firing on the wrong
-        // target, and the whole command unusable because of it.
-        //
-        // Filtering rather than refusing, because this is the one place an
-        // unrecognised name is expected rather than suspicious: the archive
-        // root is an ordinary directory someone may keep other things in.
-        .filter(isSafePathSegment)
-        .sort()
+      return (
+        entries
+          .filter((e) => e.isDirectory())
+          .map((e) => e.name)
+          // Only names that are safe to hand straight back to `read`. Anything
+          // else under the archive root is not ours: `lost+found`, a `.tmp` left
+          // by an interrupted copy, an editor's scratch directory. Returning
+          // those made `status` throw UnsafeArchivePath on a directory nobody
+          // ever claimed was a championship — the guard firing on the wrong
+          // target, and the whole command unusable because of it.
+          //
+          // Filtering rather than refusing, because this is the one place an
+          // unrecognised name is expected rather than suspicious: the archive
+          // root is an ordinary directory someone may keep other things in.
+          .filter(isSafePathSegment)
+          .sort()
+      )
     } catch (e) {
       if (isNotFound(e)) return []
       throw e
     }
   }
 
-  /** Reads a stored snapshot back, verbatim. */
-  async readSnapshot(championshipId: string, file: string): Promise<string> {
+  /** Reads a stored snapshot back, verbatim — bytes, for the same reason `put` takes them. */
+  async readSnapshot(championshipId: string, file: string): Promise<Buffer> {
     assertSafeChampionshipId(championshipId)
     // Same containment rule, but this one is a filename — a timestamp, not an
     // ID — so it gets its own wording rather than being reported as a bad
     // championship ID.
     assertSafePathSegment(file, "a snapshot filename")
-    return readFile(join(this.#root, championshipId, file), "utf8")
+    return readFile(join(this.#root, championshipId, file))
   }
 
+  /**
+   * Writes the index atomically: temp file, then rename.
+   *
+   * A plain `writeFile` truncates before it writes, so a crash mid-write leaves
+   * a short file. `read` treats an unparseable index as "no index", and `put`
+   * would then start a fresh one — silently discarding every snapshot recorded
+   * so far and resetting `firstSeen`, while the bodies sat orphaned on disk.
+   * The change history is the thing this module exists to keep, so losing it to
+   * a torn write is the one failure worth spending a rename on.
+   *
+   * `rename` within a directory is atomic on POSIX: readers see the old index
+   * or the new one, never a partial.
+   *
+   * The temp name is unique per write, not a fixed `index.json.tmp`. Two runs
+   * overlapping on the same championship — a manual run during the cron window
+   * — would otherwise write the same path concurrently, and each `rename` would
+   * publish whatever the *other* process had most recently left there. A torn
+   * write is what this method exists to prevent; doing it through a shared
+   * scratch file would reintroduce the same loss by a different route.
+   *
+   * This does not make concurrent runs safe. `put` is still an unguarded
+   * read-modify-write, so the later writer's index can still omit a snapshot
+   * the earlier one added. It removes the case where the *bytes in flight*
+   * belong to someone else, which is the one that can publish a half-written
+   * or entirely unrelated index.
+   */
   async #writeIndex(dir: string, index: ChampionshipIndex): Promise<void> {
-    await writeFile(join(dir, INDEX_FILE), `${JSON.stringify(index, null, 2)}\n`, "utf8")
+    const target = join(dir, INDEX_FILE)
+    const tmp = `${target}.${process.pid}.${randomUUID()}.tmp`
+    try {
+      await writeFile(tmp, `${JSON.stringify(index, null, 2)}\n`, "utf8")
+      await rename(tmp, target)
+    } catch (e) {
+      // Don't leave scratch files behind on a failed write; the archive root is
+      // meant to be readable by eye.
+      await rm(tmp, { force: true }).catch(() => undefined)
+      throw e
+    }
   }
 }

@@ -83,12 +83,17 @@ export async function ingest(
     // A summary with no ID can't be fetched or filed. Report it rather than
     // dropping it silently — it means the list shape changed.
     if (!championshipId) {
-      outcomes.push({
+      // Through onProgress like every other outcome. Pushing it to `outcomes`
+      // alone would have the summary say "1 failed" while nothing on screen
+      // said which one, since the non-JSON output is built from progress.
+      const outcome: IngestOutcome = {
         kind: "failed",
         championshipId: "(no ID)",
         ...(name === undefined ? {} : { name }),
         error: "Championship list entry had no ID field",
-      })
+      }
+      outcomes.push(outcome)
+      options.onProgress?.(outcome)
       continue
     }
 
