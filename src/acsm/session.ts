@@ -12,6 +12,9 @@
  * adds one would break every write silently.
  */
 
+import { getSetCookies } from "undici"
+
+import { RateLimiter, type RateLimiterOptions } from "./rate-limit.js"
 import {
   checkEntryListShape,
   parseForm,
@@ -53,10 +56,19 @@ export class AcsmWriteError extends Error {
  * failure. champctl sets `current-server` itself; everything else comes from
  * the server.
  *
- * There is deliberately no host, path, domain or expiry handling. That is safe
- * only because `AcsmSession` refuses to request anything off its base origin,
+ * There is deliberately no host, path or domain handling. That is safe only
+ * because `AcsmSession` refuses to request anything off its base origin,
  * including via a redirect — see `url()`. It is small enough to audit, which is
- * the point for something that holds admin credentials.
+ * the point for something that holds admin credentials, and it is why a full
+ * jar such as `tough-cookie` would be mostly dead weight here: domain matching
+ * and the public-suffix list solve a problem this design does not have.
+ *
+ * *Parsing* is another matter, and is not ours. `Set-Cookie` has quoting rules,
+ * two ways to express an expiry and a precedence between them, and a date
+ * format of its own; a hand-rolled version of that got the Max-Age/Expires
+ * precedence wrong on the first attempt. `undici.getSetCookies` is the parser
+ * Node's own `fetch` uses, and it is already in the dependency tree via
+ * cheerio.
  *
  * If champctl ever needs to talk to two managers at once, that's two sessions
  * with two jars, not a jar that learned about hosts.
@@ -65,17 +77,28 @@ export class CookieJar {
   readonly #cookies = new Map<string, string>()
 
   storeFromResponse(res: { headers: Headers }): void {
-    const setCookie = readSetCookie(res.headers)
-    for (const line of setCookie) {
-      const pair = line.split(";", 1)[0] ?? ""
-      const eq = pair.indexOf("=")
-      if (eq <= 0) continue
-      const name = pair.slice(0, eq).trim()
-      const value = pair.slice(eq + 1).trim()
-      // An expiry in the past is a delete; treat an empty value the same way.
-      if (value === "" || /(^|;)\s*max-age=0(;|$)/i.test(line)) this.#cookies.delete(name)
-      else this.#cookies.set(name, value)
-    }
+    const raw = readSetCookieLines(res.headers)
+
+    parseSetCookies(res.headers).forEach((cookie, i) => {
+      // An expiry already past is a delete, and so is an empty value. Max-Age
+      // wins over Expires where both appear (RFC 6265) — a cookie with a stale
+      // Expires and a live Max-Age is being *kept*.
+      //
+      // The `negativeMaxAge` clause is a gap in the parser rather than in the
+      // spec: RFC 6265 §5.2.2 says a delta-seconds of zero *or less* expires
+      // the cookie immediately, and undici surfaces `Max-Age=0` but drops
+      // `Max-Age=-1` entirely — measured. Without this the cookie would read
+      // as having no expiry at all and be kept.
+      const negativeMaxAge = /(^|;)\s*max-age\s*=\s*-\d+/i.test(raw[i] ?? "")
+      const expired =
+        negativeMaxAge ||
+        (cookie.maxAge !== undefined
+          ? cookie.maxAge <= 0
+          : cookie.expires !== undefined && new Date(cookie.expires).getTime() <= Date.now())
+
+      if (cookie.value === "" || expired) this.#cookies.delete(cookie.name)
+      else this.#cookies.set(cookie.name, cookie.value)
+    })
   }
 
   header(): string | undefined {
@@ -100,8 +123,20 @@ export class CookieJar {
   }
 }
 
-function readSetCookie(headers: Headers): string[] {
-  // Node's undici exposes getSetCookie(); fall back for other runtimes.
+/**
+ * `Set-Cookie` lines, parsed.
+ *
+ * The cast is the one wart. undici ships its own `Headers` type, structurally
+ * close to but not identical with the global one Node's lib declares, and the
+ * two don't unify. Confining that to a single function is better than either
+ * threading undici's types through the session or losing the parser.
+ */
+function parseSetCookies(headers: Headers): ReturnType<typeof getSetCookies> {
+  return getSetCookies(headers as unknown as Parameters<typeof getSetCookies>[0])
+}
+
+/** The unparsed lines, in the same order, for the one attribute undici drops. */
+function readSetCookieLines(headers: Headers): string[] {
   const withGetter = headers as Headers & { getSetCookie?: () => string[] }
   if (typeof withGetter.getSetCookie === "function") return withGetter.getSetCookie()
   const single = headers.get("set-cookie")
@@ -181,6 +216,16 @@ export interface AcsmSessionOptions {
   baseUrl: string
   fetch?: typeof globalThis.fetch
   timeoutMs?: number
+  /**
+   * Requests per window, or `false` for none.
+   *
+   * Defaults to ACSM's documented limit, same as the reader. The write path
+   * had no limiter at all, which was fine against a throwaway container and
+   * not against a league's production manager — and the write path is the one
+   * that fetches a form, posts it, then fetches and posts a schedule, four
+   * requests deep, for every round of a month.
+   */
+  rateLimit?: RateLimiterOptions | false
   userAgent?: string
   /** Server index for the `current-server` cookie. Defaults to 0. */
   serverIndex?: number
@@ -197,6 +242,7 @@ export class AcsmSession {
   readonly #timeoutMs: number
   readonly #userAgent: string
   readonly #serverIndex: string
+  readonly #limiter: RateLimiter | undefined
   readonly jar = new CookieJar()
   #loggedInAs: string | undefined
 
@@ -206,6 +252,8 @@ export class AcsmSession {
     this.#timeoutMs = options.timeoutMs ?? 30_000
     this.#userAgent = options.userAgent ?? "acsm-champctl/0.1"
     this.#serverIndex = String(options.serverIndex ?? 0)
+    this.#limiter =
+      options.rateLimit === false ? undefined : new RateLimiter(options.rateLimit ?? {})
     this.jar.set("current-server", this.#serverIndex)
   }
 
@@ -487,8 +535,26 @@ export class AcsmSession {
       // `this.url()` throws on an off-origin target, so an ACSM that redirects
       // somewhere else fails loudly rather than leaking the session cookie.
       const next = this.url(new URL(location, this.url(path)).toString())
-      // 303, and 301/302 on a POST, become a GET without a body.
-      res = await this.#fetchOnce(next, { ...init, method: "GET", body: null })
+
+      // 303 — and, by long convention, 301/302 on a POST — become a GET with
+      // no body. 307 and 308 exist precisely to say "repeat what you sent",
+      // and rewriting those to GET would turn a redirected write into a read
+      // that silently did nothing.
+      //
+      // Not reachable today, and kept anyway: every POST in this class sets
+      // `redirect: "manual"` because it reads the `Location` itself, so this
+      // loop only ever sees GETs, where the distinction doesn't arise. It is
+      // six lines against the day someone lets a write follow a redirect, and
+      // the failure it prevents — a save that reports success and changes
+      // nothing — is the kind you don't notice until race night.
+      const keepsMethod = res.status === 307 || res.status === 308
+      if (keepsMethod) {
+        res = await this.#fetchOnce(next, init)
+      } else {
+        const headers = new Headers(init.headers)
+        headers.delete("Content-Type")
+        res = await this.#fetchOnce(next, { ...init, method: "GET", body: null, headers })
+      }
     }
 
     return res
@@ -498,6 +564,10 @@ export class AcsmSession {
     // Resolve before opening the timer, so an off-origin URL fails loudly
     // rather than being reported as a request failure.
     const url = this.url(path)
+
+    // Before the timeout starts, so time spent queueing behind the limiter
+    // isn't counted against the request's own deadline.
+    await this.#limiter?.acquire()
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.#timeoutMs)

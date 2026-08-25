@@ -30,6 +30,21 @@ describe("rate limiter", () => {
     expect(sleeps).toEqual([20_000])
   })
 
+  it("refuses a limit of zero rather than spinning on it", () => {
+    // Not "block everything" — a hang. The wait loop reads #timestamps[0] to
+    // decide how long to sleep, and with nothing ever admitted that is
+    // undefined, so the sleep is NaN and the loop spins as fast as the event
+    // loop allows. A limiter is exactly the thing nobody watches while it
+    // works.
+    expect(() => new RateLimiter({ limit: 0 })).toThrow(RangeError)
+    expect(() => new RateLimiter({ limit: -1 })).toThrow(/at least 1/)
+    expect(() => new RateLimiter({ limit: 1.5 })).toThrow(/whole number/)
+    expect(() => new RateLimiter({ windowMs: 0 })).toThrow(/positive number/)
+    // The way to actually turn limiting off is an option on the caller, and
+    // the error says so rather than leaving someone to guess.
+    expect(() => new RateLimiter({ limit: 0 })).toThrow(/rateLimit: false/)
+  })
+
   it("keeps the window sliding rather than resetting in blocks", async () => {
     let clock = 0
     const limiter = new RateLimiter({

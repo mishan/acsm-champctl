@@ -61,12 +61,60 @@ describe("cookie jar", () => {
   it("has no header at all when empty", () => {
     expect(new CookieJar().header()).toBeUndefined()
   })
+
+  it("treats a past Expires as a delete, which is what ACSM's logout sends", () => {
+    // The hand-rolled parser only understood Max-Age=0, so a session cookie
+    // cleared by Expires stayed in the jar — the sort of thing you find by
+    // wondering why logging out didn't.
+    const jar = new CookieJar()
+    jar.set("_acsm_data", "x")
+    jar.storeFromResponse({
+      headers: new Headers([
+        ["set-cookie", "_acsm_data=deleted; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"],
+      ]),
+    })
+    expect(jar.get("_acsm_data")).toBeUndefined()
+  })
+
+  it("treats a negative Max-Age as a delete too", () => {
+    const jar = new CookieJar()
+    jar.set("_acsm_data", "x")
+    jar.storeFromResponse({
+      headers: new Headers([["set-cookie", "_acsm_data=gone; Max-Age=-1"]]),
+    })
+    expect(jar.get("_acsm_data")).toBeUndefined()
+  })
+
+  it("lets Max-Age win over a stale Expires, as RFC 6265 says", () => {
+    // The precedence the hand-rolled version had backwards. A cookie with an
+    // expiry in the past *and* a live Max-Age is being kept, not deleted.
+    const jar = new CookieJar()
+    jar.storeFromResponse({
+      headers: new Headers([
+        ["set-cookie", "_acsm_data=live; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=3600"],
+      ]),
+    })
+    expect(jar.get("_acsm_data")).toBe("live")
+  })
+
+  it("keeps a cookie with an expiry in the future", () => {
+    const jar = new CookieJar()
+    jar.storeFromResponse({
+      headers: new Headers([
+        ["set-cookie", "_acsm_data=ok; Expires=Tue, 19 Jan 2038 03:14:07 GMT"],
+      ]),
+    })
+    expect(jar.get("_acsm_data")).toBe("ok")
+  })
 })
 
 describe("login", () => {
   const session = (handler: (url: string, init: RequestInit) => Response) => {
     const { fn, calls } = scriptedFetch(handler)
-    return { s: new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn }), calls }
+    return {
+      s: new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn, rateLimit: false }),
+      calls,
+    }
   }
 
   it("posts the three fields with no CSRF token", async () => {
@@ -285,7 +333,12 @@ describe("login", () => {
       () =>
         new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } }),
     )
-    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn, serverIndex: 2 })
+    const s = new AcsmSession({
+      baseUrl: "https://acsm.example",
+      fetch: fn,
+      serverIndex: 2,
+      rateLimit: false,
+    })
     await s.login({ username: "admin", password: "x" })
     await s.login({ username: "admin", password: "x" })
     expect(s.jar.get("current-server")).toBe("2")
@@ -442,7 +495,7 @@ describe("single origin", () => {
         ? new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
         : new Response("{}", { status: 200 }),
     )
-    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn, rateLimit: false })
     return { s, calls, ready: s.login({ username: "admin", password: "x" }) }
   }
 
@@ -484,7 +537,7 @@ describe("single origin", () => {
       }
       return new Response('{"ok":true}', { status: 200 })
     })
-    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn, rateLimit: false })
     await s.login({ username: "admin", password: "x" })
 
     await expect(s.getJson("/old")).resolves.toEqual({ ok: true })
@@ -506,7 +559,7 @@ describe("single origin", () => {
         : // null body: 304 is a null-body status and Response rejects any other.
           new Response(null, { status: 304, headers: { location: "/somewhere-else" } }),
     )
-    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn, rateLimit: false })
     await s.login({ username: "admin", password: "x" })
 
     await expect(s.getText("/cached")).rejects.toThrow()
@@ -523,7 +576,7 @@ describe("single origin", () => {
       }
       return new Response("", { status: 302, headers: { location: "https://evil.example/steal" } })
     })
-    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn, rateLimit: false })
     await s.login({ username: "admin", password: "x" })
 
     await expect(s.getText("/championship/abc")).rejects.toThrow(/Refusing to request/)
@@ -537,7 +590,7 @@ describe("single origin", () => {
         ? new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
         : new Response("", { status: 302, headers: { location: "/loop" } }),
     )
-    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn, rateLimit: false })
     await s.login({ username: "admin", password: "x" })
 
     await expect(s.getText("/loop")).rejects.toThrow()
@@ -564,7 +617,7 @@ describe("fetching pages", () => {
       }
       return handler(url, init)
     })
-    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn, rateLimit: false })
     return { s, calls, ready: s.login({ username: "admin", password: "x" }) }
   }
 
@@ -584,6 +637,60 @@ describe("fetching pages", () => {
   })
 })
 
+describe("write-path rate limiting", () => {
+  it("waits between requests, like the read path already did", async () => {
+    // The reader was limited and the session was not, which was fine against a
+    // throwaway container and not against a league's production manager —
+    // and the write path is the deeper one: fetch a form, post it, fetch the
+    // schedule, post that, for every round of a month.
+    const sleeps: number[] = []
+    let clock = 0
+    const { fn } = scriptedFetch((url) =>
+      url.endsWith("/login")
+        ? new Response("", {
+            status: 302,
+            headers: { "set-cookie": sessionCookie, location: "/" },
+          })
+        : new Response("ok", { status: 200 }),
+    )
+    const s = new AcsmSession({
+      baseUrl: "https://acsm.example",
+      fetch: fn,
+      rateLimit: {
+        limit: 2,
+        windowMs: 1000,
+        now: () => clock,
+        sleep: async (ms) => {
+          sleeps.push(ms)
+          clock += ms
+        },
+      },
+    })
+
+    await s.login({ username: "admin", password: "x" })
+    await s.getText("/one")
+    expect(sleeps, "the first two go straight through").toEqual([])
+
+    await s.getText("/two")
+    expect(sleeps, "the third waits for the window to slide").toEqual([1000])
+  })
+
+  it("can be turned off outright", async () => {
+    const { fn } = scriptedFetch((url) =>
+      url.endsWith("/login")
+        ? new Response("", {
+            status: 302,
+            headers: { "set-cookie": sessionCookie, location: "/" },
+          })
+        : new Response("ok", { status: 200 }),
+    )
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn, rateLimit: false })
+    await s.login({ username: "admin", password: "x" })
+    // No limiter to queue behind, so this resolves without a scheduled sleep.
+    await expect(s.getText("/anything")).resolves.toBeDefined()
+  })
+})
+
 describe("postForm refuses to scramble an entry list", () => {
   const loggedIn = () => {
     const { fn, calls } = scriptedFetch((url) =>
@@ -591,7 +698,7 @@ describe("postForm refuses to scramble an entry list", () => {
         ? new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
         : new Response("", { status: 302, headers: { location: "/championship/abc" } }),
     )
-    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn, rateLimit: false })
     return { s, calls, ready: s.login({ username: "admin", password: "x" }) }
   }
 
@@ -692,7 +799,7 @@ describe("import mechanism detection", () => {
       }
       return new Response(importHtml, { status: 200 })
     })
-    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn, rateLimit: false })
     return { s, posts, ready: s.login({ username: "admin", password: "x" }) }
   }
 
@@ -742,7 +849,7 @@ describe("import mechanism detection", () => {
           ? new Response(fakeImportPage("textarea"), { status: 200 })
           : new Response(fakeImportPage("textarea"), { status: 200 }),
     )
-    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn, rateLimit: false })
     await s.login({ username: "admin", password: "x" })
 
     await expect(importChampionship(s, championship())).rejects.toThrow(
@@ -818,7 +925,7 @@ describe("import safety rules", () => {
       }
       return new Response(fakeImportPage("textarea"), { status: 200 })
     })
-    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn, rateLimit: false })
     await s.login({ username: "admin", password: "x" })
     return s
   }
