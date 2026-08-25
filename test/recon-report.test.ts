@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest"
 
 import {
   comparePitBoxes,
+  isLegacyVersion,
+  majorVersion,
   raggedKeys,
   redactBaseUrl,
   stableSource,
@@ -148,5 +150,39 @@ describe("masking for committed artefacts", () => {
     // not a URL.
     expect(stableSource("copy of championship b3607ce3-cb71-48e0-a335-ed09b8ce377e on this server"))
       .toBe("copy of championship {id} on this server")
+  })
+})
+
+describe("version gating", () => {
+  it("recognises 1.x however the version was spelled", () => {
+    // /healthcheck.json reports "v1.7.9"; the footer scrape drops the v and
+    // reports "1.7.9". The caveat this gates has to appear for both — a
+    // provisional answer presented without its caveat is the bad outcome.
+    for (const v of ["1.7.9", "v1.7.9", "V1.7.9", " v1.7.8 ", "1.10.0"]) {
+      expect(isLegacyVersion(v), v).toBe(true)
+    }
+  })
+
+  it("does not warn for the version BATL actually runs", () => {
+    for (const v of ["2.4.5", "v2.4.5", "10.0.0", "v11.2.0"]) {
+      expect(isLegacyVersion(v), v).toBe(false)
+    }
+  })
+
+  it("does not warn when the version is unknown", () => {
+    // An unknown version already prints as "unknown"; claiming it is 1.x would
+    // be inventing a fact.
+    for (const v of [undefined, "", "unknown", "premium"]) {
+      expect(isLegacyVersion(v), String(v)).toBe(false)
+    }
+  })
+
+  it("parses the major on its own", () => {
+    expect(majorVersion("v2.4.5")).toBe(2)
+    expect(majorVersion("1.7.9")).toBe(1)
+    expect(majorVersion("nonsense")).toBeUndefined()
+    // Not a prefix match: 12.x must not read as 1.x.
+    expect(majorVersion("12.0.1")).toBe(12)
+    expect(isLegacyVersion("12.0.1")).toBe(false)
   })
 })

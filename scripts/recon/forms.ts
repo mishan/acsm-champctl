@@ -36,7 +36,13 @@ import {
   seedChampionship,
   writeArtefact,
 } from "./env.js"
-import { raggedKeys, redactBaseUrl, stableSource, stableUrl } from "./report.js"
+import {
+  isLegacyVersion,
+  raggedKeys,
+  redactBaseUrl,
+  stableSource,
+  stableUrl,
+} from "./report.js"
 
 // Relative, so the fallback path in the artefact is repo-relative rather
 // than whoever ran it. seedChampionship resolves it against cwd to read.
@@ -97,7 +103,10 @@ async function main(): Promise<void> {
 
   const version = await serverVersion(session)
   log(`Server Manager version: ${version ?? "unknown"}`)
-  if (version?.startsWith("1.")) {
+  // isLegacyVersion, not startsWith("1."): /healthcheck.json reports "v1.7.9"
+  // and the footer scrape reports "1.7.9", and this caveat has to appear for
+  // both.
+  if (isLegacyVersion(version)) {
     log(`  Note: BATL runs 2.4.5. Treat the EntrantID and premium-endpoint`)
     log(`  answers below as provisional — see docs/acsm-write-path.md §0.`)
   }

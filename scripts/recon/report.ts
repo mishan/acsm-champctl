@@ -34,19 +34,26 @@ const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const STEAM_GUID = /\b7656119\d{10}\b/g
 
 /**
- * A URL reduced to the part worth committing: path only, identifiers masked.
+ * True for a 1.x Server Manager, whatever spelling the version arrived in.
  *
- * Two reasons, and both matter for a file that gets checked in.
- *
- * Privacy: form actions are resolved to absolute URLs, so they carry the host
- * — which is how a LAN address ends up in a public artefact even after the
- * `baseUrl` field is redacted. Entrant links carry Steam GUIDs outright.
- *
- * Stability: the championship and event UUIDs are new on every run, so an
- * un-masked capture differs from the previous one everywhere, every time. The
- * whole point of committing these is that the diff on the next ACSM upgrade
- * shows what actually changed.
+ * The two sources disagree: `/healthcheck.json` reports `v1.7.9` while the
+ * footer scrape captures a bare `1.7.9`, because its regex drops the `v`. A
+ * plain `startsWith("1.")` therefore misses the healthcheck form — and the
+ * thing it gates is the warning that this run cannot answer the `EntrantID`
+ * and premium-endpoint questions for the 2.4.5 build BATL actually runs. A
+ * missing caveat on a provisional answer is worse than a noisy one, so the
+ * comparison is on the parsed major rather than on the string.
  */
+export function isLegacyVersion(version: string | undefined): boolean {
+  return majorVersion(version) === 1
+}
+
+/** The leading integer of a version string, ignoring any `v` prefix. */
+export function majorVersion(version: string | undefined): number | undefined {
+  const m = /^\s*v?(\d+)\./i.exec(version ?? "")
+  return m ? Number(m[1]) : undefined
+}
+
 /**
  * A provenance string reduced to something safe and stable to commit.
  *
@@ -70,6 +77,20 @@ function toRepoRelative(absolutePath: string): string {
   return !rel || rel.startsWith("..") ? basename(absolutePath) : rel
 }
 
+/**
+ * A URL reduced to the part worth committing: path only, identifiers masked.
+ *
+ * Two reasons, and both matter for a file that gets checked in.
+ *
+ * Privacy: form actions are resolved to absolute URLs, so they carry the host
+ * — which is how a LAN address ends up in a public artefact even after the
+ * `baseUrl` field is redacted. Entrant links carry Steam GUIDs outright.
+ *
+ * Stability: the championship and event UUIDs are new on every run, so an
+ * un-masked capture differs from the previous one everywhere, every time. The
+ * whole point of committing these is that the diff on the next ACSM upgrade
+ * shows what actually changed.
+ */
 export function stableUrl(url: string): string {
   let out = url
   try {
