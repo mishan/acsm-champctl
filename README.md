@@ -8,10 +8,13 @@ README covers what exists today.
 
 ## Status
 
-**Phase 1 — gridmom** (the sanity checker) is done, plus the read-only client it
-needs. **Phase 2** has its foundations in: an authenticated session, an
-ordered-multimap form parser, the import safety rules, and a Docker test harness
-so the write path can be verified against a throwaway ACSM rather than by hand.
+- **Phase 1 — gridmom**, the sanity checker, plus the read-only client it needs.
+  Done.
+
+- **Phase 2 — the write path.** Foundations are in: an authenticated session, an
+  ordered-multimap form parser, the import safety rules, and a Docker test
+  harness so the write path can be verified against a throwaway ACSM rather than
+  by hand.
 
 The read client and the write session are separate types on purpose. The bot and
 the archive import only `AcsmReader`, which has no way to authenticate — that
@@ -25,7 +28,7 @@ src/
   pits/        track pit table, acsm | scan | manual precedence
   profile/     league profile schema + loader
   gridmom/     the checker: findings model, check registry, formatters
-  cli/         gridmom CLI
+  cli/         the command-line entry points, over a shared args module
 docker/        throwaway ACSM for recon and live tests
 scripts/recon/ form and round-trip recon against the harness
 docs/          what the ACSM source actually says about the write path

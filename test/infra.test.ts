@@ -6,6 +6,7 @@ import { InMemoryPitTable } from "../src/pits/table.js"
 import { validateProfile } from "../src/profile/load.js"
 import { isZeroTime, session, sessionKeysUsed, slots } from "../src/acsm/view.js"
 import { main, parseArgs } from "../src/cli/gridmom.js"
+import { loadPits, reportUsageError, runCli, UsageError } from "../src/cli/args.js"
 import { championship } from "./support/build.js"
 
 describe("rate limiter", () => {
@@ -346,5 +347,63 @@ describe("CLI usage errors", () => {
     expect(err).toContain("No ACSM base URL")
     expect(err).toContain("--base-url")
     expect(err).toContain("Usage:")
+  })
+
+  it("recognises a UsageError raised anywhere, not just its own", async () => {
+    // The reason UsageError lives in one module rather than one per CLI. Four
+    // classes with the same name are four *different* classes, so
+    // `e instanceof UsageError` is false for one raised by any of the others —
+    // and the first shared helper to throw one would have its usage block
+    // silently skipped by every CLI but the one that declared it. Nothing
+    // depended on that yet, which is why it was worth fixing before four
+    // entry points existed rather than after.
+    const usage = "Usage:\n  pretend-cli <thing>\n"
+    const thrower = async (): Promise<number> => {
+      throw new UsageError("raised by a shared helper")
+    }
+
+    const { err } = await stderrOf(async () => {
+      await runCli({ name: "pretend-cli", usage, main: thrower }, [])
+      return 0
+    })
+
+    expect(err).toContain("raised by a shared helper")
+    expect(err).toContain("Usage:")
+    // Not the "couldn't run" fallback, which is what an unrecognised class gets.
+    expect(err).not.toContain("couldn't run")
+  })
+
+  it("names the tool when something other than a usage mistake escapes", async () => {
+    const boom = async (): Promise<number> => {
+      throw new Error("ACSM said no")
+    }
+    const { err } = await stderrOf(async () => {
+      await runCli({ name: "pretend-cli", usage: "Usage:\n", main: boom }, [])
+      return 0
+    })
+    expect(err).toBe("pretend-cli couldn't run: ACSM said no\n")
+  })
+
+  it("reportUsageError puts the message above the usage block", async () => {
+    const { code, err } = await stderrOf(async () =>
+      reportUsageError(new UsageError("bad flag"), "Usage:\n  thing\n"),
+    )
+    expect(code).toBe(3)
+    expect(err).toBe("bad flag\n\nUsage:\n  thing\n")
+  })
+})
+
+describe("shared CLI pit-table loading", () => {
+  it("falls back to an empty table when the default file is absent", async () => {
+    // The default is league data and gitignored, so "not there yet" is normal
+    // and the grid checks are meant to degrade to a warning rather than fail.
+    const table = await loadPits(undefined)
+    expect(table).toBeDefined()
+  })
+
+  it("reports an explicit --pits that will not load", async () => {
+    // An explicit path is a claim that the file exists; swallowing that would
+    // silently run the checks against no pit data at all.
+    await expect(loadPits("./test/support/definitely-not-here.json")).rejects.toThrow()
   })
 })

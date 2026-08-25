@@ -12,10 +12,10 @@ import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { FileCache } from "../acsm/cache.js"
-import { AcsmError, HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
+import { HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
-import { EMPTY_PIT_TABLE, loadPitTable, type PitTable } from "../pits/table.js"
 import { loadProfile } from "../profile/load.js"
+import { loadPits, reportUsageError, runCli, UsageError } from "./args.js"
 import { check } from "../gridmom/index.js"
 import type { Severity } from "../gridmom/finding.js"
 import { formatReport, type ReportFormat } from "../gridmom/report.js"
@@ -129,23 +129,6 @@ export function parseArgs(argv: readonly string[]): Args {
   return args
 }
 
-/**
- * A mistake the person can fix by retyping the command, as opposed to
- * something going wrong with ACSM. These always print the usage block, so the
- * CLI explains itself rather than just saying no.
- */
-export class UsageError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "UsageError"
-  }
-}
-
-function reportUsageError(e: UsageError): number {
-  process.stderr.write(`${e.message}\n\n${USAGE}`)
-  return 3
-}
-
 function parseFormat(v: string): ReportFormat {
   if (v === "text" || v === "json" || v === "discord") return v
   throw new UsageError(`--format must be text, json or discord`)
@@ -164,19 +147,6 @@ async function readerFor(args: Args, baseUrl: string): Promise<AcsmReader> {
   })
 }
 
-async function loadPits(path: string | undefined): Promise<PitTable> {
-  const target = path ?? resolve(process.cwd(), "data/track-pits.json")
-  try {
-    return await loadPitTable(target)
-  } catch (e) {
-    // An explicit --pits that doesn't load is a mistake worth reporting; the
-    // default one simply may not exist yet.
-    if (path) throw e
-    void e
-    return EMPTY_PIT_TABLE
-  }
-}
-
 /**
  * Runs a command and turns every usage mistake into the usage block, wherever
  * it was raised — argument parsing and "no base URL configured" deserve the
@@ -186,7 +156,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   try {
     return await runCommand(argv)
   } catch (e) {
-    if (e instanceof UsageError) return reportUsageError(e)
+    if (e instanceof UsageError) return reportUsageError(e, USAGE)
     throw e
   }
 }
@@ -248,19 +218,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
 
 /** Entry point used by both `bin/gridmom.js` and `npm run gridmom`. */
 export async function run(argv: readonly string[]): Promise<void> {
-  try {
-    process.exitCode = await main(argv)
-  } catch (e) {
-    // main() already turns UsageError into the usage block; anything reaching
-    // here is ACSM or the filesystem misbehaving, which usage text won't fix.
-    if (e instanceof UsageError) {
-      process.exitCode = reportUsageError(e)
-      return
-    }
-    const msg = e instanceof AcsmError || e instanceof Error ? e.message : String(e)
-    process.stderr.write(`gridmom couldn't run: ${msg}\n`)
-    process.exitCode = 3
-  }
+  await runCli({ name: "gridmom", usage: USAGE, main }, argv)
 }
 
 // Run when executed directly, not when imported by a test.
