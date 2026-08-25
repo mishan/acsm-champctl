@@ -92,6 +92,12 @@ npm run harness:reset      # back to an empty manager
 `npm test` never needs the container; the live suite has its own config and
 skips without `CHAMPCTL_LIVE_URL`.
 
+`test/live/flows.live.test.ts` drives the finalize and month flows end to end —
+that the format lands where ACSM actually reads it, that the schedule really is
+a second request, that the stale-entry-list guard fires against a list changed
+by another session, and that a generated month imports and comes back intact.
+Those are the assertions a scripted `fetch` cannot make.
+
 ## gridmom
 
 A pure function from a championship export, the track pit table and the league
@@ -236,6 +242,46 @@ plan.blocked      // an ERROR; nothing overrides this
 await applyFinalize(session, plan, { acknowledgeWarnings: true })
 ```
 
+### CLI
+
+```
+champctl-finalize <championship-id> <round> [options]
+
+  --laps <n> | --minutes <n>     race length
+  --reversed <n>                 reversed grid positions (0 = single race)
+  --pit / --no-pit               mandatory pit stop
+  --extra-lap / --no-extra-lap
+  --quali <date> <time>          move quali, league-local
+  --push                         actually write; without it this only previews
+  --yes                          skip the confirmation prompt
+  --accept-warnings              push despite warnings. Never overrides errors.
+```
+
+```
+$ champctl-finalize 1111... 1 --laps 18 --pit
+
+Round 1 of 1111...
+  Race length: 20 laps → 18 laps
+  Mandatory pit stop: no → yes
+
+  Fields that will be posted:
+    Race.Laps: 20 → 18
+    RacePitWindowStart: 0 → 1
+
+Preview only. Re-run with --push to apply.
+```
+
+Only the fields you name change — `--laps 18` means "make it 18 laps", not
+"and reset everything I didn't mention". Exit codes: `0` previewed or pushed,
+`1` nothing to do, `2` gridmom blocked it or the entry list changed underneath,
+`3` champctl failed.
+
+Credentials come from `CHAMPCTL_USERNAME` / `CHAMPCTL_PASSWORD` and are needed
+**even for a preview**: the preview reads the event *edit form*, which ACSM
+only serves to a logged-in session, and that form is what makes the preview
+honest about the fields it would post. For a credential-free look, use gridmom
+— the export is public.
+
 Planning performs no writes. Three things about applying are worth knowing:
 
 **The entry list is fingerprinted at preview time and re-checked immediately
@@ -318,6 +364,40 @@ The §4.1 regression test re-emits a template with no overrides and diffs the
 result, allowing only an explicit list of expected changes. When an ACSM upgrade
 adds a field the emitter doesn't know about, that test fails before a Wednesday
 does.
+
+### CLI
+
+```
+champctl-month build --spec <spec.json> --template <export.json> [options]
+champctl-month clone <championship-id> --name <name> --start <yyyy-mm-dd>
+
+  --tracks <a,b,c>   override the track list
+  --out <path>       write the championship JSON here
+  --import           send it to ACSM. Without this, nothing is written.
+```
+
+```
+$ champctl-month build --spec september.json --template last-month.json
+
+September 2026 — 3 rounds
+
+  1. spa                  quali 2026-09-02 20:00
+  2. suzuka               quali 2026-09-09 20:00
+  3. monza                quali 2026-09-16 20:00
+
+  Capped at 24 by suzuka.
+
+  Set rather than inherited:
+    RaceSetup.Cars from the class car list
+    Created and Updated stamped from now, not inherited
+    every UUID regenerated, so importing creates rather than overwrites
+```
+
+This command creates championships, so the default is inert: it prints, and
+writes nothing without `--out` or `--import`. An accidental extra championship
+is recoverable, but only if you notice — and two championships with sign-ups
+split across them is the sort of thing nobody notices until race night.
+gridmom runs on the generated month, and an ERROR stops the import.
 
 ## League profiles
 

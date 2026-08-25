@@ -9,7 +9,9 @@
   },
   "bin": {
     "gridmom": "./bin/gridmom.js",
-    "champctl-archive": "./bin/champctl-archive.js"
+    "champctl-archive": "./bin/champctl-archive.js",
+    "champctl-finalize": "./bin/champctl-finalize.js",
+    "champctl-month": "./bin/champctl-month.js"
   },
   "//files": "dist/ is in .gitignore, and without an explicit list npm packs by gitignore rules — so the tarball shipped bin/ scripts importing a directory that wasn't in it. README and LICENSE come along whatever this says.",
   "files": [
@@ -21,6 +23,8 @@
     "prepare": "npm run build",
     "gridmom": "tsx src/cli/gridmom.ts",
     "archive": "tsx src/cli/archive.ts",
+    "finalize": "tsx src/cli/finalize.ts",
+    "month": "tsx src/cli/month.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint .",
