@@ -153,6 +153,57 @@ describe("applying a format to an event", () => {
     expect(after.RaceSetup?.Sessions?.["RACE"]?.Laps).toBe(18)
   })
 
+  it("creates a race session when the event has none", () => {
+    // Skipping the length here was a real bug in both directions: gridmom
+    // would be shown a would-be event still reading zero laps and report
+    // "nobody set the race length" for a race the write is about to set —
+    // blocking a push that fixes the complaint — and emitMonth, which applies
+    // a format for real, would emit a month with no race length at all.
+    const ev = raceEvent({ RaceSetup: { Sessions: {} } })
+    const after = applyFormat(ev, format({ length: { kind: "laps", laps: 18 } }))
+
+    expect(readFormat(after).length).toEqual({ kind: "laps", laps: 18 })
+    expect(Object.keys(after.RaceSetup?.Sessions ?? {})).toEqual(["RACE"])
+  })
+
+  it("creates it with no RaceSetup at all", () => {
+    const after = applyFormat(raceEvent({ RaceSetup: {} }), format())
+    expect(readFormat(after).length).toEqual({ kind: "laps", laps: 18 })
+  })
+
+  it("follows the spelling the event's other sessions use", () => {
+    // lookupSession finds either, so this is only about not leaving a RACE
+    // sitting oddly beside a Practice for whoever reads the JSON next.
+    const friendly = raceEvent({
+      RaceSetup: { Sessions: { Practice: { Name: "Practice", Time: 60, Laps: 0, IsOpen: 1 } } },
+    })
+    expect(Object.keys(applyFormat(friendly, format()).RaceSetup?.Sessions ?? {})).toEqual([
+      "Practice",
+      "Race",
+    ])
+
+    const shouty = raceEvent({
+      RaceSetup: { Sessions: { PRACTICE: { Name: "Practice", Time: 60, Laps: 0, IsOpen: 1 } } },
+    })
+    expect(Object.keys(applyFormat(shouty, format()).RaceSetup?.Sessions ?? {})).toEqual([
+      "PRACTICE",
+      "RACE",
+    ])
+  })
+
+  it("leaves the other sessions alone when it creates one", () => {
+    const ev = raceEvent({
+      RaceSetup: { Sessions: { Practice: { Name: "Practice", Time: 60, Laps: 0, IsOpen: 1 } } },
+    })
+    const after = applyFormat(ev, format())
+    expect(after.RaceSetup?.Sessions?.["Practice"]).toEqual({
+      Name: "Practice",
+      Time: 60,
+      Laps: 0,
+      IsOpen: 1,
+    })
+  })
+
   it("round-trips through readFormat", () => {
     const ev = raceEvent({
       RaceSetup: { Sessions: { Race: { Name: "Race", Time: 0, Laps: 1, IsOpen: 1 } } },
@@ -478,6 +529,29 @@ describe("planning a finalize", () => {
     })
     // A zero-length race is what gridmom's format check exists to catch.
     expect(plan.gridmom.findings.some((f) => f.code.startsWith("format."))).toBe(true)
+  })
+
+  it("previews a session-less event as the length it is about to set", async () => {
+    // applyFormat used to skip an event with no race session, so the would-be
+    // championship handed to gridmom still read zero laps while the form write
+    // set 18 — preview and outcome disagreeing about the headline field.
+    //
+    // Asserted on the form fields rather than on a gridmom finding: the
+    // race-length check returns early for an event with no race session at
+    // all, so no finding distinguishes the two cases. That early return is a
+    // real gap, and a separate one.
+    const h = await harness({ eventPages: [eventFormHtml(TWO, { "Race.Laps": "0" })] })
+    const plan = await planFinalize(h.session, {
+      championship: champ({ RaceSetup: { Sessions: {} } }),
+      championshipId: CHAMP_ID,
+      eventId: EVENT_ID,
+      format: format({ length: { kind: "laps", laps: 18 } }),
+      profile: testProfile(),
+      pits: pitTable([suzukaPits]),
+    })
+
+    expect(plan.formChanges).toContainEqual({ name: "Race.Laps", before: "0", after: "18" })
+    expect(plan.blocked).toBe(false)
   })
 
   it("refuses an event id the championship doesn't have", async () => {

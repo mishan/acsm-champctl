@@ -165,15 +165,21 @@ export function applyFormat(ev: ChampionshipEvent, format: RaceFormat): Champion
   const sessions = { ...(rs.Sessions ?? {}) }
 
   // Write back under whichever key this export actually uses, so we don't
-  // leave a stale RACE beside a fresh Race.
-  const raceKey = Object.keys(sessions).find((k) => k.toUpperCase() === "RACE")
-  if (raceKey) {
-    const existing = sessions[raceKey] ?? {}
-    sessions[raceKey] = {
-      ...existing,
-      Laps: format.length.kind === "laps" ? format.length.laps : 0,
-      Time: format.length.kind === "minutes" ? format.length.minutes : 0,
-    }
+  // leave a stale RACE beside a fresh Race — and *create* one when there is
+  // none.
+  //
+  // Skipping the length when no race session exists was a real bug in both
+  // directions. For a preview, gridmom would be handed a would-be event still
+  // reading zero laps and report `format.no-race-length` for a race the write
+  // is about to set — blocking a push that fixes the very thing complained
+  // about. For `emitMonth`, which applies a format for real rather than for
+  // preview, the month would simply be emitted without its race length.
+  const raceKey = Object.keys(sessions).find((k) => k.toUpperCase() === "RACE") ?? newRaceKey(sessions)
+  const existing = sessions[raceKey] ?? { Name: "Race" }
+  sessions[raceKey] = {
+    ...existing,
+    Laps: format.length.kind === "laps" ? format.length.laps : 0,
+    Time: format.length.kind === "minutes" ? format.length.minutes : 0,
   }
 
   return {
@@ -186,6 +192,21 @@ export function applyFormat(ev: ChampionshipEvent, format: RaceFormat): Champion
       RaceExtraLap: format.extraLap,
     },
   }
+}
+
+/**
+ * The key to file a newly-created race session under.
+ *
+ * ACSM's `SessionType` constants are `PRACTICE`/`QUALIFY`/`RACE` and that is
+ * what a real export uses, so `RACE` is the default. But exports have also
+ * carried the friendly spellings, and an event whose other sessions are
+ * `Practice`/`Qualifying` should get `Race` rather than a `RACE` sitting oddly
+ * beside them — `lookupSession` finds either, so this is about not leaving a
+ * mess for a human reading the JSON.
+ */
+function newRaceKey(sessions: Record<string, unknown>): string {
+  const friendly = Object.keys(sessions).some((k) => k !== k.toUpperCase() && /^[A-Z]/.test(k))
+  return friendly ? "Race" : "RACE"
 }
 
 function numberOr(v: unknown, fallback: number): number {
