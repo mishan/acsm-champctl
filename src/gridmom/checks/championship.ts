@@ -73,7 +73,7 @@ export const repeatedTrack: Check = {
       emit(
         "WARN",
         "champ.repeated-track",
-        `${track} shows up ${rounds.length} times this month, at ${humanList(rounds)}.`,
+        `${track} shows up ${rounds.length} times in this championship, at ${humanList(rounds)}.`,
         { path: "Events[].RaceSetup.Track" },
         { track, rounds },
       )
@@ -142,11 +142,21 @@ export const descriptionMentionsOtherTracks: Check = {
   },
 }
 
+/**
+ * Whether a description plausibly names a track folder.
+ *
+ * The word filter is there so `ks_barcelona_gp` isn't matched on `ks` or `gp`,
+ * which appear across half of Kunos's content. But `>= 4` also emptied the
+ * word list for short folder names — `spa` is three characters — and an empty
+ * list returns true, so this check could never report the one track a BATL
+ * season is most likely to run. Three is the shortest folder name that is a
+ * name rather than a prefix.
+ */
 function mentions(haystack: string, track: string): boolean {
   const words = track
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((w) => w.length >= 4 && w !== "track")
+    .filter((w) => w.length >= 3 && w !== "track")
   if (words.length === 0) return true
   return words.some((w) => haystack.includes(w))
 }
