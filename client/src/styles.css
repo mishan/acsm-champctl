@@ -1,0 +1,659 @@
+/*
+ * One stylesheet, mobile first.
+ *
+ * The screen this is for gets opened on a phone, from a Discord link, shortly
+ * before a race. So: one column, large tap targets, no hover-only affordances,
+ * and the push button at the bottom where a thumb already is. The desktop
+ * layout is the same thing with a maximum width.
+ */
+
+:root {
+  --bg: #111318;
+  --surface: #191c23;
+  --surface-2: #21252e;
+  --line: #2c313c;
+  --text: #e7e9ee;
+  --muted: #949bab;
+  --accent: #4c8dff;
+  --error: #ff6b6b;
+  --warn: #ffb454;
+  --info: #7aa2f7;
+  --ok: #4ade80;
+  --radius: 10px;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    16px / 1.5 system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  /* 16px is not a preference. Anything smaller makes iOS Safari zoom on focus,
+     which throws the layout out mid-edit on the one device this targets. */
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.app {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 0 1rem calc(2rem + env(safe-area-inset-bottom));
+}
+
+main {
+  padding-top: 0.5rem;
+}
+
+/* --- bar ---------------------------------------------------------------- */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 1;
+}
+
+.bar-title {
+  background: none;
+  border: 0;
+  color: var(--text);
+  font-weight: 650;
+  font-size: 1rem;
+  padding: 0;
+  cursor: pointer;
+}
+
+.bar-title:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.bar-league {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-right: auto;
+}
+
+/* --- type --------------------------------------------------------------- */
+
+h1 {
+  font-size: 1.35rem;
+  margin: 1rem 0 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+h2 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 1.5rem 0 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.fineprint {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0.4rem 0 0;
+}
+
+.round-number {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.7rem;
+  height: 1.7rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- lists and rows ----------------------------------------------------- */
+
+.list {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  /* Comfortably past the 44px minimum tap target, because this list is
+     scrolled and tapped one-handed. */
+  min-height: 3.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.row:active {
+  background: var(--surface-2);
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.row-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+.row-sub {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.row-chevron {
+  color: var(--muted);
+  font-size: 1.3rem;
+}
+
+/* A round that has run stays visible and stops looking like a destination.
+   Hiding it would be worse: the list would silently renumber. */
+.row-done {
+  opacity: 0.6;
+}
+
+.tag {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+
+/* --- forms -------------------------------------------------------------- */
+
+section {
+  border-top: 1px solid var(--line);
+  padding-bottom: 0.5rem;
+}
+
+label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0.75rem 0 0.25rem;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="number"],
+input[type="date"],
+input[type="time"] {
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+}
+
+input:focus-visible,
+button:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--text);
+  font-size: 1rem;
+  margin: 0.75rem 0 0;
+  cursor: pointer;
+}
+
+.check input {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--accent);
+}
+
+.check-ack {
+  padding: 0.75rem;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  margin-bottom: 0.75rem;
+}
+
+.segmented {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  padding: 0;
+  margin: 0.75rem 0 0;
+}
+
+.segmented legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.segmented label {
+  flex: 1;
+  margin: 0;
+  padding: 0.6rem;
+  text-align: center;
+  color: var(--muted);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+/*
+ * The radios are hidden with `opacity: 0`, which keeps them focusable — and
+ * takes their focus ring with them. Tabbing into the control moved focus with
+ * nothing on screen changing, so a keyboard user could not tell whether "Laps"
+ * or "Minutes" was about to be chosen, or that the control had focus at all.
+ *
+ * `:has()` puts the indicator on the visible label instead. Inset, because the
+ * fieldset clips its children — an outline outside the label would be cut off
+ * by `overflow: hidden`.
+ */
+.segmented label:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+  color: var(--text);
+}
+
+.segmented label.on {
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.segmented input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* --- presets ------------------------------------------------------------ */
+
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.preset {
+  flex: 1 1 8rem;
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.7rem 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.preset span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.preset:active {
+  border-color: var(--accent);
+}
+
+/* --- buttons ------------------------------------------------------------ */
+
+button.primary,
+button.secondary {
+  width: 100%;
+  min-height: 3rem;
+  margin-top: 0.75rem;
+  padding: 0.8rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  color: #06101f;
+}
+
+button.primary:disabled {
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background: var(--surface-2);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+button.link {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.25rem 0;
+  cursor: pointer;
+}
+
+button.link:hover {
+  color: var(--text);
+}
+
+.back {
+  margin-top: 0.75rem;
+}
+
+.push {
+  position: sticky;
+  bottom: 0;
+  padding: 0.75rem 0 calc(0.75rem + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, var(--bg) 70%, transparent);
+}
+
+/* --- diff --------------------------------------------------------------- */
+
+.changes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.changes li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.6rem 0.8rem;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+.change-label {
+  flex: 1 0 100%;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.change-before {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.change-after {
+  font-weight: 650;
+}
+
+.fields {
+  margin-top: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.8rem;
+}
+
+.fields summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.fields ul {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+}
+
+.fields li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.fields li span {
+  color: var(--muted);
+  text-align: right;
+}
+
+/* --- findings ----------------------------------------------------------- */
+
+.summary {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.summary-error {
+  border-color: var(--error);
+}
+
+.findings {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.finding {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  background: var(--surface);
+  border-left: 3px solid var(--line);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 0.9rem;
+}
+
+.finding-error {
+  border-left-color: var(--error);
+}
+.finding-warn {
+  border-left-color: var(--warn);
+}
+.finding-info {
+  border-left-color: var(--info);
+}
+
+.badge {
+  flex: none;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding-top: 0.2rem;
+  color: var(--muted);
+}
+
+.finding-error .badge {
+  color: var(--error);
+}
+.finding-warn .badge {
+  color: var(--warn);
+}
+
+.finding-text {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.finding-path {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+/* --- messages ----------------------------------------------------------- */
+
+.message {
+  margin: 0.75rem 0;
+  padding: 0.8rem 1rem;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--line);
+  background: var(--surface);
+}
+
+.message p {
+  margin: 0.4rem 0 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.message-error {
+  border-left-color: var(--error);
+}
+.message-ok {
+  border-left-color: var(--ok);
+}
+.message-info {
+  border-left-color: var(--info);
+}
+
+/* --- login and splash --------------------------------------------------- */
+
+.login {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.card {
+  width: 100%;
+  max-width: 22rem;
+  padding: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.card h1 {
+  margin: 0;
+}
+
+.splash {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 1rem;
+  color: var(--muted);
+}
+
+.spinner {
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.spinner-inline {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-width: 2px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+ * Someone who asked not to be moved is not asking for a spinner either. This
+ * used to slow the rotation to 3s, which is still a thing turning on the screen
+ * for as long as the request takes — a reduced-motion request answered with
+ * less motion rather than none. Stopped instead, and kept visible as a static
+ * ring so it still reads as "working".
+ */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+    border-top-color: var(--accent);
+    opacity: 0.7;
+  }
+}
