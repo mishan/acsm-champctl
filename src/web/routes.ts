@@ -31,6 +31,14 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest 
 import type { AcsmReader } from "../acsm/client.js"
 import { AcsmAuthError, AcsmSession } from "../acsm/session.js"
 import { events } from "../acsm/view.js"
+import { importChampionship } from "../acsm/write.js"
+import { cloneChampionship } from "../emit/clone.js"
+import {
+  EmitError,
+  type EmitResult,
+  type ChampionshipSpec,
+  type RoundSpec,
+} from "../emit/championship.js"
 import { applyFinalize, EntryListChangedError, PartialWriteError } from "../finalize/apply.js"
 import {
   MAX_LAPS,
@@ -40,7 +48,8 @@ import {
   withOverrides,
   type FormatOverrides,
 } from "../finalize/format.js"
-import { planFinalize } from "../finalize/plan.js"
+import { planFinalize, type FinalizePlan } from "../finalize/plan.js"
+import type { CheckReport } from "../gridmom/finding.js"
 import { check } from "../gridmom/index.js"
 import type { PitTable } from "../pits/table.js"
 import { EMPTY_PIT_TABLE } from "../pits/table.js"
@@ -55,16 +64,26 @@ import {
   type StoredSession,
 } from "./sessions.js"
 import { LoginThrottle } from "./throttle.js"
-import { championshipList, championshipView, planView, roundView } from "./view.js"
+import {
+  championshipList,
+  championshipView,
+  newChampionshipPlanView,
+  planView,
+  roundView,
+} from "./view.js"
 import type {
   ApplyResponse,
   ChampionshipListResponse,
   ChampionshipResponse,
   ConfigResponse,
   LoginResponse,
+  NewChampionshipResponse,
+  NewChampionshipRequest,
+  NewChampionshipPlanResponse,
   PlanRequest,
   PlanResponse,
   SessionResponse,
+  TrackRequest,
 } from "./wire.js"
 
 declare module "fastify" {
@@ -86,7 +105,13 @@ export interface ApiContext {
   baseUrl: string
   reader: AcsmReader
   sessions: SessionStore
-  plans: PlanStore
+  plans: PlanStore<FinalizePlan>
+  /**
+   * Championships awaiting confirmation. Separate from `plans` because they hold
+   * different things and expire independently, not because the lease differs —
+   * it is the same store with the same guarantees.
+   */
+  newChampionships: PlanStore<HeldChampionship>
   throttle: LoginThrottle
   /** Injectable so a test can drive a session over a stub `fetch`. */
   createSession: (baseUrl: string) => AcsmSession
@@ -111,7 +136,11 @@ export function apiContext(options: ApiContextOptions): ApiContext {
     reader: options.reader,
     pits: options.pits ?? EMPTY_PIT_TABLE,
     sessions: options.sessions ?? new SessionStore({ ttlMs: sessionTtlMs }),
-    plans: options.plans ?? new PlanStore(),
+    // Labelled, because there are two of them and the message when one fills
+    // up is otherwise "more than 2000" of something unspecified.
+    plans: options.plans ?? new PlanStore({ label: "finalize plans" }),
+    newChampionships:
+      options.newChampionships ?? new PlanStore({ label: "unconfirmed new championships" }),
     throttle: options.throttle ?? new LoginThrottle(),
     createSession: options.createSession ?? ((baseUrl) => new AcsmSession({ baseUrl })),
     secureCookies: options.secureCookies ?? true,
@@ -139,6 +168,69 @@ const planBodySchema = {
       },
     },
   },
+} as const
+
+/**
+ * What the lease holds between previewing a championship and creating it.
+ *
+ * The emitted championship rather than the request that produced it, for the
+ * same reason a finalize plan holds the parsed form: re-deriving on import
+ * would mean trusting the inputs twice and hoping the second pass agreed. The
+ * gridmom report travels with it so the import decides on the findings the
+ * person was actually shown.
+ */
+export interface HeldChampionship {
+  sourceId: string
+  result: EmitResult
+  gridmom: CheckReport
+}
+
+/** One track from the browser as the emitter's round spec. */
+function roundSpecFrom(t: TrackRequest): RoundSpec {
+  return { track: t.track, ...(t.layout ? { layout: t.layout } : {}) }
+}
+
+const newChampionshipBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["sourceId"],
+  properties: {
+    sourceId: { type: "string", minLength: 1, maxLength: 200 },
+    name: { type: "string", minLength: 1, maxLength: 200 },
+    startDate: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+    tracks: {
+      type: "array",
+      minItems: 1,
+      // A championship is a handful of race nights. The bound is here for the same
+      // reason every other bound is: past it the value is a mistake or an
+      // attack, and each entry costs a pit-table lookup and an event.
+      maxItems: 52,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["track"],
+        properties: {
+          track: { type: "string", minLength: 1, maxLength: 200 },
+          // Non-empty when present. `roundSpecFrom` reads "" as "no layout",
+          // so an empty string would arrive as a track without one and hide
+          // whatever produced it — omit the key instead.
+          layout: { type: "string", minLength: 1, maxLength: 200 },
+        },
+      },
+    },
+  },
+} as const
+
+const createChampionshipBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: { acknowledgeWarnings: { type: "boolean" } },
+} as const
+
+const planIdParamsSchema = {
+  type: "object",
+  required: ["planId"],
+  properties: { planId: { type: "string", minLength: 1, maxLength: 200 } },
 } as const
 
 const roundParamsSchema = {
@@ -406,6 +498,176 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           // "before" side without a second request — and so a round that has
           // since been run says so before anyone pushes to it.
           round: roundView(ev, round, ctx.profile),
+        }
+      },
+    )
+
+    // -----------------------------------------------------------------------
+    // Creating a championship (plan §5.1)
+    // -----------------------------------------------------------------------
+
+    /**
+     * A past championship, rebuilt as a new one, and written nowhere.
+     *
+     * The same `cloneChampionship` and the same `check` the CLI runs — one built
+     * by the browser and one built by `champctl-championship clone` are the same
+     * championship or one of them is wrong.
+     *
+     * The source is both template and spec: `specFromChampionship` reads the
+     * cars, the class, the format and the slots off it, and `overrides` is a
+     * shallow layer on top. `tracks` therefore *replaces* the round list
+     * rather than merging into it, which is what someone editing a track list
+     * means and what the CLI already does.
+     */
+    app.post<{ Body: NewChampionshipRequest }>(
+      "/championships/plan",
+      { schema: { body: newChampionshipBodySchema } },
+      async (req): Promise<NewChampionshipPlanResponse> => {
+        const s = requireSession(ctx, req)
+        const body = req.body
+
+        const source = await ctx.reader.exportChampionship(body.sourceId)
+
+        // One instant for the emit and the check both. Two calls to `now()`
+        // can land either side of midnight or a DST change, and then the
+        // schedule gridmom is checking is not quite the schedule that was
+        // generated — a disagreement that reproduces roughly never.
+        const now = ctx.now()
+
+        const overrides: Partial<ChampionshipSpec> = {
+          ...(body.name ? { name: body.name } : {}),
+          ...(body.startDate ? { startDate: body.startDate } : {}),
+          ...(body.tracks ? { rounds: body.tracks.map(roundSpecFrom) } : {}),
+        }
+
+        let result: EmitResult
+        try {
+          result = cloneChampionship({
+            source,
+            profile: ctx.profile,
+            overrides,
+            pits: ctx.pits,
+            now,
+          })
+        } catch (e) {
+          // The emitter's refusals are written for a person and are about the
+          // request rather than about champctl — an empty car list, a
+          // championship with no name to inherit. 422 for the same reason a gridmom block
+          // is: understood, and declined.
+          if (e instanceof EmitError) throw new ApiError(422, "emit", e.message)
+          throw e
+        }
+
+        const gridmom = check(result.championship, ctx.profile, { pits: ctx.pits, now })
+
+        return {
+          plan: newChampionshipPlanView(
+            ctx.newChampionships.create(s.id, { sourceId: body.sourceId, result, gridmom }),
+            body.sourceId,
+            result,
+            gridmom,
+            ctx.profile,
+          ),
+        }
+      },
+    )
+
+    /**
+     * Imports the championship that was previewed, and only that one.
+     *
+     * Takes a plan id and nothing else, so what lands is what was on screen —
+     * the same contract as `/plans/:planId/apply`, and here it matters more:
+     * a championship that imports twice leaves a league two of them to tell
+     * apart and delete by hand.
+     */
+    app.post<{ Params: { planId: string }; Body: { acknowledgeWarnings?: boolean } }>(
+      "/championships/:planId/create",
+      { schema: { params: planIdParamsSchema, body: createChampionshipBodySchema } },
+      async (req): Promise<NewChampionshipResponse> => {
+        const s = requireSession(ctx, req)
+        const { planId } = req.params
+
+        const taken = ctx.newChampionships.acquire(planId, s.id)
+        if (taken.kind === "not-found") {
+          throw new ApiError(
+            404,
+            "no-such-plan",
+            "That preview has expired, or the championship was already created. Nothing was written. " +
+              "Build it again — the fresh preview will show what it looks like now.",
+          )
+        }
+        if (taken.kind === "in-flight") {
+          throw new ApiError(
+            409,
+            "plan-in-flight",
+            "This championship is already being created. Nothing extra was written. Wait for it to " +
+              "finish rather than sending it again.",
+          )
+        }
+        const held = taken.plan
+
+        try {
+          if (held.gridmom.counts.ERROR > 0) {
+            throw new ApiError(
+              422,
+              "gridmom-blocked",
+              "gridmom found an error in this championship, so it was not created. An error means a " +
+                "broken or unfair season rather than a matter of taste — fix the cause and " +
+                "build it again.",
+            )
+          }
+          if (held.gridmom.counts.WARN > 0 && req.body?.acknowledgeWarnings !== true) {
+            throw new ApiError(
+              422,
+              "unacknowledged-warnings",
+              "gridmom has warnings about this championship. Read them and confirm, or change what " +
+                "they are about. Nothing was written.",
+            )
+          }
+
+          /**
+           * The import changes two things about the payload, and neither is
+           * part of what was reviewed.
+           *
+           * `freshIds` regenerates every UUID. The emitter already did that
+           * once, so this is belt and braces — kept on rather than turned off
+           * because the failure it prevents is two championships sharing an
+           * ID, and the cost of preventing it twice is nothing. No id crosses
+           * to the browser, so nothing on the review screen moves.
+           *
+           * `stampCreated` re-stamps `Created`/`Updated` at import. That is
+           * the behaviour §5.5 asks for: a championship should carry the
+           * moment it was made, not the moment its preview was built — and
+           * those are different moments, since a preview can sit on screen for
+           * as long as someone reads it. `now` is passed only so the stamp
+           * comes from the same injectable clock the rest of the request uses;
+           * it does not touch the schedule, which was generated during the
+           * preview and is imported exactly as it was reviewed.
+           *
+           * `championshipId` is not optional: `importChampionship` throws an
+           * `AcsmWriteError` when ACSM does not redirect to the new
+           * championship, rather than returning without one.
+           */
+          const { championshipId } = await importChampionship(s.acsm, held.result.championship, {
+            now: ctx.now(),
+          })
+
+          // Spent only once it is confirmed created. An import that failed is
+          // one worth retrying with the same championship; an import that worked must
+          // never run twice.
+          ctx.newChampionships.destroy(planId, s.id)
+          return {
+            championshipId,
+            name: held.result.championship.Name ?? "",
+            rounds: events(held.result.championship).length,
+          }
+        } catch (e) {
+          // Kept, not spent: every refusal above is one the person can act on
+          // — tick the acknowledgement, or fix what gridmom is complaining
+          // about and build again. Wedging it would make them redo a
+          // preview they are looking at.
+          ctx.newChampionships.release(planId, s.id)
+          throw e
         }
       },
     )

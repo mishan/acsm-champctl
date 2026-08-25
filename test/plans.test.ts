@@ -23,7 +23,7 @@ function plan(round = 1): FinalizePlan {
 
 function store(over: { ttlMs?: number; maxPlans?: number } = {}) {
   let now = 1_000_000
-  const s = new PlanStore({
+  const s = new PlanStore<FinalizePlan>({
     ttlMs: over.ttlMs ?? 60_000,
     maxPlans: over.maxPlans ?? 2000,
     now: () => now,
@@ -183,6 +183,15 @@ describe("not holding plans forever", () => {
     const { s } = store({ maxPlans: 2 })
     s.create(SESSION, plan(1))
     s.create(SESSION, plan(2))
-    expect(() => s.create(SESSION, plan(3))).toThrow(/previewing without ever pushing/)
+    expect(() => s.create(SESSION, plan(3))).toThrow(/previewing without ever confirming/)
+  })
+
+  it("says which store filled up", () => {
+    // Two of these exist and they fill up for different reasons. "Refusing to
+    // hold more than 2000" without saying more than 2000 *what* is the one
+    // detail the message cannot work out for itself.
+    const s = new PlanStore<FinalizePlan>({ maxPlans: 1, label: "finalize plans" })
+    s.create(SESSION, plan(1))
+    expect(() => s.create(SESSION, plan(2))).toThrow(/finalize plans/)
   })
 })

@@ -34,7 +34,14 @@ import type { Championship } from "../../src/acsm/types.js"
 import { events } from "../../src/acsm/view.js"
 import { eventEditPath, eventSubmitPath, importChampionship } from "../../src/acsm/write.js"
 import { readFormat } from "../../src/finalize/format.js"
-import type { ApplyResponse, PlanResponse, PlanView } from "../../src/web/wire.js"
+import type {
+  ApplyResponse,
+  NewChampionshipResponse,
+  NewChampionshipPlanResponse,
+  NewChampionshipPlan,
+  PlanResponse,
+  PlanView,
+} from "../../src/web/wire.js"
 import { buildServer } from "../../src/web/server.js"
 import { testProfile } from "../support/build.js"
 import {
@@ -126,6 +133,47 @@ describe.skipIf(!LIVE)("the champctl API against a real ACSM", () => {
 
   const exported = async (id: string): Promise<Championship> =>
     live().getJson<Championship>(`/championship/${id}/export`)
+
+  /**
+   * Previews a new championship and returns the plan.
+   *
+   * Same reasoning as `planFor`: assert the status before reading the body, so
+   * a failure lands on the request that failed rather than on whichever
+   * assertion first touches an undefined plan.
+   */
+  const planNewChampionship = async (
+    cookie: string,
+    body: Record<string, unknown>,
+  ): Promise<NewChampionshipPlan> => {
+    const res = await server().inject({
+      method: "POST",
+      url: "/api/championships/plan",
+      headers: { cookie },
+      payload: body,
+    })
+    expect(res.statusCode, res.body).toBe(200)
+    return (res.json() as NewChampionshipPlanResponse).plan
+  }
+
+  const createChampionship = (planId: string, cookie: string) =>
+    server().inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie },
+      payload: { acknowledgeWarnings: true },
+    })
+
+  /** An import that is meant to land, registered for teardown either way. */
+  const createOk = async (planId: string, cookie: string): Promise<NewChampionshipResponse> => {
+    const res = await createChampionship(planId, cookie)
+    // Registered before the assertion: if the status is wrong but ACSM made
+    // the championship anyway, the one case worth cleaning up is the one that
+    // would otherwise leak.
+    const body = res.json() as Partial<NewChampionshipResponse>
+    if (body.championshipId) created.push(body.championshipId)
+    expect(res.statusCode, res.body).toBe(200)
+    return body as NewChampionshipResponse
+  }
 
   /**
    * Previews a change and returns the plan.
@@ -436,6 +484,174 @@ describe.skipIf(!LIVE)("the champctl API against a real ACSM", () => {
       const fresh = await planFor(id, cookie, { laps: 15 })
       await pushed(fresh.planId, cookie)
       expect(readFormat(events(await exported(id))[0]!).length).toEqual({ kind: "laps", laps: 15 })
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Creating a championship (plan §5.1)
+  // -------------------------------------------------------------------------
+
+  describe("creating a championship, over HTTP", () => {
+    it("previews a new championship from a past one without writing anything", async () => {
+      const source = await seeded()
+      const cookie = await loggedIn()
+      const before = (await server()
+        .inject({
+          method: "GET",
+          url: "/api/championships",
+          headers: { cookie },
+        })
+        .then((r) => r.json())) as { championships: { id: string }[] }
+
+      const plan = await planNewChampionship(cookie, {
+        sourceId: source,
+        name: "champctl live preview",
+        tracks: [{ track: "spa" }, { track: "monza" }],
+      })
+      expect(plan.rounds.map((r) => r.track)).toEqual(["spa", "monza"])
+      expect(plan.grid.summary).toBeTruthy()
+
+      // A preview that quietly created something would leave a championship
+      // behind, and every later assertion would still pass.
+      const after = (await server()
+        .inject({
+          method: "GET",
+          url: "/api/championships",
+          headers: { cookie },
+        })
+        .then((r) => r.json())) as { championships: { id: string }[] }
+      expect(after.championships.length).toBe(before.championships.length)
+    })
+
+    it("creates the championship it previewed, and the manager has it", async () => {
+      const source = await seeded()
+      const cookie = await loggedIn()
+
+      const plan = await planNewChampionship(cookie, {
+        sourceId: source,
+        name: "champctl live create",
+        tracks: [{ track: "spa" }, { track: "monza" }, { track: "suzuka" }],
+      })
+      const made = await createOk(plan.planId, cookie)
+      expect(made.name).toBe("champctl live create")
+      expect(made.rounds).toBe(3)
+
+      // Read it back out of ACSM rather than trusting the response. What
+      // champctl reports and what the manager stored are two claims, and only
+      // the second is a championship anyone can race.
+      const champ = await exported(made.championshipId)
+      expect(champ.Name).toBe("champctl live create")
+      const tracks = events(champ).map((e) => e.RaceSetup?.Track)
+      expect(tracks).toEqual(["spa", "monza", "suzuka"])
+    })
+
+    it("creates exactly what the review screen showed", async () => {
+      // The endpoint's contract, and the reason the import takes a plan id
+      // rather than a request body. The import *does* change two things —
+      // every UUID is regenerated and Created/Updated are re-stamped — so this
+      // pins the part that was actually reviewed: the name, the rounds, their
+      // tracks and their times.
+      const source = await seeded()
+      const cookie = await loggedIn()
+      const plan = await planNewChampionship(cookie, {
+        sourceId: source,
+        name: "champctl live as reviewed",
+        tracks: [{ track: "spa" }, { track: "brands_hatch", layout: "indy" }],
+      })
+
+      const made = await createOk(plan.planId, cookie)
+      const champ = await exported(made.championshipId)
+
+      expect(champ.Name).toBe(plan.name)
+      expect(events(champ).length).toBe(plan.rounds.length)
+      expect(events(champ).map((e) => e.RaceSetup?.Track)).toEqual(plan.rounds.map((r) => r.track))
+      expect(events(champ).map((e) => e.RaceSetup?.TrackLayout || undefined)).toEqual(
+        plan.rounds.map((r) => r.layout),
+      )
+      // The cap, but only when one was actually derived. `maxClients: 0` means
+      // no track on the list had a pit count on file, and the emitter then
+      // leaves MaxClients as the template had it rather than writing a number
+      // derived from nothing — so 0 is precisely the case where the review and
+      // the stored value are *supposed* to differ. The harness has no pit
+      // table, so this is the branch it takes.
+      if (plan.grid.bindingTrack !== undefined) {
+        for (const ev of events(champ)) {
+          expect(ev.RaceSetup?.MaxClients).toBe(plan.grid.maxClients)
+        }
+      } else {
+        expect(plan.grid.maxClients).toBe(0)
+        expect(plan.derived.join(" ")).toMatch(/MaxClients left as the template had it/)
+      }
+    })
+
+    it("gives the new championship fresh event ids rather than the source's", async () => {
+      // The import regenerates ids. Reusing them would make the new
+      // championship's events collide with the source's, which is a mess ACSM will happily
+      // store.
+      const source = await seeded()
+      const cookie = await loggedIn()
+      const sourceEventIds = events(await exported(source)).map((e) => e.ID)
+
+      const plan = await planNewChampionship(cookie, {
+        sourceId: source,
+        name: "champctl live fresh ids",
+        tracks: [{ track: "spa" }],
+      })
+      const made = await createOk(plan.planId, cookie)
+
+      const champ = await exported(made.championshipId)
+      expect(made.championshipId).not.toBe(source)
+      for (const id of events(champ).map((e) => e.ID)) {
+        expect(sourceEventIds).not.toContain(id)
+      }
+    })
+
+    it("carries the entry list slots and cars across from the source", async () => {
+      // The point of cloning: the class, the cars and the slots come from the
+      // source, and only what was named changes.
+      const source = await seeded()
+      const cookie = await loggedIn()
+      const before = await exported(source)
+
+      const plan = await planNewChampionship(cookie, {
+        sourceId: source,
+        name: "champctl live inherited",
+        tracks: [{ track: "spa" }],
+      })
+      const made = await createOk(plan.planId, cookie)
+      const champ = await exported(made.championshipId)
+
+      expect(champ.Classes?.[0]?.AvailableCars).toEqual(before.Classes?.[0]?.AvailableCars)
+      expect(events(champ)[0]?.RaceSetup?.Cars).toBeTruthy()
+    })
+
+    it("spends the plan once, so a double-tap cannot create two", async () => {
+      const source = await seeded()
+      const cookie = await loggedIn()
+      const plan = await planNewChampionship(cookie, {
+        sourceId: source,
+        name: "champctl live once",
+        tracks: [{ track: "spa" }],
+      })
+
+      await createOk(plan.planId, cookie)
+      const second = await createChampionship(plan.planId, cookie)
+      expect(second.statusCode).toBe(404)
+      expect(second.json().error.code).toBe("no-such-plan")
+    })
+
+    it("will not let one browser create another's championship", async () => {
+      const source = await seeded()
+      const mine = await loggedIn()
+      const theirs = await loggedIn()
+      const plan = await planNewChampionship(mine, {
+        sourceId: source,
+        name: "champctl live ownership",
+        tracks: [{ track: "spa" }],
+      })
+
+      const stolen = await createChampionship(plan.planId, theirs)
+      expect(stolen.statusCode).toBe(404)
     })
   })
 })
