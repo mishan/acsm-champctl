@@ -281,12 +281,14 @@ export const UNPAIRED_ENTRY_LIST_CHECKBOXES = NON_ARRAY_ENTRY_LIST_FIELDS
  * an index-out-of-range panic in ACSM, and a long one silently reassigns
  * entrant data (docs/acsm-write-path.md §1).
  *
- * Fields appearing exactly once are treated as form-level metadata rather than
- * a badly truncated array. That is a deliberate false-negative: a genuine array
- * truncated to one value would slip through, but the alternative is refusing
- * every legitimate payload the first time ACSM adds a counter field — which is
- * exactly what `EntryList.NumEntrants` did. This check is a safety net, not the
- * primary defence; the primary defence is never building the payload by hand.
+ * Only the fields named in `NON_ARRAY_ENTRY_LIST_FIELDS` are exempt. An earlier
+ * version also exempted anything appearing exactly once, so that a new
+ * form-level counter couldn't block writes — but that let a two-entrant payload
+ * missing one value through, which is precisely the case this exists to catch.
+ * Fails closed instead: an unrecognised `EntryList.*` key with the wrong count
+ * blocks the write, and the fix is to add it to the list above once someone has
+ * checked what it is. Being wrong in that direction costs a diagnosis; being
+ * wrong the other way costs an entry list.
  */
 
 export interface EntryListShapeProblem {
@@ -299,7 +301,7 @@ export function checkEntryListShape(fields: readonly FormField[]): EntryListShap
   const counts = shape(fields)
   const excluded = new Set<string>(NON_ARRAY_ENTRY_LIST_FIELDS)
   const entries = Object.entries(counts).filter(
-    ([k, n]) => k.startsWith("EntryList.") && !excluded.has(k) && n > 1,
+    ([k]) => k.startsWith("EntryList.") && !excluded.has(k),
   )
   if (entries.length === 0) return []
 

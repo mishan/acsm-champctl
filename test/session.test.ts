@@ -155,6 +155,38 @@ describe("login", () => {
     await expect(s.login({ username: "admin", password: "x" })).rejects.toThrow(/server error/)
   })
 
+  it("refuses a 3xx that isn't ACSM's redirect to /", async () => {
+    // An auth proxy, a TLS redirect or a captive portal will happily 302 with
+    // a cookie. Treating any redirect as success hands the caller a session
+    // that isn't one.
+    for (const location of [
+      "https://sso.example/authorize?next=/",
+      "/some/other/page",
+      "https://acsm.example/login",
+    ]) {
+      const { s } = session(() =>
+        new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location } }),
+      )
+      await expect(s.login({ username: "admin", password: "x" })).rejects.toThrow(
+        /redirected to .* rather than "\/"/,
+      )
+      expect(s.isLoggedIn).toBe(false)
+    }
+  })
+
+  it("accepts the root redirect written out in full", async () => {
+    // A build with server_manager_base_URL configured may send an absolute
+    // Location rather than a bare "/".
+    const { s } = session(() =>
+      new Response("", {
+        status: 302,
+        headers: { "set-cookie": sessionCookie, location: "https://acsm.example/" },
+      }),
+    )
+    await s.login({ username: "admin", password: "x" })
+    expect(s.isLoggedIn).toBe(true)
+  })
+
   it("says so when the account must change its password first", async () => {
     const { s } = session(() =>
       new Response("", {
@@ -604,8 +636,8 @@ describe("import safety rules", () => {
     ).resolves.toMatchObject({ championshipId: IMPORTED_ID })
   })
 
-  it("refuses rather than guessing when the check can't be answered", async () => {
-    // A 500, a timeout or a DNS failure must not read as "that ID is free" —
+  it("refuses rather than guessing when the target can't be read", async () => {
+    // A 500, a timeout or a DNS failure must not read as "nothing there" —
     // the next thing that happens is an import that overwrites a live
     // championship.
     const s = await importSession()
@@ -624,15 +656,61 @@ describe("import safety rules", () => {
           freshIds: false,
           reader,
         }),
-      ).rejects.toThrow(/Couldn't determine whether championship/)
+      ).rejects.toThrow(/Couldn't read championship/)
     }
   })
 
-  it("skips the check entirely when no reader is given", async () => {
+  it("insists on a reader when it could land on an existing championship", async () => {
+    // freshIds: false means the payload keeps its own ID, so it may overwrite
+    // something. Without a reader there is no way to find out what.
     const s = await importSession()
     await expect(
       importChampionship(s, championship({ ID: "11111111-2222-3333-4444-555555555555" }), {
         freshIds: false,
+      }),
+    ).rejects.toThrow(/needs a reader to check what is there first/)
+  })
+
+  it("needs no reader when generating fresh IDs, since nothing can collide", async () => {
+    const s = await importSession()
+    await expect(
+      importChampionship(s, championship({ ID: "11111111-2222-3333-4444-555555555555" })),
+    ).resolves.toMatchObject({ championshipId: IMPORTED_ID })
+  })
+
+  it("refuses to overwrite a target that has results, even with allowOverwrite", async () => {
+    // assertNoResults only inspects the payload. A results-free championship
+    // carrying a live one's ID would sail past it and destroy three weeks of
+    // racing — so the *target* is what gets checked.
+    const s = await importSession()
+    const live = championship({
+      ID: "11111111-2222-3333-4444-555555555555",
+      Events: [
+        raceEvent({ StartedTime: "2026-07-01T19:00:00-07:00" }),
+        raceEvent({ Scheduled: "2026-09-09T19:00:00-07:00" }),
+      ],
+    })
+    const reader = readerThat({ exportChampionship: async () => live })
+
+    for (const allowOverwrite of [false, true]) {
+      await expect(
+        importChampionship(s, championship({ ID: "11111111-2222-3333-4444-555555555555" }), {
+          freshIds: false,
+          allowOverwrite,
+          reader,
+        }),
+      ).rejects.toThrow(/has results for round 1/)
+    }
+  })
+
+  it("allows overwriting a target with no results when asked", async () => {
+    const s = await importSession()
+    const reader = readerThat({ exportChampionship: async () => championship() })
+    await expect(
+      importChampionship(s, championship({ ID: "11111111-2222-3333-4444-555555555555" }), {
+        freshIds: false,
+        allowOverwrite: true,
+        reader,
       }),
     ).resolves.toMatchObject({ championshipId: IMPORTED_ID })
   })

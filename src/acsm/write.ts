@@ -191,13 +191,16 @@ export interface ImportOptions {
    */
   freshIds?: boolean
   /**
-   * Allow importing over an ID that already exists on the server. Default
-   * false. Even when true, a championship with results is still refused.
+   * Allow importing over an ID that already exists. Default false.
+   *
+   * Only relaxes "something is already there". A target that has results is
+   * refused regardless — delete it in ACSM first if that is really the intent.
    */
   allowOverwrite?: boolean
   /**
-   * Reader used to check whether the ID already exists. Optional: without one
-   * the collision check is skipped and only the local results check applies.
+   * Reader used to inspect what is already on the server. Required when
+   * freshIds is false, because that is the case where the import can land on
+   * an existing championship and its results have to be checked first.
    */
   reader?: AcsmReader
   /**
@@ -211,7 +214,8 @@ export interface ImportOptions {
 }
 
 export interface ImportResult {
-  championshipId: string | undefined
+  /** Always set: importChampionship throws when ACSM does not redirect. */
+  championshipId: string
   /** The payload actually sent, so a caller can diff against the re-export. */
   sent: Championship
   /** Which mechanism this build turned out to use. Worth reporting in recon. */
@@ -239,24 +243,18 @@ export async function importChampionship(
     payload = { ...payload, Created: now, Updated: now }
   }
 
-  if (payload.ID && options.allowOverwrite !== true && options.reader) {
-    const existing = await idExists(options.reader, payload.ID)
-    if (existing === "yes") {
+  // With fresh IDs there is nothing on the server to collide with, so there is
+  // nothing to check. Keeping the payload's own ID means it may land on top of
+  // a real championship, and then the target has to be inspected — checking
+  // only the payload's results says nothing about what is already there.
+  if (options.freshIds === false && payload.ID) {
+    if (!options.reader) {
       throw new AcsmWriteError(
-        `Championship ${payload.ID} already exists on this server. Importing would overwrite it; ` +
-          `generate fresh IDs or pass allowOverwrite.`,
+        `Importing with freshIds: false can overwrite championship ${payload.ID} on the server, ` +
+          `so it needs a reader to check what is there first. Pass one, or leave freshIds on.`,
       )
     }
-    if (existing === "unknown") {
-      // Fail closed. The check exists to stop an overwrite, so an inconclusive
-      // answer has to block — treating it as "free" would let a network blip
-      // authorise the thing the check is here to prevent.
-      throw new AcsmWriteError(
-        `Couldn't determine whether championship ${payload.ID} already exists, so the import is ` +
-          `refused rather than risk overwriting it. Retry, or pass allowOverwrite if you're sure. ` +
-          `(Leaving freshIds on — the default — sidesteps this entirely.)`,
-      )
-    }
+    await assertTargetSafeToOverwrite(options.reader, payload.ID, options.allowOverwrite === true)
   }
 
   const mechanism = options.mechanism ?? (await detectImportMechanism(session))
@@ -285,6 +283,60 @@ export async function importChampionship(
 }
 
 /**
+ * The other half of plan §3.2, and the half that actually protects a season.
+ *
+ * `assertNoResults` inspects the payload, which says nothing about what is
+ * already on the server. A results-free championship carrying a live
+ * championship's ID would sail through it and overwrite three weeks of racing.
+ * So before an import that can land on an existing ID, fetch the target and
+ * check *its* results.
+ *
+ * `allowOverwrite` relaxes "something is already there". It does not relax
+ * "that something has results" — nothing does. If you genuinely need to replace
+ * a championship that has been raced, delete it in ACSM first, where the
+ * confirmation is a human's problem rather than a flag.
+ */
+async function assertTargetSafeToOverwrite(
+  reader: AcsmReader,
+  id: string,
+  allowOverwrite: boolean,
+): Promise<void> {
+  let target: Championship
+  try {
+    target = await reader.exportChampionship(id)
+  } catch (e) {
+    const status = e instanceof AcsmError ? e.status : undefined
+    if (status === 404) return // Nothing there; nothing to protect.
+    // Anything else is inconclusive, and an inconclusive answer must not
+    // authorise the write this check exists to prevent.
+    throw new AcsmWriteError(
+      `Couldn't read championship ${id} to check whether importing would destroy it, so the ` +
+        `import is refused. Retry once the server is reachable. (Leaving freshIds on — the ` +
+        `default — sidesteps this entirely.)`,
+      status,
+    )
+  }
+
+  const started = startedRounds(target)
+  if (started.length > 0) {
+    throw new AcsmWriteError(
+      `Championship ${id} on the server has results for ${
+        started.length === 1 ? "round" : "rounds"
+      } ${started.join(", ")}. Importing over it would destroy them. Delete it in ACSM first ` +
+        `if that is really what you want.`,
+    )
+  }
+
+  if (!allowOverwrite) {
+    throw new AcsmWriteError(
+      `Championship ${id} already exists on this server. It has no results, so overwriting it ` +
+        `is recoverable — pass allowOverwrite if that's the intent, or leave freshIds on to ` +
+        `import a copy instead.`,
+    )
+  }
+}
+
+/**
  * The hard rule from plan §3.2: never import over a championship that has any
  * event with a non-zero `StartedTime`.
  */
@@ -302,36 +354,6 @@ export function assertNoResults(championship: Championship): void {
   )
 }
 
-/**
- * Whether a championship ID is already on the server.
- *
- * Deliberately three-valued. Swallowing errors and returning false would turn
- * a network blip into "that ID is free", and the caller's next move is an
- * import that overwrites a live championship — the exact outcome the plan calls
- * the worst thing this tool can do. So "couldn't tell" is its own answer and
- * the caller refuses on it.
- */
-type Existence = "yes" | "no" | "unknown"
-
-async function idExists(reader: AcsmReader, id: string): Promise<Existence> {
-  try {
-    const list = await reader.listChampionships()
-    return list.some((c) => c.ID === id) ? "yes" : "no"
-  } catch {
-    // A build without the list endpoint (docs/acsm-write-path.md §6) can't
-    // answer that way. Ask for the export instead.
-  }
-
-  try {
-    await reader.exportChampionship(id)
-    return "yes"
-  } catch (e) {
-    // Only a 404 means the championship isn't there. A 401, a 500, a timeout
-    // or a DNS failure all mean we don't know, and must not read as "free".
-    const status = e instanceof AcsmError ? e.status : undefined
-    return status === 404 ? "no" : "unknown"
-  }
-}
 
 /** ACSM redirects to `/championship/{id}` after a successful import. */
 export function championshipIdFromRedirect(res: Response): string | undefined {

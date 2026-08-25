@@ -20,8 +20,15 @@ export interface Change {
 
 export interface DiffOptions {
   /**
-   * Paths to ignore. A trailing `*` matches a prefix, so `Events[*].ID` needs
-   * `Events[` handling — use `wildcardPath` for index-agnostic patterns.
+   * Paths to ignore.
+   *
+   * A pattern with no `*` matches that path and everything under it, so
+   * `SignUpForm` also hides `SignUpForm.Responses[0].GUID`.
+   *
+   * A `*` matches one path segment, not across `.` or `[]`, so
+   * `Events[*].ScheduledServerID` covers every event and `Events[*]` covers
+   * every event entirely. Note a bare field name only matches at the root —
+   * `ScheduledServerID` will not match `Events[0].ScheduledServerID`.
    */
   ignore?: readonly string[]
   /**
@@ -71,7 +78,15 @@ function sameInstant(a: unknown, b: unknown): boolean {
  * 1, and allowlisting a silent value change is how the same mechanism quietly
  * changes a race later. It stays a visible diff until someone explains it.
  */
-export const IMPORT_HOUSEKEEPING = ["Version", "Updated", "ScheduledServerID"] as const
+export const IMPORT_HOUSEKEEPING = [
+  "Version",
+  "Updated",
+  // ScheduledServerID lives on the event, not the championship, so the bare
+  // name matches nothing — a pattern without a wildcard is anchored at the
+  // root. Both spellings are listed in case a build carries it in both places.
+  "ScheduledServerID",
+  "Events[*].ScheduledServerID",
+] as const
 
 export function diff(before: unknown, after: unknown, options: DiffOptions = {}): Change[] {
   const changes: Change[] = []

@@ -277,7 +277,11 @@ export class AcsmSession {
       )
     }
 
-    if (isRedirect(res)) {
+    // Specifically a redirect to "/", which is what accounts.go does on
+    // success. Any other 3xx is somebody else talking — an auth proxy, a TLS
+    // redirect, a captive portal — and treating those as a login would hand
+    // the caller a session that isn't one.
+    if (isRedirect(res) && this.#redirectsToRoot(location)) {
       if (this.jar.names.length <= 1) {
         // Only `current-server`, which we set ourselves. ACSM said yes but gave
         // us nothing to authenticate with, so the session is not usable.
@@ -291,10 +295,37 @@ export class AcsmSession {
       return
     }
 
+    if (isRedirect(res)) {
+      throw new AcsmAuthError(
+        `Login as ${username} was redirected to ${location || "(no Location header)"} rather than "/". ` +
+          `ACSM sends a successful login to "/", so something else answered — an auth proxy, ` +
+          `or ${this.#baseUrl} isn't Server Manager.`,
+        res.status,
+      )
+    }
+
     throw new AcsmAuthError(
       `Login as ${username} failed: ${describeLoginFailure(res.status)}${describeCredentialShape(password)}`,
       res.status,
     )
+  }
+
+  /**
+   * True when a Location header points at this server's root.
+   *
+   * Accepts `/`, an absolute URL on our own origin with an empty path, and a
+   * query string on either — Go writes a bare `/`, but a build behind a
+   * configured `server_manager_base_URL` may write it out in full.
+   */
+  #redirectsToRoot(location: string): boolean {
+    if (!location) return false
+    try {
+      const target = new URL(location, this.#baseUrl)
+      if (target.origin !== new URL(this.#baseUrl).origin) return false
+      return target.pathname === "/" || target.pathname === ""
+    } catch {
+      return false
+    }
   }
 
   async logout(): Promise<void> {
@@ -346,7 +377,10 @@ export class AcsmSession {
         .map((p) => `${p.key} has ${p.count}, expected ${p.expected}`)
         .join("; ")
       throw new AcsmWriteError(
-        `Refusing to POST ${path}: the entry list arrays don't line up (${detail})`,
+        `Refusing to POST ${path}: the entry list arrays don't line up (${detail}). ` +
+          `ACSM reads these as parallel arrays, so sending this would give entrants ` +
+          `each other's data. If one of those keys is a form-level field rather than ` +
+          `a per-entrant array, add it to NON_ARRAY_ENTRY_LIST_FIELDS in form.ts.`,
         undefined,
         path,
       )
