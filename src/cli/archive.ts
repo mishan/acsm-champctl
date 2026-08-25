@@ -54,6 +54,9 @@ interface Args {
   help: boolean
 }
 
+/** Identifies archive traffic in ACSM's logs, distinctly from gridmom's. */
+export const ARCHIVE_USER_AGENT = "acsm-champctl/0.1 (archive)"
+
 export class UsageError extends Error {
   constructor(message: string) {
     super(message)
@@ -191,7 +194,16 @@ async function runCommand(argv: readonly string[]): Promise<number> {
 
   // No response cache: the archive wants what the server says right now, and a
   // cached body would be filed under the wrong fetch time.
-  const reader: AcsmReader = new HttpAcsmReader({ baseUrl })
+  //
+  // The User-Agent is set explicitly because the default names gridmom, and
+  // the two jobs look very different in a server log — gridmom is one
+  // championship on demand, the archive is every championship nightly.
+  // Telling them apart matters the first time someone asks what is talking to
+  // ACSM at 3am.
+  const reader: AcsmReader = new HttpAcsmReader({
+    baseUrl,
+    userAgent: ARCHIVE_USER_AGENT,
+  })
 
   const report = await ingest(reader, store, {
     ...(args.since === undefined ? {} : { skipCheckedSince: args.since }),

@@ -73,6 +73,32 @@ function isNotFound(e: unknown): boolean {
 }
 
 /**
+ * Whether a parsed index is usable, checking the fields `put` and the CLI
+ * actually rely on rather than every field in the interface.
+ *
+ * Proportionate on purpose. A snapshot entry with a missing `name` is still a
+ * usable history; one that isn't an object at all is not, because `put` reads
+ * `sha256` off the last of them and `readSnapshot` reads `file`.
+ */
+function isChampionshipIndex(value: unknown): value is ChampionshipIndex {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v["championshipId"] === "string" &&
+    typeof v["firstSeen"] === "string" &&
+    typeof v["lastCheckedAt"] === "string" &&
+    Array.isArray(v["snapshots"]) &&
+    v["snapshots"].every(
+      (s) =>
+        typeof s === "object" &&
+        s !== null &&
+        typeof (s as Record<string, unknown>)["file"] === "string" &&
+        typeof (s as Record<string, unknown>)["sha256"] === "string",
+    )
+  )
+}
+
+/**
  * One safe path segment: no separator, no traversal, no leading dot.
  *
  * Championship IDs arrive off the wire and become directory names, so this is
@@ -224,12 +250,23 @@ export class FileArchiveStore implements ArchiveStore {
       throw e
     }
 
+    let parsed: unknown
     try {
-      return JSON.parse(text) as ChampionshipIndex
+      parsed = JSON.parse(text)
     } catch {
       // Corrupt or half-written. Recoverable, so treat it as absent.
       return undefined
     }
+
+    // Parsing is not enough, and casting the result was the bug. `{}` and
+    // `null` are valid JSON, and both came back as a "ChampionshipIndex" that
+    // `put` then tripped over — `existing.snapshots.at(-1)` on undefined.
+    // `{"snapshots":"nope"}` was worse: it threw nothing, while the spread
+    // produced a fresh index and silently dropped the history.
+    //
+    // "Recoverable means treat it as absent" is only true if the shape is
+    // actually checked, so it is checked.
+    return isChampionshipIndex(parsed) ? parsed : undefined
   }
 
   /**

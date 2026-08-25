@@ -169,6 +169,55 @@ describe("archive store", () => {
     expect(await new FileArchiveStore(root).read(ID)).toBeUndefined()
   })
 
+  it("treats a valid-but-wrong-shaped index as absent, not as an index", async () => {
+    // Parsing was not enough, and casting the result was the bug. `{}` made
+    // put() throw on `existing.snapshots.at(-1)`; `{"snapshots":"nope"}` threw
+    // nothing at all and silently dropped the history instead.
+    const store = new FileArchiveStore(root)
+    for (const body of [
+      "{}",
+      "null",
+      "[]",
+      '"a string"',
+      '{"snapshots":"nope"}',
+      '{"championshipId":"x","firstSeen":"t","lastCheckedAt":"t"}',
+      '{"championshipId":"x","firstSeen":"t","lastCheckedAt":"t","snapshots":[1,2]}',
+    ]) {
+      await mkdir(join(root, ID), { recursive: true })
+      await writeFile(join(root, ID, "index.json"), body, "utf8")
+      expect(await store.read(ID), body).toBeUndefined()
+    }
+  })
+
+  it("recovers from a wrong-shaped index rather than throwing", async () => {
+    // The contract is "recoverable means treat it as absent", so the next run
+    // has to store a fresh snapshot instead of falling over.
+    const store = new FileArchiveStore(root)
+    await store.put(ID, '{"a":1}', at("2026-08-24T17:00:00Z"))
+    await writeFile(join(root, ID, "index.json"), "{}", "utf8")
+
+    const again = await store.put(ID, '{"a":2}', at("2026-08-25T17:00:00Z"))
+    expect(again.stored).toBe(true)
+    expect((await store.read(ID))?.snapshots).toHaveLength(1)
+  })
+
+  it("accepts a real index, including one with optional fields missing", async () => {
+    // Proportionate: a snapshot without a `name` is still a usable history.
+    const store = new FileArchiveStore(root)
+    await mkdir(join(root, ID), { recursive: true })
+    await writeFile(
+      join(root, ID, "index.json"),
+      JSON.stringify({
+        championshipId: ID,
+        firstSeen: "2026-08-24T17:00:00.000Z",
+        lastCheckedAt: "2026-08-24T17:00:00.000Z",
+        snapshots: [{ fetchedAt: "t", file: "f.json", sha256: "abc", bytes: 3 }],
+      }),
+      "utf8",
+    )
+    expect((await store.read(ID))?.snapshots).toHaveLength(1)
+  })
+
   it("skips directories that aren't ours rather than choking on them", async () => {
     // The archive root is an ordinary directory somebody may keep other things
     // in. Returning these made `status` throw UnsafeArchivePath on a folder
