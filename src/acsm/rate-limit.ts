@@ -43,7 +43,8 @@ export class RateLimiter {
     if (!Number.isInteger(this.#limit) || this.#limit < 1) {
       throw new RangeError(
         `A rate limit must be a whole number of requests per window, at least 1; got ` +
-          `${String(options.limit)}. Pass rateLimit: false to a reader to turn limiting off.`,
+          `${String(options.limit)}. To turn limiting off, pass rateLimit: false to the reader ` +
+          `or session being constructed rather than a limit of 0 here.`,
       )
     }
     if (!Number.isFinite(this.#windowMs) || this.#windowMs <= 0) {
