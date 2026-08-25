@@ -12,7 +12,7 @@
 
 import { walkChampionshipIds } from "./listing.js"
 import { exportPath } from "./paths.js"
-import type { Championship, ChampionshipSummary } from "./types.js"
+import type { AcsmHealthcheck, Championship, ChampionshipSummary } from "./types.js"
 import { RateLimiter, type RateLimiterOptions } from "./rate-limit.js"
 
 export interface AcsmReader {
@@ -39,7 +39,7 @@ export interface AcsmReader {
    */
   exportChampionshipRaw(id: string): Promise<Buffer>
   standings(id: string): Promise<unknown>
-  healthcheck(): Promise<unknown>
+  healthcheck(): Promise<AcsmHealthcheck>
 }
 
 export class AcsmError extends Error {
@@ -168,8 +168,8 @@ export class HttpAcsmReader implements AcsmReader {
     return this.#getJson(`/championship/${encodeURIComponent(id)}/standings.json`)
   }
 
-  async healthcheck(): Promise<unknown> {
-    return this.#getJson("/healthcheck.json")
+  async healthcheck(): Promise<AcsmHealthcheck> {
+    return this.#getJson<AcsmHealthcheck>("/healthcheck.json")
   }
 
   async #getJson<T>(path: string): Promise<T> {
@@ -318,7 +318,15 @@ export class StaticAcsmReader implements AcsmReader {
     throw new AcsmError("Standings are not available from a static reader")
   }
 
-  async healthcheck(): Promise<unknown> {
-    return { ok: true }
+  async healthcheck(): Promise<AcsmHealthcheck> {
+    // No server to ask, so no version to report. `dialectFrom` treats an
+    // unknown version as premium, which is the safe direction — see the note
+    // on `familyOf`.
+    //
+    // Both spellings, because a caller reading either should see the same
+    // answer from a static reader as from a real one. Answering only `OK`
+    // would make `--file` mode differ from a live manager in a way that has
+    // nothing to do with there being no server.
+    return { OK: true, ok: true }
   }
 }
