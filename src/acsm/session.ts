@@ -110,8 +110,25 @@ function readSetCookie(headers: Headers): string[] {
 /** Enough for ACSM's own hops; a loop is a bug worth surfacing, not chasing. */
 const MAX_REDIRECTS = 5
 
+/**
+ * The five status codes that actually mean "go here instead".
+ *
+ * Deliberately not `>= 300 && < 400`. That range also holds 304 Not Modified,
+ * 305 Use Proxy and the unused 306 — and 304 is the dangerous one, because it
+ * is a cache-validation response that a cache or reverse proxy may emit
+ * carrying the stored `Location` and `Set-Cookie` headers of the response it
+ * stands in for. Under the old test a 304 quoting `Location: /` was
+ * indistinguishable from a successful login, so `login()` could hand back a
+ * session that had never been authenticated.
+ *
+ * 303 is included because ACSM's own POST handlers use it; 307/308 because a
+ * proxy in front may. Anything outside this set is not a redirect and must not
+ * be followed or read for a `Location`.
+ */
+const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308])
+
 function isRedirect(res: Response): boolean {
-  return res.status >= 300 && res.status < 400
+  return REDIRECT_STATUSES.has(res.status)
 }
 
 function describeLoginFailure(status: number): string {
@@ -119,6 +136,13 @@ function describeLoginFailure(status: number): string {
     return "ACSM re-rendered the login page, which is what it does for a wrong username or password"
   }
   if (status === 500) return "ACSM returned a server error; check its logs"
+  if (status === 304) {
+    return (
+      "something answered the login POST with 304 Not Modified, which is a cache talking rather " +
+      "than Server Manager — champctl sends no conditional-request headers. Look for a caching " +
+      "proxy in front of it"
+    )
+  }
   return `unexpected HTTP ${status}`
 }
 

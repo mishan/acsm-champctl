@@ -12,11 +12,32 @@
  * explicit override exists for everything else.
  */
 
+import ipaddr from "ipaddr.js"
+
 export const OVERRIDE_ENV = "CHAMPCTL_I_KNOW_THIS_ISNT_LOCAL"
+
+/**
+ * Address ranges that count as "your own machine or network", by ipaddr.js's
+ * names for them.
+ *
+ * An allow-list rather than a deny-list, because that is the direction this
+ * guard has to fail in: a range nobody here thought about — `reserved`,
+ * `deprecatedSiteLocal`, `6to4`, `teredo`, plain global `unicast` — is not
+ * disposable, and needs the explicit override.
+ *
+ * `unspecified` covers 0.0.0.0 and ::, which mean "this host" when bound.
+ */
+const DISPOSABLE_RANGES: ReadonlySet<string> = new Set([
+  "loopback",
+  "private", // 10/8, 172.16/12, 192.168/16
+  "linkLocal", // 169.254/16 and fe80::/10
+  "uniqueLocal", // fc00::/7
+  "carrierGradeNat", // 100.64/10, which some home routers hand out
+  "unspecified",
+])
 
 const LOOPBACK_NAMES = new Set([
   "localhost",
-  "0.0.0.0",
   "host.docker.internal",
   // Compose service names, for running champctl inside the same network.
   "acsm",
@@ -28,36 +49,47 @@ const LOOPBACK_NAMES = new Set([
 /**
  * True for a host that is plausibly a container on your own machine or LAN.
  *
- * Covers loopback, RFC1918 private ranges, RFC6598 carrier-grade NAT (which
- * some home routers hand out), link-local, and the `.local`/`.internal`
- * suffixes mDNS and container DNS use.
+ * Two separate questions, in order. If the host parses as an IP address its
+ * range decides, and nothing below is consulted. Otherwise it is a name, and
+ * the DNS rules apply: mDNS and container suffixes, then a bare single-label
+ * host.
+ *
+ * That ordering is load-bearing. The name rules end in "no dots means local",
+ * and no IPv6 address contains a dot — so when address matching was hand-rolled
+ * and simply fell through on a miss, every global IPv6 address
+ * (`2606:4700:4700::1111`) reached that rule and was called disposable.
+ * Deciding addresses and names in separate branches is what rules out that
+ * whole class of mistake.
  */
 export function isDisposableHost(hostname: string): boolean {
   const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "")
   if (!host) return false
   if (LOOPBACK_NAMES.has(host)) return true
 
-  // IPv6 loopback and unique-local/link-local prefixes.
-  if (host === "::1" || host === "::") return true
-  if (/^f[cd][0-9a-f]{2}:/.test(host)) return true // fc00::/7 unique local
-  if (/^fe80:/.test(host)) return true // link local
-
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)
-  if (v4) {
-    const parts = v4.slice(1, 5).map(Number)
-    if (parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false
-    const [a, b] = parts as [number, number, number, number]
-    if (a === 127) return true // loopback
-    if (a === 10) return true // 10/8
-    if (a === 192 && b === 168) return true // 192.168/16
-    if (a === 172 && b >= 16 && b <= 31) return true // 172.16/12
-    if (a === 100 && b >= 64 && b <= 127) return true // 100.64/10 CGNAT
-    if (a === 169 && b === 254) return true // link local
-    return false
+  // Addresses: ipaddr.js rather than regexes. These ranges have more edges
+  // than they look — fe80::/10 is a ten-bit prefix, so it runs fe80..febf and
+  // not fe80 alone; fec0::/10 sits immediately next to it and is *not* local;
+  // ::ffff:192.168.1.5 has to be read as its IPv4 form; and `10.0.0` is
+  // inet_aton for 10.0.0.0, which is where a browser would send you. Each of
+  // those was wrong when this was written by hand.
+  if (ipaddr.isValid(host)) {
+    const addr = ipaddr.parse(host)
+    // An IPv4 address wearing an IPv6 coat; judge the address it really is.
+    // Only IPv6 has that range, hence the instanceof.
+    if (addr instanceof ipaddr.IPv6 && addr.range() === "ipv4Mapped") {
+      return DISPOSABLE_RANGES.has(addr.toIPv4Address().range())
+    }
+    return DISPOSABLE_RANGES.has(addr.range())
   }
 
-  // mDNS and container-DNS suffixes, plus a bare single-label hostname, which
-  // can only resolve on a local network anyway.
+  // A colon here is an IPv6 literal that failed to parse: a DNS name cannot
+  // contain one, and a URL's port is already stripped by the time we see the
+  // hostname. Malformed, so no. Checked before the name rules because those
+  // end in "no dots means local", and no IPv6 literal has dots.
+  if (host.includes(":")) return false
+
+  // Names. mDNS and container-DNS suffixes, plus a bare single-label hostname,
+  // which can only resolve on a local network anyway.
   if (host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".localhost")) {
     return true
   }

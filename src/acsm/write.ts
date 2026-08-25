@@ -313,6 +313,22 @@ async function assertTargetSafeToOverwrite(
     )
   }
 
+  // `getJson` casts the parsed body; it does not validate it. A 200 carrying
+  // `null`, `{}`, an error envelope, or anything else that parses would arrive
+  // at `startedRounds` as a championship with no events — which reads as "no
+  // results", the single answer that lets `allowOverwrite` go ahead. Fetching
+  // the wrong thing must not be able to authorise the destructive write this
+  // function exists to prevent, so the response has to identify itself as the
+  // championship that was asked for first.
+  const targetId = isRecord(target) ? target["ID"] : undefined
+  if (typeof targetId !== "string" || !sameChampionshipId(targetId, id)) {
+    throw new AcsmWriteError(
+      `Reading championship ${id} to check whether importing would destroy it returned ` +
+        `${describeUnidentifiedExport(target, targetId)}. champctl can't tell what is on the ` +
+        `server, so the import is refused. (Leaving freshIds on — the default — sidesteps this.)`,
+    )
+  }
+
   const started = startedRounds(target)
   if (started.length > 0) {
     throw new AcsmWriteError(
@@ -330,6 +346,29 @@ async function assertTargetSafeToOverwrite(
         `import a copy instead.`,
     )
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+/**
+ * ACSM's IDs are UUIDs, which it renders lower-case but which arrive here from
+ * whatever the caller typed. Compare case-insensitively so a hand-pasted
+ * upper-case ID doesn't fail the identity check and read as a server problem.
+ */
+function sameChampionshipId(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase()
+}
+
+/** Names what came back instead, so the refusal is diagnosable. */
+function describeUnidentifiedExport(target: unknown, targetId: unknown): string {
+  if (target === null) return "JSON null rather than a championship"
+  if (Array.isArray(target)) return "a JSON array rather than a championship"
+  if (!isRecord(target)) return `a bare JSON ${typeof target} rather than a championship`
+  if (targetId === undefined) return "an object with no ID field, so it isn't a championship export"
+  if (typeof targetId !== "string") return `an ID that is a ${typeof targetId}, not a string`
+  return `a different championship (${targetId})`
 }
 
 /**

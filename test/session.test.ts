@@ -174,6 +174,44 @@ describe("login", () => {
     }
   })
 
+  it("does not accept a 304 as a successful login", async () => {
+    // 304 Not Modified is a cache-validation response, not a redirect. A cache
+    // or reverse proxy can emit one carrying the Location and Set-Cookie of
+    // the response it stands in for — so a `status >= 300 && < 400` test made
+    // it indistinguishable from ACSM's own 302-to-/, and handed back a session
+    // that was never authenticated.
+    const { s } = session(() =>
+      new Response("", {
+        status: 304,
+        headers: { "set-cookie": sessionCookie, location: "/" },
+      }),
+    )
+    await expect(s.login({ username: "admin", password: "x" })).rejects.toThrow(/304/)
+    expect(s.isLoggedIn).toBe(false)
+  })
+
+  it("does not accept 305 or 306 either", async () => {
+    for (const status of [305, 306]) {
+      const { s } = session(() =>
+        new Response("", { status, headers: { "set-cookie": sessionCookie, location: "/" } }),
+      )
+      await expect(s.login({ username: "admin", password: "x" })).rejects.toBeInstanceOf(
+        AcsmAuthError,
+      )
+      expect(s.isLoggedIn).toBe(false)
+    }
+  })
+
+  it("accepts each status that really is a redirect to /", async () => {
+    for (const status of [301, 302, 303, 307, 308]) {
+      const { s } = session(() =>
+        new Response("", { status, headers: { "set-cookie": sessionCookie, location: "/" } }),
+      )
+      await s.login({ username: "admin", password: "x" })
+      expect(s.isLoggedIn, `status ${status}`).toBe(true)
+    }
+  })
+
   it("accepts the root redirect written out in full", async () => {
     // A build with server_manager_base_URL configured may send an absolute
     // Location rather than a bare "/".
@@ -279,6 +317,79 @@ describe("disposable host guard", () => {
     expect(isDisposableHost("ac.batlracing.com")).toBe(false)
   })
 
+  it("accepts the whole of fe80::/10, not just fe80", () => {
+    // The prefix is ten bits, so the first hextet runs fe80..febf. Matching
+    // only "fe80:" turned away a legitimate link-local harness address.
+    for (const h of ["fe80::1", "fe90::1", "fea0::1", "febf::1", "[fe80::1]"]) {
+      expect(isDisposableHost(h), h).toBe(true)
+    }
+  })
+
+  it("rejects IPv6 just outside the local prefixes", () => {
+    // fec0::/10 was site-local and is deprecated but routable-looking; fe00
+    // and fb00 sit below the fc00::/7 and fe80::/10 boundaries; 2001: is
+    // ordinary global unicast.
+    for (const h of ["fec0::1", "fe00::1", "fb00::1", "2001:db8::1"]) {
+      expect(isDisposableHost(h), h).toBe(false)
+    }
+  })
+
+  it("does not mistake a global IPv6 address for a single-label hostname", () => {
+    // No IPv6 address contains a dot, and the last rule here accepts any
+    // dot-free host as a local single-label name. Every global address used to
+    // fall through to it — a public ACSM on IPv6 passed the guard outright.
+    expect(isDisposableHost("2606:4700:4700::1111")).toBe(false)
+    expect(() =>
+      assertDisposable("http://[2606:4700:4700::1111]:8772", "recon", {}),
+    ).toThrow(/CHAMPCTL_I_KNOW_THIS_ISNT_LOCAL=yes/)
+  })
+
+  it("reads IPv4-mapped addresses as their IPv4 form", () => {
+    expect(isDisposableHost("::ffff:192.168.1.5")).toBe(true)
+    expect(isDisposableHost("::ffff:8.8.8.8")).toBe(false)
+  })
+
+  it("treats ranges nobody allow-listed as not disposable", () => {
+    // The address rules are an allow-list of ipaddr.js range names, so a range
+    // that was never considered fails closed rather than open. These are the
+    // ones a deny-list would have missed.
+    for (const h of [
+      "255.255.255.255", // broadcast
+      "224.0.0.1", // multicast
+      "240.0.0.1", // reserved
+      "192.0.2.1", // TEST-NET-1
+      "2002:c0a8:0101::1", // 6to4 — encodes 192.168.1.1, but is not local
+      "2001:0::1", // teredo
+      "ff02::1", // v6 multicast
+    ]) {
+      expect(isDisposableHost(h), h).toBe(false)
+    }
+  })
+
+  it("rejects malformed addresses rather than reading them as hostnames", () => {
+    // These don't parse as addresses and have dots, so they fall to the name
+    // rules and are rejected there. The failure mode that matters is a typo
+    // being waved through.
+    for (const h of ["999.1.1.1", "10.0.0.1.2", "not:an:address"]) {
+      expect(isDisposableHost(h), h).toBe(false)
+    }
+  })
+
+  it("resolves inet_aton shorthand the way a browser would", () => {
+    // 10.0.0 is 10.0.0.0 and 2130706433 is 127.0.0.1 — curl and every browser
+    // agree, so a URL written that way really does reach a local address and
+    // the guard should say so. 8.8.8 is 8.8.0.8, which does not.
+    expect(isDisposableHost("10.0.0")).toBe(true)
+    expect(isDisposableHost("2130706433")).toBe(true)
+    expect(isDisposableHost("8.8.8")).toBe(false)
+  })
+
+  it("accepts unique-local addresses across fc00::/7", () => {
+    for (const h of ["fc00::1", "fcff::1", "fd12:3456::1", "fdff::1"]) {
+      expect(isDisposableHost(h), h).toBe(true)
+    }
+  })
+
   it("accepts container and mDNS names", () => {
     for (const h of ["acsm", "champctl-acsm", "mishas-mac.local", "db.internal"]) {
       expect(isDisposableHost(h), h).toBe(true)
@@ -366,6 +477,22 @@ describe("single origin", () => {
       "https://acsm.example/new",
     ])
     expect(new Headers(calls[2]!.init.headers).get("Cookie")).toContain("_acsm_data")
+  })
+
+  it("does not chase the Location on a 304", async () => {
+    // Same reasoning as the login case: 304 is not a redirect, so there is
+    // nothing to follow. Following it would turn a cache hit into a request
+    // nobody asked for.
+    const { fn, calls } = scriptedFetch((url) =>
+      url.endsWith("/login")
+        ? new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
+        : new Response("", { status: 304, headers: { location: "/somewhere-else" } }),
+    )
+    const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn })
+    await s.login({ username: "admin", password: "x" })
+
+    await expect(s.getText("/cached")).rejects.toThrow()
+    expect(calls.map((c) => c.url)).not.toContain("https://acsm.example/somewhere-else")
   })
 
   it("refuses to follow a redirect off the origin", async () => {
@@ -626,7 +753,10 @@ describe("import safety rules", () => {
     // authorise overwriting a championship that has since been raced. The
     // session is the server being written to and doesn't cache.
     const s = await importSession(
-      championship({ Events: [raceEvent({ StartedTime: "2026-07-01T19:00:00-07:00" })] }),
+      championship({
+        ID: EXISTING_ID,
+        Events: [raceEvent({ StartedTime: "2026-07-01T19:00:00-07:00" })],
+      }),
     )
     await expect(
       importChampionship(s, championship({ ID: EXISTING_ID }), { freshIds: false }),
@@ -661,6 +791,7 @@ describe("import safety rules", () => {
 
   it("refuses to overwrite a target that has results, even with allowOverwrite", async () => {
     const live = championship({
+      ID: EXISTING_ID,
       Events: [
         raceEvent({ StartedTime: "2026-07-01T19:00:00-07:00" }),
         raceEvent({ Scheduled: "2026-09-09T19:00:00-07:00" }),
@@ -678,14 +809,14 @@ describe("import safety rules", () => {
   })
 
   it("refuses an existing results-free target unless allowOverwrite is set", async () => {
-    const s = await importSession(championship())
+    const s = await importSession(championship({ ID: EXISTING_ID }))
     await expect(
       importChampionship(s, championship({ ID: EXISTING_ID }), { freshIds: false }),
     ).rejects.toThrow(/already exists on this server/)
   })
 
   it("allows overwriting a results-free target when asked", async () => {
-    const s = await importSession(championship())
+    const s = await importSession(championship({ ID: EXISTING_ID }))
     await expect(
       importChampionship(s, championship({ ID: EXISTING_ID }), {
         freshIds: false,
@@ -694,6 +825,47 @@ describe("import safety rules", () => {
     ).resolves.toMatchObject({ championshipId: IMPORTED_ID })
   })
 
+  it("matches the target ID case-insensitively", async () => {
+    // ACSM writes UUIDs lower-case, but the ID may have been typed or pasted.
+    // A case difference is not a mismatch, and treating it as one would look
+    // like a server fault.
+    const s = await importSession(championship({ ID: EXISTING_ID.toUpperCase() }))
+    await expect(
+      importChampionship(s, championship({ ID: EXISTING_ID }), { freshIds: false }),
+    ).rejects.toThrow(/already exists on this server/)
+  })
+
+  describe("a 200 that isn't the championship we asked for", () => {
+    // getJson casts; it does not validate. Each of these parses fine and has
+    // no events, so startedRounds() calls it results-free — which is the one
+    // answer that lets allowOverwrite proceed. The guard has to reject them
+    // before that, or "fail closed" isn't true.
+    const notOurChampionship: [string, string, RegExp][] = [
+      ["JSON null", "null", /JSON null/],
+      ["an empty object", "{}", /no ID field/],
+      ["an array", "[]", /JSON array/],
+      ["a bare string", '"nope"', /bare JSON string/],
+      ["an error envelope", '{"error":"nope"}', /no ID field/],
+      ["a non-string ID", '{"ID":42}', /ID that is a number/],
+      [
+        "a different championship",
+        '{"ID":"deadbeef-0000-0000-0000-000000000000"}',
+        /different championship \(deadbeef/,
+      ],
+    ]
+
+    for (const [what, body, expected] of notOurChampionship) {
+      it(`refuses when the export is ${what}, even with allowOverwrite`, async () => {
+        const s = await importSession(new Response(body, { status: 200 }))
+        await expect(
+          importChampionship(s, championship({ ID: EXISTING_ID }), {
+            freshIds: false,
+            allowOverwrite: true,
+          }),
+        ).rejects.toThrow(expected)
+      })
+    }
+  })
 })
 
 describe("regenerateIds", () => {

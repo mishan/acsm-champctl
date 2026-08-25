@@ -355,8 +355,22 @@ wrong.
 **`EntryList.NumEntrants`:** a form-level count, one occurrence alongside the
 24-long arrays. Not something the source reading turned up. It made
 `checkEntryListShape` call every legitimate payload ragged, which would have
-blocked every write — so the check now ignores `EntryList.*` fields appearing
-exactly once.
+blocked every write.
+
+The first fix was to exempt any `EntryList.*` field appearing exactly once.
+That was wrong, and is no longer what the code does: a two-entrant payload that
+has lost one value also leaves that key with a count of one, so the rule
+exempted precisely the truncation the check exists to catch. It now fails
+closed. Only the keys named in `NON_ARRAY_ENTRY_LIST_FIELDS` —
+`OverwriteAllEvents`, `TransferTeamPoints`, `NumEntrants` — are exempt, and any
+other `EntryList.*` key whose count disagrees with the rest blocks the POST,
+whatever that count is.
+
+The cost is that a **new** form-level scalar in a later ACSM build will block
+writes until someone adds it to that list. That is the intended trade: wrong in
+this direction costs a diagnosis, wrong in the other costs an entry list. If
+you hit it, confirm the field really is form-level and not per-entrant before
+adding it — §1 has what a ragged POST does to ACSM.
 
 **Schedule form** (recon item 4, closed). Fields are hyphenated rather than
 Go-style:
