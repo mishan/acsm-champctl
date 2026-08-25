@@ -146,6 +146,20 @@ describe("SqliteCache", () => {
     b.close()
   })
 
+  it("leaves nothing open behind it when closed", async () => {
+    // The connection owns a WAL and a shared-memory file. SQLite removes both
+    // on a clean close and leaves them for the next process to recover on an
+    // unclean one, so their absence is the observable form of "closed" —
+    // worth pinning, because nothing else in a CLI that exits immediately
+    // would ever notice the difference.
+    const c = await open()
+    await c.set("https://acsm.example/a", "x")
+    expect(await readdir(join(root, "acsm"))).toContain("cache.db-wal")
+
+    c.close()
+    expect(await readdir(join(root, "acsm"))).toEqual(["cache.db"])
+  })
+
   it("keeps the cache directory to the database and its sidecars", async () => {
     const c = await open()
     await c.set("https://acsm.example/a", "x")

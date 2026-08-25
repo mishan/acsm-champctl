@@ -1107,7 +1107,7 @@ describe("regenerateIds", () => {
     // adding a field. An export is parsed JSON, where __proto__ survives as an
     // ordinary own property — so a championship that merely *contained* one
     // came out inheriting fields nobody set, and every check downstream read
-    // them as real. deepMerge has guarded this since it was written.
+    // them as real.
     const source = JSON.parse(
       `{"ID":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","Nested":{"__proto__":{"polluted":true},"Ref":"ok"}}`,
     ) as { Nested: Record<string, unknown> }

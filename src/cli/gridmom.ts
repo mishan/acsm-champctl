@@ -140,13 +140,29 @@ function parseSeverity(v: string): Severity {
   throw new UsageError(`--min must be ERROR, WARN or INFO`)
 }
 
-async function readerFor(args: Args, baseUrl: string): Promise<AcsmReader> {
-  return new HttpAcsmReader({
-    baseUrl,
-    ...(args.cache
-      ? { cache: await SqliteCache.open({ path: resolve(process.cwd(), ".cache/acsm/cache.db") }) }
-      : {}),
-  })
+/**
+ * Builds a reader and runs `use` with it, closing the cache afterwards.
+ *
+ * The cache owns a SQLite connection, and a connection nobody closes leaves
+ * its WAL and shared-memory files behind for the next process to recover. That
+ * costs nothing on a CLI that exits immediately, and it is exactly the kind of
+ * thing that stops being free when the same code is called twice from a bot.
+ * Closing belongs here rather than in the reader: a cache is meant to outlive
+ * any one reader, so the thing that opened it is the thing that ends it.
+ */
+async function withReader<T>(
+  args: Args,
+  baseUrl: string,
+  use: (reader: AcsmReader) => Promise<T>,
+): Promise<T> {
+  const cache = args.cache
+    ? await SqliteCache.open({ path: resolve(process.cwd(), ".cache/acsm/cache.db") })
+    : undefined
+  try {
+    return await use(new HttpAcsmReader({ baseUrl, ...(cache ? { cache } : {}) }))
+  } finally {
+    cache?.close()
+  }
 }
 
 /**
@@ -177,8 +193,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
   if (args.command === "list") {
     if (!baseUrl)
       throw new UsageError(`No ACSM base URL; set one in the profile or pass --base-url`)
-    const reader = await readerFor(args, baseUrl)
-    const list = await reader.listChampionships()
+    const list = await withReader(args, baseUrl, (reader) => reader.listChampionships())
     for (const c of list) process.stdout.write(`${c.ID ?? "?"}  ${c.Name ?? ""}\n`)
     return 0
   }
@@ -195,8 +210,8 @@ async function runCommand(argv: readonly string[]): Promise<number> {
   } else if (args.target) {
     if (!baseUrl)
       throw new UsageError(`No ACSM base URL; set one in the profile or pass --base-url`)
-    const reader = await readerFor(args, baseUrl)
-    championship = await reader.exportChampionship(args.target)
+    const target = args.target
+    championship = await withReader(args, baseUrl, (reader) => reader.exportChampionship(target))
   } else {
     throw new UsageError(`check needs a championship id or --file`)
   }
