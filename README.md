@@ -20,8 +20,12 @@ README covers what exists today.
   by hand.
 
 - **Phase 3 — finalize a race.** The engine is in: the flow with a diff preview
-  and the stale-entry-list guard, plus the server-side session store. No HTTP
-  server or UI on top of it yet.
+  and the stale-entry-list guard, plus the server-side session store.
+
+- **Phase 4 — create a month.** The engine is in too: the month emitter,
+  template-and-overlay with a grid cap and clone-last-month.
+
+Neither Phase 3 nor Phase 4 has an HTTP server or UI on top of it yet.
 
 The read client and the write session are separate types on purpose. The bot and
 the archive import only `AcsmReader`, which has no way to authenticate — that
@@ -37,6 +41,7 @@ src/
   profile/     league profile schema + loader
   gridmom/     the checker: findings model, check registry, formatters
   finalize/    race format, schedule maths, plan + apply (phase 3)
+  emit/        template merge, month generation, clone (phase 4)
   web/         server-side session store for the UI
   cli/         the command-line entry points, over a shared args module
 docker/        throwaway ACSM for recon and live tests
@@ -251,6 +256,68 @@ preview shows the problems this change is about to introduce rather than
 yesterday's. That includes the schedule: a plan that moves quali is checked at
 the time it would land, so moving a race onto a Saturday says so before it is
 sent, and moving one out of the past stops complaining that it is in the past.
+
+## Create a month
+
+Phase 4's engine (plan §4.1, §5.1). A golden template plus overlays, out comes
+a championship ready to import.
+
+```
+golden template (a real exported championship)
+  → league defaults    (the profile baseline)
+    → month overrides  (name, cars, tracks, schedule)
+      → event overrides (format, race length)
+        → emit
+```
+
+```ts
+const { championship, grid, schedule, derived } = emitMonth({
+  template, profile, pits,
+  spec: {
+    name: "September 2026",
+    cars: ["rss_formula_hybrid_2021"],
+    rounds: [{ track: "spa" }, { track: "suzuka", date: "2026-09-16" }],
+    startDate: "2026-09-02",
+    format: { length: { kind: "laps", laps: 18 }, reversedGridPositions: 5,
+              mandatoryPit: true, extraLap: false },
+  },
+})
+
+grid.summary   // "Capped at 24 by suzuka."
+derived        // what the emitter set rather than inherited
+```
+
+`cloneMonth({ source, overrides })` is the same pipeline with last month as the
+template and the spec read back out of it — the most-used path per §5.1, and
+deliberately not a separate code path with its own bugs. It does *not* carry
+last month's dates.
+
+**Anything the emitter doesn't model flows through from the template.** That's
+what makes this survive ACSM upgrades: the schema is a large undocumented Go
+struct, so the merge handles values rather than fields. Arrays replace rather
+than merging, because `Events` is an ordered list where position is the round
+number — index-wise merging would leave last month's round 5 attached to a
+three-round month.
+
+**What it sets rather than inherits** is exactly the list of bugs the
+round-trip diff caught (§5.5): `Created` stamped rather than carried from the
+template, `RaceSetup.Cars` derived from the class car list plus the spectator
+model *only when the spectator car is on*, `ExportSecondRaceToACSR` forced off
+when ACSR is off, and sign-up `ExtraFields` cleared when sign-ups are disabled.
+Results and entry lists are cleared too, so the month is importable and doesn't
+carry last month's drivers.
+
+**The grid cap names the track that set it** — "capped at 24 by Brands Hatch
+Indy" tells you what to drop; "capped at 24" just invites an argument. An
+unknown pit count is never treated as unlimited. Entry list length is a
+*separate* number and is not sized down to the cap: BATL runs 30 slots against
+`MaxClients: 18` on purpose, and shrinking it would lock people out of a
+championship for a constraint that applies on one night (§4.4).
+
+The §4.1 regression test re-emits a template with no overrides and diffs the
+result, allowing only an explicit list of expected changes. When an ACSM upgrade
+adds a field the emitter doesn't know about, that test fails before a Wednesday
+does.
 
 ## League profiles
 
