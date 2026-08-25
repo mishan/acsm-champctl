@@ -11,7 +11,14 @@
     "gridmom": "./bin/gridmom.js",
     "champctl-archive": "./bin/champctl-archive.js"
   },
+  "//files": "dist/ is in .gitignore, and without an explicit list npm packs by gitignore rules — so the tarball shipped bin/ scripts importing a directory that wasn't in it. README and LICENSE come along whatever this says.",
+  "files": [
+    "bin",
+    "dist"
+  ],
   "scripts": {
+    "//prepare": "bin/ runs the compiled output, so an install has to compile. prepare covers both routes npm takes: it runs on npm install from a git URL, and before npm pack or publish.",
+    "prepare": "npm run build",
     "gridmom": "tsx src/cli/gridmom.ts",
     "archive": "tsx src/cli/archive.ts",
     "build": "tsc -p tsconfig.build.json",
