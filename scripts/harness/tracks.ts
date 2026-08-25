@@ -27,6 +27,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 
 /**
  * A track ACSM will enumerate, and the pit count champctl should read back.
@@ -116,8 +117,17 @@ async function main(): Promise<void> {
   process.stdout.write(`Wrote ${written.length} synthetic tracks under ${dir}\n`)
 }
 
-// Only when run as a script; the exports above are used by tests.
-if (process.argv[1]?.endsWith("tracks.ts")) {
+/**
+ * Only when run as a script; the exports above are used by tests.
+ *
+ * Compares this module's URL with the entry point rather than matching the
+ * filename. The filename check did work — tsx sets argv[1] to the script path
+ * even when invoked as `node node_modules/.bin/tsx scripts/harness/tracks.ts`,
+ * which is how oss.sh calls it — but it was a fact about tsx's behaviour and
+ * about this file keeping its name, and neither is something a reader can see
+ * from here. This is the idiom that means what it says.
+ */
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((e: unknown) => {
     process.stderr.write(`harness:tracks failed: ${e instanceof Error ? e.message : String(e)}\n`)
     process.exitCode = 1

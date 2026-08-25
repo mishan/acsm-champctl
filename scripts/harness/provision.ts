@@ -22,6 +22,7 @@
  *   npm run harness:provision
  */
 
+import { pathToFileURL } from "node:url"
 import { HttpAcsmReader } from "../../src/acsm/client.js"
 import { dialectFrom } from "../../src/acsm/dialect.js"
 import { assertDisposable } from "../../src/acsm/disposable.js"
@@ -249,7 +250,22 @@ export function looksLikeLoginPage(html: string): boolean {
   return /<form[^>]+action=["'][^"']*\/login["']/i.test(html) || /name=["']Password["']/i.test(html)
 }
 
-main().catch((e: unknown) => {
-  process.stderr.write(`harness:provision failed: ${e instanceof Error ? e.message : String(e)}\n`)
-  process.exitCode = 1
-})
+/**
+ * Run only when this file is what was executed.
+ *
+ * The same reasoning as `tracks.ts` above, and the same miss: this module
+ * exports `looksLikeLoginPage`, which is unit-tested, so importing it *ran a
+ * provisioning attempt*. `npm test` reached for CHAMPCTL_LIVE_URL, wrote a
+ * failure to stderr and set a non-zero exit code during a run that has no
+ * harness — invisible only because vitest sets its own. In a shell that has
+ * been running the live suite, where the variable is set, it would have gone
+ * further and started posting to a real manager from a unit test.
+ */
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e: unknown) => {
+    process.stderr.write(
+      `harness:provision failed: ${e instanceof Error ? e.message : String(e)}\n`,
+    )
+    process.exitCode = 1
+  })
+}
