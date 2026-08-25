@@ -29,20 +29,8 @@ import {
   exportPath,
   importChampionship,
 } from "../../src/acsm/write.js"
-import {
-  connect,
-  log,
-  runRecon,
-  seedChampionship,
-  writeArtefact,
-} from "./env.js"
-import {
-  isLegacyVersion,
-  raggedKeys,
-  redactBaseUrl,
-  stableSource,
-  stableUrl,
-} from "./report.js"
+import { connect, log, runRecon, seedChampionship, writeArtefact } from "./env.js"
+import { isLegacyVersion, raggedKeys, redactBaseUrl, stableSource, stableUrl } from "./report.js"
 
 // Relative, so the fallback path in the artefact is repo-relative rather
 // than whoever ran it. seedChampionship resolves it against cwd to read.
@@ -115,11 +103,9 @@ async function main(): Promise<void> {
   // How a championship is handed over differs by version: 1.7.9 renders a
   // textarea and reads r.FormValue("import"); 2.4.5 takes a multipart upload.
   const mechanism = await detectImportMechanism(session)
-  const importForm = findFormByAction(
-    await session.getText(IMPORT_PATH),
-    IMPORT_PATH,
-    { pageUrl: session.url(IMPORT_PATH) },
-  )
+  const importForm = findFormByAction(await session.getText(IMPORT_PATH), IMPORT_PATH, {
+    pageUrl: session.url(IMPORT_PATH),
+  })
   log(
     `Import: ${mechanism.kind === "file" ? "multipart file upload" : "form field (paste JSON)"}` +
       ` named "${mechanism.field}", enctype=${importForm?.enctype ?? "?"}`,
@@ -173,7 +159,9 @@ async function main(): Promise<void> {
   } else if (entrantIdCount === nameCount) {
     log(`  EntryList.EntrantID is rendered ${entrantIdCount} times — pit boxes round-trip.`)
   } else {
-    log(`  !! EntryList.EntrantID appears ${entrantIdCount} times but there are ${nameCount} entrants.`)
+    log(
+      `  !! EntryList.EntrantID appears ${entrantIdCount} times but there are ${nameCount} entrants.`,
+    )
   }
 
   // The EntryList keys that aren't per-entrant arrays, reported separately so
@@ -239,9 +227,11 @@ async function main(): Promise<void> {
     log(`Track info for ${track}: ${JSON.stringify(trackInfo).slice(0, 200)}`)
   } catch (e) {
     log("")
-    log(`Track info for ${track} unavailable (expected with no content installed): ${
-      e instanceof Error ? e.message : String(e)
-    }`)
+    log(
+      `Track info for ${track} unavailable (expected with no content installed): ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    )
   }
 
   await writeArtefact(version ? `forms-${version}.json` : "forms.json", {
@@ -297,6 +287,5 @@ function entrantStatusLinks(html: string): string[] {
   }
   return [...out]
 }
-
 
 await runRecon("recon:forms", main)

@@ -14,11 +14,7 @@ export const Severity = {
 export type Severity = (typeof Severity)[keyof typeof Severity]
 
 /** Descending order of seriousness. Used for sorting and exit codes. */
-export const SEVERITY_ORDER: readonly Severity[] = [
-  Severity.ERROR,
-  Severity.WARN,
-  Severity.INFO,
-]
+export const SEVERITY_ORDER: readonly Severity[] = [Severity.ERROR, Severity.WARN, Severity.INFO]
 
 const SEVERITY_RANK: Record<Severity, number> = {
   ERROR: 0,

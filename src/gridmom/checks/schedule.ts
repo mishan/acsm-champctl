@@ -14,13 +14,7 @@
 import { DateTime } from "luxon"
 
 import type { ChampionshipEvent } from "../../acsm/types.js"
-import {
-  eventHasStarted,
-  eventLabel,
-  events,
-  isZeroTime,
-  session,
-} from "../../acsm/view.js"
+import { eventHasStarted, eventLabel, events, isZeroTime, session } from "../../acsm/view.js"
 import type { Check, CheckContext } from "../context.js"
 import { humanList } from "../finding.js"
 

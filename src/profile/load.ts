@@ -77,7 +77,10 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
     bad("`entryList.targetSlots` must be >= 0")
   }
 
-  if (p["baseline"] !== undefined && (typeof p["baseline"] !== "object" || p["baseline"] === null)) {
+  if (
+    p["baseline"] !== undefined &&
+    (typeof p["baseline"] !== "object" || p["baseline"] === null)
+  ) {
     bad("`baseline` must be an object")
   }
 

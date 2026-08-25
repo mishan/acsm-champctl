@@ -92,8 +92,7 @@ export function diff(before: unknown, after: unknown, options: DiffOptions = {})
   const changes: Change[] = []
   const ignore = options.ignore ?? []
 
-  const ignored = (path: string): boolean =>
-    ignore.some((pattern) => matches(path, pattern))
+  const ignored = (path: string): boolean => ignore.some((pattern) => matches(path, pattern))
 
   const walk = (a: unknown, b: unknown, path: string): void => {
     if (ignored(path)) return

@@ -118,7 +118,9 @@ describe("masking for committed artefacts", () => {
     // Actions resolve to absolute URLs, so they carry the host; the ids are
     // new on every run, so leaving them makes every capture differ.
     expect(
-      stableUrl("http://192.168.2.4:8772/championship/b3607ce3-cb71-48e0-a335-ed09b8ce377e/event/submit"),
+      stableUrl(
+        "http://192.168.2.4:8772/championship/b3607ce3-cb71-48e0-a335-ed09b8ce377e/event/submit",
+      ),
     ).toBe("/championship/{id}/event/submit")
   })
 
@@ -148,8 +150,9 @@ describe("masking for committed artefacts", () => {
   it("masks ids in a provenance sentence without mangling it", () => {
     // stableUrl would percent-encode the spaces into nonsense; this is prose,
     // not a URL.
-    expect(stableSource("copy of championship b3607ce3-cb71-48e0-a335-ed09b8ce377e on this server"))
-      .toBe("copy of championship {id} on this server")
+    expect(
+      stableSource("copy of championship b3607ce3-cb71-48e0-a335-ed09b8ce377e on this server"),
+    ).toBe("copy of championship {id} on this server")
   })
 })
 

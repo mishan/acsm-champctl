@@ -43,8 +43,7 @@ export function liveConfig(): LiveConfig | undefined {
 /** `describe.skipIf(!live)` reads badly; this reads as what it means. */
 export const LIVE = liveConfig() !== undefined
 
-export const SKIP_REASON =
-  "set CHAMPCTL_LIVE_URL and CHAMPCTL_LIVE_PASSWORD to run against docker/"
+export const SKIP_REASON = "set CHAMPCTL_LIVE_URL and CHAMPCTL_LIVE_PASSWORD to run against docker/"
 
 export async function liveSession(): Promise<AcsmSession> {
   const config = liveConfig()

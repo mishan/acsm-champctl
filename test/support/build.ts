@@ -65,10 +65,7 @@ export function emptySlots(n: number): Partial<Entrant>[] {
   return Array.from({ length: n }, () => ({}))
 }
 
-export function driver(
-  name: string,
-  over: Partial<Entrant> = {},
-): Partial<Entrant> {
+export function driver(name: string, over: Partial<Entrant> = {}): Partial<Entrant> {
   return {
     Name: name,
     GUID: `7656119${name.length}${name.charCodeAt(0)}${name.charCodeAt(name.length - 1)}`,
@@ -122,15 +119,18 @@ export function raceEvent(over: Partial<ChampionshipEvent> = {}): ChampionshipEv
   }
 }
 
-export function championshipClass(
-  over: Partial<ChampionshipClass> = {},
-): ChampionshipClass {
+export function championshipClass(over: Partial<ChampionshipClass> = {}): ChampionshipClass {
   return {
     ID: "class-1",
     Name: "RSS Formula Hybrid",
     AvailableCars: ["rss_formula_hybrid_2021"],
     Entrants: entryList(emptySlots(4)),
-    Points: { Places: Array.from({ length: 20 }, (_, i) => 25 - i), BestLap: 1, PolePosition: 1, SecondRaceMultiplier: 1 },
+    Points: {
+      Places: Array.from({ length: 20 }, (_, i) => 25 - i),
+      BestLap: 1,
+      PolePosition: 1,
+      SecondRaceMultiplier: 1,
+    },
     ...over,
   }
 }

@@ -158,9 +158,7 @@ export function regenerateIds<T>(value: T): T {
  * multipart upload. Guessing wrong produces no error — ACSM adds a flash and
  * re-renders the page with a 200 — so the mechanism is read off the form.
  */
-export type ImportMechanism =
-  | { kind: "textarea"; field: string }
-  | { kind: "file"; field: string }
+export type ImportMechanism = { kind: "textarea"; field: string } | { kind: "file"; field: string }
 
 /** Works out how to import by looking at what the import page renders. */
 export async function detectImportMechanism(session: AcsmSession): Promise<ImportMechanism> {
@@ -231,7 +229,8 @@ export async function importChampionship(
 ): Promise<ImportResult> {
   assertNoResults(championship)
 
-  let payload: Championship = options.freshIds === false ? championship : regenerateIds(championship)
+  let payload: Championship =
+    options.freshIds === false ? championship : regenerateIds(championship)
 
   if (options.stampCreated !== false) {
     const now = (options.now ?? new Date()).toISOString()
@@ -397,7 +396,6 @@ export function assertNoResults(championship: Championship): void {
       `results destroys them.`,
   )
 }
-
 
 /**
  * ACSM redirects to `/championship/{id}` after a successful import.

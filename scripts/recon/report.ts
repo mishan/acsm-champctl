@@ -145,10 +145,7 @@ export interface PitBoxComparison {
  * position is doing the work is worth knowing about on its own
  * (docs/acsm-write-path.md §2).
  */
-export function comparePitBoxes(
-  sent: Championship,
-  returned: Championship,
-): PitBoxComparison {
+export function comparePitBoxes(sent: Championship, returned: Championship): PitBoxComparison {
   const boxesOf = (c: Championship): (number | undefined)[] =>
     slots(events(c)[0]?.EntryList).map((s) => s.entrant.PitBox)
 

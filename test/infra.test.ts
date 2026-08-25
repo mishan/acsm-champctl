@@ -176,7 +176,13 @@ describe("profile validation", () => {
       validateProfile({
         id: "x",
         name: "X",
-        schedule: { weekday: 8, qualiStart: "20:00", timezone: "UTC", practiceMinutes: 60, qualiMinutes: 20 },
+        schedule: {
+          weekday: 8,
+          qualiStart: "20:00",
+          timezone: "UTC",
+          practiceMinutes: 60,
+          qualiMinutes: 20,
+        },
         entryList: { targetSlots: 10 },
       }),
     ).toThrow(/weekday/)
@@ -187,7 +193,13 @@ describe("profile validation", () => {
       validateProfile({
         id: "x",
         name: "X",
-        schedule: { weekday: 3, qualiStart: "8pm", timezone: "UTC", practiceMinutes: 60, qualiMinutes: 20 },
+        schedule: {
+          weekday: 3,
+          qualiStart: "8pm",
+          timezone: "UTC",
+          practiceMinutes: 60,
+          qualiMinutes: 20,
+        },
         entryList: { targetSlots: 10 },
       }),
     ).toThrow(/qualiStart/)
@@ -208,12 +220,20 @@ describe("view helpers", () => {
     // also carried the friendly spellings. Sessions is a map, so the wrong key
     // isn't an error — the lookup just finds nothing and every format check
     // silently passes.
-    const upper = { RaceSetup: { Sessions: { PRACTICE: { Time: 60 }, QUALIFY: { Time: 20 }, RACE: { Laps: 20 } } } }
+    const upper = {
+      RaceSetup: {
+        Sessions: { PRACTICE: { Time: 60 }, QUALIFY: { Time: 20 }, RACE: { Laps: 20 } },
+      },
+    }
     expect(session(upper, "Practice")?.Time).toBe(60)
     expect(session(upper, "Qualifying")?.Time).toBe(20)
     expect(session(upper, "Race")?.Laps).toBe(20)
 
-    const friendly = { RaceSetup: { Sessions: { Practice: { Time: 60 }, Qualifying: { Time: 20 }, Race: { Laps: 20 } } } }
+    const friendly = {
+      RaceSetup: {
+        Sessions: { Practice: { Time: 60 }, Qualifying: { Time: 20 }, Race: { Laps: 20 } },
+      },
+    }
     expect(session(friendly, "Practice")?.Time).toBe(60)
     expect(session(friendly, "Qualifying")?.Time).toBe(20)
     expect(session(friendly, "Race")?.Laps).toBe(20)
@@ -263,10 +283,9 @@ describe("CLI argument parsing", () => {
   })
 
   it("splits a suppression list", () => {
-    expect(parseArgs(["check", "--file", "x.json", "--suppress", "format,entry.x"]).suppress).toEqual([
-      "format",
-      "entry.x",
-    ])
+    expect(
+      parseArgs(["check", "--file", "x.json", "--suppress", "format,entry.x"]).suppress,
+    ).toEqual(["format", "entry.x"])
   })
 
   it("rejects an unknown option rather than ignoring it", () => {
@@ -309,7 +328,9 @@ describe("CLI usage errors", () => {
   })
 
   it("prints usage when check has no target", async () => {
-    const { code, err } = await stderrOf(() => main(["check", "--profile", "./test/support/profile-no-url.json"]))
+    const { code, err } = await stderrOf(() =>
+      main(["check", "--profile", "./test/support/profile-no-url.json"]),
+    )
     expect(code).toBe(3)
     expect(err).toContain("championship id or --file")
     expect(err).toContain("Usage:")
@@ -318,7 +339,9 @@ describe("CLI usage errors", () => {
   it("prints usage when there is no base URL, not a bare failure", async () => {
     // This one is raised well after argument parsing, which is why it used to
     // surface as "gridmom couldn't run" with no hint about --base-url.
-    const { code, err } = await stderrOf(() => main(["list", "--profile", "./test/support/profile-no-url.json"]))
+    const { code, err } = await stderrOf(() =>
+      main(["list", "--profile", "./test/support/profile-no-url.json"]),
+    )
     expect(code).toBe(3)
     expect(err).toContain("No ACSM base URL")
     expect(err).toContain("--base-url")

@@ -221,7 +221,12 @@ export function setOne(fields: FormField[], name: string, value: string): FormFi
 }
 
 /** Replaces the nth value of a repeated key, preserving position. */
-export function setAt(fields: FormField[], name: string, index: number, value: string): FormField[] {
+export function setAt(
+  fields: FormField[],
+  name: string,
+  index: number,
+  value: string,
+): FormField[] {
   let seen = 0
   for (let i = 0; i < fields.length; i++) {
     if (fields[i]!.name !== name) continue
@@ -317,7 +322,5 @@ export function checkEntryListShape(fields: readonly FormField[]): EntryListShap
     }
   }
 
-  return entries
-    .filter(([, n]) => n !== expected)
-    .map(([key, n]) => ({ key, count: n, expected }))
+  return entries.filter(([, n]) => n !== expected).map(([key, n]) => ({ key, count: n, expected }))
 }

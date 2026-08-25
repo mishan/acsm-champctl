@@ -20,13 +20,7 @@ import type { Championship } from "../../src/acsm/types.js"
 import { sessionKeysUsed } from "../../src/acsm/view.js"
 import { exportPath, importChampionship } from "../../src/acsm/write.js"
 import { comparePitBoxes, stableSource } from "./report.js"
-import {
-  connect,
-  log,
-  runRecon,
-  seedChampionship,
-  writeArtefact,
-} from "./env.js"
+import { connect, log, runRecon, seedChampionship, writeArtefact } from "./env.js"
 
 const DEFAULT_FIXTURE = "fixtures/synthetic/recon-seed.json"
 
@@ -161,6 +155,5 @@ function redact(changes: readonly Change[]): Change[] {
     return out
   })
 }
-
 
 await runRecon("recon:roundtrip", main)

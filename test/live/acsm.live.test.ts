@@ -236,9 +236,7 @@ describe.skipIf(!LIVE)("ACSM harness", () => {
       expect(i, "the event form should render EntryList.GUID").toBeGreaterThanOrEqual(0)
       fields.splice(i, 1)
 
-      await expect(session.postForm(eventSubmitPath(id), fields)).rejects.toThrow(
-        /don't line up/,
-      )
+      await expect(session.postForm(eventSubmitPath(id), fields)).rejects.toThrow(/don't line up/)
     })
   })
 

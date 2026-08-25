@@ -4,11 +4,7 @@ import { assertDisposable, isDisposableHost } from "../src/acsm/disposable.js"
 import type { Championship } from "../src/acsm/types.js"
 import { AcsmAuthError, AcsmSession, CookieJar } from "../src/acsm/session.js"
 import { parseForm } from "../src/acsm/form.js"
-import {
-  IMPORT_HOUSEKEEPING,
-  diff,
-  formatChanges,
-} from "../src/acsm/diff.js"
+import { IMPORT_HOUSEKEEPING, diff, formatChanges } from "../src/acsm/diff.js"
 import {
   assertNoResults,
   detectImportMechanism,
@@ -74,8 +70,9 @@ describe("login", () => {
   }
 
   it("posts the three fields with no CSRF token", async () => {
-    const { s, calls } = session(() =>
-      new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } }),
+    const { s, calls } = session(
+      () =>
+        new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } }),
     )
     await s.login({ username: "admin", password: "hunter2" })
 
@@ -86,8 +83,9 @@ describe("login", () => {
   })
 
   it("sends the current-server cookie from the first request", async () => {
-    const { s, calls } = session(() =>
-      new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } }),
+    const { s, calls } = session(
+      () =>
+        new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } }),
     )
     await s.login({ username: "admin", password: "x" })
     expect(new Headers(calls[0]!.init.headers).get("Cookie")).toContain("current-server=0")
@@ -104,11 +102,12 @@ describe("login", () => {
   it("judges success by the redirect, not by the session cookie's name", async () => {
     // 2.4.5 names its session cookie _acsm_data; older builds don't. Looking
     // for that name reported a perfectly good login as a failure.
-    const { s } = session(() =>
-      new Response("", {
-        status: 302,
-        headers: { "set-cookie": "some_other_session=abc; Path=/", location: "/" },
-      }),
+    const { s } = session(
+      () =>
+        new Response("", {
+          status: 302,
+          headers: { "set-cookie": "some_other_session=abc; Path=/", location: "/" },
+        }),
     )
     await s.login({ username: "admin", password: "correct" })
     expect(s.isLoggedIn).toBe(true)
@@ -164,8 +163,8 @@ describe("login", () => {
       "/some/other/page",
       "https://acsm.example/login",
     ]) {
-      const { s } = session(() =>
-        new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location } }),
+      const { s } = session(
+        () => new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location } }),
       )
       await expect(s.login({ username: "admin", password: "x" })).rejects.toThrow(
         /redirected to .* rather than "\/"/,
@@ -186,11 +185,12 @@ describe("login", () => {
     // login() ever sees a response. That message happens to contain "304", so
     // an earlier version of this test matched its own constructor error and
     // passed green without exercising the branch at all.
-    const { s } = session(() =>
-      new Response(null, {
-        status: 304,
-        headers: { "set-cookie": sessionCookie, location: "/" },
-      }),
+    const { s } = session(
+      () =>
+        new Response(null, {
+          status: 304,
+          headers: { "set-cookie": sessionCookie, location: "/" },
+        }),
     )
     await expect(s.login({ username: "admin", password: "x" })).rejects.toThrow(
       /Not Modified, which is a cache talking/,
@@ -200,8 +200,8 @@ describe("login", () => {
 
   it("does not accept 305 or 306 either", async () => {
     for (const status of [305, 306]) {
-      const { s } = session(() =>
-        new Response("", { status, headers: { "set-cookie": sessionCookie, location: "/" } }),
+      const { s } = session(
+        () => new Response("", { status, headers: { "set-cookie": sessionCookie, location: "/" } }),
       )
       await expect(s.login({ username: "admin", password: "x" })).rejects.toBeInstanceOf(
         AcsmAuthError,
@@ -212,8 +212,8 @@ describe("login", () => {
 
   it("accepts each status that really is a redirect to /", async () => {
     for (const status of [301, 302, 303, 307, 308]) {
-      const { s } = session(() =>
-        new Response("", { status, headers: { "set-cookie": sessionCookie, location: "/" } }),
+      const { s } = session(
+        () => new Response("", { status, headers: { "set-cookie": sessionCookie, location: "/" } }),
       )
       await s.login({ username: "admin", password: "x" })
       expect(s.isLoggedIn, `status ${status}`).toBe(true)
@@ -223,22 +223,24 @@ describe("login", () => {
   it("accepts the root redirect written out in full", async () => {
     // A build with server_manager_base_URL configured may send an absolute
     // Location rather than a bare "/".
-    const { s } = session(() =>
-      new Response("", {
-        status: 302,
-        headers: { "set-cookie": sessionCookie, location: "https://acsm.example/" },
-      }),
+    const { s } = session(
+      () =>
+        new Response("", {
+          status: 302,
+          headers: { "set-cookie": sessionCookie, location: "https://acsm.example/" },
+        }),
     )
     await s.login({ username: "admin", password: "x" })
     expect(s.isLoggedIn).toBe(true)
   })
 
   it("says so when the account must change its password first", async () => {
-    const { s } = session(() =>
-      new Response("", {
-        status: 302,
-        headers: { "set-cookie": sessionCookie, location: "/accounts/new-password" },
-      }),
+    const { s } = session(
+      () =>
+        new Response("", {
+          status: 302,
+          headers: { "set-cookie": sessionCookie, location: "/accounts/new-password" },
+        }),
     )
     await expect(s.login({ username: "admin", password: "servermanager" })).rejects.toThrow(
       /must set a new password/,
@@ -279,8 +281,9 @@ describe("login", () => {
   })
 
   it("keeps the configured server index across a re-login", async () => {
-    const { fn } = scriptedFetch(() =>
-      new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } }),
+    const { fn } = scriptedFetch(
+      () =>
+        new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } }),
     )
     const s = new AcsmSession({ baseUrl: "https://acsm.example", fetch: fn, serverIndex: 2 })
     await s.login({ username: "admin", password: "x" })
@@ -291,7 +294,10 @@ describe("login", () => {
   it("clears the jar on logout even if the request fails", async () => {
     const { s } = session((url) => {
       if (url.endsWith("/login")) {
-        return new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
+        return new Response("", {
+          status: 302,
+          headers: { "set-cookie": sessionCookie, location: "/" },
+        })
       }
       return new Response("", { status: 500 })
     })
@@ -347,9 +353,9 @@ describe("disposable host guard", () => {
     // dot-free host as a local single-label name. Every global address used to
     // fall through to it — a public ACSM on IPv6 passed the guard outright.
     expect(isDisposableHost("2606:4700:4700::1111")).toBe(false)
-    expect(() =>
-      assertDisposable("http://[2606:4700:4700::1111]:8772", "recon", {}),
-    ).toThrow(/CHAMPCTL_I_KNOW_THIS_ISNT_LOCAL=yes/)
+    expect(() => assertDisposable("http://[2606:4700:4700::1111]:8772", "recon", {})).toThrow(
+      /CHAMPCTL_I_KNOW_THIS_ISNT_LOCAL=yes/,
+    )
   })
 
   it("reads IPv4-mapped addresses as their IPv4 form", () => {
@@ -468,7 +474,10 @@ describe("single origin", () => {
   it("follows a same-origin redirect, carrying the cookie", async () => {
     const { fn, calls } = scriptedFetch((url) => {
       if (url.endsWith("/login")) {
-        return new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
+        return new Response("", {
+          status: 302,
+          headers: { "set-cookie": sessionCookie, location: "/" },
+        })
       }
       if (url.endsWith("/old")) {
         return new Response("", { status: 302, headers: { location: "/new" } })
@@ -507,7 +516,10 @@ describe("single origin", () => {
   it("refuses to follow a redirect off the origin", async () => {
     const { fn, calls } = scriptedFetch((url) => {
       if (url.endsWith("/login")) {
-        return new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
+        return new Response("", {
+          status: 302,
+          headers: { "set-cookie": sessionCookie, location: "/" },
+        })
       }
       return new Response("", { status: 302, headers: { location: "https://evil.example/steal" } })
     })
@@ -545,7 +557,10 @@ describe("fetching pages", () => {
   const loggedIn = (handler: (url: string, init: RequestInit) => Response) => {
     const { fn, calls } = scriptedFetch((url, init) => {
       if (url.endsWith("/login")) {
-        return new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
+        return new Response("", {
+          status: 302,
+          headers: { "set-cookie": sessionCookie, location: "/" },
+        })
       }
       return handler(url, init)
     })
@@ -614,7 +629,10 @@ describe("import mechanism detection", () => {
     const posts: { url: string; init: RequestInit }[] = []
     const { fn } = scriptedFetch((url, init) => {
       if (url.endsWith("/login")) {
-        return new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
+        return new Response("", {
+          status: 302,
+          headers: { "set-cookie": sessionCookie, location: "/" },
+        })
       }
       if (init.method === "POST") {
         posts.push({ url, init })
@@ -793,9 +811,9 @@ describe("import safety rules", () => {
       championship({ Events: [raceEvent({ StartedTime: "2026-07-01T19:00:00-07:00" })] }),
     )
     // Fresh IDs, so the target is never consulted at all.
-    await expect(
-      importChampionship(s, championship({ ID: EXISTING_ID })),
-    ).resolves.toMatchObject({ championshipId: IMPORTED_ID })
+    await expect(importChampionship(s, championship({ ID: EXISTING_ID }))).resolves.toMatchObject({
+      championshipId: IMPORTED_ID,
+    })
   })
 
   it("refuses to overwrite a target that has results, even with allowOverwrite", async () => {
@@ -859,9 +877,9 @@ describe("import safety rules", () => {
         Events: [raceEvent({ StartedTime: "2026-07-01T19:00:00-07:00" })],
       }),
     )
-    await expect(
-      importChampionship(s, championship({ ID: EXISTING_ID })),
-    ).resolves.toMatchObject({ championshipId: IMPORTED_ID })
+    await expect(importChampionship(s, championship({ ID: EXISTING_ID }))).resolves.toMatchObject({
+      championshipId: IMPORTED_ID,
+    })
   })
 
   it("matches the target ID case-insensitively", async () => {

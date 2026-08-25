@@ -62,7 +62,10 @@ const LOOPBACK_NAMES = new Set([
  * whole class of mistake.
  */
 export function isDisposableHost(hostname: string): boolean {
-  const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "")
+  const host = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
   if (!host) return false
   if (LOOPBACK_NAMES.has(host)) return true
 

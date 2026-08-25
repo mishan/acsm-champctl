@@ -2,14 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import { check } from "../src/gridmom/index.js"
 import { scheduleChecks } from "../src/gridmom/checks/schedule.js"
-import {
-  NOW,
-  championship,
-  pitTable,
-  raceEvent,
-  suzukaPits,
-  testProfile,
-} from "./support/build.js"
+import { NOW, championship, pitTable, raceEvent, suzukaPits, testProfile } from "./support/build.js"
 
 const run = (c: Parameters<typeof check>[0]) =>
   check(c, testProfile(), { pits: pitTable([suzukaPits]), now: NOW, checks: scheduleChecks })
@@ -42,7 +35,9 @@ describe("Scheduled = qualiStart - practice", () => {
       Events: [
         raceEvent({
           Scheduled: "2026-09-02T19:30:00-07:00",
-          RaceSetup: { Sessions: { Practice: { Time: 30 }, Qualifying: { Time: 20 }, Race: { Laps: 20 } } },
+          RaceSetup: {
+            Sessions: { Practice: { Time: 30 }, Qualifying: { Time: 20 }, Race: { Laps: 20 } },
+          },
         }),
       ],
     })

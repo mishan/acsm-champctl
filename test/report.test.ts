@@ -46,7 +46,11 @@ describe("gridmom's Discord voice", () => {
             { ...driver("f"), PitBox: 27 },
           ]),
           RaceSetup: {
-            Sessions: { Practice: { Time: 60 }, Qualifying: { Time: 20 }, Race: { Time: 0, Laps: 0 } },
+            Sessions: {
+              Practice: { Time: 60 },
+              Qualifying: { Time: 20 },
+              Race: { Time: 0, Laps: 0 },
+            },
           },
         }),
       ],
@@ -63,7 +67,11 @@ describe("gridmom's Discord voice", () => {
   it("joins two findings as one person talking", () => {
     const out = formatDiscord({
       findings: [
-        { code: "a", severity: Severity.ERROR, message: "Suzuka has duplicate pit boxes at 3, 16 and 27." },
+        {
+          code: "a",
+          severity: Severity.ERROR,
+          message: "Suzuka has duplicate pit boxes at 3, 16 and 27.",
+        },
         { code: "b", severity: Severity.ERROR, message: "Nobody set the lap count." },
       ],
       counts: { ERROR: 2, WARN: 0, INFO: 0 },
@@ -76,7 +84,9 @@ describe("gridmom's Discord voice", () => {
 
   it("hides INFO by default so the nightly report stays readable", () => {
     const out = formatDiscord({
-      findings: [{ code: "x", severity: Severity.INFO, message: "Something differs from the baseline." }],
+      findings: [
+        { code: "x", severity: Severity.INFO, message: "Something differs from the baseline." },
+      ],
       counts: { ERROR: 0, WARN: 0, INFO: 1 },
       ok: true,
     })
@@ -84,9 +94,9 @@ describe("gridmom's Discord voice", () => {
   })
 
   it("says so plainly when there's nothing to report", () => {
-    expect(formatDiscord({ findings: [], counts: { ERROR: 0, WARN: 0, INFO: 0 }, ok: true })).toContain(
-      "looks fine to me",
-    )
+    expect(
+      formatDiscord({ findings: [], counts: { ERROR: 0, WARN: 0, INFO: 0 }, ok: true }),
+    ).toContain("looks fine to me")
   })
 })
 
@@ -103,7 +113,9 @@ describe("text report", () => {
         championship({
           Events: [
             raceEvent({
-              RaceSetup: { Sessions: { Practice: { Time: 60 }, Qualifying: { Time: 20 }, Race: {} } },
+              RaceSetup: {
+                Sessions: { Practice: { Time: 60 }, Qualifying: { Time: 20 }, Race: {} },
+              },
             }),
           ],
         }),

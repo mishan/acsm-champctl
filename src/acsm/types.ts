@@ -25,8 +25,7 @@ export const EntryListType = {
   Locked: 1,
   PartiallyLocked: 2,
 } as const
-export type EntryListTypeValue =
-  (typeof EntryListType)[keyof typeof EntryListType]
+export type EntryListTypeValue = (typeof EntryListType)[keyof typeof EntryListType]
 
 /**
  * The logical session champctl talks about. NOT the literal JSON key.

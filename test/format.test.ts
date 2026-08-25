@@ -61,7 +61,10 @@ describe("race length", () => {
 describe("mandatory pit window", () => {
   it("warns when a 1x40 has no pit window", () => {
     // Imola: 1x40 with a mandatory stop wants RacePitWindowStart = 1.
-    const c = withRace({ Time: 0, Laps: 40 }, { RacePitWindowStart: 0, ReversedGridRacePositions: 0 })
+    const c = withRace(
+      { Time: 0, Laps: 40 },
+      { RacePitWindowStart: 0, ReversedGridRacePositions: 0 },
+    )
     const f = run(c).findings.find((x) => x.code === "format.pit-window-missing")
     expect(f?.severity).toBe("WARN")
     expect(f?.message).toContain("no mandatory stop")
@@ -70,25 +73,37 @@ describe("mandatory pit window", () => {
   })
 
   it("hyphenates a minutes-based length too", () => {
-    const c = withRace({ Time: 45, Laps: 0 }, { RacePitWindowStart: 0, ReversedGridRacePositions: 0 })
+    const c = withRace(
+      { Time: 45, Laps: 0 },
+      { RacePitWindowStart: 0, ReversedGridRacePositions: 0 },
+    )
     const f = run(c).findings.find((x) => x.code === "format.pit-window-missing")
     expect(f?.message).toContain("a 45-minute single race")
   })
 
   it("accepts a 1x40 with the window opening at lap 1", () => {
-    const c = withRace({ Time: 0, Laps: 40 }, { RacePitWindowStart: 1, ReversedGridRacePositions: 0 })
+    const c = withRace(
+      { Time: 0, Laps: 40 },
+      { RacePitWindowStart: 1, ReversedGridRacePositions: 0 },
+    )
     expect(codes(c)).not.toContain("format.pit-window-missing")
   })
 
   it("accepts a 2x20 with no pit window", () => {
     // Suzuka and all five Legends events: 2x20 with RacePitWindowStart 0.
-    const c = withRace({ Time: 0, Laps: 20 }, { RacePitWindowStart: 0, ReversedGridRacePositions: 5 })
+    const c = withRace(
+      { Time: 0, Laps: 20 },
+      { RacePitWindowStart: 0, ReversedGridRacePositions: 5 },
+    )
     expect(codes(c)).not.toContain("format.pit-window-missing")
     expect(codes(c)).not.toContain("format.pit-window-unexpected")
   })
 
   it("warns when a 2x20 has a pit window set anyway", () => {
-    const c = withRace({ Time: 0, Laps: 20 }, { RacePitWindowStart: 1, ReversedGridRacePositions: 5 })
+    const c = withRace(
+      { Time: 0, Laps: 20 },
+      { RacePitWindowStart: 1, ReversedGridRacePositions: 5 },
+    )
     const f = run(c).findings.find((x) => x.code === "format.pit-window-unexpected")
     expect(f?.message).toContain("reversed grid")
   })
@@ -102,9 +117,7 @@ describe("reversed grid", () => {
           Points: { Places: [25, 18, 15], SecondRaceMultiplier: 0 },
         }),
       ],
-      Events: [
-        raceEvent({ RaceSetup: { ReversedGridRacePositions: 5, SecondRaceMultiplier: 0 } }),
-      ],
+      Events: [raceEvent({ RaceSetup: { ReversedGridRacePositions: 5, SecondRaceMultiplier: 0 } })],
     })
     const f = run(c).findings.find((x) => x.code === "format.reversed-grid-multiplier")
     expect(f?.severity).toBe("WARN")
@@ -112,9 +125,7 @@ describe("reversed grid", () => {
 
   it("is quiet for a single race", () => {
     const c = championship({
-      Events: [
-        raceEvent({ RaceSetup: { ReversedGridRacePositions: 0, SecondRaceMultiplier: 0 } }),
-      ],
+      Events: [raceEvent({ RaceSetup: { ReversedGridRacePositions: 0, SecondRaceMultiplier: 0 } })],
     })
     expect(codes(c)).not.toContain("format.reversed-grid-multiplier")
   })
@@ -151,9 +162,7 @@ describe("reversed grid", () => {
   it("lets the event-level value override the classes", () => {
     const c = championship({
       Classes: [championshipClass({ Points: { Places: [25], SecondRaceMultiplier: 1 } })],
-      Events: [
-        raceEvent({ RaceSetup: { ReversedGridRacePositions: 5, SecondRaceMultiplier: 0 } }),
-      ],
+      Events: [raceEvent({ RaceSetup: { ReversedGridRacePositions: 5, SecondRaceMultiplier: 0 } })],
     })
     expect(codes(c)).toContain("format.reversed-grid-multiplier")
   })

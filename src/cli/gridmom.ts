@@ -99,7 +99,12 @@ export function parseArgs(argv: readonly string[]): Args {
         args.min = parseSeverity(next())
         break
       case "--suppress":
-        args.suppress.push(...next().split(",").map((s) => s.trim()).filter(Boolean))
+        args.suppress.push(
+          ...next()
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        )
         break
       case "--base-url":
         args.baseUrl = next()
@@ -198,7 +203,8 @@ async function runCommand(argv: readonly string[]): Promise<number> {
   const baseUrl = args.baseUrl ?? profile.acsmBaseUrl
 
   if (args.command === "list") {
-    if (!baseUrl) throw new UsageError(`No ACSM base URL; set one in the profile or pass --base-url`)
+    if (!baseUrl)
+      throw new UsageError(`No ACSM base URL; set one in the profile or pass --base-url`)
     const reader = await readerFor(args, baseUrl)
     const list = await reader.listChampionships()
     for (const c of list) process.stdout.write(`${c.ID ?? "?"}  ${c.Name ?? ""}\n`)
@@ -211,9 +217,12 @@ async function runCommand(argv: readonly string[]): Promise<number> {
 
   let championship: Championship
   if (args.file) {
-    championship = JSON.parse(await readFile(resolve(process.cwd(), args.file), "utf8")) as Championship
+    championship = JSON.parse(
+      await readFile(resolve(process.cwd(), args.file), "utf8"),
+    ) as Championship
   } else if (args.target) {
-    if (!baseUrl) throw new UsageError(`No ACSM base URL; set one in the profile or pass --base-url`)
+    if (!baseUrl)
+      throw new UsageError(`No ACSM base URL; set one in the profile or pass --base-url`)
     const reader = await readerFor(args, baseUrl)
     championship = await reader.exportChampionship(args.target)
   } else {

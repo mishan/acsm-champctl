@@ -104,10 +104,7 @@ export function trackLabel(rs: RaceSetup | undefined): string {
  * lookup simply returns nothing, which would silently disable every format
  * check rather than failing loudly. Hence matching on aliases.
  */
-function lookupSession<T>(
-  sessions: Record<string, T> | undefined,
-  key: SessionKey,
-): T | undefined {
+function lookupSession<T>(sessions: Record<string, T> | undefined, key: SessionKey): T | undefined {
   if (!sessions || typeof sessions !== "object") return undefined
 
   const exact = sessions[key]
@@ -121,18 +118,12 @@ function lookupSession<T>(
 }
 
 /** Session *configuration* — durations, laps — from `RaceSetup.Sessions`. */
-export function session(
-  ev: ChampionshipEvent,
-  key: SessionKey,
-): SessionConfig | undefined {
+export function session(ev: ChampionshipEvent, key: SessionKey): SessionConfig | undefined {
   return lookupSession(ev.RaceSetup?.Sessions, key)
 }
 
 /** Session *state* — started/completed times and results — from `Sessions`. */
-export function eventSession(
-  ev: ChampionshipEvent,
-  key: SessionKey,
-): EventSession | undefined {
+export function eventSession(ev: ChampionshipEvent, key: SessionKey): EventSession | undefined {
   return lookupSession(ev.Sessions, key)
 }
 

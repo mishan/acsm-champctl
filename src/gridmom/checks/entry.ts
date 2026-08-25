@@ -99,9 +99,10 @@ export const duplicatePitBox: Check = {
       const used = new Set(all.map((s) => s.entrant.PitBox).filter((p): p is number => p != null))
       const gaps = freeBoxes(used, all.length)
 
-      const fix = gaps.length >= boxes.length
-        ? ` There ${pluralize(gaps.length, "is a gap", "are gaps")} at ${humanList(gaps.slice(0, boxes.length))} to move them into.`
-        : ""
+      const fix =
+        gaps.length >= boxes.length
+          ? ` There ${pluralize(gaps.length, "is a gap", "are gaps")} at ${humanList(gaps.slice(0, boxes.length))} to move them into.`
+          : ""
 
       // The consequence, not just the fact. Whoever reads this in Discord needs
       // to know it gets worse on its own.
@@ -118,9 +119,7 @@ export const duplicatePitBox: Check = {
           pitBoxes: boxes,
           gaps,
           entrantsAtRisk: atRisk,
-          slots: Object.fromEntries(
-            [...dupes].map(([box, ss]) => [box, ss.map((s) => s.key)]),
-          ),
+          slots: Object.fromEntries([...dupes].map(([box, ss]) => [box, ss.map((s) => s.key)])),
         },
       )
     }
@@ -197,9 +196,7 @@ export const pitBoxBeyondTrackCapacity: Check = {
       const track = trackLabel(rs)
       const label = eventLabel(ev, i + 1)
 
-      const over = slots(ev.EntryList).filter(
-        (s) => (s.entrant.PitBox ?? 0) >= record.pitboxes,
-      )
+      const over = slots(ev.EntryList).filter((s) => (s.entrant.PitBox ?? 0) >= record.pitboxes)
       if (over.length === 0) return
 
       const boxes = [...new Set(over.map((s) => s.entrant.PitBox!))].sort((a, b) => a - b)
@@ -329,7 +326,9 @@ export const eventListDiffersFromClass: Check = {
 
     events(ctx.championship).forEach((ev, i) => {
       const eventGuids = new Set(
-        claimedSlots(ev.EntryList).map((s) => normGuid(s.entrant.GUID)).filter(Boolean),
+        claimedSlots(ev.EntryList)
+          .map((s) => normGuid(s.entrant.GUID))
+          .filter(Boolean),
       )
       const missing = [...classGuids].filter((g) => !eventGuids.has(g))
       const extra = [...eventGuids].filter((g) => !classGuids.has(g))
@@ -339,10 +338,14 @@ export const eventListDiffersFromClass: Check = {
       const nameOf = (guid: string) => guidName(ctx, guid) ?? guid
       const parts: string[] = []
       if (missing.length) {
-        parts.push(`${humanList(missing.map(nameOf))} ${pluralize(missing.length, "is", "are")} in the championship but not in this event`)
+        parts.push(
+          `${humanList(missing.map(nameOf))} ${pluralize(missing.length, "is", "are")} in the championship but not in this event`,
+        )
       }
       if (extra.length) {
-        parts.push(`${humanList(extra.map(nameOf))} ${pluralize(extra.length, "is", "are")} in this event but not in the championship`)
+        parts.push(
+          `${humanList(extra.map(nameOf))} ${pluralize(extra.length, "is", "are")} in this event but not in the championship`,
+        )
       }
       emit(
         "WARN",
@@ -480,7 +483,11 @@ export const entryListLengthVaries: Check = {
   run(ctx, emit) {
     const evs = events(ctx.championship)
     if (evs.length < 2) return
-    const sizes = evs.map((ev, i) => ({ round: i + 1, label: eventLabel(ev, i + 1), n: slots(ev.EntryList).length }))
+    const sizes = evs.map((ev, i) => ({
+      round: i + 1,
+      label: eventLabel(ev, i + 1),
+      n: slots(ev.EntryList).length,
+    }))
     const distinct = new Set(sizes.map((s) => s.n))
     if (distinct.size <= 1) return
 
@@ -534,7 +541,9 @@ export const acceptedSignUpWithoutSlot: Check = {
       const locked = ev.RaceSetup?.EntryListType === 1
       if (!locked) return
       const guids = new Set(
-        slots(ev.EntryList).map((s) => normGuid(s.entrant.GUID)).filter(Boolean),
+        slots(ev.EntryList)
+          .map((s) => normGuid(s.entrant.GUID))
+          .filter(Boolean),
       )
       const stranded = accepted.filter((r) => {
         const g = normGuid(r.GUID)
@@ -568,7 +577,8 @@ export const unclaimedSlotNotSentinel: Check = {
 
     for (const { list, label, location } of allLists(ctx)) {
       const wrong = slots(list).filter(
-        (s) => isUnclaimed(s.entrant) && !isAnyCarModel(s.entrant) && (s.entrant.Model ?? "").trim(),
+        (s) =>
+          isUnclaimed(s.entrant) && !isAnyCarModel(s.entrant) && (s.entrant.Model ?? "").trim(),
       )
       if (wrong.length === 0) continue
       const models = [...new Set(wrong.map((s) => s.entrant.Model!.trim()))]

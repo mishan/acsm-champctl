@@ -132,7 +132,11 @@ describe("entry list shape checking", () => {
   it("catches a dropped value, which would scramble the entry list", () => {
     const f = parseForm(fakeEventForm({ entrants: threeEntrants }))
     const fields = f.fields.filter(
-      (x, i) => !(x.name === "EntryList.GUID" && i === f.fields.findIndex((y) => y.name === "EntryList.GUID")),
+      (x, i) =>
+        !(
+          x.name === "EntryList.GUID" &&
+          i === f.fields.findIndex((y) => y.name === "EntryList.GUID")
+        ),
     )
     const problems = checkEntryListShape(fields)
     expect(problems).toHaveLength(1)
@@ -170,9 +174,7 @@ describe("entry list shape checking", () => {
     const i = fields.findIndex((f) => f.name === "EntryList.GUID")
     expect(i).toBeGreaterThanOrEqual(0)
     fields.splice(i, 1)
-    expect(checkEntryListShape(fields)).toEqual([
-      { key: "EntryList.GUID", count: 1, expected: 2 },
-    ])
+    expect(checkEntryListShape(fields)).toEqual([{ key: "EntryList.GUID", count: 1, expected: 2 }])
   })
 
   it("still catches a genuinely truncated array", () => {
@@ -267,7 +269,10 @@ describe("finding the right form on a page", () => {
 
 describe("import page shapes", () => {
   it("exposes a file input's name without submitting it", () => {
-    const form = findFormByAction(fakeImportPage("file", "championshipFile"), "/championship/import")!
+    const form = findFormByAction(
+      fakeImportPage("file", "championshipFile"),
+      "/championship/import",
+    )!
     expect(form.fileFields).toEqual(["championshipFile"])
     expect(form.textAreaFields).toEqual([])
     // A file has no value to echo back, so it isn't a submittable field.

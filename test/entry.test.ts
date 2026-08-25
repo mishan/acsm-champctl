@@ -39,9 +39,7 @@ describe("duplicate pit boxes", () => {
     const c = championship({
       Events: [
         raceEvent({
-          EntryList: entryList(
-            boxes.map((box, i) => ({ ...driver(`d${i}`), PitBox: box })),
-          ),
+          EntryList: entryList(boxes.map((box, i) => ({ ...driver(`d${i}`), PitBox: box }))),
         }),
       ],
       Classes: [championshipClass({ Entrants: entryList(emptySlots(4)) })],
@@ -190,9 +188,7 @@ describe("RaceSetup.Cars", () => {
     // The exact bug the import test exposed (plan §5.5).
     const c = championship({
       SpectatorCarEnabled: false,
-      Events: [
-        raceEvent({ RaceSetup: { Cars: "rss_formula_hybrid_2021;ford_transit" } }),
-      ],
+      Events: [raceEvent({ RaceSetup: { Cars: "rss_formula_hybrid_2021;ford_transit" } })],
     })
     const f = run(c).findings.find((x) => x.code === "grid.race-setup-cars")
     expect(f?.severity).toBe("WARN")
@@ -203,9 +199,7 @@ describe("RaceSetup.Cars", () => {
     const c = championship({
       SpectatorCarEnabled: true,
       SpectatorCar: { Model: "ford_transit", PitBox: 29 },
-      Events: [
-        raceEvent({ RaceSetup: { Cars: "rss_formula_hybrid_2021;ford_transit" } }),
-      ],
+      Events: [raceEvent({ RaceSetup: { Cars: "rss_formula_hybrid_2021;ford_transit" } })],
     })
     expect(codes(c)).not.toContain("grid.race-setup-cars")
   })
@@ -273,7 +267,10 @@ describe("skins", () => {
   it("allows the same skin name on different models", () => {
     const c = championship({
       Classes: [
-        championshipClass({ AvailableCars: ["car_a", "car_b"], Entrants: entryList(emptySlots(2)) }),
+        championshipClass({
+          AvailableCars: ["car_a", "car_b"],
+          Entrants: entryList(emptySlots(2)),
+        }),
       ],
       Events: [
         raceEvent({
