@@ -1,4 +1,6 @@
 import { mkdtemp, rm } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { DatabaseSync } from "node:sqlite"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -7,6 +9,7 @@ import { AcsmError, HttpAcsmReader, type AcsmReader } from "../src/acsm/client.j
 import type { Championship, ChampionshipSummary } from "../src/acsm/types.js"
 import { ingest, IngestError, type IngestReport } from "../src/archive/ingest.js"
 import {
+  main as archiveMain,
   describe as describeOutcome,
   exitCodeFor,
   parseArgs,
@@ -57,7 +60,7 @@ describe("archive store", () => {
     const body = b('{"Name":"BATL",   "ID":"x",\n "Events":[1.0, 2.50]}')
     const { snapshot } = await s.put(ID, body, at("2026-08-24T17:00:00Z"))
 
-    expect((await s.readSnapshot(ID, snapshot.fetchedAt)).equals(body)).toBe(true)
+    expect((await s.readSnapshot(ID, snapshot.id)).equals(body)).toBe(true)
   })
 
   it("stores bytes a UTF-8 decode would have changed", async () => {
@@ -74,7 +77,7 @@ describe("archive store", () => {
     ])
 
     const { snapshot } = await s.put(ID, body, at("2026-08-24T17:00:00Z"))
-    const back = await s.readSnapshot(ID, snapshot.fetchedAt)
+    const back = await s.readSnapshot(ID, snapshot.id)
 
     expect(back.equals(body)).toBe(true)
     expect(snapshot.bytes).toBe(body.byteLength)
@@ -163,25 +166,68 @@ describe("archive store", () => {
 
   it("says which snapshot is missing rather than returning nothing", async () => {
     const s = await newStore()
-    await expect(s.readSnapshot(ID, "2026-08-24T17:00:00.000Z")).rejects.toThrow(/No snapshot/)
+    await expect(s.readSnapshot(ID, 999)).rejects.toThrow(/No snapshot/)
   })
 
-  it("writes the body and its metadata as one transaction", async () => {
+  it("rolls the whole put back when the snapshot insert fails", async () => {
     // The bug the file layout kept producing in different forms: a body and an
     // index entry are two writes, and an interruption between them left one
-    // without the other. Here they are one row, so a failed insert leaves
-    // neither — asserted by making the insert fail and checking nothing landed.
-    const s = await newStore()
-    await s.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
+    // without the other. put() upserts the championship row *before* inserting
+    // the snapshot, so if only the second fails, lastCheckedAt must not have
+    // moved either. Forced with a trigger, since there is otherwise no way to
+    // fail one statement and not the other.
+    const path = join(root, "rollback.db")
+    const s = await SqliteArchiveStore.open(path)
+    try {
+      await s.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
 
-    // Same championship, same instant: the primary key rejects it.
-    await expect(s.put(ID, b('{"a":2}'), at("2026-08-24T17:00:00Z"))).rejects.toThrow()
+      const raw = new DatabaseSync(path)
+      raw.exec(
+        `CREATE TRIGGER no_more BEFORE INSERT ON snapshot
+         BEGIN SELECT RAISE(ABORT, 'no'); END`,
+      )
+      raw.close()
+
+      await expect(s.put(ID, b('{"a":2}'), at("2026-08-26T17:00:00Z"))).rejects.toThrow()
+
+      const index = await s.read(ID)
+      expect(index?.snapshots).toHaveLength(1)
+      // The upsert ran first inside the same transaction; it has to be gone too.
+      expect(index?.lastCheckedAt).toBe("2026-08-24T17:00:00.000Z")
+    } finally {
+      s.close()
+    }
+  })
+
+  it("stores two bodies fetched in the same millisecond", async () => {
+    // fetched_at was the primary key, so two runs fetching different bodies in
+    // the same millisecond collided and the second was rolled back — losing an
+    // archive state, which is the one thing this module must not do. Snapshots
+    // have their own id now, and fetched_at is ordering metadata.
+    const s = await newStore()
+    const when = at("2026-08-24T17:00:00Z")
+    const first = await s.put(ID, b('{"a":1}'), when)
+    const second = await s.put(ID, b('{"a":2}'), when)
+
+    expect(second.stored).toBe(true)
+    expect(second.snapshot.id).not.toBe(first.snapshot.id)
+    expect((await s.read(ID))?.snapshots).toHaveLength(2)
+    expect((await s.readSnapshot(ID, first.snapshot.id)).toString()).toBe('{"a":1}')
+    expect((await s.readSnapshot(ID, second.snapshot.id)).toString()).toBe('{"a":2}')
+  })
+
+  it("keeps lastCheckedAt and firstSeen monotonic when writers land out of order", async () => {
+    // Two processes take the write lock in whatever order they get it, which
+    // is not necessarily the order they fetched in. Assigning last_checked
+    // outright let a slow older run drag it backwards, and --since would then
+    // re-fetch everything it had already done.
+    const s = await newStore()
+    await s.put(ID, b('{"a":1}'), at("2026-08-25T17:00:00Z"))
+    await s.put(ID, b('{"a":1}'), at("2026-08-20T17:00:00Z")) // a delayed older run
 
     const index = await s.read(ID)
-    expect(index?.snapshots).toHaveLength(1)
-    expect((await s.readSnapshot(ID, index?.snapshots[0]?.fetchedAt as string)).toString()).toBe(
-      '{"a":1}',
-    )
+    expect(index?.lastCheckedAt).toBe("2026-08-25T17:00:00.000Z")
+    expect(index?.firstSeen).toBe("2026-08-20T17:00:00.000Z")
   })
 
   it("cannot record a hash for a body it does not hold", async () => {
@@ -194,34 +240,113 @@ describe("archive store", () => {
 
     const index = await s.read(ID)
     for (const snap of index?.snapshots ?? []) {
-      const body = await s.readSnapshot(ID, snap.fetchedAt)
+      const body = await s.readSnapshot(ID, snap.id)
       expect(sha256(body)).toBe(snap.sha256)
       expect(body.byteLength).toBe(snap.bytes)
     }
   })
 
-  it("serialises overlapping writers instead of losing one", async () => {
-    // Two runs on the same championship — the nightly job and someone running
-    // it by hand. With a directory and an index file, both read the old index
-    // and the second to finish published one that omitted the first's
-    // snapshot. BEGIN IMMEDIATE takes the write lock before the read, so the
-    // second transaction sees the first's row and appends to it.
+  it("excludes a second writer while a write transaction is open", async () => {
+    // Two awaited put()s never overlap, so the first version of this test
+    // passed with or without any locking and proved nothing. This one holds a
+    // write transaction open on a separate connection, which is the same
+    // situation from the loser's point of view: someone else has the lock.
     //
-    // Two connections to one file, because that is what two processes are; a
-    // shared in-memory database would not exercise the lock.
+    // What it proves is that a put refused for that reason writes *nothing* —
+    // not that IMMEDIATE beats DEFERRED. Measured: it passes under both. The
+    // test below is the one that separates them.
+    //
+    // node:sqlite is synchronous, so a second writer cannot run while the
+    // first is mid-call inside one process. busyTimeoutMs is tiny so the test
+    // doesn't sit for the real five seconds.
     const path = join(root, "concurrent.db")
-    const a = await SqliteArchiveStore.open(path)
-    const c = await SqliteArchiveStore.open(path)
+    const holder = new DatabaseSync(path)
+    const s = await SqliteArchiveStore.open(path, { busyTimeoutMs: 50 })
     try {
-      await a.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
-      await c.put(ID, b('{"a":2}'), at("2026-08-25T17:00:00Z"))
+      await s.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"))
 
-      expect((await a.read(ID))?.snapshots).toHaveLength(2)
-      expect((await c.read(ID))?.snapshots).toHaveLength(2)
+      holder.exec("PRAGMA busy_timeout = 50")
+      holder.exec("BEGIN IMMEDIATE")
+
+      // The lock is held elsewhere, so this must fail rather than interleave.
+      await expect(s.put(ID, b('{"a":2}'), at("2026-08-25T17:00:00Z"))).rejects.toThrow(
+        /SQLITE_BUSY|database is locked/i,
+      )
+
+      // Nothing half-written: the refused put left the archive as it was.
+      holder.exec("ROLLBACK")
+      const index = await s.read(ID)
+      expect(index?.snapshots).toHaveLength(1)
+      expect(index?.lastCheckedAt).toBe("2026-08-24T17:00:00.000Z")
+
+      // And once the lock is free the same write goes through.
+      const after = await s.put(ID, b('{"a":2}'), at("2026-08-25T17:00:00Z"))
+      expect(after.stored).toBe(true)
+      expect((await s.read(ID))?.snapshots).toHaveLength(2)
     } finally {
-      a.close()
-      c.close()
+      holder.close()
+      s.close()
     }
+  })
+
+  it("takes the write lock before the read, so a racing commit waits its turn", async () => {
+    // Why put() uses BEGIN IMMEDIATE rather than plain BEGIN, at the SQL level
+    // — the store's own API is synchronous end to end, so there is no way to
+    // land a commit between its SELECT and its INSERT from in here.
+    //
+    // Measured, on this Node's SQLite: under DEFERRED the read takes a
+    // snapshot, and if anyone commits before the upgrade to a write, the
+    // upgrade fails outright. busy_timeout does not retry that one — it is a
+    // stale-snapshot error, not a lock-contention error — so a nightly job
+    // overlapping a manual run would fail rather than queue. IMMEDIATE takes
+    // the write lock up front, so the *other* writer is the one that waits.
+    const attempt = (mode: "DEFERRED" | "IMMEDIATE") => {
+      const path = join(root, `mode-${mode}.db`)
+      const setup = new DatabaseSync(path)
+      setup.exec("PRAGMA journal_mode = WAL")
+      setup.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)")
+      setup.close()
+
+      const ours = new DatabaseSync(path)
+      const other = new DatabaseSync(path)
+      ours.exec("PRAGMA busy_timeout = 200")
+      other.exec("PRAGMA busy_timeout = 200")
+      try {
+        ours.exec(`BEGIN ${mode}`)
+        ours.prepare("SELECT count(*) AS c FROM t").get() // the read-modify-write's read
+
+        let otherCommitted = true
+        try {
+          other.exec("BEGIN IMMEDIATE")
+          other.prepare("INSERT INTO t(v) VALUES(?)").run("them")
+          other.exec("COMMIT")
+        } catch {
+          otherCommitted = false
+        }
+
+        let ourWrite = "ok"
+        try {
+          ours.prepare("INSERT INTO t(v) VALUES(?)").run("us")
+          ours.exec("COMMIT")
+        } catch (e) {
+          ourWrite = (e as { code?: string }).code ?? "failed"
+          try {
+            ours.exec("ROLLBACK")
+          } catch {
+            /* already rolled back */
+          }
+        }
+        return { otherCommitted, ourWrite }
+      } finally {
+        ours.close()
+        other.close()
+      }
+    }
+
+    // DEFERRED: they get in first, and our upgrade is refused.
+    expect(attempt("DEFERRED")).toEqual({ otherCommitted: true, ourWrite: "ERR_SQLITE_ERROR" })
+    // IMMEDIATE: we hold the lock, so they wait and we complete.
+    expect(attempt("IMMEDIATE")).toEqual({ otherCommitted: false, ourWrite: "ok" })
   })
 
   it("persists across reopening, which is the point of an archive", async () => {
@@ -235,9 +360,9 @@ describe("archive store", () => {
       const index = await second.read(ID)
       expect(index?.snapshots).toHaveLength(1)
       expect(index?.snapshots[0]?.name).toBe("August")
-      expect(
-        (await second.readSnapshot(ID, index?.snapshots[0]?.fetchedAt as string)).toString(),
-      ).toBe('{"a":1}')
+      expect((await second.readSnapshot(ID, index?.snapshots[0]?.id as number)).toString()).toBe(
+        '{"a":1}',
+      )
     } finally {
       second.close()
     }
@@ -477,8 +602,8 @@ describe("ingest", () => {
     await ingest(reader, store, { now: clock("2026-08-24T17:00:00Z") })
 
     const index = await store.read(ID)
-    const at = index?.snapshots[0]?.fetchedAt as string
-    expect((await store.readSnapshot(ID, at)).toString("utf8")).toBe(body)
+    const id = index?.snapshots[0]?.id as number
+    expect((await store.readSnapshot(ID, id)).toString("utf8")).toBe(body)
   })
 
   it("does not let a later success hide an earlier failure", async () => {
@@ -508,6 +633,27 @@ describe("ingest", () => {
 })
 
 describe("archive CLI", () => {
+  it("reports an unknown command without creating a database", async () => {
+    // The store used to be opened before the command was checked, so a typo
+    // left an empty archive file behind — or failed with a SQLite error —
+    // instead of saying which command it didn't recognise.
+    const db = join(root, "should-not-exist.db")
+    const original = process.stderr.write.bind(process.stderr)
+    let err = ""
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      err += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk)
+      return true
+    }) as typeof process.stderr.write
+    try {
+      expect(await archiveMain(["frobnicate", "--db", db])).toBe(3)
+    } finally {
+      process.stderr.write = original
+    }
+    expect(err).toContain("Unknown command frobnicate")
+    expect(err).toContain("Usage:")
+    expect(existsSync(db)).toBe(false)
+  })
+
   const report = (over: Partial<IngestReport> = {}): IngestReport => ({
     startedAt: "2026-08-24T17:00:00.000Z",
     finishedAt: "2026-08-24T17:01:00.000Z",

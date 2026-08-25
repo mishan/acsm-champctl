@@ -170,13 +170,20 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     return args.help ? 0 : 3
   }
 
+  // Command first, database second. Opening it creates the file, so a typo
+  // like `champctl-archive frobnicate` would otherwise leave a database behind
+  // — or fail with a SQLite error — instead of saying which command it didn't
+  // recognise.
+  if (args.command !== "run" && args.command !== "status") {
+    throw new UsageError(`Unknown command ${args.command}`)
+  }
+
   // One database file rather than a directory of them, so --dir became --db.
   const store = await SqliteArchiveStore.open(
     args.db ?? resolve(process.cwd(), "data/archive/archive.db"),
   )
 
   if (args.command === "status") return status(store, args)
-  if (args.command !== "run") throw new UsageError(`Unknown command ${args.command}`)
 
   const profile = await loadProfile(args.profile)
   const baseUrl = args.baseUrl ?? profile.acsmBaseUrl

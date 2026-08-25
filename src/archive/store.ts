@@ -53,7 +53,14 @@ import { DatabaseSync } from "node:sqlite"
 
 /** One stored copy of an export. */
 export interface Snapshot {
-  /** When this body was first seen. Identifies the snapshot. */
+  /**
+   * Identifies the snapshot. A surrogate key, not the timestamp: two runs can
+   * fetch different bodies in the same millisecond, and keying on `fetchedAt`
+   * made that a primary-key collision that rolled the second one back — losing
+   * an archive state, which is the one thing this module must not do.
+   */
+  id: number
+  /** When this body was fetched. Ordering metadata; not an identity. */
   fetchedAt: string
   sha256: string
   bytes: number
@@ -108,15 +115,22 @@ CREATE TABLE IF NOT EXISTS championship (
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS snapshot (
+  id              INTEGER PRIMARY KEY,
   championship_id TEXT NOT NULL REFERENCES championship(id) ON DELETE CASCADE,
   fetched_at      TEXT NOT NULL,
   sha256          TEXT NOT NULL,
   bytes           INTEGER NOT NULL,
   name            TEXT,
-  body            BLOB NOT NULL,
-  PRIMARY KEY (championship_id, fetched_at)
+  body            BLOB NOT NULL
 ) STRICT;
+
+CREATE INDEX IF NOT EXISTS snapshot_history ON snapshot (championship_id, id);
 `
+
+export interface OpenOptions {
+  /** How long a writer waits for another writer's lock. Default 5s. */
+  busyTimeoutMs?: number
+}
 
 export class SqliteArchiveStore implements ArchiveStore {
   readonly #db: DatabaseSync
@@ -132,15 +146,16 @@ export class SqliteArchiveStore implements ArchiveStore {
    * after that is synchronous, which is what `node:sqlite` offers and is amply
    * fast for a nightly job writing a few dozen rows.
    */
-  static async open(path: string): Promise<SqliteArchiveStore> {
+  static async open(path: string, options: OpenOptions = {}): Promise<SqliteArchiveStore> {
     if (path !== ":memory:") await mkdir(dirname(path), { recursive: true })
     const db = new DatabaseSync(path)
 
     // WAL so `status` reading doesn't block `run` writing, and a busy timeout
     // so two writers queue rather than one failing outright — a nightly job
-    // overlapping a manual run should be slow, not fatal.
+    // overlapping a manual run should be slow, not fatal. The timeout is an
+    // option only so a test can prove the lock exists without waiting for it.
     db.exec("PRAGMA journal_mode = WAL")
-    db.exec("PRAGMA busy_timeout = 5000")
+    db.exec(`PRAGMA busy_timeout = ${Number(options.busyTimeoutMs ?? 5000)}`)
     db.exec("PRAGMA foreign_keys = ON")
     db.exec(SCHEMA)
     return new SqliteArchiveStore(db)
@@ -163,15 +178,26 @@ export class SqliteArchiveStore implements ArchiveStore {
     try {
       this.#db
         .prepare(
+          // Both bounds are clamped rather than assigned. Two processes take
+          // the write lock in whatever order they get it, which is not
+          // necessarily the order they fetched in — so a slow older run
+          // committing last would otherwise drag last_checked backwards, and
+          // --since would then re-fetch everything it had already done. Same
+          // argument for first_seen in the other direction. ISO-8601 UTC sorts
+          // lexicographically, so string min/max are chronological.
           `INSERT INTO championship (id, first_seen, last_checked) VALUES (?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET last_checked = excluded.last_checked`,
+           ON CONFLICT(id) DO UPDATE SET
+             first_seen   = min(championship.first_seen, excluded.first_seen),
+             last_checked = max(championship.last_checked, excluded.last_checked)`,
         )
         .run(championshipId, when, when)
 
+      // Latest by insertion order, not by fetched_at: the question dedup asks
+      // is "what did we last store", and with two writers those can differ.
       const previous = this.#db
         .prepare(
-          `SELECT fetched_at, sha256, bytes, name FROM snapshot
-           WHERE championship_id = ? ORDER BY fetched_at DESC LIMIT 1`,
+          `SELECT id, fetched_at, sha256, bytes, name FROM snapshot
+           WHERE championship_id = ? ORDER BY id DESC LIMIT 1`,
         )
         .get(championshipId) as unknown as SnapshotRow | undefined
 
@@ -184,12 +210,14 @@ export class SqliteArchiveStore implements ArchiveStore {
         return { championshipId, stored: false, sha256: digest, snapshot: toSnapshot(previous) }
       }
 
-      this.#db
+      const inserted = this.#db
         .prepare(
           `INSERT INTO snapshot (championship_id, fetched_at, sha256, bytes, name, body)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
         )
-        .run(championshipId, when, digest, body.byteLength, name ?? null, body)
+        .get(championshipId, when, digest, body.byteLength, name ?? null, body) as unknown as {
+        id: number
+      }
 
       this.#db.exec("COMMIT")
       return {
@@ -197,6 +225,7 @@ export class SqliteArchiveStore implements ArchiveStore {
         stored: true,
         sha256: digest,
         snapshot: {
+          id: inserted.id,
           fetchedAt: when,
           sha256: digest,
           bytes: body.byteLength,
@@ -218,8 +247,8 @@ export class SqliteArchiveStore implements ArchiveStore {
 
     const rows = this.#db
       .prepare(
-        `SELECT fetched_at, sha256, bytes, name FROM snapshot
-         WHERE championship_id = ? ORDER BY fetched_at ASC`,
+        `SELECT id, fetched_at, sha256, bytes, name FROM snapshot
+         WHERE championship_id = ? ORDER BY id ASC`,
       )
       .all(championshipId) as unknown as SnapshotRow[]
 
@@ -239,13 +268,13 @@ export class SqliteArchiveStore implements ArchiveStore {
     return rows.map((r) => r.id)
   }
 
-  /** A stored body, verbatim. `fetchedAt` identifies the snapshot. */
-  async readSnapshot(championshipId: string, fetchedAt: string): Promise<Buffer> {
+  /** A stored body, verbatim, by snapshot id. */
+  async readSnapshot(championshipId: string, snapshotId: number): Promise<Buffer> {
     const row = this.#db
-      .prepare("SELECT body FROM snapshot WHERE championship_id = ? AND fetched_at = ?")
-      .get(championshipId, fetchedAt) as unknown as { body: Uint8Array } | undefined
+      .prepare("SELECT body FROM snapshot WHERE championship_id = ? AND id = ?")
+      .get(championshipId, snapshotId) as unknown as { body: Uint8Array } | undefined
     if (!row) {
-      throw new Error(`No snapshot for championship ${championshipId} at ${fetchedAt}.`)
+      throw new Error(`No snapshot ${snapshotId} for championship ${championshipId}.`)
     }
     return Buffer.from(row.body)
   }
@@ -256,6 +285,7 @@ export class SqliteArchiveStore implements ArchiveStore {
 }
 
 interface SnapshotRow {
+  id: number
   fetched_at: string
   sha256: string
   bytes: number
@@ -264,6 +294,7 @@ interface SnapshotRow {
 
 function toSnapshot(r: SnapshotRow): Snapshot {
   return {
+    id: r.id,
     fetchedAt: r.fetched_at,
     sha256: r.sha256,
     bytes: r.bytes,
