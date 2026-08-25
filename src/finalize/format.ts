@@ -24,6 +24,33 @@ import { session } from "../acsm/view.js"
 /** Laps or minutes; both are legitimate and both get voted on. */
 export type RaceLength = { kind: "laps"; laps: number } | { kind: "minutes"; minutes: number }
 
+/**
+ * One human-readable difference. "Race length: 40 minutes → 18 laps."
+ *
+ * Here rather than in `plan.ts`, which is where it is produced and used, for a
+ * reason that is entirely about dependencies: the browser needs this type, and
+ * `plan.ts` imports `node:crypto` and the write session. This module imports
+ * only the export's own types, so the client can follow it and stop.
+ */
+export interface Change {
+  label: string
+  before: string
+  after: string
+}
+
+/**
+ * One form field that will be posted with a different value.
+ *
+ * `before` is optional rather than `string | null` because a field the form
+ * doesn't currently carry is genuinely absent; `postedField` in `web/view.ts`
+ * is where that becomes JSON's `null`.
+ */
+export interface FormFieldChange {
+  name: string
+  before: string | undefined
+  after: string
+}
+
 export interface RaceFormat {
   length: RaceLength
   /** 0 = single race. BATL uses 5 for a 2x20. */
@@ -34,6 +61,27 @@ export interface RaceFormat {
   /** Audit trail — "voted 22 laps, 8/25". Never written to ACSM. */
   note?: string
 }
+
+/**
+ * Bounds that are absurd for a race and safe for `String()`.
+ *
+ * 2000 laps is longer than any endurance race a league runs weekly, and 2000
+ * minutes is a day and a half. Neither is a judgement about what a league might
+ * want; they are the point past which the value is a mistake or an attack, and
+ * having *a* bound is what keeps an integer out of exponential notation before
+ * it becomes a form value.
+ *
+ * Here rather than in the web layer because two places enforce them and they
+ * must not drift: the plan endpoint rejects a request past these, and profile
+ * validation rejects a *preset* past them at load. When only the endpoint had
+ * them, a profile could carry `laps: 1e30`, start the service cleanly, and
+ * present a preset button whose only possible outcome was a 400 — configuration
+ * that fails at the moment someone clicks it rather than at the moment it is
+ * read.
+ */
+export const MAX_LAPS = 2000
+export const MAX_MINUTES = 2000
+export const MAX_REVERSED = 1000
 
 /**
  * `mandatoryPit` is not a boolean in ACSM. It is `RacePitWindowStart`, the lap
@@ -164,6 +212,51 @@ export function formFieldsFor(format: RaceFormat): Record<string, string> {
     [FIELD.pitWindowStart]: String(pitWindowStartFor(format.mandatoryPit)),
     [FIELD.reversedGrid]: String(format.reversedGridPositions),
     [FIELD.extraLap]: format.extraLap ? "1" : "0",
+  }
+}
+
+/**
+ * A partial answer to "what did the vote change?".
+ *
+ * Every field optional, because that is the whole semantic: naming one is an
+ * instruction about that field and a promise about none of the others.
+ */
+export interface FormatOverrides {
+  laps?: number
+  minutes?: number
+  reversedGridPositions?: number
+  mandatoryPit?: boolean
+  extraLap?: boolean
+}
+
+/**
+ * The current format with whatever was asked for laid over it.
+ *
+ * Starting from the current format rather than from defaults is the point:
+ * "18 laps" means "make it 18 laps", not "make it 18 laps and reset everything
+ * I didn't mention". That rule is documented in the README as CLI behaviour,
+ * but it is not a CLI concern — the web UI sends exactly the same kind of
+ * partial answer, and two implementations of "only the fields you name change"
+ * is one that gets fixed and one that doesn't.
+ *
+ * `laps` wins over `minutes` when both arrive. Callers are expected to have
+ * rejected that combination already, with a message about why a race is
+ * measured one way or the other; this only makes the fallthrough match
+ * `readFormat`, which also prefers laps, rather than inventing a third rule.
+ */
+export function withOverrides(current: RaceFormat, over: FormatOverrides): RaceFormat {
+  const length: RaceLength =
+    over.laps !== undefined
+      ? { kind: "laps", laps: over.laps }
+      : over.minutes !== undefined
+        ? { kind: "minutes", minutes: over.minutes }
+        : current.length
+
+  return {
+    length,
+    reversedGridPositions: over.reversedGridPositions ?? current.reversedGridPositions,
+    mandatoryPit: over.mandatoryPit ?? current.mandatoryPit,
+    extraLap: over.extraLap ?? current.extraLap,
   }
 }
 

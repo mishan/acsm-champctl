@@ -7,6 +7,7 @@
  */
 
 import type { Championship, RaceSetup } from "../acsm/types.js"
+import type { RaceFormat } from "../finalize/format.js"
 
 /** ISO weekday, 1 = Monday ... 7 = Sunday (matches Luxon). */
 export type Weekday = 1 | 2 | 3 | 4 | 5 | 6 | 7
@@ -52,6 +53,22 @@ export interface Baseline {
   championship?: Partial<Championship>
 }
 
+/**
+ * A named starting point for the weekly format vote — BATL's "1x40" and
+ * "2x20".
+ *
+ * These live in the profile rather than in the UI because they are league
+ * convention, not a fact about ACSM: another league's shorthand is its own, and
+ * a preset hardcoded in a button is exactly the thing the design check in the
+ * header of this file is for. They are only starting points — every field stays
+ * editable afterwards, because the whole reason this screen exists is that the
+ * racers change them (plan §4.2).
+ */
+export interface FormatPreset extends RaceFormat {
+  /** What the league calls it. Shown on the button. */
+  name: string
+}
+
 export interface LeagueProfile {
   id: string
   name: string
@@ -60,6 +77,8 @@ export interface LeagueProfile {
   schedule: ScheduleDefaults
   entryList: EntryListPolicy
   baseline: Baseline
+  /** Named format shorthands, offered as one-tap starting points in the UI. */
+  formats?: FormatPreset[]
   /** Cars that never count toward stats or grid checks, e.g. `ford_transit`. */
   excludedCarModels?: string[]
 }

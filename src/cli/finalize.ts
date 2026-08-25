@@ -17,19 +17,18 @@
  * credential-free look at a championship, use gridmom — the export is public.
  */
 
-import { createInterface } from "node:readline/promises"
 import { pathToFileURL } from "node:url"
 
 import { AcsmError, HttpAcsmReader } from "../acsm/client.js"
 import { AcsmSession } from "../acsm/session.js"
 import { events } from "../acsm/view.js"
 import { applyFinalize, EntryListChangedError, PartialWriteError } from "../finalize/apply.js"
-import type { RaceFormat, RaceLength } from "../finalize/format.js"
-import { readFormat } from "../finalize/format.js"
+import type { RaceFormat } from "../finalize/format.js"
+import { readFormat, withOverrides } from "../finalize/format.js"
 import { FinalizeError, planFinalize, type FinalizePlan } from "../finalize/plan.js"
 import { ScheduleError } from "../finalize/schedule.js"
 import { loadProfile } from "../profile/load.js"
-import { loadPits, reportUsageError, runCli, UsageError } from "./args.js"
+import { confirm, loadPits, reportUsageError, runCli, UsageError } from "./args.js"
 
 // Re-exported so callers and tests have one obvious place to import it from,
 // while there is still only one class.
@@ -250,24 +249,25 @@ export function parseArgs(argv: readonly string[]): Args {
 /**
  * Builds the desired format from the current one plus whatever was asked for.
  *
- * Starting from the current format rather than from defaults is the whole
- * point: `--laps 18` means "make it 18 laps", not "make it 18 laps and reset
- * everything else I didn't mention".
+ * Only the spelling is CLI business — `--reversed` and `--pit` against the
+ * domain's `reversedGridPositions` and `mandatoryPit`. The rule itself, that
+ * `--laps 18` means "make it 18 laps" and not "and reset everything else I
+ * didn't mention", lives in `withOverrides` because the web UI sends the same
+ * kind of partial answer and has to obey the same rule.
+ *
+ * The conditional spreads are not decoration. `exactOptionalPropertyTypes` is
+ * on, so `{ laps: undefined }` is a different thing from `{}` — and passing the
+ * former would mean "explicitly no laps", which is not what an unmentioned flag
+ * means.
  */
 export function formatFrom(current: RaceFormat, args: Partial<Args>): RaceFormat {
-  const length: RaceLength =
-    args.laps !== undefined
-      ? { kind: "laps", laps: args.laps }
-      : args.minutes !== undefined
-        ? { kind: "minutes", minutes: args.minutes }
-        : current.length
-
-  return {
-    length,
-    reversedGridPositions: args.reversed ?? current.reversedGridPositions,
-    mandatoryPit: args.pit ?? current.mandatoryPit,
-    extraLap: args.extraLap ?? current.extraLap,
-  }
+  return withOverrides(current, {
+    ...(args.laps !== undefined ? { laps: args.laps } : {}),
+    ...(args.minutes !== undefined ? { minutes: args.minutes } : {}),
+    ...(args.reversed !== undefined ? { reversedGridPositions: args.reversed } : {}),
+    ...(args.pit !== undefined ? { mandatoryPit: args.pit } : {}),
+    ...(args.extraLap !== undefined ? { extraLap: args.extraLap } : {}),
+  })
 }
 
 export function renderPlan(plan: FinalizePlan): string {
@@ -295,34 +295,6 @@ export function renderPlan(plan: FinalizePlan): string {
     for (const f of plan.gridmom.findings) lines.push(`    [${f.severity}] ${f.message}`)
   }
   return lines.join("\n")
-}
-
-/**
- * Asks, when there is someone to ask.
- *
- * The TTY check is not politeness. With stdin at EOF — cron, a closed fd,
- * `< /dev/null` — `rl.question` never settles, so the process hangs and then
- * exits **13** on Node's unsettled-top-level-await warning. `run` never
- * returns, so the documented 0/1/2/3 contract is never reached, and a nightly
- * job looks like an infrastructure failure rather than a missing `--yes`.
- *
- * The prompt goes to stderr because stdout may be carrying `--json`, and a
- * question appended to a JSON document makes it unparseable.
- */
-export async function confirm(question: string): Promise<boolean> {
-  if (!process.stdin.isTTY) {
-    throw new UsageError(
-      "Refusing to ask for confirmation with nothing attached to stdin — there is no one to " +
-        "answer, and waiting would hang. Pass --yes to confirm up front.",
-    )
-  }
-  const rl = createInterface({ input: process.stdin, output: process.stderr })
-  try {
-    const answer = await rl.question(`${question} [y/N] `)
-    return /^y(es)?$/i.test(answer.trim())
-  } finally {
-    rl.close()
-  }
 }
 
 export async function main(argv: readonly string[]): Promise<number> {

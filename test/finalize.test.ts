@@ -29,6 +29,11 @@ import {
   ScheduleError,
 } from "../src/finalize/schedule.js"
 import {
+  eventFormHtml as eventForm,
+  scheduleFormHtml as scheduleForm,
+  type FormEntrant,
+} from "./support/acsm-html.js"
+import {
   championship,
   driver,
   entryList,
@@ -508,57 +513,16 @@ describe("schedule maths", () => {
 const EVENT_ID = "event-1"
 const CHAMP_ID = "11111111-2222-3333-4444-555555555555"
 
-function eventFormHtml(
-  entrants: { name: string; guid: string; pit: number }[],
+// Both fixtures live in test/support/acsm-html.ts, because web.test.ts drives
+// the same two endpoints through the same engine. These wrappers keep this
+// file's call sites unchanged and pin the ids and zone it uses throughout.
+const eventFormHtml = (
+  entrants: readonly FormEntrant[],
   over: Record<string, string> = {},
-): string {
-  const base: Record<string, string> = {
-    Track: "suzuka",
-    "Race.Laps": "20",
-    "Race.Time": "0",
-    RacePitWindowStart: "0",
-    ReversedGridRacePositions: "0",
-    RaceExtraLap: "0",
-    MaxClients: "18",
-    ...over,
-  }
-  const scalars = Object.entries(base)
-    .map(([k, v]) => `<input name="${k}" value="${v}">`)
-    .join("")
-  const list = entrants
-    .map(
-      (e) =>
-        `<input name="EntryList.EntrantID" value="${e.pit}">` +
-        `<input name="EntryList.Name" value="${e.name}">` +
-        `<input name="EntryList.GUID" value="${e.guid}">` +
-        `<input name="EntryList.Car" value="rss_formula_hybrid_2021">` +
-        `<input name="EntryList.Skin" value="${e.name.toLowerCase()}_01">` +
-        `<input name="EntryList.Team" value="">` +
-        `<input name="EntryList.Ballast" value="0">` +
-        `<input name="EntryList.Restrictor" value="0">` +
-        `<input name="EntryList.FixedSetup" value="">` +
-        `<input name="EntryList.InternalUUID" value="uuid-${e.pit}">`,
-    )
-    .join("")
-  return `<html><body>
-    <form action="/search" method="GET"><input name="q" value=""></form>
-    <form action="/championship/${CHAMP_ID}/event/submit" method="POST">
-      ${scalars}${list}
-      <input name="EntryList.NumEntrants" value="${entrants.length}">
-    </form>
-  </body></html>`
-}
+): string => eventForm(CHAMP_ID, entrants, over)
 
 const scheduleFormHtml = (recurrence = ""): string =>
-  `<html><body>
-    <form action="/search" method="GET"><input name="q" value=""></form>
-    <form action="/championship/${CHAMP_ID}/event/${EVENT_ID}/schedule" method="POST">
-      <input name="event-schedule-date" value="2026-09-02">
-      <input name="event-schedule-time" value="19:00">
-      <input name="event-schedule-timezone" value="${ZONE}">
-      <input name="event-schedule-recurrence" value="${recurrence}">
-    </form>
-  </body></html>`
+  scheduleForm(CHAMP_ID, EVENT_ID, ZONE, recurrence)
 
 const TWO = [
   { name: "Ada", guid: "76561198000000001", pit: 0 },

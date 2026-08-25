@@ -252,6 +252,47 @@ describe("profile validation", () => {
     ).toThrow(/weekday/)
   })
 
+  /**
+   * A preset is a button, and a button that can only ever produce a 400 is
+   * worse than no button. The plan endpoint bounds laps, minutes and reversed
+   * positions; profile validation used to bound only the low end, so
+   * `laps: 1e30` started the service cleanly and failed at the moment someone
+   * clicked it. Both now read the same constants — see MAX_LAPS in
+   * finalize/format.ts.
+   */
+  it("rejects a preset the plan endpoint would refuse anyway", () => {
+    const withPreset = (preset: unknown) => () =>
+      validateProfile({
+        id: "x",
+        name: "X",
+        schedule: {
+          weekday: 3,
+          qualiStart: "20:00",
+          timezone: "UTC",
+          practiceMinutes: 60,
+          qualiMinutes: 20,
+        },
+        entryList: { targetSlots: 10 },
+        formats: [{ name: "Silly", ...(preset as object) }],
+      })
+
+    const ok = {
+      length: { kind: "laps", laps: 18 },
+      reversedGridPositions: 5,
+      mandatoryPit: true,
+      extraLap: false,
+    }
+    expect(withPreset(ok)).not.toThrow()
+
+    expect(withPreset({ ...ok, length: { kind: "laps", laps: 1e30 } })).toThrow(/between 1 and/)
+    expect(withPreset({ ...ok, length: { kind: "minutes", minutes: 100_000 } })).toThrow(
+      /between 1 and/,
+    )
+    expect(withPreset({ ...ok, reversedGridPositions: 1e30 })).toThrow(/between 0 and/)
+    // The low end still holds.
+    expect(withPreset({ ...ok, length: { kind: "laps", laps: 0 } })).toThrow(/between 1 and/)
+  })
+
   it("rejects a timezone this system doesn't know", () => {
     // Luxon doesn't throw on an unknown zone — setZone returns an invalid
     // DateTime and every method on it answers politely, so a transposed letter
