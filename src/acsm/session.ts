@@ -270,7 +270,7 @@ export interface AcsmSessionOptions {
    * had no limiter at all, which was fine against a throwaway container and
    * not against a league's production manager — and the write path is the one
    * that fetches a form, posts it, then fetches and posts a schedule, four
-   * requests deep, for every round of a month.
+   * requests deep, for every round of a championship.
    */
   rateLimit?: RateLimiterOptions | false
   userAgent?: string

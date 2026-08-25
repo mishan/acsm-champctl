@@ -12,11 +12,11 @@ import {
   ANY_CAR_MODEL,
   derivedCars,
   EmitError,
-  emitMonth,
+  emitChampionship,
   unclaimedEntryList,
-  type MonthSpec,
-} from "../src/emit/month.js"
-import { cloneMonth, specFromChampionship } from "../src/emit/clone.js"
+  type ChampionshipSpec,
+} from "../src/emit/championship.js"
+import { cloneChampionship, specFromChampionship } from "../src/emit/clone.js"
 import type { PitTable } from "../src/pits/table.js"
 import { monthSchedule, nextWeekday } from "../src/emit/schedule.js"
 import { ScheduleError } from "../src/finalize/schedule.js"
@@ -47,7 +47,7 @@ const EXPECTED_EMIT_CHANGES = [
   /(^|\.)InternalUUID$/,
   /^Classes\[\d+\]\.ID$/,
   /^Events\[\d+\]\.ID$/,
-  // Results are cleared so the month is importable.
+  // Results are cleared so the championship is importable.
   /^Events\[\d+\]\.(StartedTime|CompletedTime|Sessions)/,
   // Regenerated per round.
   /^Events\[\d+\]\.Scheduled$/,
@@ -78,8 +78,8 @@ describe("deep merge", () => {
 
   it("replaces arrays rather than merging them index by index", () => {
     // Events and Classes are ordered lists where position is meaning. Merging
-    // a two-event month into a five-event template would leave rounds 3-5 of
-    // last month attached to this one.
+    // a two-event championship into a five-event template would leave rounds 3-5 of
+    // the previous championship attached to this one.
     const merged = deepMerge({ Events: [1, 2, 3, 4, 5] }, { Events: [9, 8] })
     expect(merged.Events).toEqual([9, 8])
   })
@@ -100,7 +100,7 @@ describe("deep merge", () => {
   })
 
   it("refuses prototype-polluting keys from a parsed overlay", () => {
-    // A saved month spec is parsed JSON, where __proto__ survives as an
+    // A saved championship spec is parsed JSON, where __proto__ survives as an
     // ordinary own property — which is what makes a naive merge assign it.
     //
     // The damage is to the *result's* prototype, not to Object.prototype:
@@ -206,7 +206,7 @@ describe("grid cap", () => {
     expect(cap.summary).toContain("mod_a and mod_b")
   })
 
-  it("handles a month with one track", () => {
+  it("handles a championship with one track", () => {
     expect(gridCap([{ track: "spa" }], pits)).toMatchObject({
       maxClients: 30,
       bindingTrack: "spa",
@@ -218,7 +218,7 @@ describe("grid cap", () => {
 // Schedule generation
 // ---------------------------------------------------------------------------
 
-describe("month schedule", () => {
+describe("championship schedule", () => {
   const profile = testProfile() // weekday 3 (Wed), quali 20:00, 60m practice
 
   it("puts one round a week on the league's weekday", () => {
@@ -255,7 +255,7 @@ describe("month schedule", () => {
   })
 
   it("takes a per-round date override without shifting later rounds", () => {
-    // A race moving a week is a one-off; dragging the rest of the month along
+    // A race moving a week is a one-off; dragging the rest of the championship along
     // would be a surprise nobody asked for.
     const rounds = monthSchedule([{}, { date: "2026-09-12" }, {}], profile, "2026-09-02")
     const dates = rounds.map((r) =>
@@ -295,7 +295,7 @@ describe("month schedule", () => {
 
 describe("entry list generation", () => {
   it("emits N slots at the sentinel model", () => {
-    // Multi-model months are solved by the sentinel, not by preallocation
+    // Multi-model championships are solved by the sentinel, not by preallocation
     // (plan §4.4). ACSM overwrites it when a sign-up is accepted.
     const list = unclaimedEntryList(4)
     expect(Object.keys(list)).toEqual(["CAR_0", "CAR_1", "CAR_2", "CAR_3"])
@@ -339,11 +339,11 @@ describe("deriving RaceSetup.Cars", () => {
 // The emitter
 // ---------------------------------------------------------------------------
 
-describe("emitting a month", () => {
+describe("emitting a championship", () => {
   const template = (over: Partial<Championship> = {}): Championship =>
     championship({
       ID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-      Name: "Last Month",
+      Name: "Previous Championship",
       Created: "2026-07-01T00:00:00-07:00",
       Updated: "2026-07-01T00:00:00-07:00",
       Classes: [championshipClass({ AvailableCars: ["old_car"] })],
@@ -358,7 +358,7 @@ describe("emitting a month", () => {
       ...over,
     })
 
-  const spec = (over: Partial<MonthSpec> = {}): MonthSpec => ({
+  const spec = (over: Partial<ChampionshipSpec> = {}): ChampionshipSpec => ({
     name: "September 2026",
     cars: ["rss_formula_hybrid_2021"],
     rounds: [{ track: "spa" }, { track: "suzuka" }],
@@ -384,9 +384,9 @@ describe("emitting a month", () => {
   ])
 
   const emit = (
-    o: { template?: Championship; spec?: MonthSpec; pits?: PitTable | undefined } = {},
+    o: { template?: Championship; spec?: ChampionshipSpec; pits?: PitTable | undefined } = {},
   ) =>
-    emitMonth({
+    emitChampionship({
       template: o.template ?? template(),
       spec: o.spec ?? spec(),
       profile: testProfile(),
@@ -456,8 +456,8 @@ describe("emitting a month", () => {
   })
 
   it("never carries the template's sign-up responses", () => {
-    // Public data, and last month's applicants have nothing to do with this
-    // month (plan §5.3).
+    // Public data, and the previous championship's applicants have nothing to do with this
+    // championship (plan §5.3).
     const { championship: c } = emit({
       template: template({
         SignUpForm: {
@@ -470,7 +470,7 @@ describe("emitting a month", () => {
     expect(c.SignUpForm?.Responses).toEqual([])
   })
 
-  it("drops the template's results, so the month is importable", () => {
+  it("drops the template's results, so the championship is importable", () => {
     // A template event carries the race it ran; carrying those in would make
     // the import safety rules refuse it, correctly.
     const { championship: c } = emit()
@@ -481,7 +481,7 @@ describe("emitting a month", () => {
     }
   })
 
-  it("does not carry last month's drivers into this month's entry list", () => {
+  it("does not carry the previous championship's drivers into this championship's entry list", () => {
     const { championship: c } = emit()
     for (const ev of events(c)) {
       const names = slots(ev.EntryList).map((s) => s.entrant.Name)
@@ -517,7 +517,7 @@ describe("emitting a month", () => {
     // distinct old UUID to one new one, so a fresh class ID and the template
     // class ID an unmodelled field still held were two different inputs and
     // came out as two different values — a reference that matched in the
-    // template silently stopped matching in the emitted month.
+    // template silently stopped matching in the emitted championship.
     const templateClassId = "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
     const t = template({
       Classes: [championshipClass({ ID: templateClassId, AvailableCars: ["old_car"] })],
@@ -539,10 +539,10 @@ describe("emitting a month", () => {
     // therefore left those references pointing at an id that no longer existed
     // anywhere, which is the failure the sweep exists to prevent, arriving by
     // the one route it doesn't cover.
-    const t = template({ ID: "last-months-championship" }) as Championship & {
+    const t = template({ ID: "previous-championship" }) as Championship & {
       SomeFutureAcsmField?: unknown
     }
-    t.SomeFutureAcsmField = { ChampionshipRef: "last-months-championship" }
+    t.SomeFutureAcsmField = { ChampionshipRef: "previous-championship" }
 
     const { championship: c, derived } = emit({ template: t })
     const ref = (c as Record<string, unknown>)["SomeFutureAcsmField"] as {
@@ -550,25 +550,25 @@ describe("emitting a month", () => {
     }
 
     expect(c.ID).toMatch(/^[0-9a-f-]{36}$/)
-    expect(c.ID).not.toBe("last-months-championship")
+    expect(c.ID).not.toBe("previous-championship")
     expect(ref.ChampionshipRef).toBe(c.ID)
-    expect(JSON.stringify(c)).not.toContain("last-months-championship")
+    expect(JSON.stringify(c)).not.toContain("previous-championship")
     expect(derived.join(" ")).toMatch(/references to the template's id/)
   })
 
-  it("emits a month with nothing reparented, whatever the template carried", () => {
+  it("emits a championship with nothing reparented, whatever the template carried", () => {
     // An end-to-end invariant, not a test of one guard. Two passes rebuild
     // every object in the championship — the id sweep and, for a non-UUID root
     // id, replaceExactString — and `out[k] = ...` with a __proto__ key
     // reparents an object rather than adding a field. An export is parsed
     // JSON, where __proto__ survives as an ordinary own property.
     //
-    // Deliberately asserted on the emitted month rather than on either pass:
+    // Deliberately asserted on the emitted championship rather than on either pass:
     // when this was written the two happened to cancel out, the sweep
     // reparenting and replaceExactString rebuilding it away, so a test aimed
     // at one of them passed whether or not it was guarded. What must hold is
-    // that nothing comes out of emitMonth inheriting fields nobody set.
-    const t = template({ ID: "last-months-championship" }) as Championship & {
+    // that nothing comes out of emitChampionship inheriting fields nobody set.
+    const t = template({ ID: "previous-championship" }) as Championship & {
       SomeFutureAcsmField?: unknown
     }
     // Parsed, because __proto__ only survives as an own property that way.
@@ -588,7 +588,7 @@ describe("emitting a month", () => {
   it("does not repoint the nil UUID, which means 'unset' everywhere", () => {
     // The one id that must not be swept: it is the blank-value sentinel, so
     // rewriting each occurrence would turn every unset date and reference in
-    // the month into a reference to the championship.
+    // the championship into a reference to the championship.
     const t = template({ ID: "00000000-0000-0000-0000-000000000000" }) as Championship & {
       SomeFutureAcsmField?: unknown
     }
@@ -625,7 +625,7 @@ describe("emitting a month", () => {
     for (const id of ids) expect(id).toMatch(/^[0-9a-f-]{36}$/)
   })
 
-  it("emits a month gridmom has no errors about", () => {
+  it("emits a championship gridmom has no errors about", () => {
     // The check the emitter's whole rationale rests on, and the one that was
     // missing: everything else here asserts a field, while this asserts the
     // two modules agree about the same championship. Three separate bugs hid
@@ -638,10 +638,10 @@ describe("emitting a month", () => {
     expect(errors.map((f) => `${f.code}: ${f.message}`)).toEqual([])
   })
 
-  it("emits a month gridmom has no errors about, with a spectator car", () => {
+  it("emits a championship gridmom has no errors about, with a spectator car", () => {
     // The spectator car occupies a pit box, so gridmom counts it against the
     // track's capacity. gridCap did not, so any template with one emitted a
-    // month whose MaxClients was exactly one too many for its tightest track.
+    // championship whose MaxClients was exactly one too many for its tightest track.
     const t = template({ SpectatorCarEnabled: true, SpectatorCar: { Model: "ford_transit" } })
     const { championship: c } = emit({ template: t })
     const report = check(c, testProfile(), { pits, now: NOW })
@@ -710,7 +710,7 @@ describe("emitting a month", () => {
     expect(testProfile().entryList.targetSlots).toBeGreaterThan(grid.maxClients)
   })
 
-  it("applies a month-wide format to every round", () => {
+  it("applies a championship-wide format to every round", () => {
     const { championship: c } = emit({
       spec: spec({
         format: {
@@ -727,7 +727,7 @@ describe("emitting a month", () => {
     }
   })
 
-  it("lets a round override the month's format", () => {
+  it("lets a round override the championship's format", () => {
     const { championship: c } = emit({
       spec: spec({
         format: {
@@ -762,13 +762,13 @@ describe("emitting a month", () => {
     expect(derived.join(" ")).toMatch(/UUID/)
   })
 
-  it("refuses a month with no rounds or no cars", () => {
+  it("refuses a championship with no rounds or no cars", () => {
     expect(() => emit({ spec: spec({ rounds: [] }) })).toThrow(EmitError)
     expect(() => emit({ spec: spec({ cars: [] }) })).toThrow(EmitError)
   })
 
   it("refuses a round with a blank track, naming the round", () => {
-    // A spec is usually parsed JSON — champctl-month reads one from a file —
+    // A spec is usually parsed JSON — champctl-championship reads one from a file —
     // so a blank track is a plausible typo. Left alone it emits Track: "",
     // which imports cleanly and then fails to load on race night.
     for (const track of ["", "   "]) {
@@ -800,7 +800,7 @@ describe("emitting a month", () => {
   })
 
   it("refuses a multi-class template instead of dropping a class", () => {
-    // A MonthSpec describes one class and Classes is replaced wholesale, so a
+    // A ChampionshipSpec describes one class and Classes is replaced wholesale, so a
     // two-class template lost the second class and its entrants with no error,
     // no warning and nothing in `derived` — the emitter's one silent data
     // loss. Modelling a single class is a deliberate limit; doing it quietly
@@ -838,10 +838,10 @@ describe("emitting a month", () => {
 
   it("applies the league baseline to every round's RaceSetup", () => {
     // gridmom checks RaceSetup against baseline.raceSetup, so an emitter that
-    // skipped it would generate months its own checker complains about — and
+    // skipped it would generate championships its own checker complains about — and
     // the deliberate EntryListType/PracticeEntryListType pair (§4.4) would
     // only be right when the template happened to agree.
-    const { championship: c } = emitMonth({
+    const { championship: c } = emitChampionship({
       template: template({
         Events: [raceEvent({ RaceSetup: { EntryListType: 0, PracticeEntryListType: 0 } })],
       }),
@@ -856,7 +856,7 @@ describe("emitting a month", () => {
     }
   })
 
-  it("lets the month's own settings beat the baseline", () => {
+  it("lets the championship's own settings beat the baseline", () => {
     // The baseline is a *default*, so it must lose to anything actually asked
     // for — otherwise a league could never run a one-off different format.
     //
@@ -874,7 +874,7 @@ describe("emitting a month", () => {
         championship: {},
       },
     })
-    const { championship: c } = emitMonth({
+    const { championship: c } = emitChampionship({
       template: template(),
       spec: spec({
         format: {
@@ -892,7 +892,7 @@ describe("emitting a month", () => {
     for (const ev of events(c)) {
       expect(ev.RaceSetup?.ReversedGridRacePositions).toBe(9)
       expect(ev.RaceSetup?.RacePitWindowStart).toBe(1)
-      // ...while a baseline field the month said nothing about still applies.
+      // ...while a baseline field the championship said nothing about still applies.
       expect(ev.RaceSetup?.EntryListType).toBe(1)
     }
   })
@@ -924,7 +924,7 @@ describe("emitting a month", () => {
 
   it("gives a fresh ID when the template's was the nil UUID", () => {
     // regenerateIds deliberately leaves the nil UUID alone, so counting it as
-    // already-fresh would let every month emitted from an all-zeroes template
+    // already-fresh would let every championship emitted from an all-zeroes template
     // keep it — and then collide with every other one.
     const { championship: c } = emit({
       template: template({ ID: "00000000-0000-0000-0000-000000000000" }),
@@ -950,7 +950,7 @@ describe("emitting a month", () => {
       emit({ spec: spec({ className: "Formula Hybrid" }) }).championship.Classes?.[0]?.Name,
     ).toBe("Formula Hybrid")
 
-    const noClass = emitMonth({
+    const noClass = emitChampionship({
       template: template({ Classes: [] }),
       spec: spec(),
       profile: testProfile(),
@@ -967,7 +967,7 @@ describe("emitting a month", () => {
     // Omitted rather than set to undefined: exactOptionalPropertyTypes means
     // those are different things, and it's the absent case being tested.
     const { startDate: _omitted, ...noStartDate } = spec()
-    const { schedule } = emitMonth({
+    const { schedule } = emitChampionship({
       template: template(),
       spec: noStartDate,
       profile: testProfile(),
@@ -992,7 +992,7 @@ describe("emitting a month", () => {
     // No format: applying one is an override, and it deliberately normalises
     // absent booleans to explicit ones. This is the template pipeline alone.
     const { format: _ignored, ...asSpec } = specFromChampionship(t)
-    const { championship: c } = emitMonth({
+    const { championship: c } = emitChampionship({
       template: t,
       spec: { ...asSpec, name: t.Name as string },
       profile: testProfile(),
@@ -1008,14 +1008,14 @@ describe("emitting a month", () => {
 
   it("keeps unmodelled template fields", () => {
     // The whole point of template-and-overlay: a field champctl has never
-    // heard of survives into the emitted month.
+    // heard of survives into the emitted championship.
     const t = template() as Championship & { SomeFutureAcsmField?: unknown }
     t.SomeFutureAcsmField = { nested: true }
     const { championship: c } = emit({ template: t })
     expect((c as Record<string, unknown>)["SomeFutureAcsmField"]).toEqual({ nested: true })
   })
 
-  describe("clone last month", () => {
+  describe("clone the previous championship", () => {
     const lastMonth = championship({
       ID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
       Name: "August 2026",
@@ -1052,16 +1052,16 @@ describe("emitting a month", () => {
       expect(specFromChampionship(lastMonth).cars).not.toContain("ford_transit")
     })
 
-    it("does not carry last month's dates", () => {
-      // The one thing a clone definitely doesn't want: a "new" month that has
+    it("does not carry the previous championship's dates", () => {
+      // The one thing a clone definitely doesn't want: a "new" championship that has
       // already happened.
       const spec = specFromChampionship(lastMonth)
       expect(spec.rounds.every((r) => r.date === undefined)).toBe(true)
       expect(spec).not.toHaveProperty("startDate")
     })
 
-    it("builds this month from last month", () => {
-      const { championship: c, grid } = cloneMonth({
+    it("builds this championship from the previous championship", () => {
+      const { championship: c, grid } = cloneChampionship({
         source: lastMonth,
         profile: testProfile(),
         pits,
@@ -1073,13 +1073,13 @@ describe("emitting a month", () => {
       expect(c.ID).not.toBe(lastMonth.ID)
       expect(events(c).map((e) => e.RaceSetup?.Track)).toEqual(["spa", "suzuka"])
       expect(grid.maxClients).toBe(24)
-      // And the clone goes through the same fixes as a fresh month.
+      // And the clone goes through the same fixes as a fresh championship.
       expect(c.Created).toBe(NOW.toISOString())
       for (const ev of events(c)) expect(ev.RaceSetup?.Cars).toBe("car_a;car_b")
     })
 
     it("lets overrides replace the track list outright", () => {
-      const { championship: c } = cloneMonth({
+      const { championship: c } = cloneChampionship({
         source: lastMonth,
         profile: testProfile(),
         pits,
@@ -1095,7 +1095,7 @@ describe("emitting a month", () => {
 
     it("refuses a clone with no name to give it", () => {
       expect(() =>
-        cloneMonth({
+        cloneChampionship({
           source: championship({ Name: "", Events: [raceEvent()] }),
           profile: testProfile(),
           now: NOW,

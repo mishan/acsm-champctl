@@ -1,11 +1,11 @@
 /**
- * Create-a-month: template plus overlays, out comes a championship (plan §4.1,
+ * Create-a-championship: template plus overlays, out comes a championship (plan §4.1,
  * §5.1).
  *
  * ```
  * golden template (a real exported championship)
  *   → league defaults          (the profile baseline)
- *     → month overrides        (car, tracks, name, schedule)
+ *     → championship overrides        (car, tracks, name, schedule)
  *       → event overrides      (format, race length, quali timing)
  *         → emit
  * ```
@@ -16,7 +16,7 @@
  *
  * The fields it *does* set are the ones a template gets wrong, and every one
  * of them is a bug the round-trip diff actually caught (plan §5.5). They are
- * listed on `emitMonth` below. Each is inherited-and-stale rather than absent,
+ * listed on `emitChampionship` below. Each is inherited-and-stale rather than absent,
  * which is why none of them announce themselves.
  */
 
@@ -46,10 +46,10 @@ import { gridCap, type GridCap } from "./grid.js"
 import { monthSchedule, type RoundSchedule } from "./schedule.js"
 
 /**
- * The sentinel that makes multi-model months work (plan §4.4).
+ * The sentinel that makes multi-model championships work (plan §4.4).
  *
  * ACSM replaces it with the driver's chosen car when a sign-up is accepted, so
- * a month with ten available cars needs *N* slots at this model rather than
+ * a championship with ten available cars needs *N* slots at this model rather than
  * per-model counts. Confirmed against the October 2025 Legends championship:
  * five slots sat here during round one and were a GT-R, two 911s, a Capri and
  * a Pantera by round two.
@@ -67,12 +67,12 @@ export interface RoundSpec {
   date?: string
   /** Why it moved, for the audit trail. Never written to ACSM. */
   dateNote?: string
-  /** Per-event format override; the month default applies otherwise. */
+  /** Per-event format override; the championship default applies otherwise. */
   format?: RaceFormat
   name?: string
 }
 
-export interface MonthSpec {
+export interface ChampionshipSpec {
   name: string
   /** Car models available to the class. `RaceSetup.Cars` is derived from this. */
   cars: string[]
@@ -90,7 +90,7 @@ export interface MonthSpec {
 
 export interface EmitOptions {
   template: Championship
-  spec: MonthSpec
+  spec: ChampionshipSpec
   profile: LeagueProfile
   pits?: PitTable
   /** Injectable for tests; `Created`/`Updated` are stamped from it. */
@@ -115,7 +115,7 @@ export class EmitError extends Error {
 }
 
 /**
- * Builds a month.
+ * Builds a championship.
  *
  * The fields set rather than inherited, each because inheriting it was a real
  * bug (plan §5.5):
@@ -130,17 +130,19 @@ export class EmitError extends Error {
  * - **`SignUpForm.ExtraFields`** — cleared when sign-ups are disabled, rather
  *   than keeping the league's Discord-username question on a form nobody sees.
  */
-export function emitMonth(options: EmitOptions): EmitResult {
+export function emitChampionship(options: EmitOptions): EmitResult {
   const { template, spec, profile } = options
   const now = options.now ?? new Date()
   const derived: string[] = []
 
   if (spec.rounds.length === 0) {
-    throw new EmitError("A month needs at least one round; nothing to generate from an empty list.")
+    throw new EmitError(
+      "A championship needs at least one round; nothing to generate from an empty list.",
+    )
   }
   if (spec.cars.length === 0) {
     throw new EmitError(
-      "A month needs at least one car model — RaceSetup.Cars is derived from it, and an empty " +
+      "A championship needs at least one car model — RaceSetup.Cars is derived from it, and an empty " +
         "car list produces a championship nobody can enter.",
     )
   }
@@ -167,7 +169,7 @@ export function emitMonth(options: EmitOptions): EmitResult {
     )
   }
 
-  // A spec is usually parsed JSON — champctl-month reads one from a file — so
+  // A spec is usually parsed JSON — champctl-championship reads one from a file — so
   // a blank track is a plausible typo rather than a programming error. Left
   // alone it emits an event with `Track: ""`, which ACSM accepts and then
   // fails to load on race night.
@@ -195,7 +197,7 @@ export function emitMonth(options: EmitOptions): EmitResult {
   // omitting startDate made the schedule depend on wall-clock time while every
   // other date in the same championship came from `now` — so a test could pin
   // Created and still get a schedule that moved, and a caller passing `now`
-  // deliberately would get a month half in one timeframe and half in another.
+  // deliberately would get a championship half in one timeframe and half in another.
   // The template event's practice length, not the league default: Scheduled is
   // quali minus practice, and the two disagreeing puts every round off by the
   // difference. templateEvent is resolved below, so this reads it from the
@@ -229,12 +231,12 @@ export function emitMonth(options: EmitOptions): EmitResult {
   const templateEvent = events(template)[0]
   if (!templateEvent) {
     throw new EmitError(
-      "The template championship has no events to use as a shape for this month's rounds. " +
+      "The template championship has no events to use as a shape for this championship's rounds. " +
         "A golden template must be a real exported championship (plan §4.1).",
     )
   }
 
-  // A MonthSpec describes one class, and `Classes` is replaced wholesale below.
+  // A ChampionshipSpec describes one class, and `Classes` is replaced wholesale below.
   // Cloning a two-class championship therefore dropped the second class and its
   // entrants with no error, no warning and no `derived` line — the emitter's
   // one silent data loss. Modelling a single class is a deliberate limit;
@@ -242,9 +244,9 @@ export function emitMonth(options: EmitOptions): EmitResult {
   if (templateClasses.length > 1) {
     const names = templateClasses.map((c, i) => c.Name ?? `class ${i + 1}`)
     throw new EmitError(
-      `The template has ${templateClasses.length} classes (${names.join(", ")}), and a month ` +
+      `The template has ${templateClasses.length} classes (${names.join(", ")}), and a championship ` +
         `spec describes one. Emitting would keep ${JSON.stringify(names[0])} and silently drop ` +
-        `the rest along with their entrants. Split the month, or start from a single-class ` +
+        `the rest along with their entrants. Split the championship, or start from a single-class ` +
         `template.`,
     )
   }
@@ -280,7 +282,7 @@ export function emitMonth(options: EmitOptions): EmitResult {
 
   // The league baseline applies to events too, not just to the championship.
   // gridmom checks `RaceSetup` against `baseline.raceSetup` and reports any
-  // difference as an INFO, so an emitter that skipped it would generate months
+  // difference as an INFO, so an emitter that skipped it would generate championships
   // that its own checker immediately complains about — and `EntryListType` /
   // `PracticeEntryListType` would only be right when the template happened to
   // agree (plan §4.4 explains why that pair is deliberate).
@@ -390,7 +392,7 @@ export function emitMonth(options: EmitOptions): EmitResult {
   //
   // The nil UUID is the exception. It is the "unset" sentinel and appears on
   // every blank date, id and reference in the export, so rewriting each
-  // occurrence would fill the month with references to the championship. That
+  // occurrence would fill the championship with references to the championship. That
   // one only gets a fresh root ID.
   if (!isFreshlyGeneratedId(out.ID)) {
     const previous = out.ID
@@ -471,7 +473,7 @@ function replaceExactString<T>(value: T, from: string, to: string): T {
         // list. A template is parsed JSON, where `__proto__` survives as an
         // ordinary own property — and `out[k] = ...` on a plain object with
         // that key reparents the object rather than adding a field, so the
-        // emitted month would silently inherit whatever it pointed at.
+        // emitted championship would silently inherit whatever it pointed at.
         // Rebuilding an object is exactly where that bites, and this rebuilds
         // every object in the championship.
         if (FORBIDDEN_KEYS.has(k)) continue
@@ -488,8 +490,8 @@ function replaceExactString<T>(value: T, from: string, to: string): T {
  * Whether `regenerateIds` would have given this ID a fresh value.
  *
  * The nil UUID is excluded precisely *because* the sweep skips it. Counting it
- * as already-fresh would let a template whose ID is all zeroes emit a month
- * that keeps it — and then every such month collides with every other one.
+ * as already-fresh would let a template whose ID is all zeroes emit a championship
+ * that keeps it — and then every such championship collides with every other one.
  */
 function isFreshlyGeneratedId(value: string | undefined): boolean {
   if (!value || value === NIL_UUID) return false
@@ -533,14 +535,14 @@ function buildEvent(o: BuildEventOptions): ChampionshipEvent {
     Scheduled: o.scheduled.scheduled,
     EntryList: o.entryList,
     // A template event carries the results of the race it ran. Carrying those
-    // into a new month would make gridmom refuse to import it — correctly.
+    // into a new championship would make gridmom refuse to import it — correctly.
     StartedTime: "0001-01-01T00:00:00Z",
     CompletedTime: "0001-01-01T00:00:00Z",
     Sessions: {},
     RaceSetup: {
       // Template first, then the league baseline over it, then the fields this
       // round decides. The baseline is a *default*, so it loses to anything
-      // the month or the round actually says.
+      // the championship or the round actually says.
       ...deepMerge(o.templateEvent.RaceSetup ?? {}, o.baselineRaceSetup),
       Track: o.round.track,
       TrackLayout: o.round.layout ?? "",

@@ -17,7 +17,8 @@
  * **Arrays replace, never merge.** `Events` and `Classes` are ordered lists
  * where position is meaning — round 1, round 2. Merging a two-event overlay
  * into a five-event template index-by-index would leave rounds 3 to 5 from
- * last month attached to this month's championship, which is exactly the kind
+ * the previous championship's rounds 3 to 5 attached to this one, which is
+ * exactly the kind
  * of silent, plausible wrongness this tool exists to prevent. Replacing is
  * loud: you get what you asked for.
  *
@@ -69,7 +70,7 @@ export function deepMerge<T>(base: T, overlay: unknown): T {
 }
 
 /**
- * Merges a chain left to right: template, then league defaults, then month,
+ * Merges a chain left to right: template, then league defaults, then the championship,
  * then event overrides. Later wins.
  */
 export function mergeAll<T>(base: T, ...overlays: readonly unknown[]): T {

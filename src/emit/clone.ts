@@ -1,9 +1,9 @@
 /**
- * Clone last month (plan §5.1: "should be the prominent path — it will be the
+ * Clone the previous championship (plan §5.1: "should be the prominent path — it will be the
  * most used").
  *
  * A clone is the template-and-overlay pipeline with the template pointed at
- * last month's championship instead of a golden fixture, and the spec read
+ * the previous championship instead of a golden fixture, and the spec read
  * back out of it. Everything else — derived `Cars`, stamped `Created`, dropped
  * results, regenerated UUIDs — is the same code, which is the point: the path
  * people use most is not the path with its own bugs.
@@ -14,25 +14,31 @@ import { classes, events, raceSetupCars } from "../acsm/view.js"
 import { readFormat } from "../finalize/format.js"
 import type { PitTable } from "../pits/table.js"
 import type { LeagueProfile } from "../profile/types.js"
-import { EmitError, emitMonth, type EmitResult, type MonthSpec, type RoundSpec } from "./month.js"
+import {
+  EmitError,
+  emitChampionship,
+  type EmitResult,
+  type ChampionshipSpec,
+  type RoundSpec,
+} from "./championship.js"
 
 /**
- * Reads a month spec back out of a championship.
+ * Reads a championship spec back out of a championship.
  *
  * Only the parts a league would restate: name, cars, tracks in order, the
  * format the first round ran, and how many entry-list slots it held.
  *
- * Deliberately not the schedule. Last month's dates are the one thing a clone
+ * Deliberately not the schedule. The previous championship's dates are the one thing a clone
  * definitely does not want — that is what `startDate` is for — and carrying
- * them would silently produce a "new" month that had already happened.
+ * them would silently produce a "new" championship that had already happened.
  */
-export function specFromChampionship(source: Championship): MonthSpec {
+export function specFromChampionship(source: Championship): ChampionshipSpec {
   const cls = classes(source)[0]
   const evs = events(source)
   if (evs.length === 0) {
     throw new EmitError(
       `Championship ${source.Name ?? source.ID ?? "(unnamed)"} has no events, so there is no ` +
-        `month to clone from it.`,
+        `championship to clone from it.`,
     )
   }
 
@@ -48,7 +54,7 @@ export function specFromChampionship(source: Championship): MonthSpec {
     return { track, ...(layout ? { layout } : {}) }
   })
 
-  const spec: MonthSpec = {
+  const spec: ChampionshipSpec = {
     name: source.Name ?? "",
     cars,
     rounds,
@@ -64,35 +70,35 @@ export function specFromChampionship(source: Championship): MonthSpec {
 }
 
 export interface CloneOptions {
-  /** Last month, used as both template and the source of the spec. */
+  /** The previous championship, used as both template and the source of the spec. */
   source: Championship
   profile: LeagueProfile
-  /** Anything the new month changes — usually name, startDate and tracks. */
-  overrides?: Partial<MonthSpec>
+  /** Anything the new championship changes — usually name, startDate and tracks. */
+  overrides?: Partial<ChampionshipSpec>
   pits?: PitTable
   now?: Date
 }
 
 /**
- * Builds this month from last month.
+ * Builds this championship from the previous championship.
  *
  * `overrides` is a shallow layer over the derived spec, so passing `rounds`
  * replaces the track list outright rather than merging into it — the same
  * reasoning as arrays in `merge.ts`, and the behaviour someone reordering a
- * month expects.
+ * championship expects.
  */
-export function cloneMonth(options: CloneOptions): EmitResult {
+export function cloneChampionship(options: CloneOptions): EmitResult {
   const derivedSpec = specFromChampionship(options.source)
-  const spec: MonthSpec = { ...derivedSpec, ...(options.overrides ?? {}) }
+  const spec: ChampionshipSpec = { ...derivedSpec, ...(options.overrides ?? {}) }
 
   if (!spec.name) {
     throw new EmitError(
-      "A cloned month needs a name — the source had none, so there is nothing to fall back on. " +
+      "A cloned championship needs a name — the source had none, so there is nothing to fall back on. " +
         "Pass one in overrides.",
     )
   }
 
-  return emitMonth({
+  return emitChampionship({
     template: options.source,
     spec,
     profile: options.profile,

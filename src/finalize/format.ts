@@ -335,8 +335,8 @@ export function applyFormat(ev: ChampionshipEvent, format: RaceFormat): Champion
   // directions. For a preview, gridmom would be handed a would-be event still
   // reading zero laps and report `format.no-race-length` for a race the write
   // is about to set — blocking a push that fixes the very thing complained
-  // about. For `emitMonth`, which applies a format for real rather than for
-  // preview, the month would simply be emitted without its race length.
+  // about. For `emitChampionship`, which applies a format for real rather than for
+  // preview, the championship would simply be emitted without its race length.
   const raceKey = Object.keys(sessions).find((k) => k.toUpperCase() === "RACE") ?? newRaceKey()
   const existing = sessions[raceKey] ?? { Name: "Race" }
   sessions[raceKey] = {
@@ -351,7 +351,7 @@ export function applyFormat(ev: ChampionshipEvent, format: RaceFormat): Champion
   // is there a compulsory stop — but `RacePitWindowStart` is a lap number, and
   // collapsing one into the other loses the lap. A championship whose window
   // opens at lap 5 round-tripped through `readFormat` (5 → true) and back
-  // through here (true → 1), so cloning last month silently moved the window
+  // through here (true → 1), so cloning the previous championship silently moved the window
   // four laps earlier and left `RacePitWindowEnd` where it was — a 1-to-12
   // window nobody chose. Silent, because `derived` never mentioned it.
   //
@@ -373,7 +373,7 @@ export function applyFormat(ev: ChampionshipEvent, format: RaceFormat): Champion
       ReversedGridRacePositions: format.reversedGridPositions,
       // A number, not the boolean the league-facing format uses. ACSM's struct
       // field is an int and Go's unmarshal rejects the whole championship on a
-      // bool — so emitting one made every generated month unimportable, which
+      // bool — so emitting one made every generated championship unimportable, which
       // is the sharpest possible version of this bug: the JSON looked right and
       // the server refused all of it. See `RaceExtraLap` in acsm/types.ts.
       RaceExtraLap: format.extraLap ? 1 : 0,

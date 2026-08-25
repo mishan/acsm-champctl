@@ -6,7 +6,7 @@
  *   npm run test:live
  *
  * The other live files drive the *engines* — `planFinalize`, `applyFinalize`,
- * `emitMonth`. This one drives `main(argv)`, which is what a person actually
+ * `emitChampionship`. This one drives `main(argv)`, which is what a person actually
  * runs, and which until now nothing exercised at all: argument parsing, profile
  * loading, base-URL resolution, credentials from the environment, the
  * confirmation prompt, and the mapping from an outcome to an exit code. A
@@ -35,7 +35,7 @@ import { importChampionship, listChampionshipIds } from "../../src/acsm/write.js
 import { main as archiveMain } from "../../src/cli/archive.js"
 import { main as finalizeMain } from "../../src/cli/finalize.js"
 import { main as gridmomMain } from "../../src/cli/gridmom.js"
-import { main as monthMain } from "../../src/cli/month.js"
+import { main as monthMain } from "../../src/cli/championship.js"
 import { LIVE, SEED, deleteChampionship, liveConfig, liveSession, loadFixture } from "./harness.js"
 
 const PROFILE = resolve(process.cwd(), "test/support/profile-harness.json")
@@ -404,10 +404,10 @@ describe.skipIf(!LIVE)("the CLIs against a real ACSM", () => {
   })
 
   // -------------------------------------------------------------------------
-  // champctl-month
+  // champctl-championship
   // -------------------------------------------------------------------------
 
-  describe("champctl-month", () => {
+  describe("champctl-championship", () => {
     const spec = {
       name: "champctl cli live",
       cars: ["rss_formula_hybrid_2021"],
@@ -447,7 +447,7 @@ describe.skipIf(!LIVE)("the CLIs against a real ACSM", () => {
       expect((await listChampionshipIds(live())).length).toBe(before)
     }, 60_000)
 
-    it("imports a month ACSM accepts, keyed the way ACSM reads sessions", async () => {
+    it("imports a championship ACSM accepts, keyed the way ACSM reads sessions", async () => {
       const name = `champctl cli import ${Date.now()}`
       const { code } = await cli(monthMain, [
         "build",
@@ -462,7 +462,7 @@ describe.skipIf(!LIVE)("the CLIs against a real ACSM", () => {
         "--base-url",
         baseUrl,
       ])
-      expect(code, "the emitted month must import").toBe(0)
+      expect(code, "the emitted championship must import").toBe(0)
 
       // Found by scraping, because 2.4.x has no championships list endpoint —
       // see HttpAcsmReader.listChampionships.
@@ -476,7 +476,7 @@ describe.skipIf(!LIVE)("the CLIs against a real ACSM", () => {
           break
         }
       }
-      expect(made, "the imported month should be on the server").toBeTruthy()
+      expect(made, "the imported championship should be on the server").toBeTruthy()
 
       const champ = made!
       expect(events(champ)).toHaveLength(2)
@@ -486,8 +486,8 @@ describe.skipIf(!LIVE)("the CLIs against a real ACSM", () => {
       }
     }, 60_000)
 
-    it("writes the month to a file with --out, and still creates nothing", async () => {
-      const out = join(tmp, "month.json")
+    it("writes the championship to a file with --out, and still creates nothing", async () => {
+      const out = join(tmp, "championship.json")
       const { code } = await cli(monthMain, [
         "build",
         "--spec",

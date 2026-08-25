@@ -34,7 +34,7 @@ export interface RoundDateSpec {
 }
 
 /**
- * Race nights for a month.
+ * Race nights for a championship.
  *
  * Rounds land on consecutive occurrences of the league's weekday, starting at
  * `startDate` if given and otherwise at the next one from `from`. A round with
@@ -54,7 +54,7 @@ export function monthSchedule(
    * `Scheduled` is quali minus practice, so using the profile's number while
    * the event carries its own puts every race night off by the difference —
    * and gridmom's `schedule.derived-start` reads the length off the *event*,
-   * so the emitter was generating months its own checker complained about.
+   * so the emitter was generating championships its own checker complained about.
    * `finalize/schedule.ts` has `practiceMinutesFor` for exactly this; the
    * caller resolves it, because only the caller knows the template.
    */
@@ -71,7 +71,7 @@ export function monthSchedule(
   return rounds.map((round, i) => {
     // Every generated round sits a week after the previous *generated* one —
     // advanced whether or not this round overrides its date, so an override
-    // doesn't drag the rest of the month along with it.
+    // doesn't drag the rest of the championship along with it.
     if (i > 0) generated = generated.plus({ weeks: 1 })
     const useDate = round.date ?? generated.toFormat("yyyy-MM-dd")
 

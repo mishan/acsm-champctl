@@ -208,10 +208,11 @@ export const pitBoxBeyondTrackCapacity: Check = {
       // has pit boxes (plan §4.4): BATL runs 30 slots against an 18-car grid,
       // because sizing the *championship* to its tightest night locks people
       // out of every other one. `MaxClients` is what caps a given race. So on a
-      // month that hasn't started, a pit box past the end is the expected shape
-      // of an oversubscribed list rather than a fault — and emitting ERROR made
-      // the month emitter produce championships gridmom then refused, with two
-      // modules disagreeing about the same file.
+      // championship that hasn't started, a pit box past the end is the
+      // expected shape of an oversubscribed list rather than a fault — and
+      // emitting ERROR made the emitter produce championships that gridmom
+      // then refused to import, with two modules disagreeing about the same
+      // file.
       //
       // Once the event has started those numbers are real assignments rather
       // than placeholders, and one past the end is a car with nowhere to go.

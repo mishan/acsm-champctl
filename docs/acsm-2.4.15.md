@@ -145,8 +145,8 @@ forms render correctly. The fixtures now use canonical keys too.
 
 That leaves a real hazard: **a championship written with friendly session keys
 round-trips through the export intact while being invisible to ACSM's own
-editor.** It looks fine in JSON and is blank in the UI. `emitMonth` inherits
-its keys from the template, so a month built from a real BATL export is safe —
+editor.** It looks fine in JSON and is blank in the UI. `emitChampionship` inherits
+its keys from the template, so a championship built from a real BATL export is safe —
 but nothing currently refuses a template that isn't.
 
 ### Pit boxes, for posterity

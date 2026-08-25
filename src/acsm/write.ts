@@ -140,7 +140,7 @@ export function regenerateIds<T>(value: T): T {
       for (const [k, val] of Object.entries(v)) {
         // Dropped rather than copied. This walk rebuilds every object in the
         // championship, so an export carrying `__proto__` as an own property
-        // reparented the rebuilt copy — measured: the emitted month inherited
+        // reparented the rebuilt copy — measured: the emitted championship inherited
         // `polluted: true` from a template that merely contained it, and every
         // check downstream then read fields nobody had set.
         if (FORBIDDEN_KEYS.has(k)) continue

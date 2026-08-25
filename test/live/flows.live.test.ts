@@ -24,7 +24,7 @@ import type { AcsmSession } from "../../src/acsm/session.js"
 import type { Championship } from "../../src/acsm/types.js"
 import { events, session as sessionConfig } from "../../src/acsm/view.js"
 import { eventEditPath, eventSubmitPath, importChampionship } from "../../src/acsm/write.js"
-import { emitMonth } from "../../src/emit/month.js"
+import { emitChampionship } from "../../src/emit/championship.js"
 import { applyFinalize, EntryListChangedError } from "../../src/finalize/apply.js"
 import { readFormat, sameFormat, type RaceFormat } from "../../src/finalize/format.js"
 import { planFinalize } from "../../src/finalize/plan.js"
@@ -347,11 +347,11 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
   // Emit (plan §4.1, §5.1)
   // -------------------------------------------------------------------------
 
-  describe("month emitter", () => {
+  describe("championship emitter", () => {
     it("produces a championship ACSM accepts, and it comes back intact", async () => {
       // The first end-to-end proof that the emitter's output is importable.
       const template = await loadFixture(SEED)
-      const { championship: month, grid } = emitMonth({
+      const { championship: emitted, grid } = emitChampionship({
         template,
         profile: PROFILE,
         spec: {
@@ -363,9 +363,9 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
         },
       })
 
-      const { export: exported } = await importFixture(month)
+      const { export: exported } = await importFixture(emitted)
 
-      expect(exported.Name).toBe(month.Name)
+      expect(exported.Name).toBe(emitted.Name)
       expect(events(exported)).toHaveLength(2)
       expect(events(exported).map((e) => e.RaceSetup?.Track)).toEqual(["spa", "suzuka"])
       // No pit table configured here, so the cap is unknown rather than wrong.
@@ -379,9 +379,9 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       expect(new Set(models)).toEqual(new Set(["any_car_model"]))
     }, 60_000)
 
-    it("emits a month with no results, so the import safety rails stay quiet", async () => {
+    it("emits a championship with no results, so the import safety rails stay quiet", async () => {
       const template = await loadFixture(SEED)
-      const { championship: month } = emitMonth({
+      const { championship: emitted } = emitChampionship({
         template,
         profile: PROFILE,
         spec: {
@@ -393,7 +393,7 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
         },
       })
 
-      const { export: exported } = await importFixture(month)
+      const { export: exported } = await importFixture(emitted)
       for (const ev of events(exported)) {
         expect(ev.StartedTime ?? "0001-01-01T00:00:00Z").toBe("0001-01-01T00:00:00Z")
       }

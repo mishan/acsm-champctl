@@ -681,7 +681,7 @@ describe("write-path rate limiting", () => {
     // The reader was limited and the session was not, which was fine against a
     // throwaway container and not against a league's production manager —
     // and the write path is the deeper one: fetch a form, post it, fetch the
-    // schedule, post that, for every round of a month.
+    // schedule, post that, for every round of a championship.
     const sleeps: number[] = []
     let clock = 0
     const { fn } = scriptedFetch((url) =>
