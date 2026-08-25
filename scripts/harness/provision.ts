@@ -22,7 +22,10 @@
  *   npm run harness:provision
  */
 
+import { HttpAcsmReader } from "../../src/acsm/client.js"
+import { dialectFrom } from "../../src/acsm/dialect.js"
 import { assertDisposable } from "../../src/acsm/disposable.js"
+import { CHAMPIONSHIPS_PATH } from "../../src/acsm/paths.js"
 import { AcsmAuthError, AcsmSession, PasswordChangeRequiredError } from "../../src/acsm/session.js"
 
 const INITIAL_PASSWORD = "servermanager"
@@ -53,15 +56,20 @@ async function main(): Promise<void> {
   // make provisioning take longer than the work it precedes.
   const session = new AcsmSession({ baseUrl, rateLimit: false })
 
+  const dialect = dialectFrom(await new HttpAcsmReader({ baseUrl, rateLimit: false }).healthcheck())
+
   const firstRun = await ensurePassword(session, username, password)
 
-  // Unconditional, because a container can have had its password set without
-  // the wizard being finished — which is exactly the half-provisioned state a
-  // manual browser visit tends to leave behind.
-  const intro = await session.getForm("/intro/server-options")
-  await session.postForm("/intro/server-options", intro.fields)
+  // Unconditional on a build that has the wizard, because a container can have
+  // had its password set without it being finished — exactly the
+  // half-provisioned state a manual browser visit tends to leave behind. 1.7.x
+  // has no wizard and answers 404 for the whole /intro tree.
+  if (dialect.hasIntroWizard) {
+    const intro = await session.getForm("/intro/server-options")
+    await session.postForm("/intro/server-options", intro.fields)
+  }
 
-  const openedNow = await allowPublicAccess(session)
+  const openedNow = await allowPublicAccess(session, baseUrl)
 
   process.stdout.write(
     `${firstRun ? "Provisioned" : "Already provisioned"} ${baseUrl} as ${username}.\n` +
@@ -91,12 +99,15 @@ async function ensurePassword(
   username: string,
   password: string,
 ): Promise<boolean> {
+  let newPasswordPath: string | undefined
+
   // The configured password first: on an already-provisioned container that is
   // the whole of it.
   try {
     await session.login({ username, password })
     return false
   } catch (e) {
+    if (e instanceof PasswordChangeRequiredError) newPasswordPath = e.newPasswordPath
     // Two ways a fresh container refuses it, and both mean "not provisioned":
     // a plain rejection, because the account is still on the shipped default;
     // or the password-change redirect, if the password happens to match and
@@ -106,15 +117,35 @@ async function ensurePassword(
     if (!isWrongPassword(e) && !(e instanceof PasswordChangeRequiredError)) throw e
   }
 
-  // Now the shipped default, which lands on the password-change redirect with
-  // the session cookie set. That cookie is what makes the POST below work.
-  try {
-    await session.login({ username, password: INITIAL_PASSWORD })
-  } catch (e) {
-    if (!(e instanceof PasswordChangeRequiredError)) throw e
+  // Only when the configured password did not already get us there. If it did,
+  // the jar holds the cookie and `newPasswordPath` holds the form, which is
+  // everything the POST below needs — and trying the shipped default anyway
+  // would be a *second* login, this time with a password ACSM has no reason to
+  // accept. It answers that with a plain rejection, which is not a
+  // `PasswordChangeRequiredError`, so it was rethrown and provisioning died
+  // one step short of finishing a container it had already unlocked.
+  if (!newPasswordPath) {
+    // The shipped default, which lands on the password-change redirect with
+    // the session cookie set. That cookie is what makes the POST below work.
+    try {
+      await session.login({ username, password: INITIAL_PASSWORD })
+    } catch (e) {
+      if (!(e instanceof PasswordChangeRequiredError)) throw e
+      newPasswordPath = e.newPasswordPath
+    }
   }
 
-  await session.postForm("/account/new-password", [
+  if (!newPasswordPath) {
+    throw new Error(
+      "ACSM never asked for a new password, so there is no form to post one to, and the " +
+        "configured password was rejected. Check CHAMPCTL_LIVE_PASSWORD against the container.",
+    )
+  }
+
+  // Whichever path ACSM redirected to. 1.7.9 says `/accounts/new-password`
+  // and 2.4.x `/account/new-password`, and the error carries the one that
+  // actually arrived rather than champctl guessing from a version.
+  await session.postForm(newPasswordPath, [
     { name: "Password", value: password },
     { name: "RepeatPassword", value: password },
   ])
@@ -152,8 +183,8 @@ function isWrongPassword(e: unknown): boolean {
  *
  * Returns whether this call changed anything.
  */
-async function allowPublicAccess(session: AcsmSession): Promise<boolean> {
-  if (await publicAccessEnabled(session)) return false
+async function allowPublicAccess(session: AcsmSession, baseUrl: string): Promise<boolean> {
+  if (await publicAccessEnabled(baseUrl)) return false
 
   // The toggle works and then redirects to `/accounts/` — with a trailing
   // slash, which ACSM itself does not route, so following the redirect gets a
@@ -167,7 +198,7 @@ async function allowPublicAccess(session: AcsmSession): Promise<boolean> {
     // Verified immediately below.
   }
 
-  if (!(await publicAccessEnabled(session))) {
+  if (!(await publicAccessEnabled(baseUrl))) {
     throw new Error(
       "Toggled /accounts/toggle-open but public access is still off. Without it every " +
         "credential-free read returns the login page, so gridmom and the archive cannot work.",
@@ -176,13 +207,25 @@ async function allowPublicAccess(session: AcsmSession): Promise<boolean> {
   return true
 }
 
-/** Reads the current setting off the accounts page rather than assuming it. */
-async function publicAccessEnabled(session: AcsmSession): Promise<boolean> {
-  const html = await session.getText("/accounts")
-  // The page states the *current* consequence in prose. Matching the sentence
-  // shown while it is off is narrower than guessing at the button's label,
-  // which changes with the action it would perform rather than the state.
-  return !html.includes("Server Manager will require all users to log in")
+/**
+ * Whether a request with no credentials can read a page that needs them.
+ *
+ * Asks the question directly instead of reading the accounts page. That page
+ * describes the setting differently on every build — 2.4.x has a sentence of
+ * prose and a button reading "Allow Public Access", 1.7.9 has no prose at all
+ * and a button reading "Make Open" — so matching either is guessing at a label.
+ * Matching 2.4.x's sentence is what made provisioning report "already enabled"
+ * on 1.7.9 while every credential-free read still returned the login page.
+ *
+ * An unauthenticated fetch is exact on both, and on whatever the next build
+ * calls its button. `/championships` is the page the archive actually needs,
+ * which makes this the property under test rather than a proxy for it.
+ */
+async function publicAccessEnabled(baseUrl: string): Promise<boolean> {
+  const res = await fetch(new URL(CHAMPIONSHIPS_PATH, baseUrl), { redirect: "manual" })
+  // A logged-out read of a protected page redirects to the login form; with
+  // public access on it is served.
+  return res.status === 200
 }
 
 main().catch((e: unknown) => {

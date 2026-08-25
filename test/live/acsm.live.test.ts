@@ -308,7 +308,19 @@ describe.skipIf(!LIVE)("ACSM harness", () => {
     })
   })
 
-  it("parses the import page's file field", async () => {
+  /**
+   * Both shapes are legitimate, so this asserts they *agree* rather than
+   * asserting one of them: 1.7.9 renders a `<textarea name="import">` and posts
+   * urlencoded, 2.4.x a file input and posts multipart. Pinning multipart made
+   * this the one test in the file that could not pass on the public build, and
+   * it would have been pinning the wrong answer for the majority of leagues.
+   *
+   * The pairing is what matters — a file input on a urlencoded form, or a
+   * textarea on a multipart one, is a page champctl would send the wrong body
+   * to. `detectImportMechanism` reads the same page to decide, and this is the
+   * assertion that its two answers stay the only two.
+   */
+  it("agrees with itself about how this build takes an import", async () => {
     const html = await session.getText("/championship/import")
     // By action, not by position. `parseForm` takes the *first* form on the
     // page, and on every ACSM page that is the navbar search form — docs §9,
@@ -318,10 +330,19 @@ describe.skipIf(!LIVE)("ACSM harness", () => {
       pageUrl: session.url("/championship/import"),
     })
     expect(form, "import page should have a form posting to /championship/import").toBeTruthy()
-    expect(form?.enctype).toBe("multipart/form-data")
+
     const fileInput = /<input[^>]*type=["']file["'][^>]*>/i.exec(html)
-    expect(fileInput, "import page should have a file input").toBeTruthy()
-    // eslint-disable-next-line no-console
-    console.log(`Import file field: ${/name=["']([^"']+)["']/i.exec(fileInput![0])?.[1]}`)
+    const textarea = /<textarea[^>]*name=["']([^"']+)["'][^>]*>/i.exec(html)
+
+    if (fileInput) {
+      expect(form?.enctype, "a file part needs a multipart form").toBe("multipart/form-data")
+      // eslint-disable-next-line no-console
+      console.log(`Import: file field ${/name=["']([^"']+)["']/i.exec(fileInput[0])?.[1]}`)
+    } else {
+      expect(textarea, "a build with no file input must paste into a textarea").toBeTruthy()
+      expect(form?.enctype, "a textarea posts urlencoded").not.toBe("multipart/form-data")
+      // eslint-disable-next-line no-console
+      console.log(`Import: textarea ${textarea?.[1]}`)
+    }
   })
 })
