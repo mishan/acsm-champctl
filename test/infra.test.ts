@@ -162,6 +162,25 @@ describe("pit table precedence", () => {
     expect(t.get("spa")?.pitboxes).toBe(26)
   })
 
+  it("normalises whitespace at the lookup, so callers don't have to", () => {
+    // The one place this rule lives. gridCap builds a human-facing label from
+    // the same track and layout it looks up with, so if the lookup were
+    // whitespace-sensitive the summary would name a track the table had never
+    // found — and every caller would need its own trim to stay honest, which
+    // is the sort of rule that drifts once it has two homes.
+    const t = new InMemoryPitTable([
+      { track: "spa", layout: "", pitboxes: 30, source: "manual" },
+      { track: "brands_hatch", layout: "indy", pitboxes: 24, source: "manual" },
+    ])
+    expect(t.get(" spa ")?.pitboxes).toBe(30)
+    expect(t.get("brands_hatch", " indy ")?.pitboxes).toBe(24)
+    // And records are normalised on the way in, not only on the way out.
+    const messy = new InMemoryPitTable([
+      { track: " monza ", layout: " ", pitboxes: 26, source: "manual" },
+    ])
+    expect(messy.get("monza")?.pitboxes).toBe(26)
+  })
+
   it("falls back from a layout to the whole track", () => {
     const t = new InMemoryPitTable([
       { track: "silverstone", layout: "", pitboxes: 24, source: "manual" },
@@ -187,6 +206,50 @@ describe("profile validation", () => {
         entryList: { targetSlots: 10 },
       }),
     ).toThrow(/weekday/)
+  })
+
+  it("rejects a timezone this system doesn't know", () => {
+    // Luxon doesn't throw on an unknown zone — setZone returns an invalid
+    // DateTime and every method on it answers politely, so a transposed letter
+    // produced findings reading "Invalid DateTime", NaN weekday comparisons
+    // that never matched, and a null used as a Map key. None of that looks
+    // like a configuration mistake, which is why it's caught here.
+    expect(() =>
+      validateProfile({
+        id: "x",
+        name: "X",
+        schedule: {
+          weekday: 3,
+          qualiStart: "20:00",
+          timezone: "Amercia/Los_Angeles",
+          practiceMinutes: 60,
+          qualiMinutes: 20,
+        },
+        entryList: { targetSlots: 10 },
+      }),
+    ).toThrow(/not a timezone this system knows/)
+  })
+
+  it("rejects a quali time that matches the shape but isn't a time", () => {
+    // "99:99" passes ^\d{2}:\d{2}$ and then reaches set({ hour: 99 }).
+    for (const qualiStart of ["99:99", "24:00", "20:60"]) {
+      expect(
+        () =>
+          validateProfile({
+            id: "x",
+            name: "X",
+            schedule: {
+              weekday: 3,
+              qualiStart,
+              timezone: "UTC",
+              practiceMinutes: 60,
+              qualiMinutes: 20,
+            },
+            entryList: { targetSlots: 10 },
+          }),
+        qualiStart,
+      ).toThrow(/must be a real time/)
+    }
   })
 
   it("rejects a malformed quali time", () => {

@@ -16,6 +16,7 @@ import {
   NON_ARRAY_ENTRY_LIST_FIELDS,
   findFormByAction,
   parseForm,
+  parseForms,
   shape,
 } from "../../src/acsm/form.js"
 import type { AcsmSession } from "../../src/acsm/session.js"
@@ -260,22 +261,34 @@ async function main(): Promise<void> {
   log(`Clean up with: delete championship ${championshipId} in the UI, or docker compose down -v`)
 }
 
-/** Finds the form whose action mentions this event id, e.g. the schedule form. */
+/**
+ * Finds the form whose action mentions this event id, e.g. the schedule form.
+ *
+ * This walked `form:nth-of-type(i)` for i in 1..40, which does not enumerate a
+ * document's forms: `nth-of-type` counts among an element's *siblings*, so it
+ * matched every form that happened to be the nth of its type under its own
+ * parent and skipped the rest. `parseForm` then took `.first()` of whatever
+ * that matched, and the loop broke on the first `FormParseError` — so in
+ * practice it inspected one or two forms and reported "No schedule form found".
+ *
+ * `parseForms` already enumerates properly; this only has to pick.
+ */
 function findScheduleForm(
   html: string,
   pageUrl: string,
   eventId: string,
 ): FormSnapshot | undefined {
-  // Try each form on the page until one has a matching action.
-  for (let i = 0; i < 40; i++) {
-    try {
-      const s = snapshot("", html, pageUrl, `form:nth-of-type(${i + 1})`)
-      if (s.action.includes(eventId) && s.action.includes("schedule")) return s
-    } catch {
-      break
-    }
+  const forms = parseForms(html, { pageUrl })
+  const found = forms.find((f) => f.action.includes(eventId) && f.action.includes("schedule"))
+  if (!found) return undefined
+  return {
+    path: stableUrl(""),
+    action: stableUrl(found.action),
+    method: found.method,
+    enctype: found.enctype,
+    shape: shape(found.fields),
+    order: [...new Set(found.fields.map((f) => f.name))],
   }
-  return undefined
 }
 
 function entrantStatusLinks(html: string): string[] {

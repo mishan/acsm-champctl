@@ -15,6 +15,7 @@
 import {
   checkEntryListShape,
   parseForm,
+  stripUnpairedCheckboxes,
   toBody,
   type FormField,
   type ParsedForm,
@@ -400,7 +401,18 @@ export class AcsmSession {
    * guard that stops champctl destroying an entry list while appearing to work.
    */
   async postForm(path: string, fields: readonly FormField[]): Promise<Response> {
-    const problems = checkEntryListShape(fields)
+    // Stripped before the check, so the arity check runs on what goes out.
+    //
+    // ACSM reads these two positionally but renders them unpaired, so a
+    // browser omits the unchecked ones and whichever values remain land on the
+    // wrong entrants (docs/acsm-write-path.md §4). form.ts has documented that
+    // champctl omits them since it was written; nothing did, and every write
+    // echoed back whatever the form had rendered. Absent means "false for
+    // everyone" — the only reading that cannot silently apply one entrant's
+    // setting to another.
+    const sent = stripUnpairedCheckboxes(fields)
+
+    const problems = checkEntryListShape(sent)
     if (problems.length > 0) {
       const detail = problems
         .map((p) => `${p.key} has ${p.count}, expected ${p.expected}`)
@@ -417,7 +429,7 @@ export class AcsmSession {
 
     const res = await this.#request(path, {
       method: "POST",
-      body: toBody(fields),
+      body: toBody(sent),
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       redirect: "manual",
     })

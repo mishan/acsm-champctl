@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { HttpAcsmReader } from "../../src/acsm/client.js"
 import { IMPORT_HOUSEKEEPING, diff, formatChanges } from "../../src/acsm/diff.js"
-import { count, getAll, parseForm, setAt, setOne } from "../../src/acsm/form.js"
+import { count, findFormByAction, getAll, setAt, setOne } from "../../src/acsm/form.js"
 import type { AcsmSession } from "../../src/acsm/session.js"
 import type { Championship } from "../../src/acsm/types.js"
 import { events, slots } from "../../src/acsm/view.js"
@@ -262,8 +262,15 @@ describe.skipIf(!LIVE)("ACSM harness", () => {
 
   it("parses the import page's file field", async () => {
     const html = await session.getText("/championship/import")
-    const form = parseForm(html)
-    expect(form.enctype).toBe("multipart/form-data")
+    // By action, not by position. `parseForm` takes the *first* form on the
+    // page, and on every ACSM page that is the navbar search form — docs §9,
+    // and test/form.test.ts pins it. So this asserted the search form's enctype
+    // and would have gone on passing if the import form vanished entirely.
+    const form = findFormByAction(html, "/championship/import", {
+      pageUrl: session.url("/championship/import"),
+    })
+    expect(form, "import page should have a form posting to /championship/import").toBeTruthy()
+    expect(form?.enctype).toBe("multipart/form-data")
     const fileInput = /<input[^>]*type=["']file["'][^>]*>/i.exec(html)
     expect(fileInput, "import page should have a file input").toBeTruthy()
     // eslint-disable-next-line no-console

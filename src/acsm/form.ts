@@ -262,20 +262,46 @@ export function shape(fields: readonly FormField[]): Record<string, number> {
 }
 
 /**
- * `EntryList.*` keys that are NOT per-entrant arrays.
+ * The two `EntryList.*` checkboxes ACSM renders unpaired, and reads wrongly.
  *
- * The two checkboxes are rendered unpaired — omitted when unchecked — and read
- * positionally anyway (docs/acsm-write-path.md §4); champctl omits them.
- * `NumEntrants` is a single form-level count, found on 1.7.9's event form.
+ * Plain checkboxes with no hidden partner field, once per entrant, read by
+ * position (docs/acsm-write-path.md §4). A browser omits unchecked boxes
+ * entirely, so ticking the box on the 12th entrant sends a single value at
+ * index 0 and ACSM applies it to the *first* entrant. The feature can only
+ * behave when every box is ticked or none are.
+ *
+ * champctl therefore strips them from every POST rather than echoing back what
+ * the form rendered. Absent means "false for everyone", which is the safe
+ * reading and the only one that cannot quietly apply someone else's setting.
  */
-export const NON_ARRAY_ENTRY_LIST_FIELDS = [
+export const UNPAIRED_ENTRY_LIST_CHECKBOXES = [
   "EntryList.OverwriteAllEvents",
   "EntryList.TransferTeamPoints",
+] as const
+
+/**
+ * `EntryList.*` keys that are NOT per-entrant arrays, and so are exempt from
+ * the arity check below.
+ *
+ * The two unpaired checkboxes, plus `NumEntrants` — a single form-level count
+ * found on 1.7.9's event form. That one is echoed back rather than stripped,
+ * because ACSM reads it as one number rather than positionally.
+ */
+export const NON_ARRAY_ENTRY_LIST_FIELDS = [
+  ...UNPAIRED_ENTRY_LIST_CHECKBOXES,
   "EntryList.NumEntrants",
 ] as const
 
-/** @deprecated Kept for the old name; use NON_ARRAY_ENTRY_LIST_FIELDS. */
-export const UNPAIRED_ENTRY_LIST_CHECKBOXES = NON_ARRAY_ENTRY_LIST_FIELDS
+/**
+ * Drops the unpaired checkboxes. Returns a new array.
+ *
+ * Not in place: callers pass fields they parsed from the page, and a write
+ * path that quietly edited its own input would be a nasty thing to debug.
+ */
+export function stripUnpairedCheckboxes(fields: readonly FormField[]): FormField[] {
+  const drop = new Set<string>(UNPAIRED_ENTRY_LIST_CHECKBOXES)
+  return fields.filter((f) => !drop.has(f.name))
+}
 
 /**
  * Checks the invariant ACSM's parser assumes: every `EntryList.*` key that is
