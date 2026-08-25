@@ -22,13 +22,15 @@
 
 import { randomUUID } from "node:crypto"
 
-import type {
-  Championship,
-  ChampionshipClass,
-  ChampionshipEvent,
-  Entrant,
-  EntryList,
-  SignUpForm,
+import {
+  ANY_CAR_MODEL,
+  type Championship,
+  type ChampionshipClass,
+  type ChampionshipEvent,
+  type Entrant,
+  type EntryList,
+  type RaceSetup,
+  type SignUpForm,
 } from "../acsm/types.js"
 import { regenerateIds } from "../acsm/write.js"
 import { classes, events } from "../acsm/view.js"
@@ -48,8 +50,12 @@ import { monthSchedule, type RoundSchedule } from "./schedule.js"
  * per-model counts. Confirmed against the October 2025 Legends championship:
  * five slots sat here during round one and were a GT-R, two 911s, a Capri and
  * a Pantera by round two.
+ *
+ * Re-exported from `acsm/types` rather than redeclared: `view.isAnyCarModel`
+ * compares against that one, and two copies of a sentinel are two things that
+ * can drift apart while every test still passes.
  */
-export const ANY_CAR_MODEL = "any_car_model"
+export { ANY_CAR_MODEL }
 
 export interface RoundSpec {
   track: string
@@ -136,6 +142,22 @@ export function emitMonth(options: EmitOptions): EmitResult {
     )
   }
 
+  // A spec is usually parsed JSON — champctl-month reads one from a file — so
+  // a blank track is a plausible typo rather than a programming error. Left
+  // alone it emits an event with `Track: ""`, which ACSM accepts and then
+  // fails to load on race night.
+  const blank = spec.rounds
+    .map((r, i) => (r.track?.trim() ? undefined : i + 1))
+    .filter((n): n is number => n !== undefined)
+  if (blank.length > 0) {
+    throw new EmitError(
+      `Round${blank.length === 1 ? "" : "s"} ${blank.join(", ")} ${
+        blank.length === 1 ? "has" : "have"
+      } no track. Every round needs one — an event with a blank track imports ` +
+        `cleanly and then fails to load when the server tries to run it.`,
+    )
+  }
+
   const schedule = monthSchedule(spec.rounds, profile, spec.startDate)
   const grid = gridCap(spec.rounds, options.pits)
 
@@ -167,6 +189,17 @@ export function emitMonth(options: EmitOptions): EmitResult {
     Entrants: entryList,
   }
 
+  // The league baseline applies to events too, not just to the championship.
+  // gridmom checks `RaceSetup` against `baseline.raceSetup` and reports any
+  // difference as an INFO, so an emitter that skipped it would generate months
+  // that its own checker immediately complains about — and `EntryListType` /
+  // `PracticeEntryListType` would only be right when the template happened to
+  // agree (plan §4.4 explains why that pair is deliberate).
+  const baselineRaceSetup = profile.baseline.raceSetup ?? {}
+  if (Object.keys(baselineRaceSetup).length > 0) {
+    derived.push("league baseline applied to every round's RaceSetup")
+  }
+
   const eventList: ChampionshipEvent[] = spec.rounds.map((round, i) =>
     buildEvent({
       templateEvent,
@@ -175,6 +208,7 @@ export function emitMonth(options: EmitOptions): EmitResult {
       cars,
       maxClients: grid.maxClients,
       entryList: unclaimedEntryList(slots),
+      baselineRaceSetup,
       format: round.format ?? spec.format,
     }),
   )
@@ -212,8 +246,20 @@ export function emitMonth(options: EmitOptions): EmitResult {
 
   // Last, so nothing downstream can reintroduce a template ID. An import that
   // keeps them lands on top of the championship the template came from.
+  //
+  // regenerateIds builds one old→new mapping and applies it across the whole
+  // object graph, so a field elsewhere that referenced the championship's own
+  // ID still points at it afterwards. Assigning a fresh `out.ID` *after* the
+  // sweep would break exactly that: the root would get one value and every
+  // reference to it another.
   out = regenerateIds(out)
-  out.ID = randomUUID()
+
+  // The sweep only rewrites UUID-shaped strings, deliberately, so a template
+  // with a non-UUID ID would come through unchanged and could still collide.
+  // Only that case needs a fresh one, and by then there is nothing left
+  // pointing at the old value for it to disagree with.
+  if (!isUuid(out.ID)) out.ID = randomUUID()
+
   derived.push("every UUID regenerated, so importing creates rather than overwrites")
 
   return { championship: out, grid, schedule, derived }
@@ -257,6 +303,11 @@ export function unclaimedEntryList(slots: number): EntryList {
   return out
 }
 
+/** Matches what `regenerateIds` considers rewritable, so the two agree. */
+function isUuid(value: string | undefined): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value ?? "")
+}
+
 function signUpForm(template: SignUpForm | undefined, enabled: boolean): SignUpForm {
   const base: SignUpForm = { ...(template ?? {}), Enabled: enabled, Responses: [] }
   // Keeping a league's Discord-username question on a championship with
@@ -271,6 +322,7 @@ interface BuildEventOptions {
   cars: string
   maxClients: number
   entryList: EntryList
+  baselineRaceSetup: Partial<RaceSetup>
   format?: RaceFormat | undefined
 }
 
@@ -286,7 +338,10 @@ function buildEvent(o: BuildEventOptions): ChampionshipEvent {
     CompletedTime: "0001-01-01T00:00:00Z",
     Sessions: {},
     RaceSetup: {
-      ...(o.templateEvent.RaceSetup ?? {}),
+      // Template first, then the league baseline over it, then the fields this
+      // round decides. The baseline is a *default*, so it loses to anything
+      // the month or the round actually says.
+      ...deepMerge(o.templateEvent.RaceSetup ?? {}, o.baselineRaceSetup),
       Track: o.round.track,
       TrackLayout: o.round.layout ?? "",
       Cars: o.cars,

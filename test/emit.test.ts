@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest"
 
 import { diff } from "../src/acsm/diff.js"
 import type { Championship } from "../src/acsm/types.js"
-import { events, slots } from "../src/acsm/view.js"
+import { ANY_CAR_MODEL as CANONICAL_ANY_CAR_MODEL } from "../src/acsm/types.js"
+import { events, isAnyCarModel, slots } from "../src/acsm/view.js"
 import { gridCap } from "../src/emit/grid.js"
 import { deepMerge, definedOnly, mergeAll } from "../src/emit/merge.js"
 import {
@@ -520,6 +521,113 @@ describe("emitting a month", () => {
   it("refuses a month with no rounds or no cars", () => {
     expect(() => emit({ spec: spec({ rounds: [] }) })).toThrow(EmitError)
     expect(() => emit({ spec: spec({ cars: [] }) })).toThrow(EmitError)
+  })
+
+  it("refuses a round with a blank track, naming the round", () => {
+    // A spec is usually parsed JSON — champctl-month reads one from a file —
+    // so a blank track is a plausible typo. Left alone it emits Track: "",
+    // which imports cleanly and then fails to load on race night.
+    for (const track of ["", "   "]) {
+      expect(() =>
+        emit({ spec: spec({ rounds: [{ track: "spa" }, { track }] }) }),
+      ).toThrow(/Round 2 has no track/)
+    }
+  })
+
+  it("uses the one ANY_CAR_MODEL, not a second copy of the string", () => {
+    // Two copies of a sentinel are two things that can drift apart while every
+    // test still passes. isAnyCarModel is what the rest of the tool asks.
+    const { championship: c } = emit()
+    for (const ev of events(c)) {
+      for (const s of slots(ev.EntryList)) expect(isAnyCarModel(s.entrant)).toBe(true)
+    }
+    expect(ANY_CAR_MODEL).toBe(CANONICAL_ANY_CAR_MODEL)
+  })
+
+  it("applies the league baseline to every round's RaceSetup", () => {
+    // gridmom checks RaceSetup against baseline.raceSetup, so an emitter that
+    // skipped it would generate months its own checker complains about — and
+    // the deliberate EntryListType/PracticeEntryListType pair (§4.4) would
+    // only be right when the template happened to agree.
+    const { championship: c } = emitMonth({
+      template: template({
+        Events: [raceEvent({ RaceSetup: { EntryListType: 0, PracticeEntryListType: 0 } })],
+      }),
+      spec: spec(),
+      profile: testProfile(),
+      pits,
+      now: NOW,
+    })
+    for (const ev of events(c)) {
+      expect(ev.RaceSetup?.EntryListType).toBe(1)
+      expect(ev.RaceSetup?.PracticeEntryListType).toBe(2)
+    }
+  })
+
+  it("lets the month's own settings beat the baseline", () => {
+    // The baseline is a *default*, so it must lose to anything actually asked
+    // for — otherwise a league could never run a one-off different format.
+    //
+    // The baseline here deliberately mentions the same fields the format sets.
+    // A baseline naming only fields the format ignores would let a
+    // wrong-precedence implementation pass unnoticed.
+    const profile = testProfile({
+      baseline: {
+        raceSetup: {
+          EntryListType: 1,
+          PracticeEntryListType: 2,
+          RacePitWindowStart: 0,
+          ReversedGridRacePositions: 0,
+        },
+        championship: {},
+      },
+    })
+    const { championship: c } = emitMonth({
+      template: template(),
+      spec: spec({
+        format: {
+          length: { kind: "laps", laps: 18 },
+          reversedGridPositions: 9,
+          mandatoryPit: true,
+          extraLap: false,
+        },
+      }),
+      profile,
+      pits,
+      now: NOW,
+    })
+
+    for (const ev of events(c)) {
+      expect(ev.RaceSetup?.ReversedGridRacePositions).toBe(9)
+      expect(ev.RaceSetup?.RacePitWindowStart).toBe(1)
+      // ...while a baseline field the month said nothing about still applies.
+      expect(ev.RaceSetup?.EntryListType).toBe(1)
+    }
+  })
+
+  it("keeps the root ID consistent with references to it", () => {
+    // regenerateIds applies one old→new mapping across the whole graph, so a
+    // field that referenced the championship's own ID still points at it.
+    // Assigning a fresh out.ID afterwards would give the root one value and
+    // every reference another.
+    const id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    const t = template({ ID: id }) as Championship & { SomeFutureAcsmField?: unknown }
+    t.SomeFutureAcsmField = { ChampionshipID: id }
+
+    const { championship: c } = emit({ template: t })
+    const ref = (c as Record<string, unknown>)["SomeFutureAcsmField"] as {
+      ChampionshipID: string
+    }
+    expect(c.ID).not.toBe(id)
+    expect(ref.ChampionshipID).toBe(c.ID)
+  })
+
+  it("still gives a fresh ID when the template's wasn't a UUID", () => {
+    // regenerateIds only rewrites UUID-shaped strings, so a non-UUID template
+    // ID would otherwise survive and could collide on import.
+    const { championship: c } = emit({ template: template({ ID: "champ-1" }) })
+    expect(c.ID).not.toBe("champ-1")
+    expect(c.ID).toMatch(/^[0-9a-f-]{36}$/)
   })
 
   it("refuses a template with no events to take a shape from", () => {
