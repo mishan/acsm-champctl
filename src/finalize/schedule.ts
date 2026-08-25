@@ -143,6 +143,24 @@ export function localTimeCandidates(date: string, time: string, zone: string): D
  * not a reason to write the wrong time without saying so.
  */
 export function qualiStartFrom(date: string, time: string, zone: string): DateTime {
+  // Strict shapes, checked before anything is parsed.
+  //
+  // Everything downstream works in `HH:mm` — `localTimeCandidates` compares
+  // against `time.slice(0, 5)` — so a looser input isn't rejected, it is
+  // silently reinterpreted. Measured: "20:00:30" quietly lost its seconds, and
+  // "20:00+05:00" quietly lost its *offset*, scheduling 8pm Pacific for
+  // someone who asked for 8pm UTC. A seven-hour error with no warning is far
+  // worse than being told the format is wrong.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new ScheduleError(`${JSON.stringify(date)} is not a date. Use YYYY-MM-DD.`)
+  }
+  if (!/^\d{2}:\d{2}$/.test(time)) {
+    throw new ScheduleError(
+      `${JSON.stringify(time)} is not a time. Use HH:mm, as ${zone}'s wall clock — no seconds, ` +
+        `and no trailing Z or offset, which would be ignored rather than honoured.`,
+    )
+  }
+
   const dt = DateTime.fromISO(`${date}T${time}`, { zone })
   if (!dt.isValid) {
     throw new ScheduleError(

@@ -292,6 +292,30 @@ describe("schedule maths", () => {
     }
   })
 
+  it("refuses a time that isn't plain HH:mm", () => {
+    // Everything downstream works in HH:mm, so a looser input wasn't rejected
+    // — it was silently reinterpreted. Measured: "20:00:30" lost its seconds,
+    // and "20:00+05:00" lost its *offset*, scheduling 8pm Pacific for someone
+    // who asked for 8pm UTC.
+    for (const t of ["20:00:30", "20:00:00.500", "20:00Z", "20:00+05:00", "8:00", "20.00", ""]) {
+      expect(() => qualiStartFrom("2026-09-02", t, ZONE), t).toThrow(ScheduleError)
+    }
+    expect(() => qualiStartFrom("2026-09-02", "20:00Z", ZONE)).toThrow(
+      /ignored rather than honoured/,
+    )
+  })
+
+  it("refuses a date that isn't plain YYYY-MM-DD", () => {
+    for (const d of ["2026-9-2", "09/02/2026", "2026-09-02T20:00", ""]) {
+      expect(() => qualiStartFrom(d, "20:00", ZONE), d).toThrow(/is not a date/)
+    }
+  })
+
+  it("still accepts an ordinary date and time", () => {
+    expect(qualiStartFrom("2026-09-02", "20:00", ZONE).toFormat("HH:mm")).toBe("20:00")
+    expect(qualiStartFrom("2026-09-02", "00:00", ZONE).toFormat("HH:mm")).toBe("00:00")
+  })
+
   it("catches a backward transition that isn't a whole hour", () => {
     // Lord Howe Island shifts by 30 minutes, so anything built around "add an
     // hour and see whether the wall clock repeats" misses its overlap

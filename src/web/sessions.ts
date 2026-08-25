@@ -164,26 +164,30 @@ export class SessionStore {
 }
 
 /**
- * Compares two session IDs without leaking anything through timing, including
- * their lengths.
+ * Compares two session IDs so that the *comparison* reveals neither how much
+ * of them matched nor whether their lengths differed.
  *
- * `timingSafeEqual` alone cannot do this: it throws on differing lengths, so
- * the usual wrapper returns early — and an early return is observably not
- * constant time, whatever the surrounding comment claims. Hashing both inputs
- * first sidesteps it. The digests are always 32 bytes, so exactly one
- * comparison of one fixed size happens regardless of what came in, and the
- * hash of a secret leaks nothing about the secret.
+ * That is the whole claim, stated narrowly on purpose, because the obvious
+ * looser version — "constant time" — would be false.
  *
- * Whether the length needed protecting here is arguable — champctl's IDs are
- * all 43 characters, which is structural and visible to anyone holding a
- * cookie. Doing it properly anyway costs two hashes on a path that runs once
- * per request, and it means the guarantee doesn't depend on a fact about
- * callers that this exported function can't enforce.
+ * `timingSafeEqual` alone can't manage even this much: it throws on differing
+ * lengths, so the usual wrapper returns early, and an early return is
+ * observably not constant time. Hashing both inputs first sidesteps that. The
+ * digests are always 32 bytes, so exactly one comparison of one fixed size
+ * happens whatever came in, and a hash reveals nothing about its input.
+ *
+ * **The function as a whole is not constant time.** SHA-256 is linear in its
+ * input, so a ten-kilobyte argument takes measurably longer than a short one.
+ * What that reveals is the length of the value the *caller* passed, which an
+ * attacker passing it already knows. The stored ID's own length is fixed at 43
+ * characters, structural, and visible to anyone holding a cookie, so there is
+ * nothing left there to leak. Don't reach for this to compare secrets whose
+ * length is itself sensitive — it would not hide that.
  *
  * The `Map` lookup in `SessionStore.get` is the normal path and is *not*
- * constant time. That is a separate and deliberate judgement: these IDs are
- * 256 bits of CSPRNG output, so there is no prefix an attacker can walk
- * toward one character at a time.
+ * constant time either. Separate, deliberate judgement: these IDs are 256 bits
+ * of CSPRNG output, so there is no prefix an attacker can walk toward one
+ * character at a time.
  */
 export function sameSessionId(a: string, b: string): boolean {
   const ah = createHash("sha256").update(a, "utf8").digest()
