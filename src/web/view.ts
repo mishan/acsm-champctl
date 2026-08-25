@@ -19,12 +19,14 @@
  * of itself rather than a second description assembled for display.
  */
 
-import type { DateTime } from "luxon"
+import { DateTime } from "luxon"
 
 import type { Championship, ChampionshipEvent, ChampionshipSummary } from "../acsm/types.js"
 import { eventHasStarted, eventLabel, events, trackLabel } from "../acsm/view.js"
 import type { FormFieldChange } from "../finalize/format.js"
 import { readFormat } from "../finalize/format.js"
+import type { CheckReport } from "../gridmom/finding.js"
+import type { EmitResult } from "../emit/month.js"
 import type { FinalizePlan } from "../finalize/plan.js"
 import { currentQualiStart, practiceMinutesFor } from "../finalize/schedule.js"
 import type { LeagueProfile } from "../profile/types.js"
@@ -32,6 +34,8 @@ import type {
   ChampionshipListItem,
   ChampionshipView,
   LocalTimeView,
+  MonthPlanView,
+  MonthRoundView,
   PlanView,
   PostedField,
   RoundView,
@@ -86,6 +90,56 @@ export function roundView(ev: ChampionshipEvent, round: number, profile: LeagueP
     // Reading the raw field would also mean rendering Go's zero time for an
     // unscheduled event as though it were a date in the year 1.
     practiceStart: quali ? localTime(quali.minus({ minutes: practiceMinutes })) : null,
+  }
+}
+
+/**
+ * The month as a review screen, not as a championship export.
+ *
+ * The export is a large document of ACSM's own bookkeeping, and handing it to
+ * a browser invites reading the wrong field to answer a question this can
+ * answer directly. What crosses is §5.1 step 5: the rounds with their tracks
+ * and times, the grid cap and what bound it, and what the emitter decided
+ * rather than inherited.
+ */
+export function monthPlanView(
+  planId: string,
+  sourceId: string,
+  result: EmitResult,
+  gridmom: CheckReport,
+  profile: LeagueProfile,
+): MonthPlanView {
+  const zone = profile.schedule.timezone
+  const rounds = events(result.championship).map((ev, i): MonthRoundView => {
+    const scheduled = result.schedule[i]
+    const track = ev.RaceSetup?.Track ?? ""
+    const layout = ev.RaceSetup?.TrackLayout ?? ""
+    return {
+      round: i + 1,
+      track,
+      ...(layout ? { layout } : {}),
+      label: trackLabel(ev.RaceSetup),
+      quali: localTime(DateTime.fromISO(scheduled?.qualiStart ?? "", { zone }).setZone(zone)),
+      moved: scheduled?.overridden === true,
+      ...(scheduled?.note ? { note: scheduled.note } : {}),
+    }
+  })
+
+  return {
+    planId,
+    sourceId,
+    name: result.championship.Name ?? "",
+    rounds,
+    grid: {
+      maxClients: result.grid.maxClients,
+      ...(result.grid.bindingTrack ? { bindingTrack: result.grid.bindingTrack } : {}),
+      unknownTracks: result.grid.unknownTracks,
+      summary: result.grid.summary,
+    },
+    derived: result.derived,
+    gridmom,
+    blocked: gridmom.counts.ERROR > 0,
+    needsAcknowledgement: gridmom.counts.WARN > 0,
   }
 }
 

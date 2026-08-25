@@ -189,6 +189,104 @@ export interface ApplyResponse {
   changes: Change[]
 }
 
+// ---------------------------------------------------------------------------
+// Creating a month (plan §5.1)
+// ---------------------------------------------------------------------------
+
+/** What the browser asks for when cloning last month into this one. */
+export interface MonthPlanRequest {
+  /** The championship to clone. Both the template and the source of the spec. */
+  sourceId: string
+  /** The new month's name. Without one, last month's name is reused. */
+  name?: string
+  /** `YYYY-MM-DD`, the first race night. Later rounds follow the weekday rule. */
+  startDate?: string
+  /**
+   * The track list, in order, replacing the source's outright.
+   *
+   * Replaced rather than merged, matching `cloneMonth`: someone who sends four
+   * tracks means four rounds, and merging would silently keep a fifth from
+   * last month.
+   */
+  tracks?: TrackRequest[]
+}
+
+export interface TrackRequest {
+  track: string
+  layout?: string
+}
+
+/** One race night, as the review screen shows it. */
+export interface MonthRoundView {
+  round: number
+  track: string
+  layout?: string
+  /**
+   * `brands_hatch/indy` — the identifier form, as `acsm/view.ts` spells it and
+   * as the pit table is keyed. Not the sentence form: `grid.summary` is where
+   * a track gets named inside a sentence, and one label doing both is how
+   * "capped at 24 by brands_hatch/indy" reached a person.
+   */
+  label: string
+  /** League-local quali start. */
+  quali: LocalTimeView
+  /** True when a per-round override moved it off the weekday rule. */
+  moved: boolean
+  note?: string
+}
+
+/**
+ * The month as it would be, for a screen to check before anything is written.
+ *
+ * Deliberately not the championship export. That is a large document full of
+ * ACSM's own bookkeeping, and a review screen that renders it invites reading
+ * the wrong field. What is here is what §5.1 step 5 asks for: the rounds, the
+ * grid cap and what set it, and what the emitter chose rather than inherited.
+ */
+export interface MonthPlanView {
+  /** Hand this back to import. It is the only thing the import endpoint takes. */
+  planId: string
+  /** The championship this was cloned from. */
+  sourceId: string
+  name: string
+  rounds: MonthRoundView[]
+  /** `MaxClients`, and the track that bound it. */
+  grid: {
+    maxClients: number
+    /** Named in the summary — "capped at 24 by brands_hatch (indy)". */
+    bindingTrack?: string
+    /** Tracks with no pit count on file, so the cap is a guess without them. */
+    unknownTracks: string[]
+    summary: string
+  }
+  /**
+   * What the emitter set rather than inherited.
+   *
+   * Every entry here was a real bug once (plan §5.5) — an inherited `Created`
+   * claiming the championship existed a month early, a car list still naming a
+   * spectator model that is switched off. Shown because "what did it decide for
+   * me?" is the question a review screen exists to answer.
+   */
+  derived: string[]
+  /** gridmom against the month as it *would* be, not against last month. */
+  gridmom: CheckReport
+  /** An ERROR. Nothing overrides this. */
+  blocked: boolean
+  /** Warnings exist, so the import will need an acknowledgement. */
+  needsAcknowledgement: boolean
+}
+
+export interface MonthPlanResponse {
+  plan: MonthPlanView
+}
+
+export interface MonthImportResponse {
+  /** The championship ACSM created. */
+  championshipId: string
+  name: string
+  rounds: number
+}
+
 /** The body of every non-2xx response. */
 export interface ErrorResponse {
   error: {

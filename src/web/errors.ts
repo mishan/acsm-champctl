@@ -16,7 +16,7 @@
  */
 
 import { AcsmError } from "../acsm/client.js"
-import { AcsmAuthError, PasswordChangeRequiredError } from "../acsm/session.js"
+import { AcsmAuthError, AcsmWriteError, PasswordChangeRequiredError } from "../acsm/session.js"
 import { EntryListChangedError, PartialWriteError } from "../finalize/apply.js"
 import { FinalizeError } from "../finalize/plan.js"
 import { ScheduleError } from "../finalize/schedule.js"
@@ -140,6 +140,23 @@ export function describeError(e: unknown): DescribedError {
       },
       ...OK,
     }
+  }
+
+  /**
+   * A write ACSM refused, or one champctl refused to send.
+   *
+   * Before the `AcsmError` branch it extends, because the message is worth
+   * keeping. These are champctl's own sentences about the *request* — this
+   * championship already has results, the import form has no field to post to,
+   * ACSM answered the import without saying what it created — and each names
+   * something the person can go and look at. The generic gateway sentence
+   * below is right for a transport failure and useless for these.
+   *
+   * Still 502: whatever went wrong, it went wrong at the manager rather than
+   * in champctl, and nothing champctl could retry differently would fix it.
+   */
+  if (e instanceof AcsmWriteError) {
+    return { status: 502, body: { error: { code: "acsm-write", message: e.message } }, ...OK }
   }
 
   /**

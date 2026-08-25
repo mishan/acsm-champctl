@@ -22,14 +22,22 @@ import type { FastifyInstance } from "fastify"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { StaticAcsmReader } from "../src/acsm/client.js"
+import { IMPORT_PATH } from "../src/acsm/paths.js"
 import { AcsmSession } from "../src/acsm/session.js"
 import type { Championship } from "../src/acsm/types.js"
 import type { FinalizePlan } from "../src/finalize/plan.js"
 import { PlanStore } from "../src/web/plans.js"
+import type { HeldMonth } from "../src/web/routes.js"
+import type { MonthImportResponse, MonthPlanResponse } from "../src/web/wire.js"
 import { buildServer } from "../src/web/server.js"
 import { SessionStore } from "../src/web/sessions.js"
 import { LoginThrottle } from "../src/web/throttle.js"
-import { eventFormHtml, scheduleFormHtml, type FormEntrant } from "./support/acsm-html.js"
+import {
+  eventFormHtml,
+  fakeImportPage,
+  scheduleFormHtml,
+  type FormEntrant,
+} from "./support/acsm-html.js"
 import {
   championship,
   driver,
@@ -42,6 +50,8 @@ import {
 } from "./support/build.js"
 
 const CHAMP_ID = "11111111-2222-3333-4444-555555555555"
+/** What ACSM redirects to after an import; the only source of the new id. */
+const IMPORTED_ID = "99999999-8888-7777-6666-555555555555"
 const EVENT_ID = "event-1"
 const BASE_URL = "https://acsm.example"
 
@@ -75,6 +85,9 @@ interface HarnessOptions {
   loginOutage?: "5xx" | "transport"
   sessions?: SessionStore
   plans?: PlanStore<FinalizePlan>
+  /** How ACSM answers the import POST. Default: the redirect a real one sends. */
+  importOutcome?: "no-redirect"
+  months?: PlanStore<HeldMonth>
   throttle?: LoginThrottle
   /**
    * Held open until the test resolves it, so two requests can be in the write
@@ -122,7 +135,24 @@ function harness(options: HarnessOptions = {}): Harness {
     if (init.method === "POST") {
       posts.push({ url, body: String(init.body) })
       if (options.postGate) await options.postGate
+      // An import redirects to the championship it made, and that redirect is
+      // the only thing that tells champctl the id. Anything else redirects to
+      // "/", as ACSM does for an event save.
+      if (url.endsWith(IMPORT_PATH)) {
+        if (options.importOutcome === "no-redirect") {
+          return new Response("<html>ok</html>", { status: 200 })
+        }
+        return new Response("", {
+          status: 302,
+          headers: { location: `/championship/${IMPORTED_ID}` },
+        })
+      }
       return new Response("", { status: 302, headers: { location: "/" } })
+    }
+    if (url.endsWith(IMPORT_PATH)) {
+      // 1.7.9 renders a textarea here and 2.4.x a file input; either drives
+      // the same path, and `detectImportMechanism` is what tells them apart.
+      return new Response(fakeImportPage("textarea"), { status: 200 })
     }
     // The schedule form is rendered on the *championship* page, not at its own
     // action — that route is POST-only and a GET of it is a 405 on 2.4.x. This
@@ -146,6 +176,7 @@ function harness(options: HarnessOptions = {}): Harness {
     createSession: (baseUrl) => new AcsmSession({ baseUrl, fetch: fetchImpl, rateLimit: false }),
     ...(options.sessions ? { sessions: options.sessions } : {}),
     ...(options.plans ? { plans: options.plans } : {}),
+    ...(options.months ? { months: options.months } : {}),
     ...(options.throttle ? { throttle: options.throttle } : {}),
     // Off so the Set-Cookie assertions below are about SameSite and HttpOnly
     // rather than about a flag every test would have to opt out of anyway.
@@ -934,6 +965,204 @@ describe("logging out", () => {
     })
     expect(res.statusCode).toBe(204)
     expect(String(res.headers["set-cookie"])).toContain("Max-Age=0")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Creating a month (plan §5.1)
+// ---------------------------------------------------------------------------
+
+describe("previewing a month", () => {
+  const planMonth = async (h: Harness, body: Record<string, unknown> = {}) =>
+    h.app.inject({
+      method: "POST",
+      url: "/api/months/plan",
+      headers: { cookie: h.cookie() },
+      payload: { sourceId: CHAMP_ID, ...body },
+    })
+
+  it("builds this month from last month, and writes nothing", async () => {
+    const h = harness()
+    await h.login()
+    const res = await planMonth(h, { name: "September 2026" })
+    expect(res.statusCode, res.body).toBe(200)
+
+    const { plan } = res.json() as MonthPlanResponse
+    expect(plan.planId).toBeTruthy()
+    expect(plan.sourceId).toBe(CHAMP_ID)
+    expect(plan.name).toBe("September 2026")
+    expect(plan.rounds.length).toBeGreaterThan(0)
+    // Previewing is a read. The whole point of the two-step.
+    expect(h.posts).toHaveLength(0)
+  })
+
+  it("replaces the track list rather than merging into it", async () => {
+    // Same rule as `cloneMonth`: someone who sends three tracks means three
+    // race nights, and merging would silently keep a fourth from last month.
+    const h = harness()
+    await h.login()
+    const res = await planMonth(h, {
+      name: "September 2026",
+      tracks: [{ track: "spa" }, { track: "monza" }, { track: "brands_hatch", layout: "indy" }],
+    })
+    expect(res.statusCode, res.body).toBe(200)
+
+    const { plan } = res.json() as MonthPlanResponse
+    expect(plan.rounds.map((r: { track: string }) => r.track)).toEqual([
+      "spa",
+      "monza",
+      "brands_hatch",
+    ])
+    expect(plan.rounds[2]?.layout).toBe("indy")
+    expect(plan.rounds[2]?.label).toBe("brands_hatch/indy")
+  })
+
+  it("names the track that bound the grid", async () => {
+    // §5.1 step 5. "Capped at 24" without saying by what leaves someone
+    // guessing which track to go and change.
+    const h = harness()
+    await h.login()
+    const res = await planMonth(h, { name: "September 2026", tracks: [{ track: "suzuka" }] })
+    const { plan } = res.json() as MonthPlanResponse
+    expect(plan.grid.maxClients).toBeGreaterThan(0)
+    expect(plan.grid.summary).toBeTruthy()
+  })
+
+  it("reports what the emitter decided rather than inherited", async () => {
+    // Every entry here was a real bug once — an inherited `Created` claiming
+    // the championship existed a month early, a car list still naming a
+    // spectator model that is switched off.
+    const h = harness()
+    await h.login()
+    const { plan } = (await planMonth(h, { name: "September 2026" })).json() as MonthPlanResponse
+    expect(plan.derived.length).toBeGreaterThan(0)
+  })
+
+  it("runs gridmom against the month as it would be", async () => {
+    const h = harness()
+    await h.login()
+    const { plan } = (await planMonth(h, { name: "September 2026" })).json() as MonthPlanResponse
+    expect(plan.gridmom).toBeDefined()
+    expect(plan.blocked).toBe(plan.gridmom.counts.ERROR > 0)
+    expect(plan.needsAcknowledgement).toBe(plan.gridmom.counts.WARN > 0)
+  })
+
+  it("refuses a request with no source to clone", async () => {
+    const h = harness()
+    await h.login()
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/api/months/plan",
+      headers: { cookie: h.cookie() },
+      payload: { name: "September 2026" },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it("needs a session", async () => {
+    const h = harness()
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/api/months/plan",
+      payload: { sourceId: CHAMP_ID },
+    })
+    expect(res.statusCode).toBe(401)
+  })
+})
+
+describe("creating the month", () => {
+  const previewed = async (h: Harness, body: Record<string, unknown> = {}): Promise<string> => {
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/api/months/plan",
+      headers: { cookie: h.cookie() },
+      payload: { sourceId: CHAMP_ID, name: "September 2026", ...body },
+    })
+    expect(res.statusCode, res.body).toBe(200)
+    return (res.json() as MonthPlanResponse).plan.planId
+  }
+
+  const importMonth = (h: Harness, planId: string, ack = true) =>
+    h.app.inject({
+      method: "POST",
+      url: `/api/months/${planId}/import`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: ack },
+    })
+
+  it("imports the month that was previewed and reports what ACSM made", async () => {
+    const h = harness()
+    await h.login()
+    const res = await importMonth(h, await previewed(h))
+    expect(res.statusCode, res.body).toBe(200)
+
+    const body = res.json() as MonthImportResponse
+    expect(body.championshipId).toBe(IMPORTED_ID)
+    expect(body.name).toBe("September 2026")
+    expect(body.rounds).toBeGreaterThan(0)
+    expect(h.posts.some((p) => p.url.endsWith(IMPORT_PATH))).toBe(true)
+  })
+
+  it("spends the month once, so a double-tap cannot create two", async () => {
+    // Sharper than the finalize equivalent: applying a format twice re-applies
+    // something already applied, while importing twice leaves a league with
+    // two Septembers to tell apart and delete by hand.
+    const h = harness()
+    await h.login()
+    const planId = await previewed(h)
+
+    expect((await importMonth(h, planId)).statusCode).toBe(200)
+    const second = await importMonth(h, planId)
+    expect(second.statusCode).toBe(404)
+    expect(second.json().error.code).toBe("no-such-plan")
+    expect(h.posts.filter((p) => p.url.endsWith(IMPORT_PATH))).toHaveLength(1)
+  })
+
+  it("will not let another session spend it", async () => {
+    const sessions = new SessionStore()
+    const months = new PlanStore<HeldMonth>()
+    const a = harness({ sessions, months })
+    const b = harness({ sessions, months })
+    await a.login("ada")
+    await b.login("grace")
+
+    const planId = await previewed(a)
+    const stolen = await importMonth(b, planId)
+    expect(stolen.statusCode).toBe(404)
+    expect(b.posts.some((p) => p.url.endsWith(IMPORT_PATH))).toBe(false)
+  })
+
+  it("keeps the month when the import is refused, so it can be retried", async () => {
+    // The refusals are things the person can act on. Wedging the month would
+    // make them rebuild a preview they are looking at.
+    const h = harness({ importOutcome: "no-redirect" })
+    await h.login()
+    const planId = await previewed(h)
+
+    const first = await importMonth(h, planId)
+    expect(first.statusCode).toBe(502)
+    // Still there: the same id works once ACSM is behaving.
+    const second = await importMonth(h, planId)
+    expect(second.statusCode).toBe(502)
+    expect(second.json().error.code).not.toBe("no-such-plan")
+  })
+
+  it("says what champctl refused rather than a generic gateway sentence", async () => {
+    // `AcsmWriteError` messages are champctl's own, about the request, and
+    // each names something to go and look at. The generic 502 sentence is
+    // right for a transport failure and useless here.
+    const h = harness({ importOutcome: "no-redirect" })
+    await h.login()
+    const res = await importMonth(h, await previewed(h))
+    expect(res.json().error.code).toBe("acsm-write")
+    expect(res.json().error.message).toMatch(/redirect|championship/i)
+  })
+
+  it("refuses an id it never issued", async () => {
+    const h = harness()
+    await h.login()
+    const res = await importMonth(h, "not-a-plan")
+    expect(res.statusCode).toBe(404)
   })
 })
 
