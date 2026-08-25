@@ -40,7 +40,7 @@ import {
   withOverrides,
   type FormatOverrides,
 } from "../finalize/format.js"
-import { planFinalize } from "../finalize/plan.js"
+import { planFinalize, type FinalizePlan } from "../finalize/plan.js"
 import { check } from "../gridmom/index.js"
 import type { PitTable } from "../pits/table.js"
 import { EMPTY_PIT_TABLE } from "../pits/table.js"
@@ -86,7 +86,7 @@ export interface ApiContext {
   baseUrl: string
   reader: AcsmReader
   sessions: SessionStore
-  plans: PlanStore
+  plans: PlanStore<FinalizePlan>
   throttle: LoginThrottle
   /** Injectable so a test can drive a session over a stub `fetch`. */
   createSession: (baseUrl: string) => AcsmSession

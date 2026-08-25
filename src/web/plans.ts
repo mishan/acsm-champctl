@@ -32,7 +32,6 @@
 
 import { randomBytes } from "node:crypto"
 
-import type { FinalizePlan } from "../finalize/plan.js"
 import { sameSessionId } from "./sessions.js"
 
 /**
@@ -48,11 +47,11 @@ import { sameSessionId } from "./sessions.js"
  */
 export const DEFAULT_PLAN_TTL_MS = 15 * 60 * 1000
 
-export interface StoredPlan {
+export interface StoredPlan<T> {
   id: string
   /** The session that created it. Only that session may apply it. */
   sessionId: string
-  plan: FinalizePlan
+  plan: T
   createdAt: number
   expiresAt: number
   /**
@@ -72,12 +71,25 @@ export interface StoredPlan {
  * tell three cases apart and they mean different things to a person: the plan
  * is gone, someone else is already pushing it, or here it is.
  */
-export type PlanAcquisition =
-  | { kind: "acquired"; plan: FinalizePlan }
+export type PlanAcquisition<T> =
+  | { kind: "acquired"; plan: T }
   | { kind: "not-found" }
   | { kind: "in-flight" }
 
 export interface PlanStoreOptions {
+  /**
+   * What these are, for the message when the store fills up.
+   *
+   * Diagnosing "refusing to hold more than 2000" means knowing *which* store
+   * ran out, and with two of them the noun is the one thing the message cannot
+   * supply for itself — the store is generic and has never seen what `T` is.
+   *
+   * That is also why the message says nothing about what a plan *holds*. A
+   * finalize plan holds a parsed event form; a new-championship plan holds an
+   * emitted championship. One sentence describing both would be wrong about
+   * one of them, so it describes neither and names them instead.
+   */
+  label?: string
   ttlMs?: number
   now?: () => number
   maxPlans?: number
@@ -88,13 +100,27 @@ export function newPlanId(): string {
   return randomBytes(32).toString("base64url")
 }
 
-export class PlanStore {
-  readonly #byId = new Map<string, StoredPlan>()
+/**
+ * A single-use, session-owned lease over something computed and then confirmed.
+ *
+ * Generic over what is held because there are two of these and they want
+ * identical guarantees for different reasons. A finalize plan is a licence to
+ * POST one event form; a new-championship plan is a licence to import one
+ * championship, where spending it twice leaves a league two of them to tell
+ * apart and delete by hand. The
+ * TTL, the ownership check and the in-flight flag are the same argument in both
+ * cases, and a second copy of them is a second place for the argument to be
+ * got wrong.
+ */
+export class PlanStore<T> {
+  readonly #byId = new Map<string, StoredPlan<T>>()
   readonly #ttlMs: number
   readonly #now: () => number
   readonly #max: number
+  readonly #label: string
 
   constructor(options: PlanStoreOptions = {}) {
+    this.#label = options.label ?? "plans"
     this.#ttlMs = options.ttlMs ?? DEFAULT_PLAN_TTL_MS
     this.#now = options.now ?? Date.now
     this.#max = options.maxPlans ?? 2000
@@ -112,12 +138,12 @@ export class PlanStore {
    * list per edit — each one holding driver names and Steam GUIDs long after
    * anyone could act on it.
    */
-  create(sessionId: string, plan: FinalizePlan): string {
+  create(sessionId: string, plan: T): string {
     this.sweep()
     if (this.#byId.size >= this.#max) {
       throw new Error(
-        `Refusing to hold more than ${this.#max} finalize plans at once. Something is previewing ` +
-          `without ever pushing, and each plan holds a parsed entry list.`,
+        `Refusing to hold more than ${this.#max} ${this.#label} at once. Something is previewing ` +
+          `without ever confirming, and each one is held in memory until it is spent or expires.`,
       )
     }
 
@@ -143,7 +169,7 @@ export class PlanStore {
    * spend it. Compared with `sameSessionId` for the same reason session lookup
    * is: the comparison should not report how much of the value matched.
    */
-  get(id: string | undefined, sessionId: string): FinalizePlan | undefined {
+  get(id: string | undefined, sessionId: string): T | undefined {
     return this.#owned(id, sessionId)?.plan
   }
 
@@ -165,7 +191,7 @@ export class PlanStore {
    * never succeed, `release` when the refusal is one the person can act on and
    * retry — an unacknowledged warning being the normal case.
    */
-  acquire(id: string | undefined, sessionId: string): PlanAcquisition {
+  acquire(id: string | undefined, sessionId: string): PlanAcquisition<T> {
     const found = this.#owned(id, sessionId)
     if (!found) return { kind: "not-found" }
     if (found.inFlight) return { kind: "in-flight" }
@@ -237,14 +263,14 @@ export class PlanStore {
    * handlers as written, which is exactly why it needed to be enforced here
    * rather than left to each caller to remember.
    */
-  #owned(id: string | undefined, sessionId: string): StoredPlan | undefined {
+  #owned(id: string | undefined, sessionId: string): StoredPlan<T> | undefined {
     const found = this.#lookup(id)
     if (!found) return undefined
     if (!sameSessionId(found.sessionId, sessionId)) return undefined
     return found
   }
 
-  #lookup(id: string | undefined): StoredPlan | undefined {
+  #lookup(id: string | undefined): StoredPlan<T> | undefined {
     if (!id) return undefined
     const found = this.#byId.get(id)
     if (!found) return undefined
