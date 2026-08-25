@@ -189,6 +189,114 @@ export interface ApplyResponse {
   changes: Change[]
 }
 
+// ---------------------------------------------------------------------------
+// Creating a championship (plan §5.1)
+// ---------------------------------------------------------------------------
+
+/** What the browser asks for when cloning a past championship into a new one. */
+export interface NewChampionshipRequest {
+  /** The championship to clone. Both the template and the source of the spec. */
+  sourceId: string
+  /** The new championship's name. Without one, the source's name is reused. */
+  name?: string
+  /** `YYYY-MM-DD`, the first race night. Later rounds follow the weekday rule. */
+  startDate?: string
+  /**
+   * The track list, in order, replacing the source's outright.
+   *
+   * Replaced rather than merged, matching `cloneChampionship`: someone who sends four
+   * tracks means four rounds, and merging would silently keep a fifth from
+   * the source.
+   */
+  tracks?: TrackRequest[]
+}
+
+export interface TrackRequest {
+  track: string
+  layout?: string
+}
+
+/** One race night, as the review screen shows it. */
+export interface PlannedRoundView {
+  round: number
+  track: string
+  layout?: string
+  /**
+   * `brands_hatch/indy` — the identifier form, as `acsm/view.ts` spells it and
+   * as the pit table is keyed. Not the sentence form: `grid.summary` is where
+   * a track gets named inside a sentence, and one label doing both is how
+   * "capped at 24 by brands_hatch/indy" reached a person.
+   */
+  label: string
+  /** League-local quali start. */
+  quali: LocalTimeView
+  /** True when a per-round override moved it off the weekday rule. */
+  moved: boolean
+  note?: string
+}
+
+/**
+ * The championship as it would be, for a screen to check before anything is written.
+ *
+ * Deliberately not the championship export. That is a large document full of
+ * ACSM's own bookkeeping, and a review screen that renders it invites reading
+ * the wrong field. What is here is what §5.1 step 5 asks for: the rounds, the
+ * grid cap and what set it, and what the emitter chose rather than inherited.
+ */
+export interface NewChampionshipPlan {
+  /** Hand this back to import. It is the only thing the import endpoint takes. */
+  planId: string
+  /** The championship this was cloned from. */
+  sourceId: string
+  name: string
+  rounds: PlannedRoundView[]
+  /** The grid cap, and the track that bound it. */
+  grid: {
+    /**
+     * The cap the pit counts imply, or **0 meaning none was derived**.
+     *
+     * 0 is not a grid of nobody: it is what `gridCap` returns when no track on
+     * the list has a pit count on file, and the emitter then leaves
+     * `MaxClients` as the template had it rather than writing a number derived
+     * from nothing. So this is not always what ACSM ends up storing — read
+     * `summary`, which says which of the two happened in a sentence, and
+     * `bindingTrack`, which is set exactly when a track supplied the number.
+     */
+    maxClients: number
+    /** Named in the summary — "capped at 24 by brands_hatch (indy)". */
+    bindingTrack?: string
+    /** Tracks with no pit count on file, so the cap is a guess without them. */
+    unknownTracks: string[]
+    summary: string
+  }
+  /**
+   * What the emitter set rather than inherited.
+   *
+   * Every entry here was a real bug once (plan §5.5) — an inherited `Created`
+   * claiming the championship existed a month before it did, a car list naming a
+   * spectator model that is switched off. Shown because "what did it decide for
+   * me?" is the question a review screen exists to answer.
+   */
+  derived: string[]
+  /** gridmom against the championship as it *would* be, not against the source. */
+  gridmom: CheckReport
+  /** An ERROR. Nothing overrides this. */
+  blocked: boolean
+  /** Warnings exist, so the import will need an acknowledgement. */
+  needsAcknowledgement: boolean
+}
+
+export interface NewChampionshipPlanResponse {
+  plan: NewChampionshipPlan
+}
+
+export interface NewChampionshipResponse {
+  /** The championship ACSM created. */
+  championshipId: string
+  name: string
+  rounds: number
+}
+
 /** The body of every non-2xx response. */
 export interface ErrorResponse {
   error: {
