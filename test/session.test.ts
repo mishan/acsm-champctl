@@ -1090,7 +1090,7 @@ describe("regenerateIds", () => {
     // came out inheriting fields nobody set, and every check downstream read
     // them as real. deepMerge has guarded this since it was written.
     const source = JSON.parse(
-      String.raw`{"ID":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","Nested":{"__proto__":{"polluted":true},"Ref":"ok"}}`,
+      `{"ID":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","Nested":{"__proto__":{"polluted":true},"Ref":"ok"}}`,
     ) as { Nested: Record<string, unknown> }
 
     const out = regenerateIds(source)
