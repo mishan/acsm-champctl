@@ -88,7 +88,7 @@ describe("reading a format off an event", () => {
    * that back and turn it off for real. The synthetic fixtures agreed with the
    * bug, because they were written with `false`.
    *
-   * Writing, a bool made every emitted month unimportable.
+   * Writing, a bool made every emitted championship unimportable.
    */
   it("reads the extra lap from the int an export really carries", () => {
     const withValue = (RaceExtraLap: unknown) =>
@@ -223,8 +223,8 @@ describe("applying a format to an event", () => {
     // Skipping the length here was a real bug in both directions: gridmom
     // would be shown a would-be event still reading zero laps and report
     // "nobody set the race length" for a race the write is about to set —
-    // blocking a push that fixes the complaint — and emitMonth, which applies
-    // a format for real, would emit a month with no race length at all.
+    // blocking a push that fixes the complaint — and emitChampionship, which applies
+    // a format for real, would emit a championship with no race length at all.
     const ev = raceEvent({ RaceSetup: { Sessions: {} } })
     const after = applyFormat(ev, format({ length: { kind: "laps", laps: 18 } }))
 

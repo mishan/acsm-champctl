@@ -83,7 +83,7 @@ describe("repeated tracks", () => {
   })
 
   it("names the rounds that share a track", () => {
-    // Usually a copy-paste in the month emitter rather than a deliberate
+    // Usually a copy-paste in the emitter rather than a deliberate
     // double-header, and it is only obvious once you list the rounds.
     const c = championship({
       Events: [raceEvent(), raceEvent({ RaceSetup: { Track: "ks_silverstone" } }), raceEvent()],

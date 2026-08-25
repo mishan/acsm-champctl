@@ -12,7 +12,7 @@ Five commands:
 | `gridmom` | check a championship for the mistakes that ruin a race night |
 | `champctl-archive` | keep a copy of every export the league has ever run |
 | `champctl-finalize` | set a race's format and push it |
-| `champctl-month` | create a month of racing from a template |
+| `champctl-championship` | create a championship of racing from a template |
 | `champctl-serve` | the same finalize flow as a web UI, for people without a terminal |
 
 Working on champctl itself? See [AGENTS.md](AGENTS.md) and
@@ -29,7 +29,7 @@ npm run gridmom -- check --file fixtures/synthetic/suzuka-duplicate-pitboxes.jso
 ```
 
 Installed, the five commands are on your `PATH` as `gridmom`,
-`champctl-archive`, `champctl-finalize`, `champctl-month` and `champctl-serve`.
+`champctl-archive`, `champctl-finalize`, `champctl-championship` and `champctl-serve`.
 From a checkout, `npm run gridmom -- <args>` is the same thing.
 
 Every command takes `--profile` and `--base-url`; `--help` on any of them is
@@ -181,16 +181,16 @@ Three things worth knowing:
   shows the problems this change is about to introduce rather than yesterday's.
   Moving a race onto a Saturday says so before it's sent.
 
-## champctl-month
+## champctl-championship
 
 A golden template plus overlays, out comes a championship ready to import.
 
 ```
-champctl-month build --spec <spec.json> --template <export.json> [options]
-champctl-month clone <championship-id> [options]
+champctl-championship build --spec <spec.json> --template <export.json> [options]
+champctl-championship clone <championship-id> [options]
 
-  --name <name>          override the month name; a clone reuses last
-                         month's name without it
+  --name <name>          override the championship name; a clone reuses last
+                         championship's name without it
   --start <yyyy-mm-dd>   first race night; without it, the next occurrence
                          of the league's race weekday
   --tracks <a,b,c>       override the track list
@@ -201,7 +201,7 @@ champctl-month clone <championship-id> [options]
 ```
 
 ```
-$ champctl-month build --spec september.json --template last-month.json
+$ champctl-championship build --spec september.json --template previous.json
 
 September 2026 — 3 rounds
 
@@ -227,18 +227,18 @@ Nothing written. Use --out to save it, or --import to send it.
 
 **This command creates championships, so the default is inert**: it prints, and
 writes nothing without `--out` or `--import`. gridmom runs on the generated
-month and an ERROR stops the import. Credentials for `--import` come from
+championship and an ERROR stops the import. Credentials for `--import` come from
 `CHAMPCTL_USERNAME` / `CHAMPCTL_PASSWORD`.
 
-`clone` is the usual path — last month as the template, with its spec read back
-out of it. It does not carry last month's dates.
+`clone` is the usual path — the previous championship as the template, with its spec read back
+out of it. It does not carry the previous championship's dates.
 
 The grid cap names the track that set it: "capped at 24 by Brands Hatch Indy"
 tells you what to drop. An unknown pit count is never treated as unlimited.
 Entry list length is a separate number and is not sized down to the cap — 30
 slots against an 18-car race is deliberate.
 
-### The month spec
+### The championship spec
 
 ```json
 {
@@ -360,11 +360,11 @@ response bodies — entry lists, so driver names and Steam GUIDs — and is crea
 
 ## Status
 
-gridmom, the archive, and the finalize and month engines are done and driven by
+gridmom, the archive, and the finalize and championship engines are done and driven by
 their CLIs. The finalize flow also has a web UI. What's left:
 
-- **The month builder is CLI-only.** `champctl-serve` covers the weekly flow;
-  creating a month still means `champctl-month`. The sign-up approval queue
+- **The championship builder is CLI-only.** `champctl-serve` covers the weekly flow;
+  creating one still means `champctl-championship`. The sign-up approval queue
   isn't built either — it needs the approve/reject POST captured first.
 - **No Discord bot**, so no polls, no announcements, no nightly gridmom report.
 - **Content checks have no source.** Three `content.*` checks need an index of

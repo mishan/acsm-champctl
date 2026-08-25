@@ -13,7 +13,7 @@ checking against the live ACSM before code depends on it.
 BATL runs a monthly championship on Assetto Corsa Server Manager, one race per
 week. Two jobs currently take more knowledge than they should:
 
-1. **Creating the month.** Whoever sets it up has to know (or copy from a
+1. **Creating the championship.** Whoever sets it up has to know (or copy from a
    previous championship) a large set of league defaults buried across ~130
    fields per event.
 2. **Finalizing each race.** Format, race length and quali timing are voted on
@@ -184,7 +184,7 @@ that will drift across versions. Instead:
 ```
 golden template (a real exported BATL championship)
   → league defaults          (the BATL baseline)
-    → month overrides        (car, tracks, name, schedule)
+    → championship overrides        (car, tracks, name, schedule)
       → event overrides      (format, race length, quali timing — the voted bits)
         → emit
 ```
@@ -270,7 +270,7 @@ and the stored offset differs either side.
 
 ### 4.4 Entry list generation
 
-**Multi-model months are solved by a sentinel, not by preallocation.** Unclaimed
+**Multi-model championships are solved by a sentinel, not by preallocation.** Unclaimed
 slots carry `Model: "any_car_model"`, and ACSM overwrites that with the driver's
 chosen car when a sign-up is accepted. Confirmed from the October 2025 Legends
 championship: five slots sat at `any_car_model` during round one and had become
@@ -278,7 +278,7 @@ a Nissan GT-R, two 911s, a Capri and a Pantera by round two.
 
 So the generator emits *N* slots at `any_car_model` and lets sign-ups resolve
 them. No per-model counts, no `DynamicClassSize`, no `FullRestartPractice`. That
-month ran ten available cars across seven models actually driven with both of
+championship ran ten available cars across seven models actually driven with both of
 those settings off.
 
 **Entry list types.** BATL runs a *locked* race entry list with a *partially
@@ -336,9 +336,9 @@ Entry list length is set separately by league policy — see §4.4.
 
 ## 5. Flows
 
-### 5.1 Create a month
+### 5.1 Create a championship
 
-1. Name, car class, month.
+1. Name, car class, calendar month it covers.
 2. Pick tracks, drag to order. Each becomes a race night.
 3. Schedule generates from the weekday/time rule; per-row date override with a
    note.
@@ -348,7 +348,7 @@ Entry list length is set separately by league policy — see §4.4.
 6. Diff preview against the golden template.
 7. Push.
 
-"Clone last month" should be the prominent path — it will be the most used.
+"Clone the previous championship" should be the prominent path — it will be the most used.
 
 ### 5.2 Finalize a race (the weekly one)
 
@@ -518,7 +518,7 @@ cross-event comparison is doing real work here.
 | Two events scheduled on the same night | WARN |
 | Event scheduled in the past but never started | WARN |
 | `ScheduledServerID` empty while other events have one | WARN |
-| Scheduled time crosses a DST boundary relative to the rest of the month | INFO |
+| Scheduled time crosses a DST boundary relative to the rest of the championship | INFO |
 
 ### 6.3 Format
 
@@ -550,7 +550,7 @@ step is the likeliest way a 1x40 quietly runs without its stop.
 |---|---|
 | `IgnoreXWorstEvents` ≥ number of events | WARN |
 | `Points.Places` shorter than `MaxClients` (drivers who can score nothing) | WARN |
-| Same track appears twice in a month | WARN |
+| Same track appears twice in a championship | WARN |
 | `ExportSecondRaceToACSR` set while ACSR is disabled | INFO |
 | Tracks named in the description don't match the event list | INFO |
 | `StartNextPracticeOnEventComplete` disabled | WARN |
@@ -699,8 +699,8 @@ preview. This is the first thing that saves anyone time. The sign-up approval
 queue belongs here too — same write mechanics, same session, and it removes the
 other recurring reason to open ACSM.
 
-**Phase 4 — Create-a-month UI.** Template, overlay, schedule generator, pit
-table, clone-last-month.
+**Phase 4 — Create-a-championship UI.** Template, overlay, schedule generator, pit
+table, clone-the-previous-championship.
 
 **Phase 5 — Bot reads.** Announcements and standings.
 
@@ -720,7 +720,7 @@ interfaces from day one so that's a config change, not a rewrite.
 - ~~How the 1x40 mandatory stop is configured~~ — answered:
   `RacePitWindowStart`, set to 1. Only the meaning of `RacePitWindowEnd: 0`
   remains open, and nothing in the emitter depends on it.
-- ~~`SignUpForm.DynamicClassSize`~~ — moot. A ten-car month ran fine with it
+- ~~`SignUpForm.DynamicClassSize`~~ — moot. A ten-car championship ran fine with it
   off; `any_car_model` is the actual mechanism. Still unknown what it does, but
   nothing depends on the answer.
 - ~~`FullRestartPractice`~~ — resolved. It stays off, and nothing needs it:

@@ -124,7 +124,7 @@ describe("grid capacity", () => {
     // pit boxes (plan §4.4) — 30 slots against an 18-car grid, because sizing
     // the championship to its tightest night locks people out of every other
     // one, and MaxClients is what caps a given race. As an ERROR this made the
-    // month emitter produce championships gridmom then refused to import: two
+    // emitter produce championships that gridmom then refused to import: two
     // modules disagreeing about the same file.
     const c = championship({
       Events: [

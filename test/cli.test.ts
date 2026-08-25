@@ -15,12 +15,12 @@ import {
   parseArgs as parseMonthArgs,
   renderResult,
   UsageError as MonthUsageError,
-} from "../src/cli/month.js"
+} from "../src/cli/championship.js"
 import { confirm, UsageError } from "../src/cli/args.js"
 import { clientRootFor, parseArgs as parseServeArgs } from "../src/cli/serve.js"
 import type { RaceFormat } from "../src/finalize/format.js"
 import type { FinalizePlan } from "../src/finalize/plan.js"
-import type { EmitResult } from "../src/emit/month.js"
+import type { EmitResult } from "../src/emit/championship.js"
 
 /** Captures stderr so a CLI's own error text can be asserted. */
 let captured = ""
@@ -157,7 +157,7 @@ describe("confirming a destructive action", () => {
     // documented 0/1/2/3 contract is never reached and a nightly job looks
     // like an infrastructure failure rather than a missing --yes.
     await withTty(undefined, async () => {
-      // One implementation now. This used to import the finalize and month
+      // One implementation now. This used to import the finalize and championship
       // copies under separate aliases and assert against each, which is what
       // testing a duplicate looks like: two names for one behaviour, and no
       // test at all for the day they stopped agreeing.
@@ -286,7 +286,7 @@ describe("rendering a plan", () => {
   })
 })
 
-describe("champctl-month arguments", () => {
+describe("champctl-championship arguments", () => {
   it("needs a command", () => {
     expect(parseMonthArgs([]).command).toBe("")
     expect(parseMonthArgs(["build"]).command).toBe("build")
@@ -363,8 +363,8 @@ describe("champctl-month arguments", () => {
   })
 
   it("says what is wrong with a spec rather than dying on it", async () => {
-    // readJson<MonthSpec> is a cast, not a check: parsing proves the bytes were
-    // JSON and nothing more. `{}` reached emitMonth's `spec.rounds.length` and
+    // readJson<ChampionshipSpec> is a cast, not a check: parsing proves the bytes were
+    // JSON and nothing more. `{}` reached emitChampionship's `spec.rounds.length` and
     // came out as "Cannot read properties of undefined (reading 'length')",
     // which reads as champctl breaking rather than as a bad file. The
     // --template path already failed properly, so this only levels them up.
@@ -395,7 +395,7 @@ describe("champctl-month arguments", () => {
   })
 })
 
-describe("rendering a month", () => {
+describe("rendering a championship", () => {
   const result: EmitResult = {
     championship: {
       Name: "September 2026",

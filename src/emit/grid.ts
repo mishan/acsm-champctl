@@ -1,9 +1,9 @@
 /**
  * The grid cap, and which track is responsible for it (plan §4.5, §5.1 step 5).
  *
- * `MaxClients` is how many cars can be on track, and across a month it is
+ * `MaxClients` is how many cars can be on track, and across a championship it is
  * bounded by the *smallest* pit count among the chosen tracks — a 24-box club
- * circuit caps every night of a month that includes it.
+ * circuit caps every night of a championship that includes it.
  *
  * The review screen has to name that track. "Capped at 24" invites someone to
  * argue with the number; "capped at 24 by Brands Hatch Indy" tells them which
@@ -36,9 +36,9 @@ export interface GridCap {
 }
 
 /**
- * How many cars a month can run, given its tracks.
+ * How many cars a championship can run, given its tracks.
  *
- * An unknown pit count is *not* treated as unlimited. A month whose tracks are
+ * An unknown pit count is *not* treated as unlimited. A championship whose tracks are
  * all unknown gets no cap at all and says so, rather than quietly emitting a
  * number derived from nothing — that's the same fail-loud choice the pit table
  * makes elsewhere, where a missing count degrades gridmom to a warning rather
@@ -52,7 +52,7 @@ export function gridCap(
   const fallback = options.fallback ?? 0
   // Boxes that are spoken for before any driver is. The spectator car occupies
   // one, and gridmom's grid.max-clients counts it against the track's capacity
-  // — so a cap set to the raw pit count emitted a month its own checker
+  // — so a cap set to the raw pit count emitted a championship its own checker
   // refused, off by exactly the number of spectator cars.
   const reserved = options.reservedBoxes ?? 0
   const unknownTracks: string[] = []

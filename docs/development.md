@@ -15,7 +15,7 @@ src/
   profile/     league profile schema + loader
   gridmom/     the checker: findings model, check registry, formatters
   finalize/    race format, schedule maths, plan + apply
-  emit/        template merge, month generation, clone
+  emit/        template merge, championship generation, clone
   web/         the HTTP service: Fastify routes, session and plan stores,
                error translation, and the wire types the client shares
   cli/         the command-line entry points, over a shared args module
@@ -99,18 +99,18 @@ plan.blocked      // an ERROR; nothing overrides this
 await applyFinalize(session, plan, { acknowledgeWarnings: true })
 ```
 
-The month emitter is a merge chain:
+The emitter is a merge chain:
 
 ```
 golden template (a real exported championship)
   → league defaults    (the profile baseline)
-    → month overrides  (name, cars, tracks, schedule)
+    → championship overrides  (name, cars, tracks, schedule)
       → event overrides (format, race length)
         → emit
 ```
 
 ```ts
-const { championship, grid, schedule, derived } = emitMonth({
+const { championship, grid, schedule, derived } = emitChampionship({
   template, profile, pits, spec,
 })
 
@@ -118,7 +118,8 @@ grid.summary   // "Capped at 24 by suzuka."
 derived        // what the emitter set rather than inherited
 ```
 
-`cloneMonth({ source, overrides })` is the same pipeline with last month as the
+`cloneChampionship({ source, overrides })` is the same pipeline with the
+previous championship as the
 template and the spec read back out of it — deliberately not a second code path
 with its own bugs.
 
@@ -143,10 +144,10 @@ The live suite has its own config and skips unless *both* `CHAMPCTL_LIVE_URL`
 and `CHAMPCTL_LIVE_PASSWORD` are set. Setting only one skips everything while
 looking configured.
 
-`test/live/flows.live.test.ts` drives finalize and month end to end: that the
+`test/live/flows.live.test.ts` drives finalize and championship creation end to end: that the
 format lands where ACSM actually reads it, that the schedule really is a second
 request, that the stale-entry-list guard fires against a list changed by another
-session, and that a generated month imports and comes back intact. Those are the
+session, and that a generated championship imports and comes back intact. Those are the
 assertions a scripted `fetch` cannot make.
 
 Re-run `npm run recon:forms` after any ACSM upgrade. It records the version it
@@ -217,18 +218,19 @@ truncates before it writes, so a run reading a page while another rewrote it saw
 neither body, and an unparseable entry reads as a miss. A cache that stops
 caching looks exactly like a cold one.
 
-**Anything the month emitter doesn't model flows through from the template.**
+**Anything the emitter doesn't model flows through from the template.**
 That's what makes it survive ACSM upgrades: the merge handles values rather than
 fields. Arrays replace rather than merge, because `Events` is an ordered list
-where position is the round number — index-wise merging would leave last month's
-round 5 attached to a three-round month.
+where position is the round number — index-wise merging would leave the previous championship's
+round 5 attached to a three-round championship.
 
 **What the emitter sets rather than inherits** is exactly the list of bugs the
 round-trip diff caught: `Created` stamped rather than carried, `RaceSetup.Cars`
 derived from the class car list plus the spectator model *only when the
 spectator car is on*, `ExportSecondRaceToACSR` forced off when ACSR is off, and
 sign-up `ExtraFields` cleared when sign-ups are disabled. Results and entry
-lists are cleared too, so the month is importable and doesn't carry last month's
+lists are cleared too, so the championship is importable and doesn't carry
+the previous one's
 drivers.
 
 The regression test re-emits a template with no overrides and diffs the result,

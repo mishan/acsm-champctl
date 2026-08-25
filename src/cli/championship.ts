@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * champctl-month — build a month and, optionally, import it (plan §5.1).
+ * champctl-championship — build a championship and, optionally, import it (plan §5.1).
  *
  * The phase 4 emitter with a face on it.
  *
@@ -25,8 +25,13 @@ import { AcsmError, HttpAcsmReader } from "../acsm/client.js"
 import { AcsmSession } from "../acsm/session.js"
 import type { Championship } from "../acsm/types.js"
 import { importChampionship } from "../acsm/write.js"
-import { cloneMonth, specFromChampionship } from "../emit/clone.js"
-import { EmitError, emitMonth, type EmitResult, type MonthSpec } from "../emit/month.js"
+import { cloneChampionship, specFromChampionship } from "../emit/clone.js"
+import {
+  EmitError,
+  emitChampionship,
+  type EmitResult,
+  type ChampionshipSpec,
+} from "../emit/championship.js"
 import { ScheduleError } from "../finalize/schedule.js"
 import { check } from "../gridmom/index.js"
 import { loadProfile } from "../profile/load.js"
@@ -36,17 +41,17 @@ import { confirm, loadPits, reportUsageError, runCli, UsageError } from "./args.
 // while there is still only one class.
 export { UsageError }
 
-const USAGE = `champctl-month — create a month of racing
+const USAGE = `champctl-championship — create a championship
 
 Usage:
-  champctl-month build --spec <spec.json> --template <export.json> [options]
-  champctl-month clone <championship-id> [options]
+  champctl-championship build --spec <spec.json> --template <export.json> [options]
+  champctl-championship clone <championship-id> [options]
 
 Options:
-  --spec <path>         month spec JSON (see README). Required for build.
+  --spec <path>         championship spec JSON (see README). Required for build.
   --template <path>     golden template export. Required for build.
-  --name <name>         override the month name. For clone, without this the
-                        new month reuses last month's name.
+  --name <name>         override the championship name. For clone, without this the
+                        new championship reuses the previous championship's name.
   --start <yyyy-mm-dd>  first race night. Without it, the next occurrence of
                         the league's race weekday.
   --tracks <a,b,c>      override the track list
@@ -63,7 +68,7 @@ Credentials for --import come from CHAMPCTL_USERNAME and CHAMPCTL_PASSWORD.
 
 Exit codes:
   0  built (and imported, if asked)
-  2  gridmom found an error in the generated month
+  2  gridmom found an error in the generated championship
   3  champctl itself failed
 `
 
@@ -201,28 +206,28 @@ async function readJson<T>(path: string, what: string): Promise<T> {
 }
 
 /**
- * Checks the shape `emitMonth` actually indexes into, before it does.
+ * Checks the shape `emitChampionship` actually indexes into, before it does.
  *
- * `readJson<MonthSpec>` is a cast, not a check — parsing tells you the bytes
+ * `readJson<ChampionshipSpec>` is a cast, not a check — parsing tells you the bytes
  * were JSON, nothing more. A spec of `{}` got as far as `spec.rounds.length`
  * and died with "Cannot read properties of undefined (reading 'length')" and
  * exit 3, which reads as champctl breaking rather than as a bad file. The
  * `--template` path already fails properly, with an EmitError naming the
  * problem, so this only brings `--spec` up to the same standard.
  *
- * Deliberately shallow: emitMonth validates the *contents* — empty rounds,
+ * Deliberately shallow: emitChampionship validates the *contents* — empty rounds,
  * empty cars, blank tracks — with messages better than anything here. This
  * covers only the fields that would throw a TypeError before reaching it.
  */
-function assertMonthSpec(value: unknown, path: string): asserts value is MonthSpec {
+function assertChampionshipSpec(value: unknown, path: string): asserts value is ChampionshipSpec {
   const bad = (why: string): never => {
-    throw new UsageError(`The month spec at ${path} ${why}.`)
+    throw new UsageError(`The championship spec at ${path} ${why}.`)
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     bad("is not a JSON object")
   }
   const v = value as Record<string, unknown>
-  if (typeof v["name"] !== "string") bad("has no `name`, which the month is called")
+  if (typeof v["name"] !== "string") bad("has no `name`, which the championship is called")
   if (!Array.isArray(v["cars"])) bad("has no `cars` array — RaceSetup.Cars is derived from it")
   if (!Array.isArray(v["rounds"])) bad("has no `rounds` array, so there is nothing to generate")
   for (const [i, r] of (v["rounds"] as unknown[]).entries()) {
@@ -279,10 +284,10 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     if (!args.spec || !args.template) {
       throw new UsageError("build needs --spec and --template.")
     }
-    const spec = await readJson<unknown>(args.spec, "the month spec")
-    assertMonthSpec(spec, args.spec)
+    const spec = await readJson<unknown>(args.spec, "the championship spec")
+    assertChampionshipSpec(spec, args.spec)
     const template = await readJson<Championship>(args.template, "the golden template")
-    result = emitMonth({ template, spec: { ...spec, ...overrides }, profile, pits })
+    result = emitChampionship({ template, spec: { ...spec, ...overrides }, profile, pits })
   } else if (args.command === "clone") {
     if (!args.source) throw new UsageError("clone needs the championship id to clone from.")
     const baseUrl = args.baseUrl ?? profile.acsmBaseUrl
@@ -292,7 +297,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
       )
     }
     const source = await new HttpAcsmReader({ baseUrl }).exportChampionship(args.source)
-    result = cloneMonth({ source, profile, pits, overrides })
+    result = cloneChampionship({ source, profile, pits, overrides })
   } else {
     throw new UsageError(`Unknown command ${args.command}. Try build or clone.`)
   }
@@ -321,7 +326,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
   }
 
   if (report.counts.ERROR > 0) {
-    process.stderr.write("\ngridmom found an error in the generated month; not importing.\n")
+    process.stderr.write("\ngridmom found an error in the generated championship; not importing.\n")
     return 2
   }
 
@@ -379,17 +384,17 @@ async function importIt(
   say(`Created ${championshipId}\n`)
 }
 
-function specOverrides(args: Args): Partial<MonthSpec> {
-  const o: Partial<MonthSpec> = {}
+function specOverrides(args: Args): Partial<ChampionshipSpec> {
+  const o: Partial<ChampionshipSpec> = {}
   if (args.name !== undefined) o.name = args.name
   if (args.start !== undefined) o.startDate = args.start
   if (args.tracks !== undefined) o.rounds = args.tracks.map((track) => ({ track }))
   return o
 }
 
-/** Entry point for `bin/champctl-month.js` and `npm run month`. */
+/** Entry point for `bin/champctl-championship.js` and `npm run championship`. */
 export async function run(argv: readonly string[]): Promise<void> {
-  await runCli({ name: "champctl-month", usage: USAGE, main }, argv)
+  await runCli({ name: "champctl-championship", usage: USAGE, main }, argv)
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {

@@ -1,7 +1,7 @@
 /**
  * The parts every champctl CLI needs, in one place.
  *
- * There are four entry points now — gridmom, archive, finalize, month — and
+ * There are four entry points now — gridmom, archive, finalize, championship — and
  * before this they each carried their own copy of the same three things: a
  * `UsageError` class, a `loadPits` that falls back when the default file isn't
  * there, and the `run()` wrapper that turns an exception into an exit code.
@@ -14,7 +14,7 @@
  * the right time to fix it.
  *
  * What is deliberately *not* here: the argument loops themselves. gridmom takes
- * a command and a target, finalize takes an id and a round, month takes a
+ * a command and a target, finalize takes an id and a round, championship takes a
  * subcommand — the switch statements have little in common, and merging them
  * would mean a config object more complicated than the code it replaced. The
  * shared part is the error type and the IO, not the parsing.
