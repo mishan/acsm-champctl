@@ -1,13 +1,13 @@
 /**
  * The new-championship screen, in a DOM.
  *
- * The same three promises as the finalize screen, and they fail the same
+ * The same three promises as the event screen, and they fail the same
  * silent way: a button that offers to create a championship the fields no longer
  * describe, a preview that quietly stops updating, an acknowledgement carried
  * over from a championship that has changed underneath it. Each renders correctly and
  * is wrong.
  *
- * One promise is sharper here. Finalize applying twice re-applies a format
+ * One promise is sharper here. EventEditor applying twice re-applies a format
  * that is already applied; creating one twice leaves someone two
  * championships to tell apart and delete by hand.
  */
@@ -381,19 +381,26 @@ describe("when the server refuses", () => {
     expect(createButton().disabled).toBe(true)
   })
 
-  it("previews again after a failed preview, without needing an edit first", async () => {
-    // A transient failure is the case where someone retries the same thing.
-    // Leaving `lastSent` set makes the identical draft look like a duplicate,
-    // so the screen sits on the error until an unrelated field is touched.
+  it("previews again after a failure when the effect re-runs on its own", async () => {
+    // Every path that edits the draft already clears `lastSent`, so a retry
+    // after an edit works either way. This is the path that doesn't: the
+    // preview effect re-running for some reason other than an edit — a parent
+    // passing a fresh `onAuthLost` on re-render is the ordinary one — with the
+    // draft unchanged. Leaving `lastSent` set after a failure makes that look
+    // like a duplicate and the screen stays on the error.
     planMock.mockRejectedValueOnce(new ApiFailure(502, "acsm", "Server Manager answered 503."))
-    await filled()
+    const { rerender } = render(<NewChampionship onCreated={() => {}} onAuthLost={() => {}} />)
+    await screen.findByLabelText(/Clone from/)
+    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+    fireEvent.change(screen.getByLabelText(/^Name$/), { target: { value: "September 2026" } })
+    fireEvent.click(screen.getByRole("button", { name: /Add a round/ }))
+    fireEvent.change(screen.getByLabelText(/Round 1 track/), { target: { value: "spa" } })
+    await settle()
+
     expect(await screen.findByText(/Server Manager answered 503/)).toBeTruthy()
     expect(planMock).toHaveBeenCalledTimes(1)
 
-    // The same draft, re-sent by the reload the screen is about to do — here,
-    // by touching the field and putting it straight back.
-    fireEvent.change(screen.getByLabelText(/Round 1 track/), { target: { value: "spa " } })
-    fireEvent.change(screen.getByLabelText(/Round 1 track/), { target: { value: "spa" } })
+    rerender(<NewChampionship onCreated={() => {}} onAuthLost={() => {}} />)
     await settle()
 
     expect(planMock).toHaveBeenCalledTimes(2)

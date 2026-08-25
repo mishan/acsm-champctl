@@ -267,9 +267,13 @@ race weekday starting from the next one. `className`, `description` and
 
 ## champctl-serve
 
-The weekly flow with a face on it: pick the round, set what the racers voted
-for, read the diff, push. Same engine as `champctl-finalize`, so the preview and
-the write agree with the CLI by construction rather than by resemblance.
+The weekly flow with a face on it: open an event, set what the racers voted
+for, read the diff, push. *Finalizing* is still the verb — it is what the job
+is called and what `champctl-finalize` does — but the screen is built around
+the event, which is what Server Manager calls the thing being changed, so
+checking champctl's work against the manager means looking for the same word in
+both. Same engine as `champctl-finalize`, so the preview and the write agree
+with the CLI by construction rather than by resemblance.
 
 It also creates a championship, the same way `champctl-championship clone`
 does: pick the one to clone, name it, say when it starts, list the tracks in
@@ -313,7 +317,7 @@ every login in the world shares one bucket.
 The screen is mobile-first, because the thing it is for is applying a Discord
 poll result from a phone the evening before a race. It shows the same three
 things the CLI prints — what changes, the exact fields that will be posted, and
-gridmom against the round *as it would be* — and it refuses in the same places:
+gridmom against the event *as it would be* — and it refuses in the same places:
 an error blocks the push outright, warnings need an acknowledgement, and an
 entry list that moved while the preview was open refuses the write and asks you
 to look again.

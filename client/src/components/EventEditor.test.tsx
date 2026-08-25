@@ -1,5 +1,5 @@
 /**
- * The finalize screen, in a DOM.
+ * The event screen, in a DOM.
  *
  * These exist because the three things this screen promises are all about
  * *not lying*, and none of them is checkable from the outside. A push button
@@ -43,7 +43,7 @@ vi.mock("../api", async (importOriginal) => {
   return { ...actual, api: { ...actual.api, plan: planMock, apply: applyMock } }
 })
 
-const { Finalize } = await import("./Finalize")
+const { EventEditor } = await import("./EventEditor")
 
 const CHAMP = "champ-1"
 
@@ -121,9 +121,9 @@ const config: Config = {
   ],
 }
 
-function renderScreen(over: Partial<React.ComponentProps<typeof Finalize>> = {}) {
+function renderScreen(over: Partial<React.ComponentProps<typeof EventEditor>> = {}) {
   return render(
-    <Finalize
+    <EventEditor
       championshipId={CHAMP}
       round={1}
       config={config}
@@ -151,7 +151,7 @@ function field(label: RegExp): HTMLInputElement {
 }
 
 /** The screen opens with a no-change preview; wait for that to land. */
-async function opened(over: Partial<React.ComponentProps<typeof Finalize>> = {}) {
+async function opened(over: Partial<React.ComponentProps<typeof EventEditor>> = {}) {
   const r = renderScreen(over)
   await screen.findByLabelText(/^(Laps|Minutes)$/, { selector: "#length" })
   return r

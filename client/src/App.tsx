@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 
 import { api, isAuthFailure, type Config, type SessionState } from "./api"
 import { ChampionshipList } from "./components/ChampionshipList"
-import { Finalize } from "./components/Finalize"
+import { EventEditor } from "./components/EventEditor"
 import { Login } from "./components/Login"
 import { NewChampionship } from "./components/NewChampionship"
 import { Message } from "./components/Message"
@@ -108,7 +108,7 @@ export function App(): React.JSX.Element {
           />
         )}
         {route.name === "round" && (
-          <Finalize
+          <EventEditor
             championshipId={route.id}
             round={route.round}
             config={config}

@@ -3,7 +3,7 @@
  *
  * Not a router library, because there is nothing here a router would earn its
  * bundle on: four shapes, no nested layouts, no loaders. What it does buy is
- * the phone's back gesture working the way the person expects — the finalize
+ * the phone's back gesture working the way the person expects — the event
  * screen is meant to be opened from a Discord link and left again, and a back
  * swipe that exits the app instead of returning to the round list is the kind
  * of thing that makes someone stop using it.
