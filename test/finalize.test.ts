@@ -21,6 +21,7 @@ import {
 import {
   currentQualiStart,
   practiceMinutesFor,
+  localTimeCandidates,
   qualiStartFrom,
   scheduledFromQuali,
   scheduleFormValues,
@@ -238,6 +239,45 @@ describe("schedule maths", () => {
     ] as const) {
       expect(() => qualiStartFrom(d, t, ZONE), `${d} ${t}`).not.toThrow()
     }
+  })
+
+  it("catches a backward transition that isn't a whole hour", () => {
+    // Lord Howe Island shifts by 30 minutes, so anything built around "add an
+    // hour and see whether the wall clock repeats" misses its overlap
+    // completely. Clocks go back 30 minutes at 02:00 on 2026-04-05, so 01:45
+    // happens twice and 01:15 happens once.
+    const LH = "Australia/Lord_Howe"
+    expect(() => qualiStartFrom("2026-04-05", "01:45", LH)).toThrow(/happens twice/)
+    expect(() => qualiStartFrom("2026-04-05", "01:45", LH)).toThrow(/30 minutes/)
+    expect(() => qualiStartFrom("2026-04-05", "01:15", LH)).not.toThrow()
+  })
+
+  it("catches a forward transition that isn't a whole hour either", () => {
+    // Same zone in October: 02:00 jumps to 02:30, so 02:15 never happens.
+    expect(() => qualiStartFrom("2026-10-04", "02:15", "Australia/Lord_Howe")).toThrow(
+      /does not exist/,
+    )
+  })
+
+  it("counts how many instants a wall clock maps to", () => {
+    expect(localTimeCandidates("2026-09-02", "20:00", ZONE)).toHaveLength(1)
+    expect(localTimeCandidates("2026-03-08", "02:30", ZONE)).toHaveLength(0)
+    expect(localTimeCandidates("2026-11-01", "01:30", ZONE)).toHaveLength(2)
+    // The 30-minute zone, which a shift-size assumption gets wrong.
+    expect(localTimeCandidates("2026-04-05", "01:45", "Australia/Lord_Howe")).toHaveLength(2)
+  })
+
+  it("works in zones with no DST at all", () => {
+    for (const z of ["UTC", "Asia/Tokyo", "America/Phoenix"]) {
+      expect(localTimeCandidates("2026-11-01", "01:30", z), z).toHaveLength(1)
+      expect(() => qualiStartFrom("2026-11-01", "01:30", z), z).not.toThrow()
+    }
+  })
+
+  it("returns an instant that renders back to what was asked for", () => {
+    const dt = qualiStartFrom("2026-09-02", "20:00", ZONE)
+    expect(dt.toFormat("yyyy-MM-dd HH:mm")).toBe("2026-09-02 20:00")
+    expect(dt.zoneName).toBe(ZONE)
   })
 
   it("prefers the event's own practice length over the league default", () => {

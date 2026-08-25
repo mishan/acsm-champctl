@@ -18,7 +18,7 @@
  * disagree with it.
  */
 
-import { randomBytes, timingSafeEqual } from "node:crypto"
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
 
 import type { AcsmSession } from "../acsm/session.js"
 
@@ -164,19 +164,31 @@ export class SessionStore {
 }
 
 /**
- * Constant-time comparison for session IDs, for callers that must compare one
- * to a known value rather than look it up.
+ * Compares two session IDs without leaking anything through timing, including
+ * their lengths.
  *
- * The `Map` lookup above is the normal path and is not constant time, which is
- * accepted: these IDs are 256 bits of CSPRNG output, so there is no prefix to
- * walk toward with timing. This exists for the cases where a comparison is
- * genuinely being made against a secret.
+ * `timingSafeEqual` alone cannot do this: it throws on differing lengths, so
+ * the usual wrapper returns early — and an early return is observably not
+ * constant time, whatever the surrounding comment claims. Hashing both inputs
+ * first sidesteps it. The digests are always 32 bytes, so exactly one
+ * comparison of one fixed size happens regardless of what came in, and the
+ * hash of a secret leaks nothing about the secret.
+ *
+ * Whether the length needed protecting here is arguable — champctl's IDs are
+ * all 43 characters, which is structural and visible to anyone holding a
+ * cookie. Doing it properly anyway costs two hashes on a path that runs once
+ * per request, and it means the guarantee doesn't depend on a fact about
+ * callers that this exported function can't enforce.
+ *
+ * The `Map` lookup in `SessionStore.get` is the normal path and is *not*
+ * constant time. That is a separate and deliberate judgement: these IDs are
+ * 256 bits of CSPRNG output, so there is no prefix an attacker can walk
+ * toward one character at a time.
  */
 export function sameSessionId(a: string, b: string): boolean {
-  const ab = Buffer.from(a)
-  const bb = Buffer.from(b)
-  if (ab.length !== bb.length) return false
-  return timingSafeEqual(ab, bb)
+  const ah = createHash("sha256").update(a, "utf8").digest()
+  const bh = createHash("sha256").update(b, "utf8").digest()
+  return timingSafeEqual(ah, bh)
 }
 
 /**

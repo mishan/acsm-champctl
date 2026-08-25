@@ -30,12 +30,33 @@ describe("session ids", () => {
     }
   })
 
-  it("compares in constant time without throwing on length mismatch", () => {
+  it("compares correctly whatever the lengths", () => {
+    // timingSafeEqual throws outright on differing lengths, so the shape of
+    // this function is entirely about not needing an early return for that.
+    // The timing property itself isn't asserted here — a wall-clock assertion
+    // would be flaky and would prove very little on a JIT.
     const a = newSessionId()
     expect(sameSessionId(a, a)).toBe(true)
     expect(sameSessionId(a, newSessionId())).toBe(false)
-    // timingSafeEqual throws on differing lengths; the wrapper must not.
     expect(sameSessionId(a, "short")).toBe(false)
+    expect(sameSessionId(a, "")).toBe(false)
+    expect(sameSessionId("", "")).toBe(true)
+    expect(sameSessionId(a, "b".repeat(a.length))).toBe(false)
+    expect(sameSessionId(a, "b".repeat(10_000))).toBe(false)
+  })
+
+  it("distinguishes ids that differ only in the last character", () => {
+    // A digest comparison must not collapse near-misses.
+    const a = `${"A".repeat(42)}b`
+    const b = `${"A".repeat(42)}c`
+    expect(sameSessionId(a, b)).toBe(false)
+  })
+
+  it("handles non-ASCII without throwing on a byte-length mismatch", () => {
+    // "é" is two UTF-8 bytes but one JS character, which is exactly the case
+    // that trips a length check done on the string rather than the buffer.
+    expect(sameSessionId("é", "e")).toBe(false)
+    expect(sameSessionId("é", "é")).toBe(true)
   })
 })
 

@@ -87,19 +87,57 @@ export function currentQualiStart(
 }
 
 /**
+ * How many distinct instants a local wall-clock time corresponds to in a zone.
+ *
+ * One, almost always. Zero in the gap where clocks go forward — that time
+ * never happens. Two in the overlap where they go back — it happens twice.
+ *
+ * Works by candidate *offsets* rather than by assuming a shift size. Take the
+ * wall clock as though it were UTC, subtract each of the offsets in force a
+ * day either side of it, and keep whichever candidate instants render back to
+ * the wall clock that was asked for.
+ *
+ * The obvious alternative — "add the shift and see whether the wall clock
+ * repeats" — has to pick a number, and an hour is only the *usual* shift. Lord
+ * Howe Island moves by 30 minutes, so an hour-based test misses its overlap
+ * completely; historical zones have used 20 and 40. Probing the offsets asks
+ * tzdata instead of guessing.
+ */
+export function localTimeCandidates(date: string, time: string, zone: string): DateTime[] {
+  const wanted = time.slice(0, 5)
+
+  // The wall clock as a UTC instant. Not a real moment — just arithmetic.
+  const asUtc = DateTime.fromISO(`${date}T${wanted}`, { zone: "utc" })
+  if (!asUtc.isValid) return []
+
+  // Offsets in force well either side, which brackets any transition that
+  // night whatever its size or direction.
+  const probe = DateTime.fromISO(`${date}T12:00`, { zone })
+  if (!probe.isValid) return []
+  const offsets = new Set([probe.minus({ days: 1 }).offset, probe.plus({ days: 1 }).offset])
+
+  const found = new Map<number, DateTime>()
+  for (const offset of offsets) {
+    const candidate = DateTime.fromMillis(asUtc.toMillis() - offset * 60_000, { zone })
+    if (candidate.toFormat("yyyy-MM-dd") === date && candidate.toFormat("HH:mm") === wanted) {
+      found.set(candidate.toMillis(), candidate)
+    }
+  }
+  return [...found.values()].sort((a, b) => a.toMillis() - b.toMillis())
+}
+
+/**
  * Parses a league-local `YYYY-MM-DD` and `HH:mm` into a zoned instant.
  *
- * Refuses the two wall-clock times a zone can't answer for, because Luxon
- * answers both silently and the answer is a race an hour from where someone
- * thought they put it.
+ * Refuses the two wall-clock times a zone cannot answer for, because Luxon
+ * answers both silently and the answer is a race starting somewhere other than
+ * where someone put it.
  *
- * **Nonexistent.** On a spring-forward night 02:30 never happens; Luxon shifts
- * it forward to 03:30. Verified, not assumed.
+ * **Nonexistent** — the gap where clocks go forward. Luxon shifts the time
+ * forward rather than failing. Verified, not assumed.
  *
- * **Ambiguous.** On a fall-back night 01:30 happens twice, and Luxon picks the
- * first. The detection is that adding an hour leaves the wall clock unchanged
- * — 01:30 PDT plus an hour is 01:30 PST — which is true only inside the
- * repeated hour.
+ * **Ambiguous** — the overlap where they go back. Luxon picks the earlier of
+ * the two without saying so.
  *
  * A league race is unlikely to be scheduled in either window. "Unlikely" is
  * not a reason to write the wrong time without saying so.
@@ -112,25 +150,28 @@ export function qualiStartFrom(date: string, time: string, zone: string): DateTi
     )
   }
 
-  const wanted = time.slice(0, 5)
-  // Round-tripping the wall clock catches a time that got moved to make it
-  // exist.
-  if (dt.toFormat("yyyy-MM-dd") !== date || dt.toFormat("HH:mm") !== wanted) {
+  const candidates = localTimeCandidates(date, time, zone)
+
+  if (candidates.length === 0) {
     throw new ScheduleError(
-      `${date} ${time} does not exist in ${zone} — the clocks go forward that night. ` +
-        `It would land at ${dt.toFormat("yyyy-MM-dd HH:mm")}. Pick a time either side of the change.`,
+      `${date} ${time} does not exist in ${zone} — the clocks go forward that night and skip ` +
+        `over it. It would land at ${dt.toFormat("yyyy-MM-dd HH:mm")}. Pick a time either side ` +
+        `of the change.`,
     )
   }
 
-  if (dt.plus({ hours: 1 }).toFormat("HH:mm") === dt.toFormat("HH:mm")) {
+  if (candidates.length > 1) {
+    const [first, second] = candidates as [DateTime, DateTime]
+    const apart = Math.round((second.toMillis() - first.toMillis()) / 60_000)
     throw new ScheduleError(
       `${date} ${time} happens twice in ${zone} — the clocks go back that night, so this ` +
-        `wall-clock time is ambiguous and the race could start an hour either side of what ` +
-        `you meant. Pick a time outside the repeated hour.`,
+        `wall-clock time is ambiguous: it could mean either of two instants ${apart} minutes ` +
+        `apart (${first.toFormat("ZZ")} or ${second.toFormat("ZZ")}). Pick a time outside the ` +
+        `repeated period.`,
     )
   }
 
-  return dt
+  return candidates[0] as DateTime
 }
 
 /**
