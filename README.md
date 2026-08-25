@@ -191,7 +191,16 @@ A row in a transaction is the same guarantee, already written and already
 tested. `--db` points somewhere else if you want it to.
 
 Gitignored either way: league data, and personal data at that, since every
-export carries driver names and Steam GUIDs.
+export carries driver names and Steam GUIDs. `.gitignore` keeps it out of the
+repo and does nothing about the other accounts on the machine, so champctl
+creates the directory `0700` and the database `0600` — including SQLite's
+`-wal` sidecar, which holds pages not yet checkpointed and is archive content
+in its own right. A directory that already exists is left as the operator set
+it.
+
+`--since` is parsed strictly as ISO 8601, and a bare date means UTC midnight
+rather than the machine's, so the same cron line means the same thing
+everywhere.
 
 ## League profiles
 

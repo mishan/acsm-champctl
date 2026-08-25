@@ -13,6 +13,8 @@
  */
 
 import { resolve } from "node:path"
+
+import { DateTime } from "luxon"
 import { pathToFileURL } from "node:url"
 
 import { HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
@@ -58,6 +60,32 @@ interface Args {
 /** Identifies archive traffic in ACSM's logs, distinctly from gridmom's. */
 export const ARCHIVE_USER_AGENT = "acsm-champctl/0.1 (archive)"
 
+/**
+ * A cutoff, parsed strictly as ISO 8601.
+ *
+ * `new Date()` was doing this, and it is not an ISO parser. It accepts
+ * implementation-defined formats — V8 reads `08/24/2026` as a US date, which
+ * another runtime need not — and, worse, it *normalises* impossible ISO-looking
+ * dates: `2026-02-30` becomes 2 March rather than an error. `--since` decides
+ * which championships a run skips, so a mistyped cutoff that parses is a run
+ * that quietly does the wrong thing and reports success.
+ *
+ * A bare date means UTC midnight rather than the machine's midnight, so the
+ * same command means the same thing on the league's server and on a laptop.
+ * An explicit offset or `Z` in the value is honoured.
+ */
+export function isoTimestampOrThrow(value: string): Date {
+  const dt = DateTime.fromISO(value, { zone: "utc", setZone: true })
+  if (!dt.isValid) {
+    throw new UsageError(
+      `--since must be an ISO 8601 timestamp, and ${JSON.stringify(value)} is not ` +
+        `(${dt.invalidReason ?? "unparsable"}). Try 2026-08-24 or 2026-08-24T17:00:00Z — ` +
+        `a bare date is read as UTC midnight.`,
+    )
+  }
+  return dt.toJSDate()
+}
+
 export function parseArgs(argv: readonly string[]): Args {
   const args: Args = { command: "", profile: "batl", json: false, help: false }
   const rest: string[] = []
@@ -86,12 +114,9 @@ export function parseArgs(argv: readonly string[]): Args {
       case "--json":
         args.json = true
         break
-      case "--since": {
-        const d = new Date(next())
-        if (Number.isNaN(d.getTime())) throw new UsageError("--since must be an ISO timestamp")
-        args.since = d
+      case "--since":
+        args.since = isoTimestampOrThrow(next())
         break
-      }
       default:
         if (a.startsWith("-")) throw new UsageError(`Unknown option ${a}`)
         rest.push(a)

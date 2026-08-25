@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, rm, stat } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { DatabaseSync } from "node:sqlite"
 import { tmpdir } from "node:os"
@@ -368,6 +368,49 @@ describe("archive store", () => {
     }
   })
 
+  it("keeps the archive readable only by its owner", async () => {
+    // Driver names and Steam GUIDs. .gitignore keeps them out of the repo and
+    // does nothing about the other accounts on a league VPS — under the usual
+    // 0022 umask the default is world-readable.
+    //
+    // The sidecars matter as much as the database: -wal holds pages not yet
+    // checkpointed, and SQLite creates both at the umask default rather than
+    // inheriting the database's mode. Measured at 0644 against a 0600 db.
+    const dir = join(root, "private")
+    const path = join(dir, "archive.db")
+    const s = await SqliteArchiveStore.open(path)
+    try {
+      await s.put(ID, b('{"a":1}'), at("2026-08-24T17:00:00Z"), "Ada")
+
+      const mode = async (f: string) => (await stat(f)).mode & 0o777
+      expect(await mode(dir), "the directory champctl created").toBe(0o700)
+      expect(await mode(path), "the database").toBe(0o600)
+
+      for (const sidecar of [`${path}-wal`, `${path}-shm`]) {
+        if (!existsSync(sidecar)) continue
+        expect(await mode(sidecar), sidecar).toBe(0o600)
+      }
+    } finally {
+      s.close()
+    }
+  })
+
+  it("leaves an existing directory's permissions alone", async () => {
+    // Only directories champctl creates are restricted. An existing one is the
+    // operator's to set — pointing --db at /srv/shared and having champctl
+    // quietly make it owner-only would be worse than leaving it.
+    const dir = join(root, "theirs")
+    await mkdir(dir, { recursive: true })
+    await chmod(dir, 0o755)
+
+    const s = await SqliteArchiveStore.open(join(dir, "archive.db"))
+    try {
+      expect((await stat(dir)).mode & 0o777).toBe(0o755)
+    } finally {
+      s.close()
+    }
+  })
+
   it("creates the directory the database is asked to live in", async () => {
     const path = join(root, "nested", "deeper", "archive.db")
     const s = await SqliteArchiveStore.open(path)
@@ -690,6 +733,29 @@ describe("archive CLI", () => {
         error: "500 Internal Server Error",
       }),
     ).toBe(`FAILED     August (${ID}) — 500 Internal Server Error`)
+  })
+
+  it("refuses a --since that isn't ISO 8601", () => {
+    // new Date() was doing this and is not an ISO parser: V8 reads
+    // "08/24/2026" as a US date, and — worse — normalises impossible
+    // ISO-looking dates, so "2026-02-30" became 2 March rather than an error.
+    // --since decides which championships a run skips, so a mistyped cutoff
+    // that parses is a run that quietly does the wrong thing and exits 0.
+    for (const bad of ["08/24/2026", "2026-02-30", "2026-13-01", "last tuesday", "24-08-2026"]) {
+      expect(() => parseArgs(["run", "--since", bad]), bad).toThrow(/ISO 8601/)
+    }
+  })
+
+  it("reads a bare --since date as UTC, not as the machine's midnight", () => {
+    // The same command has to mean the same thing on the league's server and
+    // on a laptop in another timezone.
+    expect(parseArgs(["run", "--since", "2026-08-24"]).since?.toISOString()).toBe(
+      "2026-08-24T00:00:00.000Z",
+    )
+    // An explicit offset is still honoured.
+    expect(parseArgs(["run", "--since", "2026-08-24T00:00:00+05:00"]).since?.toISOString()).toBe(
+      "2026-08-23T19:00:00.000Z",
+    )
   })
 
   it("parses the options it documents", () => {

@@ -47,7 +47,7 @@
  */
 
 import { createHash } from "node:crypto"
-import { mkdir } from "node:fs/promises"
+import { chmod, mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
@@ -147,7 +147,13 @@ export class SqliteArchiveStore implements ArchiveStore {
    * fast for a nightly job writing a few dozen rows.
    */
   static async open(path: string, options: OpenOptions = {}): Promise<SqliteArchiveStore> {
-    if (path !== ":memory:") await mkdir(dirname(path), { recursive: true })
+    // 0700 on any directory this creates. The archive holds driver names and
+    // Steam GUIDs, and .gitignore keeps it out of the repo but does nothing
+    // about the other accounts on a league VPS — under the usual 0022 umask
+    // the default is world-readable. Only directories champctl creates are
+    // restricted; an existing one is the operator's to set, and quietly
+    // rewriting its mode would be worse than leaving it.
+    if (path !== ":memory:") await mkdir(dirname(path), { recursive: true, mode: 0o700 })
     const db = new DatabaseSync(path)
 
     // WAL so `status` reading doesn't block `run` writing, and a busy timeout
@@ -158,6 +164,7 @@ export class SqliteArchiveStore implements ArchiveStore {
     db.exec(`PRAGMA busy_timeout = ${Number(options.busyTimeoutMs ?? 5000)}`)
     db.exec("PRAGMA foreign_keys = ON")
     db.exec(SCHEMA)
+    if (path !== ":memory:") await restrictToOwner(path)
     return new SqliteArchiveStore(db)
   }
 
@@ -281,6 +288,25 @@ export class SqliteArchiveStore implements ArchiveStore {
 
   close(): void {
     this.#db.close()
+  }
+}
+
+/**
+ * 0600 on the database and its WAL sidecars.
+ *
+ * The sidecars matter as much as the database: `-wal` holds pages not yet
+ * checkpointed, so it is archive content, and SQLite creates both at the
+ * umask default rather than inheriting the database's mode — measured at 0644
+ * against a 0600 database. They are removed on a clean close and left behind
+ * on a kill, which is exactly when nobody is watching.
+ *
+ * Best effort. A filesystem without POSIX modes, or a database the operator
+ * deliberately owns differently, should not stop an archive run — the
+ * directory mode above is the containment that matters.
+ */
+async function restrictToOwner(path: string): Promise<void> {
+  for (const f of [path, `${path}-wal`, `${path}-shm`]) {
+    await chmod(f, 0o600).catch(() => undefined)
   }
 }
 
