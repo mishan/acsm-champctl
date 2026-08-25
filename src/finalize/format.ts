@@ -183,12 +183,31 @@ export function applyFormat(ev: ChampionshipEvent, format: RaceFormat): Champion
     Time: format.length.kind === "minutes" ? format.length.minutes : 0,
   }
 
+  // Turning the window *on* keeps whichever lap it already opened at.
+  //
+  // `mandatoryPit` is a boolean because that is the league-facing question —
+  // is there a compulsory stop — but `RacePitWindowStart` is a lap number, and
+  // collapsing one into the other loses the lap. A championship whose window
+  // opens at lap 5 round-tripped through `readFormat` (5 → true) and back
+  // through here (true → 1), so cloning last month silently moved the window
+  // four laps earlier and left `RacePitWindowEnd` where it was — a 1-to-12
+  // window nobody chose. Silent, because `derived` never mentioned it.
+  //
+  // So the boolean only decides *whether* there is a window; an existing lap
+  // survives, and 1 is the default for a window being switched on from off.
+  const currentWindowStart = numberOr(rs.RacePitWindowStart, 0)
+  const pitWindowStart = format.mandatoryPit
+    ? currentWindowStart > 0
+      ? currentWindowStart
+      : PIT_WINDOW_OPEN
+    : PIT_WINDOW_CLOSED
+
   return {
     ...ev,
     RaceSetup: {
       ...rs,
       Sessions: sessions,
-      RacePitWindowStart: pitWindowStartFor(format.mandatoryPit),
+      RacePitWindowStart: pitWindowStart,
       ReversedGridRacePositions: format.reversedGridPositions,
       RaceExtraLap: format.extraLap,
     },

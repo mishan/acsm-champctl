@@ -100,6 +100,28 @@ describe("reading a format off an event", () => {
     expect(readFormat(ev).length).toEqual({ kind: "minutes", minutes: 0 })
   })
 
+  it("keeps the lap an existing pit window opens at", () => {
+    // mandatoryPit is a boolean because that is the league-facing question,
+    // but RacePitWindowStart is a lap number. Collapsing one into the other
+    // moved a window that opened at lap 5 to lap 1 and left RacePitWindowEnd
+    // alone — a 1-to-12 window nobody chose, and nothing said so. The boolean
+    // decides whether there is a window; the lap survives.
+    const ev = raceEvent({ RaceSetup: { RacePitWindowStart: 5, RacePitWindowEnd: 12 } })
+    const after = applyFormat(ev, format({ mandatoryPit: true }))
+    expect(after.RaceSetup?.RacePitWindowStart).toBe(5)
+    expect(after.RaceSetup?.RacePitWindowEnd).toBe(12)
+  })
+
+  it("opens a window at lap 1 when there wasn't one", () => {
+    const ev = raceEvent({ RaceSetup: { RacePitWindowStart: 0 } })
+    expect(applyFormat(ev, format({ mandatoryPit: true })).RaceSetup?.RacePitWindowStart).toBe(1)
+  })
+
+  it("closes the window without pretending to know a lap", () => {
+    const ev = raceEvent({ RaceSetup: { RacePitWindowStart: 5 } })
+    expect(applyFormat(ev, format({ mandatoryPit: false })).RaceSetup?.RacePitWindowStart).toBe(0)
+  })
+
   it("treats a missing pit window as no mandatory stop", () => {
     expect(readFormat(raceEvent({ RaceSetup: {} })).mandatoryPit).toBe(false)
   })
