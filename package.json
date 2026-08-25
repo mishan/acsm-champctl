@@ -11,7 +11,8 @@
     "gridmom": "./bin/gridmom.js",
     "champctl-archive": "./bin/champctl-archive.js",
     "champctl-finalize": "./bin/champctl-finalize.js",
-    "champctl-month": "./bin/champctl-month.js"
+    "champctl-month": "./bin/champctl-month.js",
+    "champctl-serve": "./bin/champctl-serve.js"
   },
   "//files": "dist/ is in .gitignore, and without an explicit list npm packs by gitignore rules — so the tarball shipped bin/ scripts importing a directory that wasn't in it. README and LICENSE come along whatever this says.",
   "files": [
@@ -25,6 +26,7 @@
     "archive": "tsx src/cli/archive.ts",
     "finalize": "tsx src/cli/finalize.ts",
     "month": "tsx src/cli/month.ts",
+    "serve": "tsx src/cli/serve.ts",
     "dev": "vite",
     "//build": "Two outputs from one command: tsc emits dist/ for the CLIs and the server, vite emits dist/client for the browser. The gates run `npm run build`, so a client that doesn't compile fails CI the same way the server would.",
     "build": "npm run build:server && npm run build:client",
@@ -43,6 +45,8 @@
     "harness:reset": "docker compose --project-directory docker down -v && docker compose --project-directory docker up -d",
     "harness:logs": "docker compose --project-directory docker logs -f",
     "harness:provision": "tsx scripts/harness/provision.ts",
+    "harness:tracks": "tsx scripts/harness/tracks.ts",
+    "harness:oss": "bash scripts/harness/oss.sh",
     "harness:steam-login-qr": "bash docker/steam-login-qr.sh",
     "harness:steam-login": "bash docker/steam-login.sh",
     "harness:steam-check": "docker compose --project-directory docker run --rm --entrypoint steamcmd acsm +quit",
@@ -61,11 +65,15 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.6",
     "@types/luxon": "^3.4.2",
     "@types/node": "^22.10.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.0",
+    "jsdom": "^27.4.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "tsx": "^4.19.2",

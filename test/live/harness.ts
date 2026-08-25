@@ -13,6 +13,8 @@ import { resolve } from "node:path"
 import { assertDisposable } from "../../src/acsm/disposable.js"
 import { AcsmSession } from "../../src/acsm/session.js"
 import type { Championship } from "../../src/acsm/types.js"
+import { events } from "../../src/acsm/view.js"
+import { readFormat, type RaceFormat } from "../../src/finalize/format.js"
 
 export interface LiveConfig {
   baseUrl: string
@@ -64,6 +66,55 @@ export async function loadFixture(relativePath: string): Promise<Championship> {
 }
 
 export const SEED = "fixtures/synthetic/recon-seed.json"
+
+/**
+ * Refuses a plan that has nothing to do.
+ *
+ * Every test in this suite seeds from the same fixture, so "ask for 12 laps"
+ * is a different request depending on what the fixture already races — and
+ * when it matches, the plan is a no-op, `applyFinalize` returns early, and the
+ * write under test never happens. Nothing fails: the assertions that follow
+ * are typically of the form "the entry list is untouched" or "the other
+ * sessions survived", and a write that never ran satisfies all of them.
+ *
+ * That is the worst shape a test can take, because it reports success for the
+ * absence of the thing it exists to check. This turns it into a failure that
+ * names the cause, at the point where the plan was made rather than several
+ * assertions later.
+ *
+ * `seedFormat` is the way to avoid needing this: derive the value from the
+ * fixture instead of writing a literal that a future edit to the seed can
+ * silently collide with.
+ */
+export function assertWouldChange(plan: { noop: boolean }, asked: string): void {
+  if (!plan.noop) return
+  throw new Error(
+    `The plan for ${asked} has nothing to do, so the write it was meant to exercise never ` +
+      `happens — and a test asserting that nothing else changed then passes for the wrong ` +
+      `reason. The seed fixture already races that format. Pick a value it does not, ` +
+      `ideally by deriving one from seedFormat() rather than writing a literal.`,
+  )
+}
+
+/** The race format the seed fixture's first event already has. */
+export async function seedFormat(): Promise<RaceFormat> {
+  const champ = await loadFixture(SEED)
+  const event = events(champ)[0]
+  if (!event)
+    throw new Error(`${SEED} has no first event, so there is nothing to read a format from`)
+  return readFormat(event)
+}
+
+/**
+ * A lap count the seed does not already race, so a plan for it always changes
+ * something. Deliberately derived rather than chosen: a literal is only
+ * correct until somebody edits the fixture.
+ */
+export async function lapsUnlikeSeed(): Promise<number> {
+  const current = await seedFormat()
+  const seeded = current.length.kind === "laps" ? current.length.laps : 0
+  return seeded === 17 ? 23 : 17
+}
 export const SEED_DUPLICATE_PITBOXES = "fixtures/synthetic/recon-seed-duplicate-pitboxes.json"
 
 /** Best-effort teardown; the definitive reset is `docker compose down -v`. */

@@ -52,3 +52,6 @@ docker/premium/*.zip
 
 # Working notes, not deliverables.
 docs/review-*.md
+
+# The OSS harness downloads a release zip and runs it in place.
+.harness/

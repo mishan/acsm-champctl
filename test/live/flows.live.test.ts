@@ -26,11 +26,19 @@ import { events, session as sessionConfig } from "../../src/acsm/view.js"
 import { eventEditPath, eventSubmitPath, importChampionship } from "../../src/acsm/write.js"
 import { emitMonth } from "../../src/emit/month.js"
 import { applyFinalize, EntryListChangedError } from "../../src/finalize/apply.js"
-import { readFormat, type RaceFormat } from "../../src/finalize/format.js"
+import { readFormat, sameFormat, type RaceFormat } from "../../src/finalize/format.js"
 import { planFinalize } from "../../src/finalize/plan.js"
 import { practiceMinutesFor } from "../../src/finalize/schedule.js"
 import { testProfile } from "../support/build.js"
-import { LIVE, SEED, deleteChampionship, liveSession, loadFixture } from "./harness.js"
+import {
+  assertWouldChange,
+  deleteChampionship,
+  LIVE,
+  liveSession,
+  loadFixture,
+  SEED,
+  seedFormat,
+} from "./harness.js"
 
 const PROFILE = testProfile()
 
@@ -117,6 +125,17 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       extraLap: false,
     }
 
+    /**
+     * The format above has to differ from what the seed already races, or
+     * every apply below returns early and the assertions that follow pass for
+     * the absence of the write they exist to check. 17 differs today; this is
+     * here so that an edit to the fixture says so rather than quietly turning
+     * these into tests of nothing.
+     */
+    it("asks for a format the seed does not already have", async () => {
+      expect(sameFormat(await seedFormat(), wanted)).toBe(false)
+    })
+
     it("lands the format it previewed", async () => {
       const { id, export: champ } = await seeded()
       const eventId = firstEventId(champ)
@@ -133,6 +152,7 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
         "the seed should differ from what we asked for",
       ).toBeGreaterThan(0)
 
+      assertWouldChange(plan, "the finalize under test")
       await applyFinalize(live(), plan, { acknowledgeWarnings: true })
 
       // Read it back from ACSM rather than trusting the POST's redirect.
@@ -154,6 +174,7 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
         format: { ...wanted, length: { kind: "laps", laps: 13 } },
         profile: PROFILE,
       })
+      assertWouldChange(plan, "the finalize under test")
       await applyFinalize(live(), plan, { acknowledgeWarnings: true })
 
       const after = await live().getJson<Championship>(`/championship/${id}/export`)
@@ -188,6 +209,7 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
         format: wanted,
         profile: PROFILE,
       })
+      assertWouldChange(plan, "the finalize under test")
       await applyFinalize(live(), plan, { acknowledgeWarnings: true })
 
       const after = events(await live().getJson<Championship>(`/championship/${id}/export`))[0]!
@@ -230,6 +252,7 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
         format: wanted,
         profile: PROFILE,
       })
+      assertWouldChange(plan, "the finalize under test")
       await applyFinalize(live(), plan, { acknowledgeWarnings: true })
 
       const after = await live().getJson<Championship>(`/championship/${id}/export`)

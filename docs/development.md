@@ -16,13 +16,24 @@ src/
   gridmom/     the checker: findings model, check registry, formatters
   finalize/    race format, schedule maths, plan + apply
   emit/        template merge, month generation, clone
-  web/         server-side session store for the UI
+  web/         the HTTP service: Fastify routes, session and plan stores,
+               error translation, and the wire types the client shares
   cli/         the command-line entry points, over a shared args module
+client/        the React finalize screen, built by Vite into dist/client
 docker/        throwaway ACSM for recon and live tests
 scripts/recon/ form and round-trip recon against the harness
 docs/          what the ACSM source actually says about the write path
 profiles/      league baselines — batl.json ships here
 ```
+
+**The web UI is a second front end over the same engine, not a second
+implementation.** `src/web/routes.ts` reads a request, calls `planFinalize` or
+`applyFinalize`, and shapes the answer — exactly the relationship
+`src/cli/finalize.ts` has to the same two functions. The diff a browser renders
+is `plan.changes`, the same array the CLI prints. Anything that would have to be
+reimplemented to serve HTTP is a sign the engine is missing something, and
+`withOverrides` is where that already happened once: "only the fields you name
+change" was CLI code until the UI needed the same rule.
 
 **The read client and the write session are separate types on purpose.**
 `AcsmReader` has no way to authenticate; `AcsmSession` holds a cookie jar. The
@@ -32,17 +43,28 @@ write credentials" a property of the code rather than a promise.
 ## Gates
 
 ```sh
-npm run typecheck     # tsc --noEmit
+npm run typecheck     # tsc --noEmit, twice: server, then client
 npm run lint          # biome lint
 npm run format:check  # biome format, checking only
 npm test              # vitest run
-npm run build         # tsc -p tsconfig.build.json
+npm run build         # tsc for dist/, then vite for dist/client
 ```
 
 CI runs all of these, plus the tests on Node 22.13 and 24. `npm run format`
 applies formatting; `npm run lint:fix` applies the fixable lint rules.
 
 `npm test` never needs a container.
+
+Typecheck and build are each two invocations because the client compiles under
+different `lib` and `jsx` settings — same strictness, DOM instead of Node. Both
+halves are in the one script, so a client that doesn't compile fails the gate
+rather than the deploy.
+
+For working on the UI, `npm run serve` runs the API and `npm run dev` runs Vite
+on 5173 proxying `/api` to it. The proxy leaves `changeOrigin` off deliberately:
+that keeps the `Host` matching the browser's `Origin`, so the server's
+cross-origin check behaves the way it will in production instead of rejecting
+every write in development.
 
 ## Using the pieces as a library
 
@@ -213,6 +235,42 @@ The regression test re-emits a template with no overrides and diffs the result,
 allowing only an explicit list of expected changes. When an ACSM upgrade adds a
 field the emitter doesn't know about, that test fails before a Wednesday does.
 
+**The web UI holds the finalize plan server-side, and the push endpoint takes a
+plan id and nothing else.** This is the design decision the whole HTTP layer
+turns on, and the obvious alternative — the browser posts a lap count, the
+server re-plans and applies — is broken in a way that looks fine.
+
+`planFinalize` fingerprints the entry list as ACSM rendered it, and
+`applyFinalize` re-fetches the form and compares before posting. That guard
+exists because the event form is a full-list replace, so a sign-up approved
+while a preview is open would be silently deleted by the save. Re-planning at
+push time takes the fingerprint one round trip before comparing it, which means
+the check is comparing a form against itself and the window it was built to
+cover — the person's thinking time — isn't covered at all. The guard would still
+be there, still be tested, and no longer guard anything.
+
+Holding the plan buys two more things. What gets posted is what was previewed,
+because there is no second set of fields to disagree with the first. And the
+parsed form — every entrant's name, Steam GUID, car and pit box — never leaves
+the process; `web/view.ts` builds the response by naming what goes out rather
+than by deleting what doesn't, so a field added to `FinalizePlan` later is
+absent from the API until someone decides otherwise.
+
+**`web/wire.ts` may only import from leaves.** Every response shape lives there
+and the client imports it directly, so the browser and the server cannot drift
+about what a field is called. That only works while following the import doesn't
+drag `node:crypto` and the write session into the client's typecheck, where it
+fails on the difference between Node's `Uint8Array` and the DOM's `BlobPart`.
+`Change` and `FormFieldChange` moved from `finalize/plan.ts` to
+`finalize/format.ts` for exactly this reason — the types are needed in a browser
+and `plan.ts` is not.
+
+**Routes are authenticated unless they opt out**, via `config.public` on the
+route rather than a list of protected paths somewhere else. A route added
+without a thought about auth comes out protected. The inventory in
+`test/web.test.ts` is maintained by hand and only catches a route that *was*
+protected becoming public; the opt-out default is what covers the rest.
+
 **One forbidden-key list.** `FORBIDDEN_KEYS` in `acsm/write.ts` is the only one;
 anything that rebuilds an object key by key imports it. `out[k] = value` where
 the key is `__proto__` reparents the object rather than adding a field, and an
@@ -231,3 +289,14 @@ Two copies of that list is one that gets updated and one that doesn't.
   export before the round-trip regression test can cover the real schema. The
   archive's first run produces one; it needs sanitising before it can be
   committed.
+- **The client has no tests of its own.** `test/web.test.ts` drives the API end
+  to end over a scripted ACSM, and the components are typed against the same
+  `wire.ts` the server implements, so a renamed field fails the typecheck. What
+  is not covered is the screen's own behaviour: the debounce, the abort on a
+  superseded preview, the acknowledgement being retired when the plan changes.
+  Those are stated in comments and checked by hand, which is not the same thing.
+- **`champctl-serve` has no live test.** `test/live/flows.live.test.ts` drives
+  finalize against the Docker harness through the engine; nothing drives it
+  through HTTP. The engine is where the risk is, so this is a gap in coverage
+  rather than in confidence — but the session and cookie handling in particular
+  have only ever met a stub `fetch`.

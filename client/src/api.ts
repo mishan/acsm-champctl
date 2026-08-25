@@ -37,11 +37,16 @@ import type {
 export type {
   ApplyResponse,
   ChampionshipListItem,
+  // `championship()` returns it, for the same reason `PlanResponse` is here.
+  ChampionshipResponse,
   ChampionshipView,
   CheckReport,
   Finding,
   FormatPreset,
   PlanRequest,
+  // `plan()` returns it, so a caller that wants to name what it got back
+  // should not have to reach past this module into the server's wire types.
+  PlanResponse,
   PlanView,
   RaceFormat,
   RoundView,

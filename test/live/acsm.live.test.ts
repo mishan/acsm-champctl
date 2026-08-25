@@ -289,26 +289,55 @@ describe.skipIf(!LIVE)("ACSM harness", () => {
   })
 
   // -------------------------------------------------------------- plan §3.1
-  describe("premium-only endpoints", () => {
-    it("reports whether this build has the list endpoint", async () => {
-      const reader = new HttpAcsmReader({ baseUrl: liveConfig()!.baseUrl, rateLimit: false })
-      try {
-        const list = await reader.listChampionships()
-        // eslint-disable-next-line no-console
-        console.log(`/api/championships/list.json present — ${list.length} championships.`)
-        expect(Array.isArray(list)).toBe(true)
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.log(
-          `/api/championships/list.json unavailable on this build: ${
-            e instanceof Error ? e.message : String(e)
-          }`,
-        )
-      }
+  describe("enumerating championships", () => {
+    /**
+     * This used to log "list.json present — N championships" whenever
+     * `listChampionships()` resolved, which stopped being true the moment the
+     * reader learned to fall back to the listing page: it then said "present"
+     * for a build that answers 404, on every run, in the recon output people
+     * read to find out what a build does.
+     *
+     * So the endpoint is asked about directly, and the reader is checked for
+     * the thing that actually matters — that it comes back with championships
+     * either way.
+     */
+    it("finds championships whether or not the JSON endpoint exists", async () => {
+      const baseUrl = liveConfig()!.baseUrl
+      const reader = new HttpAcsmReader({ baseUrl, rateLimit: false })
+
+      const direct = await fetch(new URL("/api/championships/list.json", baseUrl), {
+        redirect: "manual",
+      })
+      // eslint-disable-next-line no-console
+      console.log(
+        direct.status === 200
+          ? "/api/championships/list.json: present"
+          : `/api/championships/list.json: absent (HTTP ${direct.status}), reading the listing page`,
+      )
+
+      const list = await reader.listChampionships()
+      expect(Array.isArray(list)).toBe(true)
+      // There is at least the seed this file imported, so an empty list means
+      // the enumeration path is broken rather than that the server is empty —
+      // which is exactly how the archive came to exit 0 having archived
+      // nothing.
+      expect(list.length, "the reader must find the championships that exist").toBeGreaterThan(0)
     })
   })
 
-  it("parses the import page's file field", async () => {
+  /**
+   * Both shapes are legitimate, so this asserts they *agree* rather than
+   * asserting one of them: 1.7.9 renders a `<textarea name="import">` and posts
+   * urlencoded, 2.4.x a file input and posts multipart. Pinning multipart made
+   * this the one test in the file that could not pass on the public build, and
+   * it would have been pinning the wrong answer for the majority of leagues.
+   *
+   * The pairing is what matters — a file input on a urlencoded form, or a
+   * textarea on a multipart one, is a page champctl would send the wrong body
+   * to. `detectImportMechanism` reads the same page to decide, and this is the
+   * assertion that its two answers stay the only two.
+   */
+  it("agrees with itself about how this build takes an import", async () => {
     const html = await session.getText("/championship/import")
     // By action, not by position. `parseForm` takes the *first* form on the
     // page, and on every ACSM page that is the navbar search form — docs §9,
@@ -318,10 +347,19 @@ describe.skipIf(!LIVE)("ACSM harness", () => {
       pageUrl: session.url("/championship/import"),
     })
     expect(form, "import page should have a form posting to /championship/import").toBeTruthy()
-    expect(form?.enctype).toBe("multipart/form-data")
+
     const fileInput = /<input[^>]*type=["']file["'][^>]*>/i.exec(html)
-    expect(fileInput, "import page should have a file input").toBeTruthy()
-    // eslint-disable-next-line no-console
-    console.log(`Import file field: ${/name=["']([^"']+)["']/i.exec(fileInput![0])?.[1]}`)
+    const textarea = /<textarea[^>]*name=["']([^"']+)["'][^>]*>/i.exec(html)
+
+    if (fileInput) {
+      expect(form?.enctype, "a file part needs a multipart form").toBe("multipart/form-data")
+      // eslint-disable-next-line no-console
+      console.log(`Import: file field ${/name=["']([^"']+)["']/i.exec(fileInput[0])?.[1]}`)
+    } else {
+      expect(textarea, "a build with no file input must paste into a textarea").toBeTruthy()
+      expect(form?.enctype, "a textarea posts urlencoded").not.toBe("multipart/form-data")
+      // eslint-disable-next-line no-console
+      console.log(`Import: textarea ${textarea?.[1]}`)
+    }
   })
 })

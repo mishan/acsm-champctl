@@ -51,7 +51,19 @@ export class AcsmAuthError extends Error {
  * the harness happened to change the password by other means first.
  */
 export class PasswordChangeRequiredError extends AcsmAuthError {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /**
+     * Where ACSM redirected to, which is the form to post the new password to.
+     *
+     * Carried rather than reconstructed because the path differs by build:
+     * 1.7.9 uses `/accounts/new-password` and 2.4.x `/account/new-password`,
+     * plural against singular. Reading it off the redirect is exact for both
+     * and for whatever the next build does, where keying it off a version
+     * number would be a guess that compiles.
+     */
+    readonly newPasswordPath: string,
+  ) {
     super(message)
     this.name = "PasswordChangeRequiredError"
   }
@@ -387,6 +399,7 @@ export class AcsmSession {
       throw new PasswordChangeRequiredError(
         `${username} must set a new password in ACSM before champctl can use this account. ` +
           `Log in at ${this.#baseUrl} in a browser, set one, and put it in CHAMPCTL_LIVE_PASSWORD.`,
+        new URL(location, this.url("/")).pathname,
       )
     }
 

@@ -100,6 +100,7 @@ describe("failures that came from ACSM", () => {
     const d = describeError(
       new PasswordChangeRequiredError(
         "ACSM wants league-admin's password changed at https://acsm.batlracing.com.",
+        "/accounts/new-password",
       ),
     )
     expect(d.body.error.message).not.toMatch(/league-admin|batlracing/)
@@ -112,7 +113,15 @@ describe("failures that came from ACSM", () => {
     // It extends AcsmAuthError, so the order of the branches is the whole
     // test: "these credentials are wrong" sends someone back to retype them,
     // and no amount of retyping clears a password change ACSM is demanding.
-    const d = describeError(new PasswordChangeRequiredError("ACSM wants this password changed."))
+    // The path is carried rather than reconstructed because it differs by
+    // build — 1.7.9 pluralises it, 2.4.x doesn't — and it plays no part in
+    // what the browser is told here.
+    const d = describeError(
+      new PasswordChangeRequiredError(
+        "ACSM wants this password changed.",
+        "/accounts/new-password",
+      ),
+    )
     expect(d.status).toBe(401)
     expect(d.body.error.code).toBe("acsm-password-change")
   })

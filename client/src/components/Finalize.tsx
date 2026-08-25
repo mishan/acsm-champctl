@@ -148,9 +148,14 @@ export function Finalize({
     load()
     // Bumping the counter on the way out retires whatever is in flight, so the
     // guard that already covers a reload covers an unmount too: `load`'s
-    // response can land after the component is gone, and setting state then is
-    // a warning in development and a leak in principle. Same counter, because
+    // response can land after the component is gone. Same counter, because
     // "which load is current" and "is any load current" are the same question.
+    //
+    // Deliberately not covered by a test. React 19 dropped the
+    // setState-after-unmount warning, so a late response applied to a dead
+    // component is silent — a test for it passes whether or not this line is
+    // here, which is worse than no test. The reload case next door *is*
+    // covered, and it exercises the same counter.
     return () => {
       generation.current++
     }

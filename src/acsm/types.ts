@@ -284,3 +284,37 @@ export interface ChampionshipSummary extends Unknowns {
   ID?: string
   Name?: string
 }
+
+/**
+ * `/healthcheck.json`, which every build answers without credentials.
+ *
+ * Only the fields champctl reads are named, and all of them are optional: this
+ * is the one response that has to parse on a build nobody has seen yet, since
+ * it is what tells us which build we are talking to. See `dialect.ts`.
+ */
+export interface AcsmHealthcheck extends Unknowns {
+  /**
+   * Both spellings, because both are in play. 1.7.9, 2.4.5 and 2.4.15 all
+   * answer `OK`; the repo's own fixtures and `StaticAcsmReader` have long used
+   * `ok`. Declaring only one left the other reachable through the index
+   * signature — typed as `unknown`, so every read of it needed a cast, which
+   * is how a field that exists ends up treated as one that might not.
+   */
+  OK?: boolean
+  ok?: boolean
+  /**
+   * `Version` is what 1.7.9, 2.4.5 and 2.4.15 all return — measured, not
+   * assumed. The other two spellings have never been seen from a build and are
+   * declared because `scripts/recon/forms.ts` probes for them, which is the
+   * kind of hedge that is worth either honouring or deleting rather than
+   * leaving in two minds. `dialectFrom` reads all three.
+   */
+  Version?: string
+  version?: string
+  ServerManagerVersion?: string
+  /** 1.7.x reports this. 2.4.x dropped it and reports `LicenseID` instead. */
+  IsPremium?: boolean
+  /** Premium only — it is the licence the build validated at startup. */
+  LicenseID?: string
+  AssettoIsInstalled?: boolean
+}
