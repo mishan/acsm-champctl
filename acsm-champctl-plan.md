@@ -60,11 +60,18 @@ deployment.
 
 Public Access is enabled on `ac.batlracing.com`, so these need no credentials:
 
-- ~~`GET /api/championships/list.json`~~ — **does not exist.** 404 on 2.4.5 and
-  2.4.15, and 404 on `ac.batlracing.com` itself, logged out or in, while
+- `GET /api/championships/list.json` — **build-dependent, so never assumed.**
+  404 on 2.4.5 and on `ac.batlracing.com` itself, logged out or in, while
   `/api/results/list.json` beside it answers 200. The archive walked this
   endpoint, so it could not enumerate a single championship on the server it
-  was built for. Championships are listed only by the server-rendered
+  was built for. On the premium 2.4.15 harness it *does* answer, 200 with
+  `{"championships":[…]}` — and with **lowercase keys**, `id` and `name`,
+  where the export and the HTML scrape both use `ID` and `Name`. champctl read
+  only the capitalised spelling, so on a build that has this endpoint every
+  entry lost its id: the web UI's clone list was empty, `gridmom list` printed
+  `?` per row, and the archive reported "no ID field" for the whole server.
+  `HttpAcsmReader.listChampionships` normalises both spellings now.
+  Championships are otherwise listed only by the server-rendered
   `/championships` page, which Public Access serves without credentials;
   `walkChampionshipIds` reads them from there.
 - `GET /championship/{id}/standings.json`

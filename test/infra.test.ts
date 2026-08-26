@@ -99,9 +99,61 @@ describe("HTTP reader", () => {
   })
 
   /**
-   * `/api/championships/list.json` does not exist on 2.4.5 or 2.4.15, nor on
-   * ac.batlracing.com — measured, 404 even as admin. The listing page is the
-   * only way to enumerate championships, so the fallback is the normal path
+   * The shape 2.4.15 actually answers with, measured against the harness.
+   *
+   * Lowercase keys, and champctl reads `ID`/`Name` everywhere because that is
+   * what the export and the scrape fallback use. The array was cast straight
+   * through, so nothing failed: the clone list in the web UI came back empty,
+   * `gridmom list` printed `?` for every row, and `champctl-archive` said
+   * "Championship list entry had no ID field" about every championship on the
+   * server. A build that has this endpoint is a build where the archive
+   * silently records nothing.
+   */
+  it("reads a list entry whose keys are lowercase", async () => {
+    const r = reader(
+      async () =>
+        new Response(
+          JSON.stringify({
+            championships: [{ name: "August 2026", id: A, progress: 0 }],
+          }),
+        ),
+    )
+    await expect(r.listChampionships()).resolves.toEqual([
+      { ID: A, Name: "August 2026", id: A, name: "August 2026", progress: 0 },
+    ])
+  })
+
+  /**
+   * Both spellings present, and the capitalised one useless.
+   *
+   * Reading `raw.ID ?? raw.id` prefers whichever key *exists*, so a build that
+   * answers with `"ID": null` beside a real `"id"` — or with the capitalised
+   * key holding a number — loses the id it did send. That is the empty clone
+   * list and the archive recording nothing all over again, one level down.
+   */
+  it("prefers the spelling that holds a string, not the one that exists", async () => {
+    const r = reader(
+      async () => new Response(JSON.stringify([{ ID: null, id: A, Name: 7, name: "August 2026" }])),
+    )
+    await expect(r.listChampionships()).resolves.toMatchObject({
+      0: { ID: A, Name: "August 2026" },
+    })
+  })
+
+  /**
+   * A row that is not an object at all, which `Array.isArray` does not catch.
+   * The archive's contract is that one bad championship never stops the rest,
+   * and reading `.ID` off a string used to be how the whole run ended.
+   */
+  it("does not choke on a list entry that is not an object", async () => {
+    const r = reader(async () => new Response(JSON.stringify([null, "nope", { ID: A }])))
+    await expect(r.listChampionships()).resolves.toEqual([{}, {}, { ID: A }])
+  })
+
+  /**
+   * `/api/championships/list.json` does not exist on 2.4.5, nor on
+   * ac.batlracing.com — measured, 404 even as admin. The listing page is then
+   * the only way to enumerate championships, so the fallback is a normal path
    * rather than a rescue.
    */
   it("falls back to the listing page when the endpoint is a 404", async () => {

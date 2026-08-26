@@ -492,6 +492,13 @@ describe("parsing champctl-serve's arguments", () => {
     expect(() => parseServeArgs(["--reverse-proxy"])).toThrow(/Unknown option --reverse-proxy/)
   })
 
+  it("reads --unthrottled-reads, and leaves the delay on without it", () => {
+    // The delay is how champctl stays a good citizen on a league's production
+    // manager, so the direction this has to fail in is "still polite".
+    expect(parseServeArgs([]).unthrottledReads).toBe(false)
+    expect(parseServeArgs(["--unthrottled-reads"]).unthrottledReads).toBe(true)
+  })
+
   it("calls a stray word an argument, not an option", () => {
     // champctl-serve takes no positional arguments, so "Unknown option batl"
     // sends the reader looking for a flag they never typed. The likeliest
