@@ -102,13 +102,13 @@ describe.skipIf(!LIVE)("the champctl API against a real ACSM", () => {
   }
 
   /**
-   * A logged-in browser, as a cookie header.
+   * A logged-in browser, as a cookie header, from its own `/api/login`.
    *
-   * Goes through `/api/login` rather than being fabricated, because what this
+   * Goes through the endpoint rather than being fabricated, because what this
    * file is here to test starts with champctl forwarding real credentials to a
    * real manager and holding what comes back.
    */
-  const loggedIn = async (): Promise<string> => {
+  const freshLogin = async (): Promise<string> => {
     const config = liveConfig()
     if (!config) throw new Error("no live config")
     const res = await server().inject({
@@ -121,6 +121,25 @@ describe.skipIf(!LIVE)("the champctl API against a real ACSM", () => {
     const raw = Array.isArray(cookie) ? cookie[0] : cookie
     if (!raw) throw new Error("login returned no session cookie")
     return raw.split(";")[0] as string
+  }
+
+  /**
+   * The same browser, for the tests that just need to be signed in.
+   *
+   * The login round trip is proven by making it, not by making it nineteen
+   * times, and nineteen is what this file was doing — one per test, for tests
+   * about plans and pushes. ACSM allows about five requests per twenty seconds
+   * on `/login` (test/live/setup.ts), so that was a minute and a half of the
+   * suite waiting its turn to re-prove the same thing.
+   *
+   * `freshLogin` is still there for tests that need a session of their own.
+   * Signing out destroys the one it is handed, so the logout test sharing this
+   * cookie would sign out every test that ran after it.
+   */
+  let shared: string | undefined
+  const loggedIn = async (): Promise<string> => {
+    shared ??= await freshLogin()
+    return shared
   }
 
   /** A seed championship in the live manager, registered for teardown. */
@@ -297,7 +316,9 @@ describe.skipIf(!LIVE)("the champctl API against a real ACSM", () => {
     })
 
     it("stops working the moment the browser logs out", async () => {
-      const cookie = await loggedIn()
+      // Its own session: this test destroys the one it is given, and the
+      // shared cookie is the one every other test in this file is holding.
+      const cookie = await freshLogin()
       const out = await server().inject({ method: "POST", url: "/api/logout", headers: { cookie } })
       expect(out.statusCode).toBe(204)
 
@@ -413,7 +434,11 @@ describe.skipIf(!LIVE)("the champctl API against a real ACSM", () => {
       // a form fetched with that session's cookies.
       const id = await seeded()
       const mine = await loggedIn()
-      const theirs = await loggedIn()
+      // Explicitly a second login: `loggedIn` hands out one shared browser, so
+      // asking it twice would make "another browser" the same one — and this
+      // test would pass for the wrong reason. The assertion below is what
+      // caught that when the sharing went in.
+      const theirs = await freshLogin()
       expect(mine).not.toBe(theirs)
 
       const plan = await planFor(id, mine, { laps: 21 })
@@ -643,7 +668,10 @@ describe.skipIf(!LIVE)("the champctl API against a real ACSM", () => {
     it("will not let one browser create another's championship", async () => {
       const source = await seeded()
       const mine = await loggedIn()
-      const theirs = await loggedIn()
+      // A second login, not the shared browser again — see the plan-ownership
+      // test above. There is no `expect(mine).not.toBe(theirs)` here, so this
+      // one would have gone green against a single session.
+      const theirs = await freshLogin()
       const plan = await planNewChampionship(mine, {
         sourceId: source,
         name: "champctl live ownership",

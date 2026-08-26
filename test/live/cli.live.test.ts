@@ -45,36 +45,16 @@ const PROFILE = resolve(process.cwd(), "test/support/profile-harness.json")
  *
  * Captured rather than silenced so a failing assertion can show what the tool
  * said — an exit code on its own is a poor bug report.
- */
-/**
- * ACSM allows about 5 requests per 20 seconds on `/login` and answers 429 past
- * that. Every CLI invocation logs in once, so a file of them outruns it in
- * about a second — measured, as `Login as admin failed: unexpected HTTP 429`
- * from the sixth command. champctl's own limiter cannot help, because each run
- * constructs a fresh session that has never seen the others.
  *
- * Paced rather than retried so a real 429 still surfaces as one.
+ * The login pacing that used to live here has moved to `test/live/setup.ts`,
+ * where it covers the whole suite rather than this file. Module state paced
+ * these invocations and nothing else, so the other three files ran unpaced and
+ * spent the budget this one was carefully staying inside.
  */
-const LOGIN_WINDOW_MS = 20_000
-const LOGINS_PER_WINDOW = 5
-const logins: number[] = []
-
-async function paceLogin(): Promise<void> {
-  const now = Date.now()
-  while (logins.length > 0 && now - logins[0]! > LOGIN_WINDOW_MS) logins.shift()
-  if (logins.length >= LOGINS_PER_WINDOW) {
-    const wait = LOGIN_WINDOW_MS - (now - logins[0]!) + 250
-    await new Promise((r) => setTimeout(r, wait))
-    logins.shift()
-  }
-  logins.push(Date.now())
-}
-
 async function cli(
   main: (argv: readonly string[]) => Promise<number>,
   argv: readonly string[],
 ): Promise<{ code: number; out: string; err: string }> {
-  await paceLogin()
   let out = ""
   let err = ""
   const stdout = process.stdout.write.bind(process.stdout)
