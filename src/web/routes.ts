@@ -30,6 +30,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest 
 
 import type { AcsmReader } from "../acsm/client.js"
 import { AcsmAuthError, AcsmSession } from "../acsm/session.js"
+import { ContentCache } from "./content-cache.js"
 import { events } from "../acsm/view.js"
 import { importChampionship } from "../acsm/write.js"
 import { cloneChampionship } from "../emit/clone.js"
@@ -76,6 +77,7 @@ import type {
   ChampionshipListResponse,
   ChampionshipResponse,
   ConfigResponse,
+  ContentResponse,
   LoginResponse,
   NewChampionshipResponse,
   NewChampionshipRequest,
@@ -112,6 +114,12 @@ export interface ApiContext {
    * it is the same store with the same guarantees.
    */
   newChampionships: PlanStore<HeldChampionship>
+  /**
+   * Installed cars and tracks, held for an hour. The new-championship screen
+   * offers only what is in here, so this is what stops anyone having to know
+   * that Brands Hatch is `ks_brands_hatch`.
+   */
+  content: ContentCache
   throttle: LoginThrottle
   /** Injectable so a test can drive a session over a stub `fetch`. */
   createSession: (baseUrl: string) => AcsmSession
@@ -141,6 +149,7 @@ export function apiContext(options: ApiContextOptions): ApiContext {
     plans: options.plans ?? new PlanStore({ label: "finalize plans" }),
     newChampionships:
       options.newChampionships ?? new PlanStore({ label: "unconfirmed new championships" }),
+    content: options.content ?? new ContentCache({ load: () => options.reader.listContent() }),
     throttle: options.throttle ?? new LoginThrottle(),
     createSession: options.createSession ?? ((baseUrl) => new AcsmSession({ baseUrl })),
     secureCookies: options.secureCookies ?? true,
@@ -198,6 +207,27 @@ const newChampionshipBodySchema = {
     sourceId: { type: "string", minLength: 1, maxLength: 200 },
     name: { type: "string", minLength: 1, maxLength: 200 },
     startDate: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+    /**
+     * The class car list, as folder names.
+     *
+     * Absent means "whatever the source ran", which is what a clone did before
+     * this existed and is still the common case. Present replaces it outright
+     * rather than adding to it — the same rule as `tracks`, and the one
+     * somebody changing a championship's class expects.
+     *
+     * `minItems: 1` because an empty array is not "inherit", it is a class
+     * with no cars, and `emitChampionship` refuses that with a message about
+     * an empty car list. Better to refuse the request than to produce a
+     * plausible-looking 422 about something the person did not ask for.
+     */
+    cars: {
+      type: "array",
+      minItems: 1,
+      // A multi-make championship is a handful of models; the Legends one ran
+      // ten. The bound is here for the same reason every other bound is.
+      maxItems: 200,
+      items: { type: "string", minLength: 1, maxLength: 200 },
+    },
     tracks: {
       type: "array",
       minItems: 1,
@@ -425,6 +455,18 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
       }),
     )
 
+    /**
+     * What is installed on the server, so the screen can offer it rather than
+     * ask someone to type `ks_brands_hatch` from memory.
+     *
+     * Behind a session like every other read, even though ACSM serves both
+     * listings without credentials. Not for secrecy — it is a list of folder
+     * names — but because it is champctl's most expensive read, and an
+     * unauthenticated endpoint that walks five pages of a league's manager is
+     * something a stranger could point at that manager on a loop.
+     */
+    app.get("/content", async (): Promise<ContentResponse> => await ctx.content.get())
+
     app.get<{ Params: { id: string } }>(
       "/championships/:id",
       {
@@ -537,6 +579,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
         const overrides: Partial<ChampionshipSpec> = {
           ...(body.name ? { name: body.name } : {}),
           ...(body.startDate ? { startDate: body.startDate } : {}),
+          ...(body.cars?.length ? { cars: body.cars } : {}),
           ...(body.tracks ? { rounds: body.tracks.map(roundSpecFrom) } : {}),
         }
 

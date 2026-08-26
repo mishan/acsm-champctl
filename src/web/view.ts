@@ -22,7 +22,7 @@
 import { DateTime } from "luxon"
 
 import type { Championship, ChampionshipEvent, ChampionshipSummary } from "../acsm/types.js"
-import { eventHasStarted, eventLabel, events, trackLabel } from "../acsm/view.js"
+import { classes, eventHasStarted, eventLabel, events, trackLabel } from "../acsm/view.js"
 import type { FormFieldChange } from "../finalize/format.js"
 import { readFormat } from "../finalize/format.js"
 import type { CheckReport } from "../gridmom/finding.js"
@@ -66,6 +66,10 @@ export function championshipView(c: Championship, profile: LeagueProfile): Champ
     id: (c.ID ?? "").trim(),
     name: (c.Name ?? "").trim(),
     timezone: profile.schedule.timezone,
+    // The class list rather than `RaceSetup.Cars`: that one is a derived,
+    // semicolon-joined copy which may carry a spectator model the class never
+    // had (plan §5.5), and this is what a clone would start from.
+    cars: [...(classes(c)[0]?.AvailableCars ?? [])],
     rounds: events(c).map((ev, i) => roundView(ev, i + 1, profile)),
   }
 }

@@ -26,6 +26,7 @@ import { IMPORT_PATH } from "../src/acsm/paths.js"
 import { AcsmSession } from "../src/acsm/session.js"
 import type { Championship } from "../src/acsm/types.js"
 import type { FinalizePlan } from "../src/finalize/plan.js"
+import { ContentCache } from "../src/web/content-cache.js"
 import { PlanStore } from "../src/web/plans.js"
 import type { HeldChampionship } from "../src/web/routes.js"
 import type { NewChampionshipResponse, NewChampionshipPlanResponse } from "../src/web/wire.js"
@@ -88,6 +89,8 @@ interface HarnessOptions {
   /** How ACSM answers the import POST. Default: the redirect a real one sends. */
   importOutcome?: "no-redirect"
   newChampionships?: PlanStore<HeldChampionship>
+  /** Installed cars and tracks. Default: whatever the static reader has, i.e. none. */
+  content?: ContentCache
   throttle?: LoginThrottle
   /**
    * Held open until the test resolves it, so two requests can be in the write
@@ -177,6 +180,7 @@ function harness(options: HarnessOptions = {}): Harness {
     ...(options.sessions ? { sessions: options.sessions } : {}),
     ...(options.plans ? { plans: options.plans } : {}),
     ...(options.newChampionships ? { newChampionships: options.newChampionships } : {}),
+    ...(options.content ? { content: options.content } : {}),
     ...(options.throttle ? { throttle: options.throttle } : {}),
     // Off so the Set-Cookie assertions below are about SameSite and HttpOnly
     // rather than about a flag every test would have to opt out of anyway.
@@ -1098,6 +1102,109 @@ describe("previewing a new championship", () => {
       url: "/api/championships/plan",
       payload: { sourceId: CHAMP_ID },
     })
+    expect(res.statusCode).toBe(401)
+  })
+
+  /**
+   * The car list a clone inherits, made changeable.
+   *
+   * It was always inherited and never mentioned, so the screen asked which
+   * tracks a championship runs at and never what anyone would drive — the one
+   * thing about a championship that cannot be worked out from the rest of the
+   * form. A different model from the fixture's on purpose: asserting the
+   * source's own car would pass whether the override reached the emitter or
+   * not.
+   */
+  it("takes a car list, and replaces the source's rather than adding to it", async () => {
+    const h = harness()
+    await h.login()
+    const planId = await previewedWith(h, { cars: ["ks_porsche_911_gt3_r_2016"] })
+
+    const created = await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+    expect(created.statusCode, created.body).toBe(200)
+
+    const champ = importedChampionship(h)
+    expect(champ.Classes?.[0]?.AvailableCars).toEqual(["ks_porsche_911_gt3_r_2016"])
+    // Derived from the class list rather than inherited, which is the bug plan
+    // §5.5 found: a template's `Cars` string outlived the class it came from.
+    expect(champ.Events?.[0]?.RaceSetup?.Cars).toBe("ks_porsche_911_gt3_r_2016")
+  })
+
+  it("keeps the source's cars when none are named", async () => {
+    const h = harness()
+    await h.login()
+    const planId = await previewedWith(h, {})
+    await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+    expect(importedChampionship(h).Classes?.[0]?.AvailableCars).toEqual(["rss_formula_hybrid_2021"])
+  })
+
+  it("refuses an empty car list rather than reading it as 'inherit'", async () => {
+    // `[]` is a class with no cars, not "leave it alone". The emitter refuses
+    // it, and refusing at the schema says so about the request instead of
+    // producing a 422 about something nobody asked for.
+    const h = harness()
+    await h.login()
+    const res = await planChampionship(h, { name: "September 2026", cars: [] })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().error.code).toBe("bad-request")
+  })
+
+  const previewedWith = async (h: Harness, body: Record<string, unknown>): Promise<string> => {
+    const res = await planChampionship(h, { name: "September 2026", ...body })
+    expect(res.statusCode, res.body).toBe(200)
+    return (res.json() as NewChampionshipPlanResponse).plan.planId
+  }
+
+  /** The championship JSON that reached ACSM's import form. */
+  const importedChampionship = (h: Harness): Championship => {
+    const sent = h.posts.find((p) => p.url.endsWith(IMPORT_PATH))
+    expect(sent, "the championship should have been imported").toBeTruthy()
+    const field = new URLSearchParams(sent!.body).get("import")
+    expect(field, "the import form's field should carry the championship").toBeTruthy()
+    return JSON.parse(field as string) as Championship
+  }
+})
+
+describe("what content is installed", () => {
+  it("answers with the cars and tracks the reader found", async () => {
+    const h = harness({
+      content: new ContentCache({
+        load: async () => ({
+          cars: [{ id: "ks_porsche_911_gt3_r_2016", name: "Porsche 911 GT3 R" }],
+          tracks: [{ id: "ks_brands_hatch", name: "Brands Hatch" }],
+        }),
+      }),
+    })
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/api/content",
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.statusCode, res.body).toBe(200)
+    // Both halves: the folder name is what a championship stores, the display
+    // name is the only part anybody knows.
+    expect(res.json()).toEqual({
+      cars: [{ id: "ks_porsche_911_gt3_r_2016", name: "Porsche 911 GT3 R" }],
+      tracks: [{ id: "ks_brands_hatch", name: "Brands Hatch" }],
+    })
+  })
+
+  it("needs a session, like every other read", async () => {
+    // Not secrecy — it is a list of folder names — but it is champctl's most
+    // expensive read, and it walks several pages of a league's manager.
+    const h = harness()
+    const res = await h.app.inject({ method: "GET", url: "/api/content" })
     expect(res.statusCode).toBe(401)
   })
 })

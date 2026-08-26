@@ -21,11 +21,12 @@
  * restriction.
  */
 
+import type { InstalledItem } from "../acsm/types.js"
 import type { Change, FormFieldChange, RaceFormat } from "../finalize/format.js"
 import type { CheckReport } from "../gridmom/finding.js"
 import type { FormatPreset } from "../profile/types.js"
 
-export type { Change, CheckReport, FormatPreset, FormFieldChange, RaceFormat }
+export type { Change, CheckReport, FormatPreset, FormFieldChange, InstalledItem, RaceFormat }
 
 // ---------------------------------------------------------------------------
 // Session
@@ -103,6 +104,15 @@ export interface ChampionshipView {
   name: string
   /** The league zone every time above is expressed in. */
   timezone: string
+  /**
+   * The class car list, as folder names.
+   *
+   * Here so the create screen can show what a clone would inherit instead of
+   * carrying it silently. Off the first class: champctl builds one class per
+   * championship, and a hand-made multi-class one is not something this screen
+   * can represent anyway.
+   */
+  cars: string[]
   rounds: RoundView[]
 }
 
@@ -113,6 +123,18 @@ export interface ChampionshipListItem {
 
 export interface ChampionshipListResponse {
   championships: ChampionshipListItem[]
+}
+
+/**
+ * Cars and tracks installed on the league's manager.
+ *
+ * `id` is the folder name a championship stores; `name` is what the manager
+ * calls it. The screen searches the name and submits the id, which is the
+ * entire point of carrying both.
+ */
+export interface ContentResponse {
+  cars: InstalledItem[]
+  tracks: InstalledItem[]
 }
 
 export interface ChampionshipResponse {
@@ -201,6 +223,14 @@ export interface NewChampionshipRequest {
   name?: string
   /** `YYYY-MM-DD`, the first race night. Later rounds follow the weekday rule. */
   startDate?: string
+  /**
+   * The class car list, as folder names, replacing the source's outright.
+   *
+   * Absent means the source's cars, which is what a clone has always done —
+   * and doing it invisibly is what let the screen ask which tracks a
+   * championship runs at without ever mentioning what anyone would drive.
+   */
+  cars?: string[]
   /**
    * The track list, in order, replacing the source's outright.
    *
