@@ -136,11 +136,12 @@ export class HttpAcsmReader implements AcsmReader {
   }
 
   /**
-   * Championship ids off the HTML listing, for builds with no list endpoint.
+   * Championships off the HTML listing, for builds with no list endpoint.
    *
-   * Ids only: the page shows names, but parsing them out of markup is the kind
-   * of thing that breaks silently on a template change, and every caller reads
-   * the name defensively already because the JSON shape varies too.
+   * Names come through when the listing gave one, and are left absent rather
+   * than filled in when it didn't — see `championshipsFrom` for why they are
+   * read at all, given markup changes silently and ids don't. Every caller
+   * already reads the name defensively, because the JSON shape varies too.
    */
   async #scrapeChampionships(): Promise<ChampionshipSummary[]> {
     const found = await walkChampionships(async (path) =>

@@ -140,12 +140,19 @@ function collect(html: string): { ids: Set<string>; names: Map<string, string>; 
      * the name into a sibling would leave this empty, which is the safe
      * direction — the caller falls back to the id.
      *
-     * "Looks like a name" excludes a UUID (some templates link the id itself)
-     * and anything long enough to be a paragraph that happens to be wrapped in
-     * a link. First one wins, because the first link to a championship is the
-     * title and later ones are "edit", "export", "delete".
+     * **Only `/championship/{id}` itself**, never `/championship/{id}/export`
+     * or `/edit`. Ids are still collected from the deeper links, because a
+     * template that links only to `/export` still lists that championship —
+     * but their text is "Export" and "Edit", and taking it would name a
+     * championship after a button on any page that puts those first. Relying
+     * on document order instead is relying on something no template promises.
+     *
+     * "Looks like a name" also excludes a UUID, since some templates link the
+     * id itself, and anything long enough to be a paragraph that happens to be
+     * wrapped in a link.
      */
     if (names.has(key)) return
+    if (segments.length !== at + 2) return
     const text = $(el).text().replace(/\s+/gu, " ").trim()
     if (!text || UUID.test(text) || text.length > 120) return
     names.set(key, text)

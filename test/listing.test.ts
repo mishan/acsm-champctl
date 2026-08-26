@@ -144,7 +144,7 @@ describe("names off the listing", () => {
     ])
   })
 
-  it("takes the first link's text, not the edit and export ones after it", () => {
+  it("takes the title link's text, not the edit and export ones beside it", () => {
     const id = "11111111-2222-3333-4444-555555555555"
     const html = `<tr>
       <td><a href="/championship/${id}">September 2026</a></td>
@@ -152,6 +152,21 @@ describe("names off the listing", () => {
       <td><a href="/championship/${id}/export">Export</a></td>
     </tr>`
     expect(championshipsFrom(html)).toEqual([{ id, name: "September 2026" }])
+  })
+
+  it("names a championship after a button on no template, whatever the order", () => {
+    // Document order is not something a template promises, and taking the
+    // first link the id appeared in made "Export" a plausible championship
+    // name. Only `/championship/{id}` itself carries the title; the deeper
+    // links still count towards the ids, because a page that links only to
+    // /export is still listing that championship.
+    const id = "11111111-2222-3333-4444-555555555555"
+    const html = `<tr>
+      <td><a href="/championship/${id}/export">Export</a></td>
+      <td><a href="/championship/${id}">September 2026</a></td>
+    </tr>`
+    expect(championshipsFrom(html)).toEqual([{ id, name: "September 2026" }])
+    expect(championshipsFrom(`<a href="/championship/${id}/export">Export</a>`)).toEqual([{ id }])
   })
 
   it("leaves the name off rather than inventing one", () => {
