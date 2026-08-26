@@ -194,7 +194,17 @@ export async function walkChampionships(
     seen.add(path)
 
     const html = await fetchPath(path)
-    for (const c of championshipsFrom(html)) if (!found.has(c.id)) found.set(c.id, c)
+    // First sighting wins for the id, since ACSM has been known to list a
+    // championship twice across pages — but a name is taken from whichever
+    // page has one. A page that links a championship only through `/export`
+    // yields it nameless, and dropping the later page's title link would put
+    // it back on screen as a UUID, which is the whole thing this is here to
+    // stop.
+    for (const c of championshipsFrom(html)) {
+      const already = found.get(c.id)
+      if (already === undefined) found.set(c.id, c)
+      else if (already.name === undefined && c.name !== undefined) found.set(c.id, c)
+    }
     for (const next of championshipPageLinks(html, path)) {
       if (!seen.has(next)) queue.push(next)
     }

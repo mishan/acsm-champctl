@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 
-import { championshipsFrom, championshipIdsFrom, walkChampionshipIds } from "../src/acsm/listing.js"
+import {
+  championshipsFrom,
+  championshipIdsFrom,
+  walkChampionshipIds,
+  walkChampionships,
+} from "../src/acsm/listing.js"
 
 const A = "11111111-2222-3333-4444-555555555555"
 const B = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -187,5 +192,26 @@ describe("names off the listing", () => {
   it("still lists the ids, for callers that only want those", () => {
     const id = "11111111-2222-3333-4444-555555555555"
     expect(championshipIdsFrom(`<a href="/championship/${id}">September 2026</a>`)).toEqual([id])
+  })
+
+  /**
+   * A name found on a later page still counts.
+   *
+   * ACSM lists a championship twice across pages, so the walk keeps the first
+   * sighting of an id — and a first sighting through `/export` alone carries
+   * no name. Keeping that one and discarding the page that has the title link
+   * puts the championship back on screen as a UUID, which is what reading
+   * names was for.
+   */
+  it("takes the name from whichever page has one", async () => {
+    const id = "11111111-2222-3333-4444-555555555555"
+    const pages: Record<string, string> = {
+      "/championships": `<a href="/championship/${id}/export">Export</a>
+        <a href="/championships?page=2">Next</a>`,
+      "/championships?page=2": `<a href="/championship/${id}">September 2026</a>`,
+    }
+    await expect(walkChampionships(async (p) => pages[p] ?? "")).resolves.toEqual([
+      { id, name: "September 2026" },
+    ])
   })
 })
