@@ -15,16 +15,33 @@ import { defineConfig } from "@playwright/test"
  * leaving the browser and the route receiving it are the same string, proven
  * by a real fetch from real bundled code.
  *
- * Opt-in the same way the live suite is, and for the same reason: it needs a
- * running ACSM. Without `CHAMPCTL_LIVE_URL` the specs skip, so `npm test` on a
- * laptop with no harness stays green.
+ * Needs a running ACSM, and refuses to load without one — see below. `npm test`
+ * is unaffected: this suite has its own command and its own runner.
  *
  *   npm run harness:oss -- start
  *   npm run build:client
  *   CHAMPCTL_LIVE_URL=... CHAMPCTL_LIVE_PASSWORD=... npm run test:e2e
  */
 
-const PORT = Number(process.env["CHAMPCTL_E2E_PORT"] ?? 3100)
+/**
+ * The port champctl is served on for the run.
+ *
+ * Validated rather than coerced. `Number("nope")` is `NaN`, which turns the
+ * base URL into `http://127.0.0.1:NaN` — a string that looks almost right in a
+ * log and produces a connection failure with nothing pointing at the typo.
+ */
+const PORT = port(process.env["CHAMPCTL_E2E_PORT"])
+
+function port(raw: string | undefined): number {
+  if (raw === undefined || raw === "") return 3100
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    throw new Error(
+      `CHAMPCTL_E2E_PORT is ${JSON.stringify(raw)}, which is not a port from 1 to 65535.`,
+    )
+  }
+  return n
+}
 
 /**
  * Refuse to run rather than skipping quietly.
