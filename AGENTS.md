@@ -9,7 +9,6 @@ For humans and agents alike. Layout, gates and design history are in
 - **No tool prefixes on branch names.** No `claude/`, no `copilot/`, no
   `bot/`. Name the branch after the change.
 - **No `Co-authored-by` trailers.** No "generated with" footers either.
-- **Commit as `Misha Nasledov <misha@nasledov.com>`.**
 
 Commit messages: a terse title saying what the commit delivers, and a body only
 where the *why* isn't obvious from the diff. Two or three sentences is plenty.
