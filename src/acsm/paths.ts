@@ -35,6 +35,17 @@ export function championshipPath(championshipId: string): string {
 /** The championships listing page, which is the only way to enumerate them. */
 export const CHAMPIONSHIPS_PATH = "/championships"
 
+/**
+ * The installed-content listings, which are the only way to enumerate those
+ * either — `/api/cars`, `/api/cars/list.json` and `/api/content/cars` are all
+ * 404 on 2.4.15. Both are served without credentials under Public Access.
+ *
+ * `/cars` pages at fifty; `/tracks` did not paginate at 21 tracks, but is
+ * walked the same way rather than assumed to be one page.
+ */
+export const CARS_PATH = "/cars"
+export const TRACKS_PATH = "/tracks"
+
 export function eventEditPath(championshipId: string, eventId: string, server = 0): string {
   return `/championship/${encodeURIComponent(championshipId)}/event/${encodeURIComponent(
     eventId,

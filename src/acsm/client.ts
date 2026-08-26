@@ -10,6 +10,7 @@
  * filesystem) can be swapped in later as a config change (plan §9).
  */
 
+import { readInstalledContent, type InstalledContent } from "./content.js"
 import { walkChampionships } from "./listing.js"
 import { exportPath } from "./paths.js"
 import type { AcsmHealthcheck, Championship, ChampionshipSummary } from "./types.js"
@@ -40,6 +41,11 @@ export interface AcsmReader {
   exportChampionshipRaw(id: string): Promise<Buffer>
   standings(id: string): Promise<unknown>
   healthcheck(): Promise<AcsmHealthcheck>
+  /**
+   * Cars and tracks installed on the server, with the names people know them
+   * by. Scraped, because there is no endpoint — see `content.ts`.
+   */
+  listContent(): Promise<InstalledContent>
 }
 
 export class AcsmError extends Error {
@@ -152,6 +158,20 @@ export class HttpAcsmReader implements AcsmReader {
       if (c.name !== undefined) s.Name = c.name
       return s
     })
+  }
+
+  /**
+   * Installed cars and tracks, off the listing pages.
+   *
+   * Not cached, for the same reason the championships scrape isn't: the
+   * response cache holds decoded JSON and these are HTML. That makes this the
+   * most expensive read champctl has — `/cars` pages at fifty, so a stock
+   * install is four requests plus `/tracks` — against a limiter that allows
+   * five per twenty seconds. Whoever calls it repeatedly has to hold onto the
+   * answer; `champctl-serve` does, in `contentCache`.
+   */
+  async listContent(): Promise<InstalledContent> {
+    return readInstalledContent(async (path) => (await this.#request(path)).toString("utf8"))
   }
 
   async exportChampionship(id: string): Promise<Championship> {
@@ -350,6 +370,16 @@ export class StaticAcsmReader implements AcsmReader {
       if (c.Name !== undefined) s.Name = c.Name
       return s
     })
+  }
+
+  /**
+   * Nothing, because an export on disk says what a championship *used*, not
+   * what the server has. Empty rather than "everything these exports mention":
+   * the callers use this to decide what a person may choose, and a track this
+   * league raced last year is not evidence it is still installed.
+   */
+  async listContent(): Promise<InstalledContent> {
+    return { cars: [], tracks: [] }
   }
 
   async exportChampionship(id: string): Promise<Championship> {

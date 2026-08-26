@@ -318,3 +318,22 @@ export interface AcsmHealthcheck extends Unknowns {
   LicenseID?: string
   AssettoIsInstalled?: boolean
 }
+
+/**
+ * A car or a track as ACSM's own listing pages show it.
+ *
+ * Here rather than beside the scraper that produces it, because `wire.ts`
+ * names this shape and may only reach into leaves — following it into a module
+ * that imports cheerio would drag the HTML parser into the client's typecheck.
+ */
+export interface InstalledItem {
+  /** The folder name, which is what a championship stores. */
+  id: string
+  /** What the listing calls it, or the folder name when it gives no other. */
+  name: string
+}
+
+export interface InstalledContent {
+  cars: InstalledItem[]
+  tracks: InstalledItem[]
+}

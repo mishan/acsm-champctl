@@ -605,6 +605,10 @@ function fakeReader(options: FakeOptions): AcsmReader & { fetched: string[] } {
       if (options.failList) throw new AcsmError(options.failList)
       return options.summaries
     },
+    // The archive stores exports and never asks what is installed.
+    async listContent() {
+      return { cars: [], tracks: [] }
+    },
     async exportChampionshipRaw(id: string) {
       fetched.push(id)
       const failure = options.fail?.[id]
