@@ -748,3 +748,96 @@ button.link:hover {
   margin: 0.4rem 0 0;
   padding-left: 1.1rem;
 }
+
+/* --- picker ------------------------------------------------------------- */
+
+/*
+ * A combobox: text input, and a list under it that overlays whatever follows.
+ *
+ * `position: relative` on the wrapper and `absolute` on the list, so opening
+ * it doesn't push the rest of the form down the page. A list that reflows the
+ * page moves the button you were about to press.
+ */
+.picker {
+  position: relative;
+}
+
+.picker input {
+  margin: 0;
+}
+
+.picker-list {
+  position: absolute;
+  z-index: 10;
+  left: 0;
+  right: 0;
+  margin: 0.15rem 0 0;
+  padding: 0.25rem;
+  list-style: none;
+  /* Tall enough to be worth scrolling, short enough to leave the field and
+     some context visible on a phone. */
+  max-height: 15rem;
+  overflow-y: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+
+.picker-list [role="option"],
+.picker-empty {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: calc(var(--radius) - 4px);
+  cursor: pointer;
+}
+
+.picker-list [role="option"].active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* The folder name, alongside the name people know. Quieter, because it is the
+   confirmation rather than the thing being read. */
+.picker-id {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
+.picker-list [role="option"].active .picker-id {
+  color: rgb(255 255 255 / 80%);
+}
+
+.picker-empty {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* One picked car, in the list under the Cars field. */
+.chips {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.chips li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.3rem 0.3rem 0.6rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.chips .picker-id {
+  font-size: 0.75rem;
+}

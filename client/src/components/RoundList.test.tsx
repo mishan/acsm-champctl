@@ -30,6 +30,7 @@ function response(name: string): ChampionshipResponse {
       id: "champ-1",
       name,
       timezone: "America/Los_Angeles",
+      cars: ["rss_formula_hybrid_2021"],
       rounds: [
         {
           round: 1,

@@ -24,7 +24,9 @@ import type {
   ChampionshipView,
   CheckReport,
   ConfigResponse,
+  ContentResponse,
   FormatPreset,
+  InstalledItem,
   LoginResponse,
   NewChampionshipResponse,
   NewChampionshipRequest,
@@ -50,8 +52,10 @@ export type {
   ChampionshipResponse,
   ChampionshipView,
   CheckReport,
+  ContentResponse,
   Finding,
   FormatPreset,
+  InstalledItem,
   NewChampionshipResponse,
   NewChampionshipRequest,
   NewChampionshipPlanResponse,
@@ -158,6 +162,14 @@ export const api = {
   logout: (): Promise<void> => request("/logout", { method: "POST" }),
 
   championships: (): Promise<ChampionshipListResponse> => request("/championships"),
+
+  /**
+   * Cars and tracks installed on the manager, for the fields that ask for one.
+   *
+   * Held server-side for an hour, so calling this whenever a screen opens is
+   * one cheap request rather than a walk of `/cars`.
+   */
+  content: (): Promise<ContentResponse> => request("/content"),
 
   championship: (id: string): Promise<ChampionshipResponse> =>
     request(`/championships/${encodeURIComponent(id)}`),

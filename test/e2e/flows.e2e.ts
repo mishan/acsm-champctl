@@ -64,6 +64,26 @@ test.afterAll(async () => {
 })
 
 /**
+ * Choose something in a typeahead: focus it, type part of the name, take the
+ * first suggestion.
+ *
+ * `fill` is what this used to do, and it stopped meaning anything when the
+ * field became a picker — typing filters the list, it does not enter a value.
+ * The suggestions are whatever `/api/content` scraped off the manager's own
+ * `/cars` and `/tracks` pages, so this only passes if the display name a
+ * person would search for really does reach the browser.
+ */
+async function pick(page: Page, label: RegExp, query: string): Promise<void> {
+  // By role, not `getByLabel`: the listbox carries the same accessible name as
+  // the input it belongs to — deliberately, so a screen reader announces what
+  // the options are for — and a label lookup resolves to both.
+  const input = page.getByRole("combobox", { name: label })
+  await input.click()
+  await input.fill(query)
+  await page.getByRole("listbox", { name: label }).getByRole("option").first().click()
+}
+
+/**
  * Wait for the server's review, then acknowledge whatever gridmom said.
  *
  * Both write screens render their gridmom section only once a plan has come
@@ -142,7 +162,13 @@ test("creates a championship and finalizes a round of it", async ({ page }) => {
   const name = `champctl e2e ${Date.now()}`
   await page.getByLabel(/^Name$/).fill(name)
   await page.getByRole("button", { name: /Add a round/ }).click()
-  await page.getByLabel(/Round 1 track/).fill("spa")
+  await pick(page, /Round 1 track/, "Spa")
+
+  // The cars came from the source championship, through `/api/content` and a
+  // second read of the source — two requests the DOM tests mock away. An empty
+  // Cars field blocks the preview, so reaching the review at all proves both
+  // arrived and that the picker matched what ACSM says is installed.
+  await expect(page.getByRole("button", { name: /^Remove / }).first()).toBeVisible()
 
   // The preview is a real POST to /api/championships/plan from bundled client
   // code. A path the server does not serve shows up right here.

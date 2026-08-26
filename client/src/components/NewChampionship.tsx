@@ -4,12 +4,14 @@ import { useAuthAware } from "../App"
 import {
   api,
   type ChampionshipListItem,
+  type InstalledItem,
   type NewChampionshipResponse,
   type NewChampionshipPlan,
   type TrackRequest,
 } from "../api"
 import { Findings } from "./Findings"
 import { Message } from "./Message"
+import { Picker } from "./Picker"
 
 /**
  * Create a championship (plan §5.1), by cloning a past one.
@@ -44,6 +46,16 @@ interface Draft {
   sourceId: string
   name: string
   startDate: string
+  /**
+   * The class car list, as folder names.
+   *
+   * Empty means "whatever the source ran", which is what cloning always did.
+   * The screen fills this in from the source instead of leaving it empty, so
+   * the cars are on screen rather than inherited silently — that invisibility
+   * is why the form could ask which tracks a season runs at and never mention
+   * what anyone would be driving.
+   */
+  cars: string[]
   tracks: TrackRow[]
 }
 
@@ -60,6 +72,11 @@ export function NewChampionship({
   onAuthLost,
 }: NewChampionshipProps): React.JSX.Element {
   const [sources, setSources] = useState<ChampionshipListItem[] | null>(null)
+  /** What the manager has installed, for the fields that ask for a folder name. */
+  const [installed, setInstalled] = useState<{ cars: InstalledItem[]; tracks: InstalledItem[] }>({
+    cars: [],
+    tracks: [],
+  })
   const [draft, setDraft] = useState<Draft | null>(null)
   const [plan, setPlan] = useState<NewChampionshipPlan | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -88,6 +105,28 @@ export function NewChampionship({
       live = false
     }
   }, [describe])
+
+  // What's installed, in parallel and separately from the championship list.
+  // Separately because the two fail differently and only one of them is fatal:
+  // with no championships there is nothing to clone and the screen has no
+  // purpose, while with no content index the pickers say they have nothing to
+  // offer and the rest of the screen still works.
+  useEffect(() => {
+    let live = true
+    void (async () => {
+      try {
+        const content = await api.content()
+        if (live) setInstalled({ cars: content.cars, tracks: content.tracks })
+      } catch {
+        // Deliberately quiet. `Picker` says "champctl couldn't read what's
+        // installed" in the field itself, which is where somebody wondering
+        // why the list is empty is already looking.
+      }
+    })()
+    return () => {
+      live = false
+    }
+  }, [])
 
   // Re-preview as the form changes, debounced, with the previous request
   // aborted — an answer to a question the person has moved on from must not
@@ -180,8 +219,25 @@ export function NewChampionship({
       // September field is the kind of default that gets pushed.
       name: "",
       startDate: "",
+      cars: [],
       tracks: [],
     })
+
+    // The source's cars, so the field shows what would be inherited rather
+    // than leaving it to be discovered after the championship exists. Unlike
+    // the name, this default is one a league nearly always wants: the cars are
+    // the part of a clone that stays the same.
+    void (async () => {
+      try {
+        const { championship } = await api.championship(id)
+        // Only if they are still on the same source. Picking one, changing
+        // your mind, and having the first one's cars land a moment later is
+        // the exact shape of bug the preview effect's `generation` exists for.
+        setDraft((d) => (d && d.sourceId === id ? { ...d, cars: championship.cars } : d))
+      } catch (e) {
+        setError(describe(e))
+      }
+    })()
   }
 
   const create = async (): Promise<void> => {
@@ -282,7 +338,17 @@ export function NewChampionship({
             </p>
           </section>
 
-          <TrackList rows={draft.tracks} onChange={(tracks) => set({ tracks })} />
+          <CarList
+            chosen={draft.cars}
+            installed={installed.cars}
+            onChange={(cars) => set({ cars })}
+          />
+
+          <TrackList
+            rows={draft.tracks}
+            installed={installed.tracks}
+            onChange={(tracks) => set({ tracks })}
+          />
         </>
       )}
 
@@ -344,6 +410,82 @@ export function NewChampionship({
 }
 
 /**
+ * The class car list.
+ *
+ * The field this screen was missing. A clone inherits the source's cars, which
+ * is nearly always right and was entirely invisible — so the form asked which
+ * tracks a season runs at and never mentioned what anyone would drive, which
+ * is the one thing about a championship you cannot infer from the rest of it.
+ *
+ * A list rather than a single value because a class legitimately holds several
+ * models: BATL's October 2025 Legends championship ran ten across seven models
+ * actually driven (plan §4.4). Unordered, unlike tracks — `AvailableCars` is a
+ * set, and offering to reorder it would imply a meaning it does not have.
+ */
+function CarList({
+  chosen,
+  installed,
+  onChange,
+}: {
+  chosen: readonly string[]
+  installed: readonly InstalledItem[]
+  onChange: (cars: string[]) => void
+}): React.JSX.Element {
+  const nameOf = (id: string): string => installed.find((c) => c.id === id)?.name ?? id
+
+  return (
+    <section>
+      <h2>Cars</h2>
+      <p className="fineprint">
+        Everything the class can drive. Cloned from the championship above; change it here.
+      </p>
+
+      {chosen.length > 0 && (
+        <ul className="chips">
+          {chosen.map((id) => (
+            <li key={id}>
+              <span>{nameOf(id)}</span>
+              <span className="picker-id">{id}</span>
+              <button
+                type="button"
+                className="icon"
+                aria-label={`Remove ${nameOf(id)}`}
+                onClick={() => onChange(chosen.filter((c) => c !== id))}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Picker
+        label="Add a car"
+        // Always empty: this picker adds to the list above rather than holding
+        // a value of its own, so leaving the last pick in the box would read
+        // as a car that is somehow chosen twice.
+        value=""
+        // Already-picked cars removed rather than shown and ignored. A list
+        // that offers a car and then does nothing when you pick it reads as
+        // broken.
+        items={installed.filter((c) => !chosen.includes(c.id))}
+        placeholder="Search installed cars"
+        emptyHint="champctl couldn't read the cars installed on this manager."
+        onChange={(id) => {
+          if (id && !chosen.includes(id)) onChange([...chosen, id])
+        }}
+      />
+
+      {chosen.length === 0 && (
+        <p className="fineprint">
+          No cars chosen, so this championship would have nothing to drive. Add at least one.
+        </p>
+      )}
+    </section>
+  )
+}
+
+/**
  * The track list, in order, one race night each.
  *
  * Up and down rather than drag: it works with a keyboard, it works on a phone
@@ -352,9 +494,11 @@ export function NewChampionship({
  */
 function TrackList({
   rows,
+  installed,
   onChange,
 }: {
   rows: TrackRow[]
+  installed: readonly InstalledItem[]
   onChange: (rows: TrackRow[]) => void
 }): React.JSX.Element {
   const move = (from: number, to: number): void => {
@@ -381,13 +525,23 @@ function TrackList({
           // biome-ignore lint/suspicious/noArrayIndexKey: a row is its position
           <li key={i}>
             <span className="round-number">{i + 1}</span>
-            <input
-              type="text"
-              aria-label={`Round ${i + 1} track`}
+            <Picker
+              label={`Round ${i + 1} track`}
               value={row.track}
-              placeholder="spa"
-              onChange={(e) => update(i, { track: e.target.value })}
+              items={installed}
+              placeholder="Search installed tracks"
+              emptyHint="champctl couldn't read the tracks installed on this manager."
+              onChange={(track) => update(i, { track })}
             />
+            {/*
+              Still free text, and the one field on this screen that is.
+              ACSM's listing does not enumerate a track's layouts — the detail
+              page renders them from JavaScript, and
+              `/content/tracks/{t}/ui/{anything}/ui_track.json` answers 200 for
+              a layout that does not exist, so there is nothing to check
+              against either. Blank is the common case and blank is correct for
+              a track with one layout.
+            */}
             <input
               type="text"
               aria-label={`Round ${i + 1} layout`}
@@ -498,13 +652,25 @@ function Review({ plan }: { plan: NewChampionshipPlan }): React.JSX.Element {
  *
  * A blank track row is someone mid-type, not a request for a round at a track
  * called "".
+ *
+ * An empty car list is the same kind of thing. It means the source's cars
+ * haven't arrived yet, or somebody has just removed the last one — and sending
+ * no `cars` key would silently fall back to inheriting, so the screen would
+ * show an empty Cars field and create a championship full of cars anyway.
  */
-export function requestFrom(
-  draft: Draft,
-): { sourceId: string; name: string; startDate?: string; tracks?: TrackRequest[] } | null {
+export function requestFrom(draft: Draft): {
+  sourceId: string
+  name: string
+  startDate?: string
+  cars?: string[]
+  tracks?: TrackRequest[]
+} | null {
   if (!draft.sourceId) return null
   const name = draft.name.trim()
   if (!name) return null
+
+  const cars = draft.cars.map((c) => c.trim()).filter((c) => c !== "")
+  if (cars.length === 0) return null
 
   const tracks = draft.tracks
     .map((r) => ({ track: r.track.trim(), layout: r.layout.trim() }))
@@ -516,6 +682,7 @@ export function requestFrom(
     sourceId: draft.sourceId,
     name,
     ...(draft.startDate ? { startDate: draft.startDate } : {}),
+    cars,
     tracks: tracks.map((r) => ({ track: r.track, ...(r.layout ? { layout: r.layout } : {}) })),
   }
 }
