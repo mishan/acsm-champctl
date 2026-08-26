@@ -71,6 +71,10 @@ export default defineConfig({
   // and a browser spec picked up by vitest fails in a way that reads as a
   // broken test rather than a misfiled one.
   testMatch: "**/*.e2e.ts",
+  // Seeds a championship for the write flow to clone, and removes it after.
+  // `seed.ts` says why the suite brings its own rather than using whatever the
+  // manager happens to hold.
+  globalSetup: "./test/e2e/seed.ts",
   // Serially, and one worker. These import championships into a shared manager
   // and delete them again; two workers would be two people editing the same
   // ACSM, which is a race the tool is designed to *detect* rather than a thing
