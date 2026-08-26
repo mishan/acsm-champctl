@@ -161,3 +161,77 @@ jobs:
       - name: Stop Server Manager
         if: always()
         run: npm run harness:oss -- stop
+
+  e2e:
+    name: Browser suite (Server Manager 1.7.9)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Cache the Server Manager release
+        uses: actions/cache@v5
+        with:
+          path: .harness/oss-1.7.9/server-manager.zip
+          key: acsm-oss-1.7.9
+
+      # `--with-deps` installs the system libraries Chromium needs on a bare
+      # runner. `--only-shell` is the headless build: this suite never takes a
+      # screenshot of browser chrome, and the full download is several times
+      # the size for nothing.
+      - name: Install Chromium
+        run: npx playwright install --with-deps --only-shell chromium
+
+      # The browser loads what a deployment serves, not what Vite serves in
+      # development. A suite that proved the dev server works would prove
+      # nothing about the thing anyone runs.
+      - name: Build the client
+        run: npm run build:client
+
+      - name: Start Server Manager
+        run: npm run harness:oss -- start
+
+      - name: Provision it
+        env:
+          CHAMPCTL_LIVE_URL: http://127.0.0.1:8772
+          CHAMPCTL_LIVE_USERNAME: admin
+          CHAMPCTL_LIVE_PASSWORD: champctl-ci-not-a-secret
+        run: npm run harness:provision
+
+      # No "did it actually run" guard here, unlike the live job above. This
+      # suite refuses to load without a manager to drive — `playwright.config.ts`
+      # throws — so a job that failed to set the variables fails loudly instead
+      # of passing having run nothing.
+      - name: Run the browser suite
+        env:
+          CHAMPCTL_LIVE_URL: http://127.0.0.1:8772
+          CHAMPCTL_LIVE_USERNAME: admin
+          CHAMPCTL_LIVE_PASSWORD: champctl-ci-not-a-secret
+        run: npm run test:e2e
+
+      # Traces and screenshots, kept only when something went wrong — which is
+      # the whole reason `trace: retain-on-failure` is set.
+      - name: Keep the trace from a failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-trace
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+
+      - name: Server Manager log
+        if: failure()
+        run: tail -n 200 .harness/oss-1.7.9/run/server-manager.log || true
+
+      - name: Stop Server Manager
+        if: always()
+        run: npm run harness:oss -- stop
+

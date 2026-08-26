@@ -16,12 +16,8 @@
 
 import { expect, test } from "@playwright/test"
 
-const LIVE = Boolean(process.env["CHAMPCTL_LIVE_URL"] && process.env["CHAMPCTL_LIVE_PASSWORD"])
-
-test.skip(
-  !LIVE,
-  "set CHAMPCTL_LIVE_URL and CHAMPCTL_LIVE_PASSWORD, and start the harness, to run these",
-)
+// No skip gate: `playwright.config.ts` refuses to load without a manager to
+// drive, so reaching here means there is one.
 
 const USERNAME = process.env["CHAMPCTL_LIVE_USERNAME"] ?? "admin"
 const PASSWORD = process.env["CHAMPCTL_LIVE_PASSWORD"] ?? ""
@@ -63,23 +59,59 @@ test("refuses a wrong password without leaving a session behind", async ({ page 
   await expect(page.getByRole("button", { name: /sign out/i })).toHaveCount(0)
 })
 
-/*
- * Still to come: the two write flows.
+/**
+ * The two write flows, in one pass, against a championship this test makes.
  *
- * The harness reaches them — a browser signs in, the list renders from a real
- * manager — but both specs stop at the same place and it is not yet clear
- * whether the fault is theirs or champctl's:
- *
- * - Creating a championship: the form fills in, and "Create in ACSM" never
- *   leaves its disabled state, which means the preview POST is not producing a
- *   plan. Either the spec is cloning a source that cannot be cloned, or the
- *   browser's request to /api/championships/plan is not landing the way
- *   `web.live.test.ts` proves the endpoint does.
- * - Finalizing an event: the push reports "Pushed to ACSM", and a reload shows
- *   the old lap count. Either the spec navigates to a different round than the
- *   one it edited, or a write that the API suite lands is not landing here.
- *
- * The second reading of each is the one worth ruling out first, because it is
- * exactly the class of bug this suite exists to catch: something true of the
- * API that is not true of the browser reaching it.
+ * Chained rather than independent because the alternative is editing whatever
+ * happens to be first in the manager's list — which on a shared harness is a
+ * different championship every run, sometimes one that has already been raced.
+ * Both earlier attempts failed on exactly that, and a browser test whose
+ * subject depends on the order of somebody else's data is a flake with extra
+ * steps.
  */
+test("creates a championship and finalizes a round of it", async ({ page }) => {
+  await signIn(page)
+  await page.getByRole("button", { name: /New championship/ }).click()
+
+  const sources = page.getByLabel(/Clone from/)
+  await expect(sources).toBeVisible()
+  const options = await sources.locator("option").count()
+  expect(options, "the manager has nothing to clone from").toBeGreaterThan(1)
+  await sources.selectOption({ index: 1 })
+
+  const name = `champctl e2e ${Date.now()}`
+  await page.getByLabel(/^Name$/).fill(name)
+  await page.getByRole("button", { name: /Add a round/ }).click()
+  await page.getByLabel(/Round 1 track/).fill("spa")
+
+  // The preview is a real POST to /api/championships/plan from bundled client
+  // code. A path the server does not serve shows up right here.
+  const create = page.getByRole("button", { name: /Create in ACSM|Blocked/ })
+  await expect(create).toBeEnabled()
+  await create.click()
+  await expect(page.getByText(/Championship created/)).toBeVisible()
+
+  // Into the championship champctl says it made.
+  await page.getByRole("button", { name: /Open it/ }).click()
+  await expect(page.getByRole("heading", { name })).toBeVisible()
+
+  // Its one round, which has never been raced — so the lap count is safe to
+  // change and a push is a real write rather than a no-op reporting success.
+  await page.locator("button.row").first().click()
+  const length = page.locator("#length")
+  await expect(length).toBeVisible()
+
+  const before = await length.inputValue()
+  const wanted = before === "18" ? "19" : "18"
+  await length.fill(wanted)
+
+  const push = page.getByRole("button", { name: /Push to ACSM|Blocked|Nothing to change/ })
+  await expect(push).toBeEnabled()
+  await push.click()
+  await expect(page.getByText(/Pushed to ACSM/)).toBeVisible()
+
+  // And it stuck: a reload re-reads the event from ACSM through the API rather
+  // than trusting anything still on screen.
+  await page.reload()
+  await expect(page.locator("#length")).toHaveValue(wanted)
+})

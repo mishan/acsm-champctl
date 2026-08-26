@@ -26,6 +26,28 @@ import { defineConfig } from "@playwright/test"
 
 const PORT = Number(process.env["CHAMPCTL_E2E_PORT"] ?? 3100)
 
+/**
+ * Refuse to run rather than skipping quietly.
+ *
+ * `npm run test:e2e` is an explicit request to run these. Reporting "2 skipped"
+ * for a missing variable looks like a pass in a terminal and in CI, which is
+ * the same failure as a test that goes green for the absence of what it
+ * checks. The live *vitest* suite skips instead, and correctly: it shares a
+ * command with the unit tests, so a laptop with no harness has to stay green.
+ * Nothing shares a command with this one.
+ */
+const BASE_URL = process.env["CHAMPCTL_LIVE_URL"]
+if (!BASE_URL || !process.env["CHAMPCTL_LIVE_PASSWORD"]) {
+  throw new Error(
+    "The browser suite needs a Server Manager to drive. Start one and point champctl at it:\n\n" +
+      "  npm run harness:oss -- start\n" +
+      "  set -a && . docker/.env && set +a\n" +
+      "  CHAMPCTL_LIVE_URL=http://127.0.0.1:8772 npm run test:e2e\n\n" +
+      "docker-compose puts the OSS build on ACSM_OSS_PORT (8773 by default) and the premium one " +
+      "on 8772, so check which one you are running.",
+  )
+}
+
 export default defineConfig({
   testDir: "test/e2e",
   // `.e2e.ts`, not `.test.ts`: vitest's node project globs `test/**/*.test.ts`,
@@ -75,7 +97,7 @@ export default defineConfig({
    * away, which is the case that flag exists for.
    */
   webServer: {
-    command: `node_modules/.bin/tsx src/cli/serve.ts --port ${PORT} --insecure-cookies --unthrottled-reads --client dist/client --base-url ${process.env["CHAMPCTL_LIVE_URL"] ?? "http://127.0.0.1:8772"}`,
+    command: `node_modules/.bin/tsx src/cli/serve.ts --port ${PORT} --insecure-cookies --unthrottled-reads --client dist/client --base-url ${BASE_URL}`,
     url: `http://127.0.0.1:${PORT}/healthz`,
     reuseExistingServer: !process.env["CI"],
     timeout: 30_000,
