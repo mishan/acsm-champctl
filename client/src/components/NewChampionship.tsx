@@ -72,11 +72,18 @@ export function NewChampionship({
   onAuthLost,
 }: NewChampionshipProps): React.JSX.Element {
   const [sources, setSources] = useState<ChampionshipListItem[] | null>(null)
-  /** What the manager has installed, for the fields that ask for a folder name. */
-  const [installed, setInstalled] = useState<{ cars: InstalledItem[]; tracks: InstalledItem[] }>({
-    cars: [],
-    tracks: [],
-  })
+  /**
+   * What the manager has installed, for the fields that ask for a folder name.
+   *
+   * `null` until the answer arrives, which is a different thing from empty:
+   * the first time champctl talks to a manager it walks its `/cars` pages, and
+   * a field that says "couldn't read what's installed" while that is still in
+   * flight is saying something false.
+   */
+  const [installed, setInstalled] = useState<{
+    cars: InstalledItem[]
+    tracks: InstalledItem[]
+  } | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [plan, setPlan] = useState<NewChampionshipPlan | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -118,9 +125,11 @@ export function NewChampionship({
         const content = await api.content()
         if (live) setInstalled({ cars: content.cars, tracks: content.tracks })
       } catch {
-        // Deliberately quiet. `Picker` says "champctl couldn't read what's
-        // installed" in the field itself, which is where somebody wondering
-        // why the list is empty is already looking.
+        // Deliberately quiet, and empty rather than left loading: `Picker`
+        // says "champctl couldn't read what's installed" in the field itself,
+        // which is where somebody wondering why the list is empty is already
+        // looking.
+        if (live) setInstalled({ cars: [], tracks: [] })
       }
     })()
     return () => {
@@ -340,13 +349,15 @@ export function NewChampionship({
 
           <CarList
             chosen={draft.cars}
-            installed={installed.cars}
+            installed={installed?.cars ?? []}
+            loading={installed === null}
             onChange={(cars) => set({ cars })}
           />
 
           <TrackList
             rows={draft.tracks}
-            installed={installed.tracks}
+            installed={installed?.tracks ?? []}
+            loading={installed === null}
             onChange={(tracks) => set({ tracks })}
           />
         </>
@@ -425,10 +436,12 @@ export function NewChampionship({
 function CarList({
   chosen,
   installed,
+  loading,
   onChange,
 }: {
   chosen: readonly string[]
   installed: readonly InstalledItem[]
+  loading: boolean
   onChange: (cars: string[]) => void
 }): React.JSX.Element {
   const nameOf = (id: string): string => installed.find((c) => c.id === id)?.name ?? id
@@ -470,6 +483,7 @@ function CarList({
         // broken.
         items={installed.filter((c) => !chosen.includes(c.id))}
         placeholder="Search installed cars"
+        loading={loading}
         emptyHint="champctl couldn't read the cars installed on this manager."
         onChange={(id) => {
           if (id && !chosen.includes(id)) onChange([...chosen, id])
@@ -495,10 +509,12 @@ function CarList({
 function TrackList({
   rows,
   installed,
+  loading,
   onChange,
 }: {
   rows: TrackRow[]
   installed: readonly InstalledItem[]
+  loading: boolean
   onChange: (rows: TrackRow[]) => void
 }): React.JSX.Element {
   const move = (from: number, to: number): void => {
@@ -530,6 +546,7 @@ function TrackList({
               value={row.track}
               items={installed}
               placeholder="Search installed tracks"
+              loading={loading}
               emptyHint="champctl couldn't read the tracks installed on this manager."
               onChange={(track) => update(i, { track })}
             />

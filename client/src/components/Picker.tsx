@@ -39,6 +39,15 @@ interface PickerProps {
   placeholder?: string
   /** Said when there is nothing to pick from at all, rather than no match. */
   emptyHint?: string
+  /**
+   * The list is still on its way.
+   *
+   * Distinct from an empty one: reading what a manager has installed means
+   * walking its `/cars` pages, which takes real time the first time champctl
+   * ever talks to it. Showing "couldn't read what's installed" during that
+   * says something false about a request still in flight.
+   */
+  loading?: boolean
   /** Reflected onto the input, for `getByLabel` and for screen readers. */
   id?: string
 }
@@ -53,6 +62,7 @@ export function Picker({
   onChange,
   placeholder,
   emptyHint,
+  loading = false,
   id,
 }: PickerProps): React.JSX.Element {
   const generated = useId()
@@ -127,6 +137,7 @@ export function Picker({
   }
 
   const nothingInstalled = items.length === 0
+  const unusable = loading || nothingInstalled
 
   return (
     <div className="picker" ref={box}>
@@ -140,8 +151,8 @@ export function Picker({
         aria-controls={listId}
         aria-autocomplete="list"
         {...(open && matches[active] ? { "aria-activedescendant": `${listId}-${active}` } : {})}
-        disabled={nothingInstalled}
-        placeholder={nothingInstalled ? "" : placeholder}
+        disabled={unusable}
+        placeholder={loading ? "Reading what's installed…" : nothingInstalled ? "" : placeholder}
         // The query while typing, the chosen name otherwise. One input rather
         // than a chip plus a search box: this is a phone-first screen, and the
         // field is the thing under the thumb.
@@ -159,9 +170,9 @@ export function Picker({
         onKeyDown={onKeyDown}
       />
 
-      {nothingInstalled && emptyHint && <p className="fineprint">{emptyHint}</p>}
+      {!loading && nothingInstalled && emptyHint && <p className="fineprint">{emptyHint}</p>}
 
-      {open && (
+      {open && !unusable && (
         // `div`s rather than a `ul`: in a combobox that keeps focus on the
         // input and points at the highlighted option with
         // `aria-activedescendant`, the list is not a list of list items, and

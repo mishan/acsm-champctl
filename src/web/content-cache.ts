@@ -1,36 +1,63 @@
 /**
  * The installed-content index, read once and held.
  *
- * `listContent` is the most expensive read champctl makes: `/cars` pages at
- * fifty, so a stock install is four requests plus `/tracks`, and there is no
- * response cache behind it because that one holds decoded JSON and these are
- * HTML. Against champctl's own read limiter — five per twenty seconds — a
- * screen that fetched this on every mount would spend twenty seconds waiting
- * for permission champctl gave itself, every time somebody opened it.
+ * `listContent` is by far the most expensive read champctl makes: `/cars` pages
+ * at fifty and offers no way to ask for more — measured, `size`, `limit`,
+ * `pageSize` and `perPage` are all ignored — so a stock install is four
+ * requests plus `/tracks`, and a league running mod content is more. There is
+ * no response cache behind it either, because that one holds decoded JSON and
+ * these are HTML.
  *
- * So it is held for an hour. Content changes when an admin installs a car,
- * which is a thing that happens between seasons rather than between page
- * loads, and the cost of being an hour stale is that a car installed in the
- * last hour is missing from a dropdown until the service is restarted or the
- * hour is up. The cost of not caching is a screen that takes twenty seconds.
+ * **That cost is why this class exists, and getting it wrong was visible.**
+ * Against a read budget of five per twenty seconds, a walk started when a
+ * screen opened took every slot in the window, and the `/api/championships`
+ * request the same screen makes queued behind it — so opening the create
+ * screen hung the list of championships next to it. Three things follow, and
+ * all three are about never making a person wait on this:
+ *
+ * - It is held for an hour. Content changes when an admin installs a car,
+ *   which happens between seasons rather than between page loads.
+ * - Once stale it is *still served*, and refreshed behind whoever asked.
+ *   Waiting for the refresh would put the whole cost back on somebody once an
+ *   hour at random.
+ * - `warm()` starts the first read at boot, so the one load that genuinely has
+ *   nothing to serve happens while nobody is looking at it.
+ *
+ * The other half of the fix is not here: `champctl-serve` gives this its own
+ * reader with its own rate limiter, so a walk cannot take slots an interactive
+ * read is waiting for.
  *
  * In memory rather than on disk, unlike the response cache. This is a list of
- * folder names with nothing private in it, but it is also cheap to rebuild and
- * a restart is exactly when you would want it rebuilt.
+ * folder names with nothing private in it, and `warm()` means a restart pays
+ * for it at boot rather than on the first click.
  */
 
 import type { InstalledContent } from "../acsm/content.js"
 
 const DEFAULT_TTL_MS = 60 * 60 * 1000
 
+/**
+ * Somewhere to keep the index across restarts.
+ *
+ * An interface rather than a path, so the tests do not need a filesystem and
+ * so an on-host deployment could keep it wherever it likes.
+ */
+export interface ContentStore {
+  read(): Promise<{ at: number; value: InstalledContent } | undefined>
+  write(entry: { at: number; value: InstalledContent }): Promise<void>
+}
+
 export interface ContentCacheOptions {
   load: () => Promise<InstalledContent>
+  /** Persists the index across restarts. Without one, every boot re-walks. */
+  store?: ContentStore
   ttlMs?: number
   now?: () => number
 }
 
 export class ContentCache {
   readonly #load: () => Promise<InstalledContent>
+  readonly #store: ContentStore | undefined
   readonly #ttlMs: number
   readonly #now: () => number
   #held: { at: number; value: InstalledContent } | undefined
@@ -38,6 +65,7 @@ export class ContentCache {
 
   constructor(options: ContentCacheOptions) {
     this.#load = options.load
+    this.#store = options.store
     this.#ttlMs = options.ttlMs ?? DEFAULT_TTL_MS
     this.#now = options.now ?? Date.now
   }
@@ -46,14 +74,55 @@ export class ContentCache {
     const held = this.#held
     if (held && this.#now() - held.at < this.#ttlMs) return held.value
 
+    // Stale is served, and refreshed behind whoever asked.
+    //
+    // Waiting for the refresh would put the whole cost back on a person, once
+    // an hour, at random — and an hour-old list of installed cars is wrong
+    // only if somebody installed one in the last hour. The first load has
+    // nothing to serve and does have to wait; `warm()` is how that stops
+    // landing on a person.
+    const refresh = this.#refresh()
+    return held ? held.value : refresh
+  }
+
+  /**
+   * Take whatever the last run left, then start a read behind it.
+   *
+   * Called at startup, and it is what makes a restart free. Without it every
+   * restart re-walks `/cars` from nothing, which is minutes on a league with
+   * mod content — and the person who restarted is usually the person about to
+   * open the screen.
+   *
+   * Whatever was stored is served immediately even if it is old, because a
+   * month-old list of installed cars is a far better answer than a spinner.
+   * Failure is not fatal and not rethrown: a manager that is down when
+   * champctl boots is one champctl should still start against, and the next
+   * `get()` tries again.
+   */
+  async warm(): Promise<void> {
+    try {
+      const stored = await this.#store?.read()
+      if (stored && !this.#held) this.#held = stored
+    } catch {
+      // A store that cannot be read is a slow start, not a failed one.
+    }
+    void this.#refresh().catch(() => undefined)
+  }
+
+  #refresh(): Promise<InstalledContent> {
     // One read for however many callers arrive while it is in flight. Two
     // people opening the screen at once is the ordinary case, and without this
     // it is two full walks of `/cars` — which is more requests than the
-    // limiter allows in its window, so the second person waits on the first
+    // limiter allows in its window, so the second person waits out the first
     // one's rate limiting rather than on their own answer.
     this.#inFlight ??= this.#load()
-      .then((value) => {
-        this.#held = { at: this.#now(), value }
+      .then(async (value) => {
+        const entry = { at: this.#now(), value }
+        this.#held = entry
+        // Best effort, and after the value is already held: a store that
+        // cannot be written costs the *next* restart its head start, and
+        // failing the request over it would cost this one its answer.
+        await this.#store?.write(entry).catch(() => undefined)
         return value
       })
       .finally(() => {

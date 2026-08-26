@@ -27,6 +27,8 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { HttpAcsmReader } from "../acsm/client.js"
 import { SqliteCache } from "../acsm/cache.js"
 import { loadProfile } from "../profile/load.js"
+import { ContentCache } from "../web/content-cache.js"
+import { contentStore } from "../web/content-store.js"
 import { buildServer } from "../web/server.js"
 import { loadPits, runCli, UsageError } from "./args.js"
 
@@ -268,6 +270,37 @@ async function main(argv: readonly string[]): Promise<number> {
     ? await SqliteCache.open({ path: resolve(process.cwd(), ".cache/acsm/cache.db") })
     : undefined
 
+  /**
+   * The installed-content index reads through a reader of its own.
+   *
+   * Not tidiness — a rate limiter of its own. Walking `/cars` is several
+   * requests, more on a league running mod content, and champctl paces its
+   * reads at five per twenty seconds. Sharing one limiter meant a walk could
+   * take every slot in the window while the `/api/championships` request from
+   * the same screen waited for a budget spent on a dropdown: opening the
+   * create screen hung the championship list beside it, which reads as champctl
+   * being broken rather than as champctl being polite.
+   *
+   * Its own budget rather than a slice of one, because the two are different
+   * shapes of load. The interactive limiter paces a person clicking around a
+   * manager all evening; this paces one bulk read that happens at boot and at
+   * most once an hour after. Splitting the five would have made a cold walk
+   * take minutes to save a burst nobody is there for.
+   */
+  const contentReader = new HttpAcsmReader({
+    baseUrl,
+    ...(args.unthrottledReads ? { rateLimit: false as const } : {}),
+  })
+  const content = new ContentCache({
+    load: () => contentReader.listContent(),
+    // Kept across restarts, in the response cache's own database. Re-walking
+    // `/cars` on every boot is minutes against a league's manager, and the
+    // person who just restarted champctl is usually the person about to open
+    // the screen. `--no-cache` opts out of this too, which is what that flag
+    // means.
+    ...(cache ? { store: contentStore(cache, baseUrl) } : {}),
+  })
+
   // Everything after the cache is open runs inside try/finally, because the
   // cache is a SQLite handle with WAL state and only the clean shutdown path
   // used to close it. A pit table that won't load, a port already in use, or a
@@ -278,6 +311,7 @@ async function main(argv: readonly string[]): Promise<number> {
     app = buildServer({
       profile,
       baseUrl,
+      content,
       reader: new HttpAcsmReader({
         baseUrl,
         ...(cache ? { cache } : {}),
@@ -297,6 +331,11 @@ async function main(argv: readonly string[]): Promise<number> {
           "against one you can throw away.",
       )
     }
+
+    // Before listening, so the read is already going when the first request
+    // arrives — and so a stored index from the last run is in hand rather than
+    // being fetched while somebody waits on a dropdown.
+    await content.warm()
 
     await app.listen({ port: args.port, host: args.host })
     await shutdownSignal()

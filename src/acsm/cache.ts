@@ -45,6 +45,24 @@ CREATE TABLE IF NOT EXISTS response (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS response_by_age ON response (fetched_at);
+
+/*
+ * Things that must outlive the response TTL.
+ *
+ * A second table rather than a flag on the first, because the two want
+ * opposite things and one sweep would serve both otherwise. The response
+ * table exists to expire -- five minutes, deleted on write -- and this one
+ * exists to survive a restart. The installed-content index is what it holds:
+ * walking /cars is several requests against a rate limiter, so re-reading it
+ * on every boot is minutes a person spends looking at an empty dropdown.
+ *
+ * Whoever writes here owns the freshness question. Nothing expires these.
+ */
+CREATE TABLE IF NOT EXISTS kept (
+  key        TEXT PRIMARY KEY,
+  written_at INTEGER NOT NULL,
+  body       TEXT NOT NULL
+) STRICT;
 `
 
 export interface SqliteCacheOptions {
@@ -115,6 +133,39 @@ export class SqliteCache implements ResponseCache {
       this.#db.prepare("DELETE FROM response WHERE fetched_at <= ?").run(now - this.#ttlMs)
     } catch {
       // Caching is an optimisation; failing to write must not fail the request.
+    }
+  }
+
+  /**
+   * Read something stored without a lifetime.
+   *
+   * Separate from `get` on purpose: that one answers "is this still fresh",
+   * and this one answers "what did the last run leave". A caller of `keep`
+   * decides for itself when what it stored has gone stale — `ContentCache`
+   * serves it and refreshes behind whoever asked.
+   */
+  async kept(key: string): Promise<{ writtenAt: number; body: string } | undefined> {
+    try {
+      const row = this.#db.prepare("SELECT written_at, body FROM kept WHERE key = ?").get(key) as
+        | { written_at: number; body: string }
+        | undefined
+      return row ? { writtenAt: row.written_at, body: row.body } : undefined
+    } catch {
+      // Same rule as `get`: a store that can't be read is a miss.
+      return undefined
+    }
+  }
+
+  async keep(key: string, body: string): Promise<void> {
+    try {
+      this.#db
+        .prepare(
+          `INSERT INTO kept (key, written_at, body) VALUES (?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET written_at = excluded.written_at, body = excluded.body`,
+        )
+        .run(key, this.#now(), body)
+    } catch {
+      // Costs the next restart its head start, nothing more.
     }
   }
 

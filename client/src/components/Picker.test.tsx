@@ -134,3 +134,34 @@ describe("picking installed content by name", () => {
     expect(screen.getByText(/couldn't read what's installed/)).toBeTruthy()
   })
 })
+
+describe("while the list is still on its way", () => {
+  /**
+   * The first time champctl talks to a manager it walks its `/cars` pages,
+   * which takes real time. Saying "couldn't read what's installed" during that
+   * is saying something false about a request still in flight — and it is what
+   * an empty list looked like before loading was a state of its own.
+   */
+  it("says it is reading rather than that it failed", () => {
+    render(
+      <Picker
+        label="Track"
+        value=""
+        items={[]}
+        loading
+        emptyHint="champctl couldn't read what's installed."
+        onChange={() => {}}
+      />,
+    )
+    const input = screen.getByLabelText("Track") as HTMLInputElement
+    expect(input.disabled).toBe(true)
+    expect(input.placeholder).toMatch(/Reading what's installed/)
+    expect(screen.queryByText(/couldn't read/)).toBeNull()
+  })
+
+  it("does not open a list it has nothing to put in", () => {
+    render(<Picker label="Track" value="" items={[]} loading onChange={() => {}} />)
+    fireEvent.focus(screen.getByLabelText("Track"))
+    expect(screen.queryByRole("listbox")).toBeNull()
+  })
+})
