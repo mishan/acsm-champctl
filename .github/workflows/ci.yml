@@ -208,6 +208,15 @@ jobs:
       # suite refuses to load without a manager to drive — `playwright.config.ts`
       # throws — so a job that failed to set the variables fails loudly instead
       # of passing having run nothing.
+      #
+      # And no wait between provisioning and the suite, which looks like it
+      # should need one: provisioning signs in several times and the suite adds
+      # five more. On 2.4.x that would outrun ACSM's login limiter. This job
+      # runs 1.7.9, which does not have one — measured, eight rapid logins all
+      # answer 302 and no `X-Ratelimit-*` header comes back at all — so a sleep
+      # here would be twenty seconds of every run spent on nothing. The suite
+      # paces and retries its logins anyway (`test/live/login-pace.mjs`), which
+      # is what covers a run against a 2.4.x harness locally.
       - name: Run the browser suite
         env:
           CHAMPCTL_LIVE_URL: http://127.0.0.1:8772

@@ -18,6 +18,9 @@ import { expect, type Page, test } from "@playwright/test"
 
 import { AcsmSession } from "../../src/acsm/session.js"
 import { deleteChampionship } from "../live/harness.js"
+// Paces the teardown login below. Playwright runs this file in a worker of its
+// own, so the config's import does not reach it.
+import "../live/login-pace.mjs"
 import { SOURCE_NAME_VAR } from "./seed.js"
 
 // No skip gate: `playwright.config.ts` refuses to load without a manager to

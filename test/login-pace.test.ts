@@ -14,7 +14,7 @@ import { join } from "node:path"
 
 import { beforeEach, describe, expect, it } from "vitest"
 
-import { paceLogin, paceStatePath } from "./live/login-pace.js"
+import { paceLogin, paceStatePath } from "./live/login-pace.mjs"
 
 describe("pacing logins against ACSM's limiter", () => {
   let statePath = ""

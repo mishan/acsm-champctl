@@ -1,4 +1,10 @@
+import { fileURLToPath, pathToFileURL } from "node:url"
+
 import { defineConfig } from "@playwright/test"
+
+// Paces this process's own logins — `seed.ts` runs here. The spec imports it
+// too, for the worker, and `webServer` below hands it to the server subprocess.
+import "./test/live/login-pace.mjs"
 
 /**
  * The browser suite: champctl as a person actually reaches it.
@@ -123,6 +129,19 @@ export default defineConfig({
    * the previous run saw — the seeded championship is simply absent, and the
    * spec fails looking for an option that exists on the manager. The cache
    * outlives the process, so restarting champctl does not clear it.
+   *
+   * **`NODE_OPTIONS` carries the login pacer into this process**, which is
+   * where the three sign-ins the browser performs actually reach ACSM. On
+   * 2.4.x `/login` allows five requests per twenty seconds, and a run makes
+   * five logins — so anything else that signs in just beforehand pushes it
+   * over. `npm run harness:provision` does exactly that, immediately before
+   * this suite in CI. Measured: burn four slots with `curl` and the first
+   * sign-in hangs until its timeout, saying nothing about why.
+   *
+   * `--import` rather than importing it in `src/`: champctl itself should keep
+   * failing a 429 outright, and nothing about the server under test should
+   * change because a suite is watching. Plain `.mjs` because node resolves
+   * `--import` before tsx registers a TypeScript loader.
    */
   webServer: {
     command: `node_modules/.bin/tsx src/cli/serve.ts --port ${PORT} --insecure-cookies --unthrottled-reads --no-cache --client dist/client --base-url ${BASE_URL}`,
@@ -131,5 +150,13 @@ export default defineConfig({
     timeout: 30_000,
     stdout: "pipe",
     stderr: "pipe",
+    env: {
+      NODE_OPTIONS: [
+        process.env["NODE_OPTIONS"] ?? "",
+        `--import ${pathToFileURL(fileURLToPath(new URL("./test/live/login-pace.mjs", import.meta.url))).href}`,
+      ]
+        .join(" ")
+        .trim(),
+    },
   },
 })

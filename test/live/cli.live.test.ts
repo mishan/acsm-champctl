@@ -46,10 +46,10 @@ const PROFILE = resolve(process.cwd(), "test/support/profile-harness.json")
  * Captured rather than silenced so a failing assertion can show what the tool
  * said — an exit code on its own is a poor bug report.
  *
- * The login pacing that used to live here has moved to `test/live/setup.ts`,
- * where it covers the whole suite rather than this file. Module state paced
- * these invocations and nothing else, so the other three files ran unpaced and
- * spent the budget this one was carefully staying inside.
+ * The login pacing that used to live here has moved to `login-pace.mjs`, where
+ * it covers every process that logs in rather than this file. Module state
+ * paced these invocations and nothing else, so the other three files ran
+ * unpaced and spent the budget this one was carefully staying inside.
  */
 async function cli(
   main: (argv: readonly string[]) => Promise<number>,

@@ -8,14 +8,14 @@ import { defineConfig } from "vitest/config"
  * Serial is not enough on its own, and that is worth saying because the
  * obvious reading of the failure was that these were racing. They weren't:
  * ACSM limits `/login` to about five requests per twenty seconds, and a serial
- * run still makes far more than that in a minute. `test/live/setup.ts` paces
+ * run still makes far more than that in a minute. `test/live/login-pace.mjs` paces
  * them.
  */
 export default defineConfig({
   test: {
     include: ["test/live/**/*.live.test.ts"],
     environment: "node",
-    setupFiles: ["./test/live/setup.ts"],
+    setupFiles: ["./test/live/login-pace.mjs"],
     // Long enough to hold a test that waits out ACSM's login window — twenty
     // seconds — before it does anything.
     testTimeout: 90_000,
