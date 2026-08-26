@@ -123,3 +123,36 @@ describe("moving to another championship", () => {
     expect(screen.queryByText("Summer Series")).toBeNull()
   })
 })
+
+describe("a round that has already been raced", () => {
+  it("says raced rather than run", async () => {
+    // As a chip beside a race, "run" reads as an instruction to start one.
+    const r = response("Summer Series")
+    r.championship.rounds[0]!.started = true
+    championshipMock.mockResolvedValue(r)
+    renderList("champ-1")
+    expect(await screen.findByText("raced")).toBeTruthy()
+    expect(screen.queryByText("run")).toBeNull()
+  })
+
+  it("does not call a finished round unscheduled", async () => {
+    // ACSM clears `Scheduled` once an event starts, so every raced round
+    // reported itself unscheduled — true, useless, and read as "nobody has set
+    // a date for this yet" when the race had already happened.
+    const r = response("Summer Series")
+    r.championship.rounds[0]!.started = true
+    r.championship.rounds[0]!.quali = null
+    championshipMock.mockResolvedValue(r)
+    renderList("champ-1")
+    await screen.findByText("raced")
+    expect(screen.queryByText(/unscheduled/)).toBeNull()
+  })
+
+  it("still says unscheduled when the round has not run", async () => {
+    const r = response("Summer Series")
+    r.championship.rounds[0]!.quali = null
+    championshipMock.mockResolvedValue(r)
+    renderList("champ-1")
+    expect(await screen.findByText(/unscheduled/)).toBeTruthy()
+  })
+})

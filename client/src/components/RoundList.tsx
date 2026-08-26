@@ -98,12 +98,24 @@ function Round({ round, onOpen }: { round: RoundView; onOpen: () => void }): Rea
         </span>
         <span className="row-sub">
           {describeFormat(round.format)}
-          {/* Quali, not `Scheduled`. Anyone reading `Scheduled` as the quali
-              time is an hour out — it is practice start. */}
-          {round.quali ? ` · quali ${round.quali.display}` : " · unscheduled"}
+          {/*
+            Quali, not `Scheduled`. Anyone reading `Scheduled` as the quali time
+            is an hour out — it is practice start.
+
+            "Unscheduled" only for a round that has *not* run. ACSM clears
+            `Scheduled` once an event starts, so every finished round reported
+            itself as unscheduled — true, useless, and read as "nobody has set
+            a date for this yet" when in fact the race happened.
+          */}
+          {round.quali ? ` · quali ${round.quali.display}` : round.started ? "" : " · unscheduled"}
         </span>
       </span>
-      {round.started ? <span className="tag">run</span> : <span className="row-chevron">›</span>}
+      {/*
+        "Raced", not "run". As a chip beside a race, "RUN" reads as an
+        instruction to start one — the opposite of what it means, and next to a
+        row that is still tappable.
+      */}
+      {round.started ? <span className="tag">raced</span> : <span className="row-chevron">›</span>}
     </button>
   )
 }
