@@ -116,9 +116,16 @@ export default defineConfig({
    * makes three of them then spends a minute waiting for permission champctl
    * gave itself. The harness is a container this suite started and will throw
    * away, which is the case that flag exists for.
+   *
+   * `--no-cache` because `seed.ts` imports a championship straight into ACSM,
+   * behind champctl's back, moments before the run. Responses are cached on
+   * disk for five minutes, so without this the "Clone from" list is whatever
+   * the previous run saw — the seeded championship is simply absent, and the
+   * spec fails looking for an option that exists on the manager. The cache
+   * outlives the process, so restarting champctl does not clear it.
    */
   webServer: {
-    command: `node_modules/.bin/tsx src/cli/serve.ts --port ${PORT} --insecure-cookies --unthrottled-reads --client dist/client --base-url ${BASE_URL}`,
+    command: `node_modules/.bin/tsx src/cli/serve.ts --port ${PORT} --insecure-cookies --unthrottled-reads --no-cache --client dist/client --base-url ${BASE_URL}`,
     url: `http://127.0.0.1:${PORT}/healthz`,
     reuseExistingServer: !process.env["CI"],
     timeout: 30_000,

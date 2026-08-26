@@ -10,8 +10,9 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
+import { asMessage } from "../../src/acsm/client.js"
 import { assertDisposable } from "../../src/acsm/disposable.js"
-import { AcsmSession } from "../../src/acsm/session.js"
+import { AcsmSession, AcsmWriteError } from "../../src/acsm/session.js"
 import type { Championship } from "../../src/acsm/types.js"
 import { events } from "../../src/acsm/view.js"
 import { readFormat, type RaceFormat } from "../../src/finalize/format.js"
@@ -117,14 +118,28 @@ export async function lapsUnlikeSeed(): Promise<number> {
 }
 export const SEED_DUPLICATE_PITBOXES = "fixtures/synthetic/recon-seed-duplicate-pitboxes.json"
 
-/** Best-effort teardown; the definitive reset is `docker compose down -v`. */
+/**
+ * Best-effort teardown; the definitive reset is `docker compose down -v`.
+ *
+ * A delete that *worked* throws, which is why the 404 is singled out rather
+ * than everything being swallowed. ACSM deletes on a GET that 302s to the
+ * championship's own page; `getText` follows redirects, so it lands on the page
+ * just removed and reports its 404 — and that 404 is the end state this
+ * function is after. Anything else means the championship is probably still on
+ * the manager, which is worth a line rather than silence: the browser suite
+ * makes one per run and would otherwise pile them up unremarked.
+ *
+ * Still not a failure. Leaving a stray test championship behind is untidy, and
+ * failing a teardown would bury whatever the tests actually found.
+ */
 export async function deleteChampionship(
   session: AcsmSession,
   championshipId: string,
 ): Promise<void> {
   try {
     await session.getText(`/championship/${championshipId}/delete`)
-  } catch {
-    // Leaving a stray test championship behind is untidy, not a test failure.
+  } catch (e) {
+    if (e instanceof AcsmWriteError && e.status === 404) return
+    console.warn(`could not delete the test championship ${championshipId}: ${asMessage(e)}`)
   }
 }

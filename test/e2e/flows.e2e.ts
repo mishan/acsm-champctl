@@ -14,8 +14,10 @@
  * that through a browser buys slow tests and a second place to update.
  */
 
-import { expect, test } from "@playwright/test"
+import { expect, type Page, test } from "@playwright/test"
 
+import { AcsmSession } from "../../src/acsm/session.js"
+import { deleteChampionship } from "../live/harness.js"
 import { SOURCE_NAME_VAR } from "./seed.js"
 
 // No skip gate: `playwright.config.ts` refuses to load without a manager to
@@ -31,7 +33,7 @@ const PASSWORD = process.env["CHAMPCTL_LIVE_PASSWORD"] ?? ""
  * part of what this suite is here to prove, and a fabricated session would
  * skip the one request every other one depends on.
  */
-async function signIn(page: import("@playwright/test").Page): Promise<void> {
+async function signIn(page: Page): Promise<void> {
   await page.goto("/")
   await page.getByLabel(/username/i).fill(USERNAME)
   await page.getByLabel(/password/i).fill(PASSWORD)
@@ -39,13 +41,64 @@ async function signIn(page: import("@playwright/test").Page): Promise<void> {
   await expect(page.getByRole("button", { name: /sign out/i })).toBeVisible()
 }
 
+/**
+ * The championship the write flow created, so a run doesn't leave one behind.
+ *
+ * `seed.ts` removes what it seeded; this is the other half, and without it a
+ * manager collects a "champctl e2e <timestamp>" every time anyone runs the
+ * suite. Its own session because a Playwright worker cannot reach into global
+ * setup's — one more login, at the end, against a manager that allows five in
+ * twenty seconds.
+ */
+let created: string | undefined
+
+test.afterAll(async () => {
+  const baseUrl = process.env["CHAMPCTL_LIVE_URL"]
+  if (!created || !baseUrl) return
+  const session = new AcsmSession({ baseUrl, rateLimit: false })
+  await session.login({ username: USERNAME, password: PASSWORD })
+  await deleteChampionship(session, created)
+})
+
+/**
+ * Wait for the server's review, then acknowledge whatever gridmom said.
+ *
+ * Both write screens render their gridmom section only once a plan has come
+ * back, so that heading is the signal that the preview resolved — waiting on
+ * the button instead races the debounce and reads "disabled" from a screen
+ * that has not asked the server anything yet.
+ *
+ * Ticking the box is not a way around the rules. An ERROR blocks the write
+ * outright and offers no checkbox; warnings are the case the screen expects a
+ * person to read and accept, and against this harness there are always some —
+ * there is no pit table for the seed's tracks and no content installed, so
+ * gridmom reports on the harness rather than on the change under test. Leaving
+ * them unacknowledged would mean this suite could only ever exercise the path
+ * where gridmom is silent, which is not the path a league takes.
+ */
+async function reviewAndAcknowledge(page: Page): Promise<void> {
+  await expect(page.getByRole("heading", { name: /^gridmom$/ })).toBeVisible()
+  const ack = page.getByRole("checkbox", { name: /read the warnings/i })
+  if ((await ack.count()) > 0) await ack.check()
+}
+
 test("signs in against the real manager and lists its championships", async ({ page }) => {
   await signIn(page)
-  // Something came back from ACSM through champctl and rendered. The list may
-  // be empty on a fresh harness, so this asserts the screen resolved rather
-  // than a count.
   await expect(page.getByText(/Loading championships/)).toHaveCount(0)
   await expect(page.getByRole("button", { name: /New championship/ })).toBeVisible()
+
+  // The championship `seed.ts` just imported, by name.
+  //
+  // This used to assert only that the screen resolved, on the grounds that a
+  // fresh harness has nothing to list. It doesn't any more — the suite seeds
+  // one — and "resolved" was passing against an empty list while
+  // `listChampionships` dropped every entry on the floor, because 2.4.15's
+  // list endpoint spells its keys in lowercase and champctl read `ID`. A
+  // screen that renders nothing is exactly what that bug looks like, so
+  // "something rendered" has to mean a championship.
+  const sourceName = process.env[SOURCE_NAME_VAR]
+  expect(sourceName, "global setup did not seed a championship").toBeTruthy()
+  await expect(page.getByText(sourceName as string)).toBeVisible()
 })
 
 test("refuses a wrong password without leaving a session behind", async ({ page }) => {
@@ -71,29 +124,7 @@ test("refuses a wrong password without leaving a session behind", async ({ page 
  * whichever championship was first in the list, which is a different one every
  * run on a shared manager and none at all on a fresh one — see `seed.ts`.
  */
-/**
- * Not passing yet, and marked so rather than left to fail in CI.
- *
- * The data dependency is gone — `seed.ts` puts a known, unraced championship
- * in the manager and this picks it by name — and the "Clone from" select now
- * resolves. What it does not do is become actionable: Playwright reports
- * `waiting for element to be visible and enabled` some sixty times against
- * a `<select id="source">` it has already found, then times out.
- *
- * That is a narrower question than the one it replaced, and it has two
- * readings worth separating. Either the select is genuinely never actionable
- * — hidden, zero-sized, or re-rendering on a loop that Playwright reads as
- * never stable — in which case it is a real UI bug that no other suite can
- * see, since the DOM tests query a jsdom tree where visibility is not
- * modelled. Or the spec is asking for actionability the screen never claims,
- * and wants a different wait.
- *
- * Look at the trace first: `playwright show-trace` on the artifact CI keeps.
- * It records the DOM and the CSS at each step, which answers "was it visible"
- * without guessing.
- *
- */
-test.fixme("creates a championship and finalizes a round of it", async ({ page }) => {
+test("creates a championship and finalizes a round of it", async ({ page }) => {
   await signIn(page)
   await page.getByRole("button", { name: /New championship/ }).click()
 
@@ -112,6 +143,7 @@ test.fixme("creates a championship and finalizes a round of it", async ({ page }
 
   // The preview is a real POST to /api/championships/plan from bundled client
   // code. A path the server does not serve shows up right here.
+  await reviewAndAcknowledge(page)
   const create = page.getByRole("button", { name: /Create in ACSM|Blocked/ })
   await expect(create).toBeEnabled()
   await create.click()
@@ -120,6 +152,9 @@ test.fixme("creates a championship and finalizes a round of it", async ({ page }
   // Into the championship champctl says it made.
   await page.getByRole("button", { name: /Open it/ }).click()
   await expect(page.getByRole("heading", { name })).toBeVisible()
+  // Off the URL rather than out of the create response, so cleanup removes
+  // whatever the browser actually ended up on.
+  created = new URL(page.url()).pathname.split("/")[2]
 
   // Its one round, which has never been raced — so the lap count is safe to
   // change and a push is a real write rather than a no-op reporting success.
@@ -131,6 +166,7 @@ test.fixme("creates a championship and finalizes a round of it", async ({ page }
   const wanted = before === "18" ? "19" : "18"
   await length.fill(wanted)
 
+  await reviewAndAcknowledge(page)
   const push = page.getByRole("button", { name: /Push to ACSM|Blocked|Nothing to change/ })
   await expect(push).toBeEnabled()
   await push.click()

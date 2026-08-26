@@ -22,7 +22,7 @@
 import { AcsmSession } from "../../src/acsm/session.js"
 import type { Championship } from "../../src/acsm/types.js"
 import { importChampionship } from "../../src/acsm/write.js"
-import { loadFixture, SEED } from "../live/harness.js"
+import { deleteChampionship, loadFixture, SEED } from "../live/harness.js"
 
 /** Where the spec reads the name to pick out of the "Clone from" list. */
 export const SOURCE_NAME_VAR = "CHAMPCTL_E2E_SOURCE_NAME"
@@ -50,14 +50,11 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const { championshipId } = await importChampionship(session, source)
   process.env[SOURCE_NAME_VAR] = name
 
+  // Through the live suite's helper rather than a `getText` here, because a
+  // delete that worked reports a 404 and telling the two apart is a detail
+  // worth having in one place — this file's own version warned on every
+  // successful run.
   return async () => {
-    // Best effort. A harness that outlives the run is a harness someone throws
-    // away, and failing the whole suite on a failed cleanup would hide
-    // whatever the tests actually found.
-    try {
-      await session.getText(`/championship/${championshipId}/delete`)
-    } catch (e) {
-      console.warn(`could not delete the seeded championship: ${(e as Error).message}`)
-    }
+    await deleteChampionship(session, championshipId)
   }
 }
