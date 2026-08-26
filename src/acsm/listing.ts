@@ -36,6 +36,32 @@ export function championshipIdsFrom(html: string): string[] {
   return [...collect(html).ids]
 }
 
+/** A championship on the listing: its id, and its name when the page gave one. */
+export interface ListedChampionship {
+  id: string
+  name?: string
+}
+
+/**
+ * Championships off the HTML listing, with names where the markup supplies one.
+ *
+ * Ids alone used to be the whole of this, on the reasoning that parsing names
+ * out of markup breaks silently on a template change. That reasoning was
+ * right about the risk and wrong about the alternative: no ACSM build serves
+ * `/api/championships/list.json`, so *every* caller takes this path, and the
+ * UI spent its life listing UUIDs at people who name their championships.
+ *
+ * A missing name is still not an error. It comes back undefined and the
+ * caller shows the id, which is exactly what happened before.
+ */
+export function championshipsFrom(html: string): ListedChampionship[] {
+  const { ids, names } = collect(html)
+  return [...ids].map((id) => {
+    const name = names.get(id)
+    return name === undefined ? { id } : { id, name }
+  })
+}
+
 /**
  * Further pages of the championship listing, as paths to fetch.
  *
@@ -79,9 +105,10 @@ function parse(href: string): URL | undefined {
   }
 }
 
-function collect(html: string): { ids: Set<string>; hrefs: string[] } {
+function collect(html: string): { ids: Set<string>; names: Map<string, string>; hrefs: string[] } {
   const $ = cheerio.load(html)
   const ids = new Set<string>()
+  const names = new Map<string, string>()
   const hrefs: string[] = []
 
   $("a[href]").each((_, el) => {
@@ -99,10 +126,39 @@ function collect(html: string): { ids: Set<string>; hrefs: string[] } {
     const at = segments.indexOf("championship")
     if (at === -1) return
     const id = segments[at + 1]
-    if (id && UUID.test(id)) ids.add(id.toLowerCase())
+    if (!id || !UUID.test(id)) return
+    const key = id.toLowerCase()
+    ids.add(key)
+
+    /**
+     * The link's own text, when it looks like a name.
+     *
+     * Read off the anchor rather than hunted for in surrounding markup: an
+     * `<a href="/championship/{id}">` whose text is the championship's name is
+     * the one structural fact every listing template has in common, and it is
+     * the same element the id was just taken from. A card layout that moves
+     * the name into a sibling would leave this empty, which is the safe
+     * direction — the caller falls back to the id.
+     *
+     * **Only `/championship/{id}` itself**, never `/championship/{id}/export`
+     * or `/edit`. Ids are still collected from the deeper links, because a
+     * template that links only to `/export` still lists that championship —
+     * but their text is "Export" and "Edit", and taking it would name a
+     * championship after a button on any page that puts those first. Relying
+     * on document order instead is relying on something no template promises.
+     *
+     * "Looks like a name" also excludes a UUID, since some templates link the
+     * id itself, and anything long enough to be a paragraph that happens to be
+     * wrapped in a link.
+     */
+    if (names.has(key)) return
+    if (segments.length !== at + 2) return
+    const text = $(el).text().replace(/\s+/gu, " ").trim()
+    if (!text || UUID.test(text) || text.length > 120) return
+    names.set(key, text)
   })
 
-  return { ids, hrefs }
+  return { ids, names, hrefs }
 }
 
 /**
@@ -121,7 +177,14 @@ function collect(html: string): { ids: Set<string>; hrefs: string[] } {
 export async function walkChampionshipIds(
   fetchPath: (path: string) => Promise<string>,
 ): Promise<string[]> {
-  const ids = new Set<string>()
+  return (await walkChampionships(fetchPath)).map((c) => c.id)
+}
+
+/** As `walkChampionshipIds`, keeping the names the listing carried. */
+export async function walkChampionships(
+  fetchPath: (path: string) => Promise<string>,
+): Promise<ListedChampionship[]> {
+  const found = new Map<string, ListedChampionship>()
   const seen = new Set<string>()
   const queue = [CHAMPIONSHIPS_PATH]
 
@@ -131,7 +194,17 @@ export async function walkChampionshipIds(
     seen.add(path)
 
     const html = await fetchPath(path)
-    for (const id of championshipIdsFrom(html)) ids.add(id)
+    // First sighting wins for the id, since ACSM has been known to list a
+    // championship twice across pages — but a name is taken from whichever
+    // page has one. A page that links a championship only through `/export`
+    // yields it nameless, and dropping the later page's title link would put
+    // it back on screen as a UUID, which is the whole thing this is here to
+    // stop.
+    for (const c of championshipsFrom(html)) {
+      const already = found.get(c.id)
+      if (already === undefined) found.set(c.id, c)
+      else if (already.name === undefined && c.name !== undefined) found.set(c.id, c)
+    }
     for (const next of championshipPageLinks(html, path)) {
       if (!seen.has(next)) queue.push(next)
     }
@@ -153,5 +226,5 @@ export async function walkChampionshipIds(
     )
   }
 
-  return [...ids]
+  return [...found.values()]
 }

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 
-import { championshipIdsFrom, walkChampionshipIds } from "../src/acsm/listing.js"
+import {
+  championshipsFrom,
+  championshipIdsFrom,
+  walkChampionshipIds,
+  walkChampionships,
+} from "../src/acsm/listing.js"
 
 const A = "11111111-2222-3333-4444-555555555555"
 const B = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -127,5 +132,86 @@ describe("walking the listing pages", () => {
       return n < 20 ? page([A], [`/championships?p=${n}`]) : page([B])
     })
     expect(ids.sort()).toEqual([A, B].sort())
+  })
+})
+
+describe("names off the listing", () => {
+  it("reads the name from the link the id came from", () => {
+    // The whole reason this exists: no ACSM build serves
+    // /api/championships/list.json, so every list goes through the scrape, and
+    // ids-only meant the UI showed people UUIDs for championships they had
+    // named themselves.
+    const html = `<ul>
+      <li><a href="/championship/11111111-2222-3333-4444-555555555555">September 2026</a></li>
+    </ul>`
+    expect(championshipsFrom(html)).toEqual([
+      { id: "11111111-2222-3333-4444-555555555555", name: "September 2026" },
+    ])
+  })
+
+  it("takes the title link's text, not the edit and export ones beside it", () => {
+    const id = "11111111-2222-3333-4444-555555555555"
+    const html = `<tr>
+      <td><a href="/championship/${id}">September 2026</a></td>
+      <td><a href="/championship/${id}/edit">Edit</a></td>
+      <td><a href="/championship/${id}/export">Export</a></td>
+    </tr>`
+    expect(championshipsFrom(html)).toEqual([{ id, name: "September 2026" }])
+  })
+
+  it("names a championship after a button on no template, whatever the order", () => {
+    // Document order is not something a template promises, and taking the
+    // first link the id appeared in made "Export" a plausible championship
+    // name. Only `/championship/{id}` itself carries the title; the deeper
+    // links still count towards the ids, because a page that links only to
+    // /export is still listing that championship.
+    const id = "11111111-2222-3333-4444-555555555555"
+    const html = `<tr>
+      <td><a href="/championship/${id}/export">Export</a></td>
+      <td><a href="/championship/${id}">September 2026</a></td>
+    </tr>`
+    expect(championshipsFrom(html)).toEqual([{ id, name: "September 2026" }])
+    expect(championshipsFrom(`<a href="/championship/${id}/export">Export</a>`)).toEqual([{ id }])
+  })
+
+  it("leaves the name off rather than inventing one", () => {
+    // A template that links the id itself, and one with an empty anchor. Both
+    // come back nameless and the caller falls back to the id, which is exactly
+    // what happened before names were read at all.
+    const id = "11111111-2222-3333-4444-555555555555"
+    expect(championshipsFrom(`<a href="/championship/${id}">${id}</a>`)).toEqual([{ id }])
+    expect(championshipsFrom(`<a href="/championship/${id}"><img src="x"></a>`)).toEqual([{ id }])
+  })
+
+  it("collapses the whitespace a template leaves in the markup", () => {
+    const id = "11111111-2222-3333-4444-555555555555"
+    const html = `<a href="/championship/${id}">\n   September\n   2026\n  </a>`
+    expect(championshipsFrom(html)).toEqual([{ id, name: "September 2026" }])
+  })
+
+  it("still lists the ids, for callers that only want those", () => {
+    const id = "11111111-2222-3333-4444-555555555555"
+    expect(championshipIdsFrom(`<a href="/championship/${id}">September 2026</a>`)).toEqual([id])
+  })
+
+  /**
+   * A name found on a later page still counts.
+   *
+   * ACSM lists a championship twice across pages, so the walk keeps the first
+   * sighting of an id — and a first sighting through `/export` alone carries
+   * no name. Keeping that one and discarding the page that has the title link
+   * puts the championship back on screen as a UUID, which is what reading
+   * names was for.
+   */
+  it("takes the name from whichever page has one", async () => {
+    const id = "11111111-2222-3333-4444-555555555555"
+    const pages: Record<string, string> = {
+      "/championships": `<a href="/championship/${id}/export">Export</a>
+        <a href="/championships?page=2">Next</a>`,
+      "/championships?page=2": `<a href="/championship/${id}">September 2026</a>`,
+    }
+    await expect(walkChampionships(async (p) => pages[p] ?? "")).resolves.toEqual([
+      { id, name: "September 2026" },
+    ])
   })
 })
