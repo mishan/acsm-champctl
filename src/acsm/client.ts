@@ -10,7 +10,7 @@
  * filesystem) can be swapped in later as a config change (plan §9).
  */
 
-import { walkChampionshipIds } from "./listing.js"
+import { walkChampionships } from "./listing.js"
 import { exportPath } from "./paths.js"
 import type { AcsmHealthcheck, Championship, ChampionshipSummary } from "./types.js"
 import { RateLimiter, type RateLimiterOptions } from "./rate-limit.js"
@@ -143,10 +143,14 @@ export class HttpAcsmReader implements AcsmReader {
    * the name defensively already because the JSON shape varies too.
    */
   async #scrapeChampionships(): Promise<ChampionshipSummary[]> {
-    const ids = await walkChampionshipIds(async (path) =>
+    const found = await walkChampionships(async (path) =>
       (await this.#request(path)).toString("utf8"),
     )
-    return ids.map((ID) => ({ ID }) as ChampionshipSummary)
+    return found.map((c) => {
+      const s = { ID: c.id } as ChampionshipSummary
+      if (c.name !== undefined) s.Name = c.name
+      return s
+    })
   }
 
   async exportChampionship(id: string): Promise<Championship> {

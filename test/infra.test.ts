@@ -110,7 +110,9 @@ describe("HTTP reader", () => {
         ? new Response("not found", { status: 404 })
         : new Response(`<a href="/championship/${A}">x</a>`, { status: 200 }),
     )
-    await expect(r.listChampionships()).resolves.toEqual([{ ID: A }])
+    // With the name the listing carried: the scrape is the only path any real
+    // ACSM takes, so a nameless summary here is a UUID on someone's screen.
+    await expect(r.listChampionships()).resolves.toEqual([{ ID: A, Name: "x" }])
   })
 
   /**
