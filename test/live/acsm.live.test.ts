@@ -304,6 +304,7 @@ describe.skipIf(!LIVE)("ACSM harness", () => {
     it("finds championships whether or not the JSON endpoint exists", async () => {
       const baseUrl = liveConfig()!.baseUrl
       const reader = new HttpAcsmReader({ baseUrl, rateLimit: false })
+      const { id } = await importSeed()
 
       const direct = await fetch(new URL("/api/championships/list.json", baseUrl), {
         redirect: "manual",
@@ -317,11 +318,19 @@ describe.skipIf(!LIVE)("ACSM harness", () => {
 
       const list = await reader.listChampionships()
       expect(Array.isArray(list)).toBe(true)
-      // There is at least the seed this file imported, so an empty list means
-      // the enumeration path is broken rather than that the server is empty —
-      // which is exactly how the archive came to exit 0 having archived
-      // nothing.
-      expect(list.length, "the reader must find the championships that exist").toBeGreaterThan(0)
+      // By id, not by count.
+      //
+      // A count passes on a list whose entries are useless. 2.4.15's list
+      // endpoint spells its keys `id` and `name`, and champctl read only `ID`,
+      // so this came back as the right number of entries with no id on any of
+      // them — enough for a length check, and nothing downstream can fetch a
+      // championship without one. The archive then reported "Championship list
+      // entry had no ID field" for the whole server: the failure this test
+      // exists to catch, arriving as a pass.
+      expect(
+        list.map((c) => c.ID),
+        "the reader must find the championships that exist, with their ids",
+      ).toContain(id)
     })
   })
 

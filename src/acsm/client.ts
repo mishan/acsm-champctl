@@ -100,8 +100,8 @@ export class HttpAcsmReader implements AcsmReader {
    * Every championship on the server.
    *
    * `/api/championships/list.json` is the documented endpoint (plan §3.1) and
-   * it does not exist on 2.4.5 or 2.4.15 — measured, 404 even when logged in as
-   * admin, while `/api/results/list.json` beside it answers 200. Since that is
+   * it is not on every build: 404 on 2.4.5 and on ac.batlracing.com, logged out
+   * or in, while `/api/results/list.json` beside it answers 200. Since that is
    * the endpoint `champctl-archive` walks, the archive could not enumerate a
    * single championship on the version BATL runs, and nothing noticed because
    * no test had ever run a CLI against a real manager.
@@ -124,12 +124,12 @@ export class HttpAcsmReader implements AcsmReader {
       if (e instanceof AcsmError && e.status === 404) return await this.#scrapeChampionships()
       throw e
     }
-    if (Array.isArray(body)) return body as ChampionshipSummary[]
+    if (Array.isArray(body)) return summaries(body)
     // Some versions wrap the list; accept the common shapes rather than fail.
     if (body && typeof body === "object") {
       for (const key of ["championships", "Championships", "data"]) {
         const v = (body as Record<string, unknown>)[key]
-        if (Array.isArray(v)) return v as ChampionshipSummary[]
+        if (Array.isArray(v)) return summaries(v)
       }
     }
     throw new AcsmError("Championship list was not an array")
@@ -271,6 +271,54 @@ function assertJson(bytes: Buffer, path: string, url: string): unknown {
       : ""
     throw new AcsmError(`Response from ${path} was not JSON${hint}`, undefined, url)
   }
+}
+
+/**
+ * List entries with an `ID` and a `Name`, whichever way the build spells them.
+ *
+ * `/api/championships/list.json` on 2.4.15 answers with lowercase JSON keys —
+ * `{"championships":[{"name":"…","id":"…","progress":0,…}]}` — and the rest of
+ * champctl reads `ID` and `Name`, because that is what the championship export
+ * and the scrape fallback use. Casting the array through
+ * `as ChampionshipSummary[]` made that a silent miss rather than a type error:
+ * every entry had `ID` undefined, so the web UI's clone list came back empty,
+ * `gridmom list` printed `?` per row, and `champctl-archive` reported
+ * "Championship list entry had no ID field" for the entire server while
+ * exiting on its ordinary failure path.
+ *
+ * Both spellings are in play and neither is safe to assume, so read both and
+ * normalise here — at the boundary, once — rather than in each caller. Unknown
+ * fields are kept, per the loose-at-the-boundary rule in AGENTS.md.
+ */
+function summaries(entries: readonly unknown[]): ChampionshipSummary[] {
+  return entries.map((entry) => {
+    // A `null`, a string or a number survives `Array.isArray`, and the archive
+    // has to survive one malformed row without losing the rest of the list.
+    if (entry === null || typeof entry !== "object") return {}
+    const raw = entry as Record<string, unknown>
+    const out: ChampionshipSummary = { ...raw }
+    const id = firstString(raw["ID"], raw["id"])
+    const name = firstString(raw["Name"], raw["name"])
+    if (id !== undefined) out.ID = id
+    else delete out.ID
+    if (name !== undefined) out.Name = name
+    else delete out.Name
+    return out
+  })
+}
+
+/**
+ * The first of two spellings that actually holds a string.
+ *
+ * Not `a ?? b`: that picks the capitalised key whenever it is *present*, which
+ * on a build that answers with both spellings — or with `"ID": null` beside a
+ * real `"id"` — throws away the usable one and leaves the entry with no id at
+ * all. That is the same silent-empty-list failure this function exists to fix,
+ * reintroduced one nesting level down.
+ */
+function firstString(...values: readonly unknown[]): string | undefined {
+  for (const v of values) if (typeof v === "string") return v
+  return undefined
 }
 
 /**
