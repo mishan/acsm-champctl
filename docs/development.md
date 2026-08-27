@@ -187,6 +187,11 @@ ACSM source rather than guessed. The load-bearing parts:
   number, two names. The duplicate-pit-box fix is reassigning into the gaps.
 - **`InternalUUID` is not a join key.** The class list and each event list use
   different UUIDs for the same driver; `CAR_n` is what lines them up.
+- **`EntryListType` and `PracticeEntryListType` are championship-level.** Not
+  `RaceSetup`, where champctl kept them until a real export said otherwise —
+  see plan §4.4. A field in the wrong place fails silently in both directions:
+  ACSM drops what the emitter writes, and a check reading it back finds
+  `undefined` and quietly does nothing.
 - **Types are deliberately loose.** ACSM's championship schema is a large
   undocumented Go struct that drifts across versions, so we model only what we
   read and let everything else flow through. Don't tighten them.

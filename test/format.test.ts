@@ -169,11 +169,18 @@ describe("reversed grid", () => {
 })
 
 describe("baseline drift", () => {
-  it("notes a differing entry list type without blocking", () => {
-    const c = championship({ Events: [raceEvent({ RaceSetup: { EntryListType: 0 } })] })
+  it("notes a differing RaceSetup field without blocking", () => {
+    // Was `EntryListType` until that turned out to be championship-level, and
+    // so never on a `RaceSetup` for this check to compare against — the
+    // fixture was the only reason it appeared to work. `champ.baseline` covers
+    // the championship-level half now.
+    const c = championship({
+      Events: [raceEvent({ RaceSetup: { AllowDuplicateSkinChoices: true } })],
+    })
     const report = run(c)
     const f = report.findings.find((x) => x.code === "format.baseline")
     expect(f?.severity).toBe("INFO")
+    expect(f?.message).toContain("AllowDuplicateSkinChoices")
     expect(report.ok).toBe(true)
   })
 

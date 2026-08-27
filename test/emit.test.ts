@@ -878,12 +878,10 @@ describe("emitting a championship", () => {
 
   it("applies the league baseline to every round's RaceSetup", () => {
     // gridmom checks RaceSetup against baseline.raceSetup, so an emitter that
-    // skipped it would generate championships its own checker complains about — and
-    // the deliberate EntryListType/PracticeEntryListType pair (§4.4) would
-    // only be right when the template happened to agree.
+    // skipped it would generate championships its own checker complains about.
     const { championship: c } = emitChampionship({
       template: template({
-        Events: [raceEvent({ RaceSetup: { EntryListType: 0, PracticeEntryListType: 0 } })],
+        Events: [raceEvent({ RaceSetup: { AllowDuplicateSkinChoices: true } })],
       }),
       spec: spec(),
       profile: testProfile(),
@@ -891,8 +889,30 @@ describe("emitting a championship", () => {
       now: NOW,
     })
     for (const ev of events(c)) {
-      expect(ev.RaceSetup?.EntryListType).toBe(1)
-      expect(ev.RaceSetup?.PracticeEntryListType).toBe(2)
+      expect(ev.RaceSetup?.AllowDuplicateSkinChoices).toBe(false)
+    }
+  })
+
+  it("applies the championship half of the baseline at championship level", () => {
+    // The deliberate EntryListType/PracticeEntryListType pair (§4.4) lives
+    // here, not on RaceSetup. It was in `baseline.raceSetup` until a real
+    // export showed ACSM keeps neither field there: the emitter wrote them
+    // onto every event, ACSM dropped them on import, and the championship kept
+    // whatever the template had. A clone of a locked-practice championship
+    // therefore stayed locked however the profile was configured.
+    const { championship: c } = emitChampionship({
+      template: template({ EntryListType: 0, PracticeEntryListType: 0 }),
+      spec: spec(),
+      profile: testProfile(),
+      pits,
+      now: NOW,
+    })
+    expect(c.EntryListType).toBe(1)
+    expect(c.PracticeEntryListType).toBe(2)
+    // And not smuggled onto the events, where it would be silently discarded.
+    for (const ev of events(c)) {
+      expect(ev.RaceSetup?.EntryListType).toBeUndefined()
+      expect(ev.RaceSetup?.PracticeEntryListType).toBeUndefined()
     }
   })
 
@@ -906,8 +926,7 @@ describe("emitting a championship", () => {
     const profile = testProfile({
       baseline: {
         raceSetup: {
-          EntryListType: 1,
-          PracticeEntryListType: 2,
+          AllowDuplicateSkinChoices: false,
           RacePitWindowStart: 0,
           ReversedGridRacePositions: 0,
         },
@@ -933,7 +952,7 @@ describe("emitting a championship", () => {
       expect(ev.RaceSetup?.ReversedGridRacePositions).toBe(9)
       expect(ev.RaceSetup?.RacePitWindowStart).toBe(1)
       // ...while a baseline field the championship said nothing about still applies.
-      expect(ev.RaceSetup?.EntryListType).toBe(1)
+      expect(ev.RaceSetup?.AllowDuplicateSkinChoices).toBe(false)
     }
   })
 

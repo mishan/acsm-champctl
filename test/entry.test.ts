@@ -404,6 +404,45 @@ describe("sign-ups", () => {
     })
     expect(codes(c)).not.toContain("signup.no-slot")
   })
+
+  /**
+   * The locked flag is a championship field, not an event one.
+   *
+   * This check gated on `ev.RaceSetup.EntryListType`, which no real export
+   * carries, so `undefined === 1` was false on every championship anyone has
+   * ever run it against and the check could not fire at all. It passed its
+   * tests because `raceEvent` put the field where the code looked rather than
+   * where ACSM keeps it. Both of these read the championship now.
+   */
+  it("reads the locked flag off the championship, not the event", () => {
+    const c = championship({
+      EntryListType: 1,
+      SignUpForm: {
+        Enabled: true,
+        Responses: [{ Name: "stranded", GUID: "guid-x", Status: "Accepted" }],
+      },
+      // RaceSetup deliberately says nothing about it, which is the shape every
+      // real export has.
+      Events: [raceEvent({ EntryList: entryList(emptySlots(10)) })],
+      Classes: [championshipClass({ Entrants: entryList(emptySlots(10)) })],
+    })
+    expect(codes(c)).toContain("signup.no-slot")
+  })
+
+  it("says nothing when the race list is unlocked", () => {
+    // Anyone can take any free slot, so an accepted driver without one of
+    // their own is not shut out of anything.
+    const c = championship({
+      EntryListType: 0,
+      SignUpForm: {
+        Enabled: true,
+        Responses: [{ Name: "stranded", GUID: "guid-x", Status: "Accepted" }],
+      },
+      Events: [raceEvent({ EntryList: entryList(emptySlots(10)) })],
+      Classes: [championshipClass({ Entrants: entryList(emptySlots(10)) })],
+    })
+    expect(codes(c)).not.toContain("signup.no-slot")
+  })
 })
 
 describe("race numbers", () => {

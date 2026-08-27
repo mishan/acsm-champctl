@@ -5,7 +5,7 @@
  * each event — so cross-list comparison is doing real work here.
  */
 
-import { ANY_CAR_MODEL, type EntryList } from "../../acsm/types.js"
+import { ANY_CAR_MODEL, EntryListType, type EntryList } from "../../acsm/types.js"
 import {
   acceptedSignUps,
   claimedSlots,
@@ -554,6 +554,12 @@ export const signUpsExceedSlots: Check = {
 /**
  * Under a locked race entry list, an accepted sign-up with no slot is someone
  * who literally cannot join the race (plan §4.4).
+ *
+ * **`EntryListType` is championship-level.** This read it off each event's
+ * `RaceSetup` and therefore never fired: no real export has it there, so
+ * `locked` was `undefined === 1` on every championship champctl has ever
+ * checked. See the note on `Championship.EntryListType`. A check that cannot
+ * run is worse than no check, because the report looks complete.
  */
 export const acceptedSignUpWithoutSlot: Check = {
   id: "signup.no-slot",
@@ -561,10 +567,9 @@ export const acceptedSignUpWithoutSlot: Check = {
   run(ctx, emit) {
     const accepted = acceptedSignUps(ctx.championship)
     if (accepted.length === 0) return
+    if (ctx.championship.EntryListType !== EntryListType.Locked) return
 
     events(ctx.championship).forEach((ev, i) => {
-      const locked = ev.RaceSetup?.EntryListType === 1
-      if (!locked) return
       const guids = new Set(
         slots(ev.EntryList)
           .map((s) => normGuid(s.entrant.GUID))

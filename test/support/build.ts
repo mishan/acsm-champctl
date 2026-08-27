@@ -31,8 +31,8 @@ export const testProfile = (over: Partial<LeagueProfile> = {}): LeagueProfile =>
     },
     entryList: { targetSlots: 30 },
     baseline: {
-      raceSetup: { EntryListType: 1, PracticeEntryListType: 2 },
-      championship: {},
+      raceSetup: { AllowDuplicateSkinChoices: false },
+      championship: { EntryListType: 1, PracticeEntryListType: 2 },
     },
     excludedCarModels: ["ford_transit"],
     ...over,
@@ -111,8 +111,10 @@ export function raceEvent(over: Partial<ChampionshipEvent> = {}): ChampionshipEv
       TrackLayout: "",
       Cars: "rss_formula_hybrid_2021",
       MaxClients: 18,
-      EntryListType: 1,
-      PracticeEntryListType: 2,
+      // No EntryListType here, deliberately. It is championship-level, and a
+      // fixture that puts it on RaceSetup is a fixture no manager produces —
+      // which is how `signup.no-slot` came to gate on a field it could never
+      // read. See the note on `Championship.EntryListType`.
       RacePitWindowStart: 0,
       RacePitWindowEnd: 0,
       ReversedGridRacePositions: 0,
@@ -153,6 +155,10 @@ export function championship(over: Partial<Championship> = {}): Championship {
     Version: 2,
     Classes: [championshipClass()],
     Events: [raceEvent()],
+    // BATL's combination, and where ACSM actually keeps it: locked race list,
+    // partially locked practice (plan §4.4).
+    EntryListType: 1,
+    PracticeEntryListType: 2,
     SignUpForm: { Enabled: false, Responses: [], ExtraFields: [] },
     IgnoreXWorstEvents: 0,
     SpectatorCarEnabled: false,

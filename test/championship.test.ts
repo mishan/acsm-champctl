@@ -23,6 +23,43 @@ const run = (c: Export) => check(c, testProfile(), { now: NOW, checks: champions
 
 const codes = (c: Export) => run(c).findings.map((f) => f.code)
 
+/**
+ * The championship half of the baseline, which nothing checked until now.
+ *
+ * `baseline.championship` was a supported profile section with no check behind
+ * it, and that gap hid a real one: BATL's profile asks for a partially locked
+ * practice list, a cloned championship came back fully locked, and the report
+ * said nothing about it. `testProfile` sets `EntryListType: 1` and
+ * `PracticeEntryListType: 2`.
+ */
+describe("championship baseline drift", () => {
+  it("notes a differing value without blocking", () => {
+    const c = championship({ PracticeEntryListType: 1 })
+    const report = run(c)
+    const f = report.findings.find((x) => x.code === "champ.baseline")
+    expect(f?.severity).toBe("INFO")
+    expect(f?.message).toContain("PracticeEntryListType")
+    expect(report.ok).toBe(true)
+  })
+
+  it("is quiet when the championship matches the league's usual", () => {
+    expect(codes(championship())).not.toContain("champ.baseline")
+  })
+
+  it("says nothing about a field the export doesn't carry", () => {
+    // Absent is a different statement from "set to something else". An ACSM
+    // that renamed or dropped a field would otherwise put a finding on every
+    // championship it serves.
+    // `delete` rather than assigning undefined: under
+    // `exactOptionalPropertyTypes` those are different things, and "the key
+    // isn't there" is the one being tested.
+    const c = championship()
+    delete c.PracticeEntryListType
+    delete c.EntryListType
+    expect(codes(c)).not.toContain("champ.baseline")
+  })
+})
+
 describe("dropped scores", () => {
   it("is quiet when the drop count leaves rounds standing", () => {
     const c = championship({
