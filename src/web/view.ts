@@ -88,7 +88,10 @@ export function roundView(ev: ChampionshipEvent, round: number, profile: LeagueP
   return {
     round,
     eventId: (ev.ID ?? "").trim(),
-    track: trackLabel(ev.RaceSetup),
+    venue: {
+      track: (ev.RaceSetup?.Track ?? "").trim(),
+      layout: (ev.RaceSetup?.TrackLayout ?? "").trim(),
+    },
     label: eventLabel(ev, round),
     started: eventHasStarted(ev),
     format: readFormat(ev),

@@ -26,14 +26,15 @@
  */
 
 import type { AcsmReader } from "../acsm/client.js"
-import { layoutsFrom } from "../acsm/content.js"
+import { layoutsFrom, type TrackLayouts } from "../acsm/content.js"
 import { eventEditPath } from "../acsm/paths.js"
 import type { AcsmSession } from "../acsm/session.js"
 import type { Championship } from "../acsm/types.js"
 import { events } from "../acsm/view.js"
 
-/** Track folder name to its layouts. A track with no choice has no entry. */
-export type TrackLayouts = Record<string, string[]>
+// Declared next to the parser that produces it; re-exported here because this
+// is where callers reach for it.
+export type { TrackLayouts }
 
 /**
  * How many championships to open looking for one with an event.

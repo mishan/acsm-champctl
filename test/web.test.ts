@@ -36,7 +36,6 @@ import { LoginThrottle } from "../src/web/throttle.js"
 import {
   eventFormHtml,
   fakeImportPage,
-  layoutSelectHtml,
   scheduleFormHtml,
   type FormEntrant,
 } from "./support/acsm-html.js"
@@ -118,7 +117,9 @@ afterEach(async () => {
 
 function harness(options: HarnessOptions = {}): Harness {
   const posts: { url: string; body: string }[] = []
-  const pages = options.eventPages ?? [eventFormHtml(CHAMP_ID, TWO)]
+  const pages = options.eventPages ?? [
+    eventFormHtml(CHAMP_ID, TWO, {}, { layoutSelect: !options.noLayoutSelect }),
+  ]
   let eventGets = 0
   let stored = ""
 
@@ -169,13 +170,10 @@ function harness(options: HarnessOptions = {}): Harness {
     }
     const page = pages[Math.min(eventGets, pages.length - 1)] as string
     eventGets++
-    // Real event forms carry the TrackLayout select, which is the only place
-    // ACSM lists a track's layouts.
-    if (options.noLayoutSelect) return new Response(page, { status: 200 })
-    return new Response(
-      page + layoutSelectHtml(["ks_brands_hatch:indy", "ks_brands_hatch:gp", "spa:<default>"]),
-      { status: 200 },
-    )
+    // The TrackLayout select is part of the event form fixture now — it is the
+    // only place ACSM lists a track's layouts, and it is also the field a save
+    // has to round-trip, so the two cannot be tested against different pages.
+    return new Response(page, { status: 200 })
   }
 
   const app = buildServer({
@@ -606,6 +604,36 @@ describe("previewing a change", () => {
     expect(plan.formChanges.map((f: { name: string }) => f.name)).toEqual(["Race.Laps"])
   })
 
+  /**
+   * Moving a round, and the only repair for one whose layout ACSM can't
+   * resolve. The screen offers it beside the lap count, so the API takes it in
+   * the same preview.
+   */
+  it("previews a move to another track", async () => {
+    const h = harness()
+    await h.login()
+    const { plan } = (
+      await preview(h, { venue: { track: "ks_brands_hatch", layout: "indy" } })
+    ).json()
+
+    expect(plan.changes).toContainEqual({
+      label: "Track",
+      before: "suzuka",
+      after: "ks_brands_hatch/indy",
+    })
+    expect(plan.formChanges.map((f: { name: string }) => f.name)).toEqual(
+      expect.arrayContaining(["Track", "TrackLayout"]),
+    )
+  })
+
+  it("declines a move ACSM could not hold, rather than landing it elsewhere", async () => {
+    const h = harness()
+    await h.login()
+    const res = await preview(h, { venue: { track: "ks_brands_hatch", layout: "club" } })
+    expect(res.statusCode).toBe(422)
+    expect(res.json().error.message).toContain("no club layout")
+  })
+
   it("refuses laps and minutes together", async () => {
     const h = harness()
     await h.login()
@@ -888,7 +916,7 @@ describe("reading a championship", () => {
     expect(body.championship.rounds).toHaveLength(1)
     const round = body.championship.rounds[0]
     expect(round.round).toBe(1)
-    expect(round.track).toBe("suzuka")
+    expect(round.venue).toEqual({ track: "suzuka", layout: "" })
     expect(round.format.length).toEqual({ kind: "laps", laps: 20 })
     // Scheduled is practice start; quali is an hour later. Anyone reading
     // `Scheduled` as the quali time is an hour out.
@@ -1354,6 +1382,31 @@ describe("what content is installed", () => {
     })
     expect(res.statusCode, res.body).toBe(200)
     expect((res.json() as { layouts: unknown }).layouts).toBeNull()
+  })
+
+  /**
+   * The check that would have caught what BATL hit: a round on a track with
+   * layouts, with none set. It reaches the screen through the same report the
+   * round list already carries, so there is nowhere new to look.
+   */
+  it("warns on the round list about a round with no layout set", async () => {
+    const h = harness({
+      championship: champ({
+        Events: [raceEvent({ ID: EVENT_ID, RaceSetup: { Track: "ks_brands_hatch" } })],
+      }),
+    })
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/api/championships/${CHAMP_ID}`,
+      headers: { cookie: h.cookie() },
+    })
+
+    const f = res
+      .json()
+      .gridmom.findings.find((x: { code: string }) => x.code === "content.track-layout-unset")
+    expect(f?.severity).toBe("WARN")
+    expect(f?.message).toContain("indy and gp")
   })
 
   it("needs a session, like every other read", async () => {

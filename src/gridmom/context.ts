@@ -7,6 +7,7 @@
  */
 
 import type { Championship } from "../acsm/types.js"
+import type { TrackLayouts } from "../acsm/content.js"
 import type { ContentIndex } from "../content/index.js"
 import type { PitTable } from "../pits/table.js"
 import type { LeagueProfile } from "../profile/types.js"
@@ -23,6 +24,19 @@ export interface CheckContext {
    * in which case the content checks skip rather than guess.
    */
   content?: ContentIndex | undefined
+  /**
+   * Which layouts each track has, when something has been able to read them.
+   *
+   * A track with no layout to choose has no entry — see `acsm/content.ts`. Its
+   * own field rather than part of `content` because it comes from somewhere
+   * else and costs something else: ACSM lists layouts on exactly one page, an
+   * event edit form, and that page needs a login.
+   *
+   * `undefined` and `null` both mean "nobody could tell me", and the layout
+   * checks skip. That distinction matters on the wire, where `null` says the
+   * read was attempted and failed; here there is nothing to do about either.
+   */
+  layouts?: TrackLayouts | null | undefined
 }
 
 /** Convenience emitter handed to each check, so checks stay declarative. */

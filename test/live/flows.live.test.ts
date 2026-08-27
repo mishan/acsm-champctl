@@ -19,6 +19,8 @@
 import { DateTime } from "luxon"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
+import { layoutsFrom } from "../../src/acsm/content.js"
+import { offeredTracks } from "../../src/acsm/event-form.js"
 import { getAll, parseForm, setAt } from "../../src/acsm/form.js"
 import type { AcsmSession } from "../../src/acsm/session.js"
 import type { Championship } from "../../src/acsm/types.js"
@@ -71,6 +73,50 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
   const live = (): AcsmSession => {
     if (!session) throw new Error("no live session; beforeAll did not complete")
     return session
+  }
+
+  /**
+   * Somewhere else on *this* server to move a round to.
+   *
+   * Read off the event form rather than named in the test, and that is the
+   * whole point: a harness is whatever content somebody installed on it, so a
+   * hardcoded `ks_silverstone` is a test that passes on one machine and fails
+   * on the next. It did exactly that.
+   *
+   * Prefers a track with layouts, because `TrackLayout` is the field this
+   * feature exists to write and a single-layout track exercises only half of
+   * it. Falls back to any other installed track when the server has none —
+   * still a real move, still a real write.
+   */
+  const somewhereElse = async (
+    championshipId: string,
+    eventId: string,
+    from: string,
+  ): Promise<{ track: string; layout: string }> => {
+    const html = await live().getText(eventEditPath(championshipId, eventId))
+    const layouts = layoutsFrom(html) ?? {}
+    const offered = [...offeredTracks(html)].filter((t) => t !== from).sort()
+
+    const withLayouts = offered.find((t) => (layouts[t]?.length ?? 0) > 0)
+    if (withLayouts) return { track: withLayouts, layout: layouts[withLayouts]?.[0] ?? "" }
+
+    const plain = offered[0]
+    if (!plain) {
+      throw new Error(
+        `This manager offers no track other than ${from}, so there is nowhere to move a round ` +
+          `to. That is a harness with no content installed, not a failure of the code under test.`,
+      )
+    }
+    return { track: plain, layout: "" }
+  }
+
+  /** A track name this server certainly does not have. */
+  const nowhere = async (championshipId: string, eventId: string): Promise<string> => {
+    const offered = offeredTracks(await live().getText(eventEditPath(championshipId, eventId)))
+    for (let i = 0; ; i++) {
+      const name = `champctl_no_such_track_${i}`
+      if (!offered.has(name)) return name
+    }
   }
 
   const importFixture = async (
@@ -224,6 +270,94 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       expect(sessionConfig(after, "Qualifying")?.Time).toBe(
         sessionConfig(before, "Qualifying")?.Time,
       )
+    }, 60_000)
+
+    /**
+     * The assertion this suite exists for, and the one it was missing.
+     *
+     * ACSM renders `TrackLayout` as a select of every track's layouts with
+     * nothing marked `selected`, so a browser-correct round-trip posts the
+     * first option — a layout belonging to some other track. Every finalize
+     * champctl ran moved the round's layout, and no scripted-fetch test could
+     * have seen it: the fixture rendered a select that submits `""` under any
+     * reading. Only a real manager's HTML has the shape that breaks.
+     */
+    it("leaves the track and layout exactly as they were", async () => {
+      const { id, export: champ } = await seeded()
+      const eventId = firstEventId(champ)
+      const before = events(champ)[0]!.RaceSetup
+
+      const plan = await planFinalize(live(), {
+        championship: champ,
+        championshipId: id,
+        eventId,
+        format: wanted,
+        profile: PROFILE,
+      })
+      assertWouldChange(plan, "the finalize under test")
+      await applyFinalize(live(), plan, { acknowledgeWarnings: true })
+
+      const after = events(await live().getJson<Championship>(`/championship/${id}/export`))[0]!
+      expect(after.RaceSetup?.Track, "a finalize is about laps").toBe(before?.Track)
+      expect(after.RaceSetup?.TrackLayout, "a finalize is about laps").toBe(before?.TrackLayout)
+    }, 60_000)
+
+    /**
+     * The repair, end to end, on a real manager.
+     *
+     * This is the state BATL is in on rounds champctl has already touched:
+     * a layout belonging to another track, which ACSM stores without complaint
+     * and cannot render. Nothing but writing `TrackLayout` fixes it, and until
+     * now nothing could write it.
+     */
+    it("moves a round to another track and layout", async () => {
+      const { id, export: champ } = await seeded()
+      const eventId = firstEventId(champ)
+
+      const target = await somewhereElse(
+        id,
+        eventId,
+        (events(champ)[0]?.RaceSetup?.Track ?? "").trim(),
+      )
+
+      const plan = await planFinalize(live(), {
+        championship: champ,
+        championshipId: id,
+        eventId,
+        format: await seedFormat(),
+        profile: PROFILE,
+        venue: target,
+      })
+      expect(plan.venue?.to).toEqual(target)
+      await applyFinalize(live(), plan, { acknowledgeWarnings: true })
+
+      const after = events(await live().getJson<Championship>(`/championship/${id}/export`))[0]!
+      expect(after.RaceSetup?.Track).toBe(target.track)
+      expect(after.RaceSetup?.TrackLayout, "the layout ACSM stored").toBe(target.layout)
+    }, 60_000)
+
+    /**
+     * A track this server doesn't have. ACSM's form cannot express it, so
+     * every payload champctl could send lands somewhere else — refusing is the
+     * only answer that doesn't move a race without being asked.
+     */
+    it("refuses to move a round to a track that isn't installed", async () => {
+      const { id, export: champ } = await seeded()
+      const eventId = firstEventId(champ)
+      const err = await planFinalize(live(), {
+        championship: champ,
+        championshipId: id,
+        eventId,
+        format: await seedFormat(),
+        profile: PROFILE,
+        // Checked against the form rather than assumed: a name this test picks
+        // out of the air could be a mod track somebody has installed, and then
+        // this would pass for the wrong reason.
+        venue: { track: await nowhere(id, eventId), layout: "" },
+      }).catch((e: unknown) => e)
+
+      expect(err).toBeInstanceOf(Error)
+      expect((err as Error).message).toMatch(/isn't installed/)
     }, 60_000)
 
     it("keeps every entrant, with their own car and skin", async () => {

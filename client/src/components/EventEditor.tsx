@@ -9,10 +9,12 @@ import {
   type ApplyResponse,
   type Config,
   type FormatPreset,
+  type InstalledItem,
   type PlanView,
   type RoundView,
 } from "../api"
-import { describeFormat, describeLength } from "../format"
+import { describeFormat, describeLength, venueLabel } from "../format"
+import { Picker } from "./Picker"
 import { Findings } from "./Findings"
 import { Message } from "./Message"
 
@@ -66,6 +68,11 @@ interface EventEditorProps {
 function draftFrom(round: RoundView): Draft {
   const f = round.format
   return {
+    track: round.venue.track,
+    layout: round.venue.layout,
+    // Kept beside the live values so the request can tell a move from a
+    // round that simply arrived somewhere.
+    venueWas: round.venue,
     lengthKind: f.length.kind,
     laps: f.length.kind === "laps" ? String(f.length.laps) : "",
     minutes: f.length.kind === "minutes" ? String(f.length.minutes) : "",
@@ -100,6 +107,19 @@ export function EventEditor({
   onAuthLost,
 }: EventEditorProps): React.JSX.Element {
   const [current, setCurrent] = useState<RoundView | null>(null)
+  /**
+   * What is installed, for the track and layout pickers.
+   *
+   * Its own request, and its own failure. A screen that could not read the
+   * content index can still change a lap count, so this never blocks the
+   * round: the pickers say they have nothing to offer and everything else
+   * works. `null` layouts means champctl has no layout index at all, which is
+   * not the same as a track having no layouts — see `NewChampionship`.
+   */
+  const [installed, setInstalled] = useState<{
+    tracks: InstalledItem[]
+    layouts: Record<string, string[]> | null
+  } | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [plan, setPlan] = useState<PlanView | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -149,6 +169,24 @@ export function EventEditor({
       }
     })()
   }, [championshipId, round, describe])
+
+  useEffect(() => {
+    let live = true
+    void (async () => {
+      try {
+        const content = await api.content()
+        if (live) setInstalled({ tracks: content.tracks, layouts: content.layouts })
+      } catch {
+        // Quiet, and empty rather than left loading: `Picker` says "champctl
+        // couldn't read what's installed" in the field itself, which is where
+        // somebody wondering about an empty list is already looking.
+        if (live) setInstalled({ tracks: [], layouts: null })
+      }
+    })()
+    return () => {
+      live = false
+    }
+  }, [])
 
   useEffect(() => {
     load()
@@ -320,7 +358,7 @@ export function EventEditor({
 
       <h1>
         <span className="round-number">{round}</span>
-        {current.track || "no track set"}
+        {venueLabel(current.venue) || "no track set"}
       </h1>
       <p className="muted">
         {/*
@@ -364,6 +402,56 @@ export function EventEditor({
           </p>
         </section>
       )}
+
+      <section>
+        <h2>Track</h2>
+        {/*
+          Here, rather than behind a separate screen, because the round is the
+          thing being edited and this is part of where it runs. It is also the
+          only way to repair a round whose layout ACSM can't resolve — gridmom
+          says so in the report below, and the fix has to be within reach of
+          the complaint.
+        */}
+        <Picker
+          label="Track"
+          value={draft.track}
+          items={installed?.tracks ?? []}
+          loading={installed === null}
+          placeholder="Search installed tracks"
+          emptyHint="champctl couldn't read the tracks installed on this manager."
+          onChange={(track) =>
+            // The layout belongs to the old track, so it goes with it. Keeping
+            // it would ask the server to put `indy` on Monza, which it refuses
+            // — correctly, and confusingly, since nobody typed that.
+            set({ track, layout: "" })
+          }
+        />
+
+        {installed?.layouts == null ? (
+          draft.track && (
+            <>
+              <label htmlFor="layout">Layout</label>
+              <input
+                id="layout"
+                type="text"
+                value={draft.layout}
+                placeholder="Layout, if this track has one"
+                onChange={(e) => set({ layout: e.target.value })}
+              />
+            </>
+          )
+        ) : (installed.layouts[draft.track]?.length ?? 0) > 0 ? (
+          <Picker
+            label="Layout"
+            value={draft.layout}
+            items={(installed.layouts[draft.track] ?? []).map((l) => ({ id: l, name: l }))}
+            placeholder="Layout"
+            onChange={(layout) => set({ layout })}
+          />
+        ) : (
+          <p className="fineprint">{draft.track ? "This track has a single layout." : ""}</p>
+        )}
+      </section>
 
       <section>
         <h2>Race</h2>

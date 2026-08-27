@@ -105,6 +105,89 @@ export const skinMissing: Check = {
   },
 }
 
+/**
+ * A round whose layout ACSM cannot resolve.
+ *
+ * Two shapes, one cause, and both of them produce a championship page with no
+ * track image and a race at a layout nobody chose:
+ *
+ * - **Nothing set** on a track that has layouts. What the create screen
+ *   produced before it asked for one, since a clone of a template inherits
+ *   `TrackLayout: ""`.
+ * - **Set to something this track doesn't have.** What every champctl event
+ *   save wrote before `acsm/event-form.ts` — a layout belonging to whichever
+ *   track sorts first on the server. See `docs/acsm-write-path.md` §15.
+ *
+ * WARN rather than ERROR: BATL ran a full practice session on a round in this
+ * state, so it is "this is probably not the layout you meant" rather than
+ * "this cannot run", and blocking every push on a round that has already raced
+ * would help nobody.
+ *
+ * Skipped entirely without a layout index, like the rest of §6.4. A track
+ * absent from a *present* index genuinely has one layout, and saying nothing
+ * about it is the right answer.
+ */
+export const trackLayoutUnusable: Check = {
+  id: "content.track-layout",
+  section: "6.4",
+  run(ctx, emit) {
+    const layouts = ctx.layouts
+    if (!layouts) return
+
+    events(ctx.championship).forEach((ev, i) => {
+      const track = (ev.RaceSetup?.Track ?? "").trim()
+      if (!track) return
+
+      const available = layouts[track] ?? []
+      const label = eventLabel(ev, i + 1)
+      const loc = { round: i + 1, event: label, path: `Events[${i}].RaceSetup.TrackLayout` }
+      const layout = (ev.RaceSetup?.TrackLayout ?? "").trim()
+
+      // A track the index doesn't mention has one layout, which ACSM stores as
+      // `""`. Anything else on such a track is wrong however plausible it
+      // looks — and this is the shape the old save bug left on a single-layout
+      // track, where the "available" list has nothing to compare against.
+      if (available.length === 0) {
+        if (!layout) return
+        emit(
+          "WARN",
+          "content.track-layout-unknown",
+          `${label} is set to the ${layout} layout, and this server offers no layouts for ` +
+            `${track} — a single-layout track is stored with none set. Most likely a save wrote ` +
+            `it: champctl did that to every event it touched before it learned to read this field.`,
+          loc,
+          { track, layout, available },
+        )
+        return
+      }
+
+      if (!layout) {
+        emit(
+          "WARN",
+          "content.track-layout-unset",
+          `${label} has no layout set, and ${track} has ${humanList(available)} to choose from. ` +
+            `ACSM can't show the track and the race runs at whatever it falls back to.`,
+          loc,
+          { track, available },
+        )
+        return
+      }
+
+      if (available.includes(layout)) return
+
+      emit(
+        "WARN",
+        "content.track-layout-unknown",
+        `${label} is set to the ${layout} layout, which isn't one ${track} has — its layouts are ` +
+          `${humanList(available)}. Most likely a save wrote it: champctl did that to every event ` +
+          `it touched before it learned to read this field.`,
+        loc,
+        { track, layout, available },
+      )
+    })
+  },
+}
+
 export const unknownPitCount: Check = {
   id: "content.pit-count-unknown",
   section: "6.4",
@@ -156,5 +239,6 @@ export const contentChecks: readonly Check[] = [
   trackNotInstalled,
   carNotInstalled,
   skinMissing,
+  trackLayoutUnusable,
   unknownPitCount,
 ]

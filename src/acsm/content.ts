@@ -90,6 +90,16 @@ function headingFor(node: ReturnType<ReturnType<typeof cheerio.load>>): string {
 }
 
 /**
+ * Track folder name to its layouts. A track with no choice has no entry.
+ *
+ * Declared here, with the parser that produces it, rather than in the web
+ * layer that first needed it: gridmom reads this too, and gridmom is a pure
+ * function of an export plus some facts about the server. Reaching into
+ * `web/` for a type would make the checker depend on the service.
+ */
+export type TrackLayouts = Record<string, string[]>
+
+/**
  * Every track's layouts, off an event edit form.
  *
  * The only place ACSM will say. `/tracks` lists tracks and no layouts, the
@@ -103,6 +113,11 @@ function headingFor(node: ReturnType<ReturnType<typeof cheerio.load>>): string {
  * The form spells each one `{track}:{layout}` in the option's value, which is
  * why this returns a map rather than a list: the caller has a track and wants
  * that track's layouts.
+ *
+ * **The option for the layout the event is currently on carries a third
+ * segment**, `{track}:{layout}:current`, which is how the page tells its own
+ * JavaScript what to select — see `acsm/event-form.ts`. It is a marker, not
+ * part of the layout's name, and it is dropped here.
  *
  * A track with no layouts is spelled `{track}:<default>`, and comes back with
  * no entry at all rather than one holding a sentinel. Measured on 2.4.15:
@@ -119,6 +134,7 @@ function headingFor(node: ReturnType<ReturnType<typeof cheerio.load>>): string {
  * simply failed to find the list.
  */
 const NO_LAYOUT = "<default>"
+
 export function layoutsFrom(html: string): Record<string, string[]> | undefined {
   const $ = cheerio.load(html)
   const select = $('select[name="TrackLayout"]')
@@ -130,11 +146,17 @@ export function layoutsFrom(html: string): Record<string, string[]> | undefined 
     // The value, not the label: 2.4.15 labels the option with the layout's
     // folder name, but a build that labelled it "Indy Circuit" would still
     // have to submit the folder name, and that is the half champctl stores.
-    const value = $(el).attr("value") ?? ""
-    const at = value.indexOf(":")
-    if (at <= 0) return
-    const track = value.slice(0, at).trim()
-    const layout = value.slice(at + 1).trim()
+    //
+    // Three segments, not two. The option for the layout the event is on
+    // carries a marker — `ks_highlands:layout_short:current` — so splitting on
+    // the first colon and keeping the rest made the layout `layout_short:current`.
+    // That reached the create screen as an option nobody could pick correctly,
+    // and would have had gridmom report the layout ACSM is *actually* running
+    // as one its track does not have. Exactly one option per page carries it,
+    // which is why it went unnoticed.
+    const parts = ($(el).attr("value") ?? "").split(":")
+    const track = (parts[0] ?? "").trim()
+    const layout = (parts[1] ?? "").trim()
     if (!track || !layout || layout === NO_LAYOUT) return
 
     const list = out[track] ?? []

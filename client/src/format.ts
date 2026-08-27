@@ -26,6 +26,21 @@ export function describeFormat(f: RaceFormat): string {
   return parts.join(" · ")
 }
 
+/**
+ * `ks_brands_hatch/indy`, or just the track when it has one layout.
+ *
+ * The identifier form rather than a sentence, and one function rather than a
+ * template string in each of the three places that need it. It is the spelling
+ * ACSM uses, the spelling the pit table is keyed by, and the one somebody
+ * checking champctl's work against Server Manager is looking at.
+ */
+export function venueLabel(venue: { track: string; layout: string }): string {
+  const track = venue.track.trim()
+  if (!track) return ""
+  const layout = venue.layout.trim()
+  return layout ? `${track}/${layout}` : track
+}
+
 /** True when the two describe the same race. Mirrors `sameFormat` on the server. */
 export function sameFormat(a: RaceFormat, b: RaceFormat): boolean {
   const sameLength =

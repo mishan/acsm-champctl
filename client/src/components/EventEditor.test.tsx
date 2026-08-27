@@ -13,7 +13,7 @@
  * for real is a test nobody runs.
  */
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ApiFailure } from "../api"
@@ -21,6 +21,7 @@ import type {
   ApplyResponse,
   CheckReport,
   Config,
+  ContentResponse,
   Finding,
   PlanResponse,
   PlanView,
@@ -31,16 +32,20 @@ import type {
 // file, and the factory now runs at import time — this module imports a *value*
 // from "../api" (`ApiFailure`), not only types. Plain consts were initialised
 // too late and the factory saw them undefined.
-const { planMock, applyMock } = vi.hoisted(() => ({
+const { planMock, applyMock, contentMock } = vi.hoisted(() => ({
   planMock: vi.fn<(...args: unknown[]) => Promise<PlanResponse>>(),
   applyMock: vi.fn<(...args: unknown[]) => Promise<ApplyResponse>>(),
+  contentMock: vi.fn<() => Promise<ContentResponse>>(),
 }))
 
 vi.mock("../api", async (importOriginal) => {
   // `ApiFailure` is a real class the component narrows on with `instanceof`, so
   // it has to be the real one rather than a stand-in.
   const actual = await importOriginal<typeof import("../api")>()
-  return { ...actual, api: { ...actual.api, plan: planMock, apply: applyMock } }
+  return {
+    ...actual,
+    api: { ...actual.api, plan: planMock, apply: applyMock, content: contentMock },
+  }
 })
 
 const { EventEditor } = await import("./EventEditor")
@@ -51,7 +56,7 @@ function round(over: Partial<RoundView> = {}): RoundView {
   return {
     round: 1,
     eventId: "event-1",
-    track: "suzuka",
+    venue: { track: "suzuka", layout: "" },
     label: "Round 1 — suzuka",
     started: false,
     format: {
@@ -172,13 +177,95 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   planMock.mockReset()
   applyMock.mockReset()
+  contentMock.mockReset()
   planMock.mockResolvedValue({ plan: planView(), round: round() })
   applyMock.mockResolvedValue({ eventSaved: true, scheduleSaved: true, changes: [] })
+  contentMock.mockResolvedValue({
+    cars: [],
+    tracks: [
+      { id: "suzuka", name: "Suzuka Circuit" },
+      { id: "ks_brands_hatch", name: "Brands Hatch" },
+    ],
+    layouts: { ks_brands_hatch: ["indy", "gp"] },
+  })
 })
 
 afterEach(() => {
   cleanup()
   vi.useRealTimers()
+})
+
+/**
+ * Changing where a round runs, which is on this screen for a reason: it is the
+ * only repair for a round whose layout ACSM can't resolve, and gridmom says so
+ * in the report a few inches below the field.
+ */
+describe("moving a round", () => {
+  const pick = async (label: RegExp, query: string) => {
+    const input = screen.getByLabelText(label)
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: query } })
+    const list = await screen.findByRole("listbox", { name: label })
+    const first = within(list).getAllByRole("option")[0]
+    if (!first) throw new Error(`nothing matches ${query}`)
+    fireEvent.mouseDown(first)
+  }
+
+  it("seeds the track from the round and asks for no move", async () => {
+    await opened()
+    await waitFor(() =>
+      expect(screen.getByLabelText(/^Track$/)).toHaveProperty("value", "Suzuka Circuit"),
+    )
+    await settle()
+    // Every preview so far is of the round as it stands, so none of them may
+    // ask to write the track.
+    for (const call of planMock.mock.calls) expect(call[2]).not.toHaveProperty("venue")
+  })
+
+  it("sends the move once a track is picked", async () => {
+    await opened()
+    await screen.findByLabelText(/^Track$/)
+    await pick(/^Track$/, "Brands")
+    await pick(/^Layout$/, "indy")
+    await settle()
+
+    expect(planMock.mock.lastCall?.[2]).toMatchObject({
+      venue: { track: "ks_brands_hatch", layout: "indy" },
+    })
+  })
+
+  /**
+   * A layout belongs to one track — `indy` means nothing at Suzuka — so the
+   * track change has to drop it. Keeping it would ask the server for a pair it
+   * refuses, over a layout nobody typed.
+   */
+  it("drops the layout when the track changes", async () => {
+    await opened()
+    await screen.findByLabelText(/^Track$/)
+    await pick(/^Track$/, "Brands")
+    await pick(/^Layout$/, "gp")
+    await settle()
+    expect(planMock.mock.lastCall?.[2]).toMatchObject({ venue: { layout: "gp" } })
+
+    // Back where it started, and asking for nothing — which is only true if
+    // `gp` went with the track it belonged to. Had it survived, this would be
+    // a move to suzuka/gp, a pair the server refuses.
+    await pick(/^Track$/, "Suzuka")
+    await settle()
+    expect(planMock.mock.lastCall?.[2]).not.toHaveProperty("venue")
+  })
+
+  /**
+   * The screen still works when the content index doesn't. Changing a lap
+   * count must not depend on having read what's installed.
+   */
+  it("still previews when the track list could not be read", async () => {
+    contentMock.mockRejectedValue(new Error("nope"))
+    await opened()
+    fireEvent.change(lengthField(), { target: { value: "18" } })
+    await settle()
+    expect(planMock.mock.lastCall?.[2]).toMatchObject({ minutes: 18 })
+  })
 })
 
 describe("opening a round", () => {

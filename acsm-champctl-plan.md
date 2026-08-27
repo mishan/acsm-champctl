@@ -568,6 +568,17 @@ step is the likeliest way a 1x40 quietly runs without its stop.
 | Car model not installed | ERROR |
 | Skin missing for a model | WARN |
 | Pit count for a selected track is unknown or unverified | WARN |
+| A track with layouts has none set (`content.track-layout-unset`) | WARN |
+| The layout set is not one the track has (`content.track-layout-unknown`) | WARN |
+
+The two layout checks need the layout index, which costs a login (§3.4), so
+they skip when nobody could read it. WARN rather than ERROR because a round in
+this state still runs — BATL completed a practice session on one — but it runs
+somewhere nobody chose, and ACSM shows no track image for it. Both shapes were
+produced by champctl itself: the unset one by a clone made before the create
+screen asked for a layout, the unknown one by every event save made before
+`acsm/event-form.ts` (see `docs/acsm-write-path.md` §15). The repair is on the
+round screen, which is where the warning appears.
 
 ### 6.5 Championship level
 

@@ -520,7 +520,8 @@ const CHAMP_ID = "11111111-2222-3333-4444-555555555555"
 const eventFormHtml = (
   entrants: readonly FormEntrant[],
   over: Record<string, string> = {},
-): string => eventForm(CHAMP_ID, entrants, over)
+  options: { trackInstalled?: boolean } = {},
+): string => eventForm(CHAMP_ID, entrants, over, options)
 
 const scheduleFormHtml = (recurrence = ""): string =>
   scheduleForm(CHAMP_ID, EVENT_ID, ZONE, recurrence)
@@ -973,6 +974,199 @@ describe("applying a finalize", () => {
     // Untouched fields are echoed back as the form rendered them.
     expect(body.get("Track")).toBe("suzuka")
     expect(body.getAll("EntryList.Name")).toEqual(["Ada", "Grace"])
+  })
+
+  /**
+   * The bug that put a Brands Hatch event on a Black Cat County layout.
+   *
+   * ACSM renders `TrackLayout` as a select holding *every* track's layouts and
+   * marks none of them `selected`, because the page's JavaScript empties it on
+   * load and rebuilds it from the chosen track. By the HTML rules `parseForm`
+   * correctly follows, a select with nothing selected submits its first option
+   * — so saving a race format also silently moved the round to whichever
+   * layout sorts first on the server. Measured against 2.4.15: `indy` came
+   * back as `ks_black_cat_county:layout_int`, which is why the championship
+   * page then showed no track image.
+   *
+   * A finalize is about laps. It must not touch the track.
+   */
+  it("posts the layout the event is on, not the first one in the list", async () => {
+    const h = await harness({
+      eventPages: [eventFormHtml(TWO, { Track: "ks_brands_hatch", TrackLayout: "gp" })],
+    })
+    await applyFinalize(h.session, await planFor(h))
+
+    const body = h.posts[0]!.body
+    expect(body.get("Track")).toBe("ks_brands_hatch")
+    expect(body.get("TrackLayout")).toBe("gp")
+    expect(body.getAll("TrackLayout")).toHaveLength(1)
+  })
+
+  /**
+   * A track with no layouts stores `""`, and that is what has to go back. The
+   * first option of the select belongs to some other track either way.
+   */
+  it("posts an empty layout for a track that has none", async () => {
+    const h = await harness()
+    await applyFinalize(h.session, await planFor(h))
+
+    const body = h.posts[0]!.body
+    expect(body.get("Track")).toBe("suzuka")
+    expect(body.get("TrackLayout")).toBe("")
+  })
+
+  /**
+   * The other half of the same problem, and the louder one.
+   *
+   * ACSM renders one `Track` option per *installed* track, so an event on a
+   * track the server no longer has matches none of them and nothing is marked
+   * selected. The round-trip then posts the first track in the list: measured,
+   * a `suzuka` event on a manager without Suzuka came back as
+   * `ks_black_cat_county`. A finalize about lap count moved the race to a
+   * different circuit.
+   *
+   * There is no right value to post, so nothing is posted. Refusing is the
+   * only option that doesn't silently pick a track for somebody.
+   */
+  it("refuses to save an event whose track the server doesn't have", async () => {
+    const h = await harness({
+      eventPages: [eventFormHtml(TWO, { Track: "suzuka" }, { trackInstalled: false })],
+    })
+
+    const err = await planFor(h).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(FinalizeError)
+    expect((err as Error).message).toMatch(/isn't installed/)
+    expect(h.posts, "nothing may be written").toHaveLength(0)
+  })
+
+  /**
+   * Moving a round, which until now could not be done at all.
+   *
+   * The UI offers this beside the lap count because it is the only repair for
+   * a round whose layout ACSM can't resolve — the state every champctl save
+   * used to produce, and the one the create screen produced before it asked
+   * for a layout.
+   */
+  it("posts the track and layout a move asks for", async () => {
+    const h = await harness({
+      eventPages: [eventFormHtml(TWO, { Track: "suzuka" })],
+    })
+    const plan = await planFor(h, { venue: { track: "ks_brands_hatch", layout: "gp" } })
+
+    expect(plan.venue).toEqual({
+      from: { track: "suzuka", layout: "" },
+      to: { track: "ks_brands_hatch", layout: "gp" },
+    })
+    expect(plan.changes).toContainEqual({
+      label: "Track",
+      before: "suzuka",
+      after: "ks_brands_hatch/gp",
+    })
+
+    await applyFinalize(h.session, plan, { acknowledgeWarnings: true })
+    const body = h.posts[0]!.body
+    expect(body.get("Track")).toBe("ks_brands_hatch")
+    expect(body.get("TrackLayout")).toBe("gp")
+  })
+
+  /**
+   * The repair the whole feature exists for: the track stays put and only the
+   * layout changes. The export says `""` — or something belonging to another
+   * track — and the form's own corrected value is `""` either way, so a move
+   * compared against the *form* would read as a no-op and write nothing.
+   */
+  it("sets a layout on a round that has none", async () => {
+    const h = await harness({
+      eventPages: [eventFormHtml(TWO, { Track: "ks_brands_hatch" })],
+    })
+    const plan = await planFor(h, { venue: { track: "ks_brands_hatch", layout: "indy" } })
+
+    expect(plan.noop, "there is something to write").toBe(false)
+    await applyFinalize(h.session, plan, { acknowledgeWarnings: true })
+    expect(h.posts[0]!.body.get("TrackLayout")).toBe("indy")
+  })
+
+  /**
+   * Repairing a round whose stored layout belongs to another track — the state
+   * every champctl save used to leave, and the reason this feature exists.
+   *
+   * The trap: `findEventForm` has already corrected the form's `TrackLayout` to
+   * `""`, and the repair also asks for `""`, so a diff computed against the
+   * form sees no change at all. The plan came back a no-op, applyFinalize
+   * returned early, and ACSM kept the broken value — a repair that reported
+   * success and wrote nothing. Measured against a real 2.4.15 round.
+   */
+  it("writes a repair the form already agrees with", async () => {
+    const h = await harness({ eventPages: [eventFormHtml(TWO, { Track: "spa" })] })
+    const plan = await planFor(h, {
+      championship: champ({
+        RaceSetup: {
+          Track: "spa",
+          // Not one of Spa's layouts; not one of anything's, on this server.
+          TrackLayout: "ks_black_cat_county:layout_int",
+          Sessions: { RACE: { Name: "Race", Time: 0, Laps: 20, IsOpen: 1 } },
+        },
+      }),
+      venue: { track: "spa", layout: "" },
+    })
+
+    expect(plan.noop, "there is a broken value to overwrite").toBe(false)
+    expect(plan.formChanges.map((c) => c.name)).toContain("TrackLayout")
+
+    await applyFinalize(h.session, plan, { acknowledgeWarnings: true })
+    expect(h.posts, "the write has to happen").toHaveLength(1)
+    expect(h.posts[0]!.body.get("TrackLayout")).toBe("")
+  })
+
+  it("leaves the track alone when the move names where it already is", async () => {
+    const h = await harness({
+      eventPages: [eventFormHtml(TWO, { Track: "ks_brands_hatch", TrackLayout: "gp" })],
+    })
+    // Both the export and the form, because the comparison is against the
+    // export: it is what the round *is*, and the form's corrected layout is
+    // only what a browser would submit for it.
+    const plan = await planFor(h, {
+      championship: champ({
+        RaceSetup: {
+          Track: "ks_brands_hatch",
+          TrackLayout: "gp",
+          Sessions: { RACE: { Name: "Race", Time: 0, Laps: 20, IsOpen: 1 } },
+        },
+      }),
+      venue: { track: "ks_brands_hatch", layout: "gp" },
+    })
+
+    expect(plan.venue).toBeUndefined()
+    expect(plan.formChanges.map((c) => c.name)).not.toContain("Track")
+  })
+
+  describe("a move ACSM could not hold", () => {
+    // Refused rather than approximated, every one of them. A track that lands
+    // somewhere other than where it was asked to go is the failure this whole
+    // area is being fixed for, so producing another one here would be perverse.
+    const refuses = async (venue: { track: string; layout: string }, expected: RegExp) => {
+      const h = await harness({ eventPages: [eventFormHtml(TWO, { Track: "suzuka" })] })
+      const err = await planFor(h, { venue }).catch((e: unknown) => e)
+      expect(err).toBeInstanceOf(FinalizeError)
+      expect((err as Error).message).toMatch(expected)
+      expect(h.posts).toHaveLength(0)
+    }
+
+    it("refuses a track the server doesn't have", async () => {
+      await refuses({ track: "rt_bathurst", layout: "" }, /isn't installed/)
+    })
+
+    it("refuses a layout the track doesn't have", async () => {
+      await refuses({ track: "ks_brands_hatch", layout: "club" }, /no club layout/)
+    })
+
+    it("refuses no layout on a track that has some", async () => {
+      await refuses({ track: "ks_brands_hatch", layout: "" }, /needs a layout/)
+    })
+
+    it("refuses a layout on a track that has none", async () => {
+      await refuses({ track: "spa", layout: "gp" }, /no layouts to choose from/)
+    })
   })
 
   it("names the save, which the parsed form alone cannot", async () => {

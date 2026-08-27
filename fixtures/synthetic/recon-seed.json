@@ -136,7 +136,7 @@
       "StartedTime": "0001-01-01T00:00:00Z",
       "CompletedTime": "0001-01-01T00:00:00Z",
       "RaceSetup": {
-        "Track": "suzuka",
+        "Track": "monza",
         "TrackLayout": "",
         "Cars": "rss_formula_hybrid_2021",
         "MaxClients": 6,

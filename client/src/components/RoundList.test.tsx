@@ -36,7 +36,7 @@ function response(name: string): ChampionshipResponse {
         {
           round: 1,
           eventId: "event-1",
-          track: "suzuka",
+          venue: { track: "suzuka", layout: "" },
           label: "Round 1 — suzuka",
           started: false,
           format: {
