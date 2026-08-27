@@ -85,6 +85,16 @@ export function NewChampionship({
     tracks: InstalledItem[]
   } | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
+  /**
+   * The source's cars are still on their way.
+   *
+   * An empty car list means two different things and they need different
+   * words: nothing has arrived yet, or somebody removed the last one. Without
+   * this the screen said "this championship would have nothing to drive" for
+   * the moment between picking a source and its cars landing, which is a
+   * sentence about a mistake nobody had made.
+   */
+  const [sourceCarsPending, setSourceCarsPending] = useState(false)
   const [plan, setPlan] = useState<NewChampionshipPlan | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [previewing, setPreviewing] = useState(false)
@@ -236,6 +246,7 @@ export function NewChampionship({
     // than leaving it to be discovered after the championship exists. Unlike
     // the name, this default is one a league nearly always wants: the cars are
     // the part of a clone that stays the same.
+    setSourceCarsPending(true)
     void (async () => {
       try {
         const { championship } = await api.championship(id)
@@ -245,6 +256,8 @@ export function NewChampionship({
         setDraft((d) => (d && d.sourceId === id ? { ...d, cars: championship.cars } : d))
       } catch (e) {
         setError(describe(e))
+      } finally {
+        setSourceCarsPending(false)
       }
     })()
   }
@@ -351,6 +364,7 @@ export function NewChampionship({
             chosen={draft.cars}
             installed={installed?.cars ?? []}
             loading={installed === null}
+            pending={sourceCarsPending}
             onChange={(cars) => set({ cars })}
           />
 
@@ -437,11 +451,14 @@ function CarList({
   chosen,
   installed,
   loading,
+  pending,
   onChange,
 }: {
   chosen: readonly string[]
   installed: readonly InstalledItem[]
   loading: boolean
+  /** The source's cars have not arrived yet, which is not the same as none. */
+  pending: boolean
   onChange: (cars: string[]) => void
 }): React.JSX.Element {
   const nameOf = (id: string): string => installed.find((c) => c.id === id)?.name ?? id
@@ -492,7 +509,9 @@ function CarList({
 
       {chosen.length === 0 && (
         <p className="fineprint">
-          No cars chosen, so this championship would have nothing to drive. Add at least one.
+          {pending
+            ? "Reading the cars from the championship above…"
+            : "No cars chosen, so this championship would have nothing to drive. Add at least one."}
         </p>
       )}
     </section>

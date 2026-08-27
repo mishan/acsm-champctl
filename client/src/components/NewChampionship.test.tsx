@@ -294,6 +294,41 @@ describe("the car list", () => {
   })
 
   /**
+   * An empty list before anything has arrived is not somebody's mistake.
+   *
+   * The screen used to say "this championship would have nothing to drive" for
+   * the moment between picking a source and its cars landing — a sentence
+   * about a problem nobody had, on a form that was working correctly.
+   */
+  it("says it is still reading rather than that there are no cars", async () => {
+    let release: ((r: ChampionshipResponse) => void) | undefined
+    championshipMock.mockReturnValue(
+      new Promise<ChampionshipResponse>((r) => {
+        release = r
+      }),
+    )
+
+    renderScreen()
+    await screen.findByLabelText(/Clone from/)
+    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+
+    expect(await screen.findByText(/Reading the cars from the championship above/)).toBeTruthy()
+    expect(screen.queryByText(/nothing to drive/)).toBeNull()
+
+    release?.({
+      championship: {
+        id: SOURCE,
+        name: "August 2026",
+        timezone: "America/Los_Angeles",
+        cars: ["rss_formula_hybrid_2021"],
+        rounds: [],
+      },
+      gridmom: report(),
+    })
+    await waitFor(() => expect(screen.getByText("RSS Formula Hybrid 2021")).toBeTruthy())
+  })
+
+  /**
    * An empty list is not "inherit". Sending no `cars` key would fall back to
    * the source's, so the screen would show no cars and create a championship
    * full of them — the invisible inheritance this field exists to end, wearing

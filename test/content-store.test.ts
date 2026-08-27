@@ -98,6 +98,50 @@ describe("keeping the content index across restarts", () => {
       expect(await store.read(), "cars is not a list").toBeUndefined()
     })
 
+    /**
+     * A list of the right shape holding the wrong things.
+     *
+     * An older champctl stored bare folder names, so `["spa"]` is a plausible
+     * thing to find in this row and it passes an `Array.isArray` check. It
+     * would reach the screen as items with no `id` and no `name` — a picker
+     * rendering blanks and committing `undefined` into a championship.
+     */
+    it("is ignored when the items are not id/name pairs", async () => {
+      const kept = fake()
+      const store = contentStore(kept, "https://acsm.example")
+      const key = "content:https://acsm.example"
+
+      kept.rows.set(key, { writtenAt: 1, body: JSON.stringify({ cars: ["spa"], tracks: [] }) })
+      expect(await store.read(), "bare folder names").toBeUndefined()
+
+      kept.rows.set(key, {
+        writtenAt: 1,
+        body: JSON.stringify({ cars: [{ id: "a" }], tracks: [] }),
+      })
+      expect(await store.read(), "no name").toBeUndefined()
+
+      kept.rows.set(key, {
+        writtenAt: 1,
+        body: JSON.stringify({ cars: [], tracks: [{ id: 1, name: "One" }] }),
+      })
+      expect(await store.read(), "id is not a string").toBeUndefined()
+    })
+
+    /**
+     * Every item, not just the first. A row that is half-right is the shape an
+     * interrupted migration leaves, and "the first one looked fine" is not a
+     * reason to trust the rest of it.
+     */
+    it("is ignored when only some of the items are wrong", async () => {
+      const kept = fake()
+      const store = contentStore(kept, "https://acsm.example")
+      kept.rows.set("content:https://acsm.example", {
+        writtenAt: 1,
+        body: JSON.stringify({ cars: [{ id: "a", name: "A" }, "b"], tracks: [] }),
+      })
+      expect(await store.read()).toBeUndefined()
+    })
+
     it("throws on one that isn't JSON, for the caller to swallow", async () => {
       // `ContentCache.warm` catches this. Returning undefined here instead
       // would make "there was no row" and "the row is corrupt" the same thing,

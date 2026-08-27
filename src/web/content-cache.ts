@@ -27,9 +27,10 @@
  * reader with its own rate limiter, so a walk cannot take slots an interactive
  * read is waiting for.
  *
- * In memory rather than on disk, unlike the response cache. This is a list of
- * folder names with nothing private in it, and `warm()` means a restart pays
- * for it at boot rather than on the first click.
+ * Held in memory, and optionally written through to a `store` so a restart
+ * does not start from nothing — `champctl-serve` passes one backed by the
+ * response cache's database. Without a store this is memory only, and every
+ * boot re-reads; `warm()` is what keeps that off the first click either way.
  */
 
 import type { InstalledContent } from "../acsm/content.js"

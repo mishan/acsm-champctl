@@ -17,13 +17,27 @@
  * start; failing a request over it would cost a screen.
  */
 
-import type { InstalledContent } from "../acsm/types.js"
+import type { InstalledContent, InstalledItem } from "../acsm/types.js"
 import type { ContentStore } from "./content-cache.js"
 
 /** Anything that can hold a string past the response TTL. `SqliteCache` does. */
 export interface KeptStore {
   kept(key: string): Promise<{ writtenAt: number; body: string } | undefined>
   keep(key: string, body: string): Promise<void>
+}
+
+/** Every entry an `{ id, name }` pair, with both actually present. */
+function isItemList(value: unknown): value is InstalledItem[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (i) =>
+        i !== null &&
+        typeof i === "object" &&
+        typeof (i as InstalledItem).id === "string" &&
+        typeof (i as InstalledItem).name === "string",
+    )
+  )
 }
 
 export function contentStore(store: KeptStore, baseUrl: string): ContentStore {
@@ -35,13 +49,19 @@ export function contentStore(store: KeptStore, baseUrl: string): ContentStore {
       if (!row) return undefined
 
       const parsed: unknown = JSON.parse(row.body)
-      // Shape-checked rather than trusted. This row is written by a previous
-      // version of champctl as much as by this one, and half a car list
-      // reaching the screen is a picker that silently offers the wrong thing —
-      // worse than the slow start it was avoiding.
+      // Shape-checked rather than trusted, down to the items. This row is
+      // written by a previous version of champctl as much as by this one, and
+      // an older one stored bare folder names — so `["spa"]` is a plausible
+      // thing to find here, and it type-checks as an array. It would reach the
+      // screen as a list of items with no `id` and no `name`, which is a
+      // picker rendering blanks and committing `undefined`.
+      //
+      // Checking the whole list rather than the first item: a row that is
+      // half-right is exactly the shape an interrupted migration leaves, and
+      // "the first one looked fine" is not a reason to trust the rest.
       if (!parsed || typeof parsed !== "object") return undefined
       const { cars, tracks } = parsed as Partial<InstalledContent>
-      if (!Array.isArray(cars) || !Array.isArray(tracks)) return undefined
+      if (!isItemList(cars) || !isItemList(tracks)) return undefined
 
       return { at: row.writtenAt, value: { cars, tracks } }
     },
