@@ -253,6 +253,68 @@ export interface ApplyResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Reordering the rounds of a championship that already exists
+// ---------------------------------------------------------------------------
+
+/** The new calendar, as 1-based source rounds. `[3,1,2]` puts round 3 first. */
+export interface ReorderRequest {
+  order: number[]
+}
+
+/** One round as it would stand after the reorder. */
+export interface ReorderedRoundView {
+  /** Where it ends up, 1-based. */
+  round: number
+  /** Where its track and format came from, 1-based. Equal to `round` if it stayed. */
+  cameFrom: number
+  /** The track that ends up here. */
+  label: string
+  /**
+   * The date this slot keeps.
+   *
+   * Here because it is the thing people get wrong about a reorder: the date
+   * belongs to the race night, not to the track, so moving Monza to round 1
+   * gives it round 1's date. Showing it beside the new order is how the screen
+   * says that without a paragraph of explanation.
+   */
+  quali: LocalTimeView | null
+  /** True when this slot's track or format changes. */
+  moved: boolean
+  /** Already raced, so it cannot be moved and nothing may be moved into it. */
+  started: boolean
+}
+
+export interface ReorderPlanView {
+  /** Hand this back to push. It is the only thing the push endpoint takes. */
+  planId: string
+  championshipId: string
+  /** The whole calendar as it would be, in order, moved rounds and all. */
+  rounds: ReorderedRoundView[]
+  /** What each moved round's write will post, so the preview cannot lie. */
+  moves: {
+    round: number
+    cameFrom: number
+    changes: Change[]
+    formChanges: PostedField[]
+  }[]
+  /** gridmom against the championship as it *would* be, once, for the lot. */
+  gridmom: CheckReport
+  blocked: boolean
+  needsAcknowledgement: boolean
+  /** The order asked for is the order it is already in. */
+  noop: boolean
+}
+
+export interface ReorderPlanResponse {
+  plan: ReorderPlanView
+}
+
+export interface ReorderResponse {
+  /** The rounds written, in the order they were written. */
+  rounds: number[]
+}
+
+// ---------------------------------------------------------------------------
 // Creating a championship (plan §5.1)
 // ---------------------------------------------------------------------------
 

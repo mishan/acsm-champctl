@@ -15,6 +15,8 @@ import { AcsmError } from "../src/acsm/client.js"
 import { AcsmAuthError, PasswordChangeRequiredError } from "../src/acsm/session.js"
 import { EntryListChangedError, PartialWriteError } from "../src/finalize/apply.js"
 import { FinalizeError, type FinalizePlan } from "../src/finalize/plan.js"
+import { PartialReorderError } from "../src/reorder/apply.js"
+import { ReorderError } from "../src/reorder/plan.js"
 import { ScheduleError } from "../src/finalize/schedule.js"
 import { ApiError, describeError } from "../src/web/errors.js"
 
@@ -63,6 +65,25 @@ describe("champctl's own refusals", () => {
     const d = describeError(new FinalizeError("gridmom found 2 errors."))
     expect(d.status).toBe(422)
     expect(d.body.error.code).toBe("finalize")
+  })
+
+  it("returns 422 for a reorder champctl declined", () => {
+    const d = describeError(new ReorderError("Round 2 has already been raced."))
+    expect(d.status).toBe(422)
+    expect(d.body.error.code).toBe("reorder")
+    expect(d.body.error.message).toMatch(/already been raced/)
+    expect(d.unexpected).toBe(false)
+  })
+
+  it("does not call a half-finished reorder a refusal", () => {
+    // Before the ReorderError branch it extends, and it must not be a 422: a
+    // 422 reads as "nothing happened, fix it and try again", and here some
+    // rounds are already at their new tracks.
+    const d = describeError(new PartialReorderError([1, 2], [3], new Error("ACSM returned 500")))
+    expect(d.status).toBe(500)
+    expect(d.body.error.code).toBe("partial-reorder")
+    expect(d.body.error.message).toMatch(/Do not re-run/)
+    expect(d.unexpected).toBe(false)
   })
 })
 
