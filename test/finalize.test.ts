@@ -520,7 +520,8 @@ const CHAMP_ID = "11111111-2222-3333-4444-555555555555"
 const eventFormHtml = (
   entrants: readonly FormEntrant[],
   over: Record<string, string> = {},
-): string => eventForm(CHAMP_ID, entrants, over)
+  options: { trackInstalled?: boolean } = {},
+): string => eventForm(CHAMP_ID, entrants, over, options)
 
 const scheduleFormHtml = (recurrence = ""): string =>
   scheduleForm(CHAMP_ID, EVENT_ID, ZONE, recurrence)
@@ -973,6 +974,69 @@ describe("applying a finalize", () => {
     // Untouched fields are echoed back as the form rendered them.
     expect(body.get("Track")).toBe("suzuka")
     expect(body.getAll("EntryList.Name")).toEqual(["Ada", "Grace"])
+  })
+
+  /**
+   * The bug that put a Brands Hatch event on a Black Cat County layout.
+   *
+   * ACSM renders `TrackLayout` as a select holding *every* track's layouts and
+   * marks none of them `selected`, because the page's JavaScript empties it on
+   * load and rebuilds it from the chosen track. By the HTML rules `parseForm`
+   * correctly follows, a select with nothing selected submits its first option
+   * — so saving a race format also silently moved the round to whichever
+   * layout sorts first on the server. Measured against 2.4.15: `indy` came
+   * back as `ks_black_cat_county:layout_int`, which is why the championship
+   * page then showed no track image.
+   *
+   * A finalize is about laps. It must not touch the track.
+   */
+  it("posts the layout the event is on, not the first one in the list", async () => {
+    const h = await harness({
+      eventPages: [eventFormHtml(TWO, { Track: "ks_brands_hatch", TrackLayout: "gp" })],
+    })
+    await applyFinalize(h.session, await planFor(h))
+
+    const body = h.posts[0]!.body
+    expect(body.get("Track")).toBe("ks_brands_hatch")
+    expect(body.get("TrackLayout")).toBe("gp")
+    expect(body.getAll("TrackLayout")).toHaveLength(1)
+  })
+
+  /**
+   * A track with no layouts stores `""`, and that is what has to go back. The
+   * first option of the select belongs to some other track either way.
+   */
+  it("posts an empty layout for a track that has none", async () => {
+    const h = await harness()
+    await applyFinalize(h.session, await planFor(h))
+
+    const body = h.posts[0]!.body
+    expect(body.get("Track")).toBe("suzuka")
+    expect(body.get("TrackLayout")).toBe("")
+  })
+
+  /**
+   * The other half of the same problem, and the louder one.
+   *
+   * ACSM renders one `Track` option per *installed* track, so an event on a
+   * track the server no longer has matches none of them and nothing is marked
+   * selected. The round-trip then posts the first track in the list: measured,
+   * a `suzuka` event on a manager without Suzuka came back as
+   * `ks_black_cat_county`. A finalize about lap count moved the race to a
+   * different circuit.
+   *
+   * There is no right value to post, so nothing is posted. Refusing is the
+   * only option that doesn't silently pick a track for somebody.
+   */
+  it("refuses to save an event whose track the server doesn't have", async () => {
+    const h = await harness({
+      eventPages: [eventFormHtml(TWO, { Track: "suzuka" }, { trackInstalled: false })],
+    })
+
+    const err = await planFor(h).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(FinalizeError)
+    expect((err as Error).message).toMatch(/isn't installed/)
+    expect(h.posts, "nothing may be written").toHaveLength(0)
   })
 
   it("names the save, which the parsed form alone cannot", async () => {

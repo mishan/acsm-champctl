@@ -491,3 +491,72 @@ Two things still unconfirmed, both cheap to settle on the harness:
 The general lesson is worth keeping: **the count in a form capture tells you
 the arity, not the encoding.** Pair it with a known value from the export
 before deciding what a field means.
+
+---
+
+## 15. `Track` and `TrackLayout` cannot be round-tripped by the HTML rules
+
+Measured on **2.4.15**, and this one had already destroyed data: every event
+save champctl made rewrote the round's layout, and some of them rewrote the
+track.
+
+The event form renders both as `<select>`, and the browser rules our parser
+correctly follows say a select with nothing marked `selected` submits its first
+option. Both selects hit that case, for different reasons.
+
+**`TrackLayout` never marks anything selected.** It is not really a control —
+it is a data island for the page's JavaScript, carrying *every* installed
+track's layouts as `{track}:{layout}`, with `{track}:<default>` for a track that
+has none. On load, `loadTrackLayouts()` empties it and rebuilds it from the
+chosen track's layouts alone, with bare values (`indy`, not
+`ks_brands_hatch:indy`). A browser therefore never sends what the server
+rendered. champctl runs no JavaScript, so it sent the first option:
+
+```
+before: ks_brands_hatch "indy"
+posting TrackLayout = "ks_black_cat_county:layout_int"
+after:  ks_brands_hatch "ks_black_cat_county:layout_int"
+```
+
+That is a layout belonging to a different track. ACSM stores it without
+complaint; the visible symptom is the championship page losing the track's
+layout image, and the race running at whatever the server falls back to.
+
+The server does say which layout is current, in the only place it can without a
+`selected` attribute: **a third segment on the value**,
+`ks_highlands:layout_short:current`. `currentTrackLayout` in
+`src/acsm/event-form.ts` reads it, and `findEventForm` applies it to every
+event-form write.
+
+Where champctl deliberately parts company with a browser: when the track has
+layouts and none is marked current — an event whose stored layout is not one
+this track has — the page's rebuilt dropdown would be *showing* the first
+layout, and a browser would post that. champctl posts `""`. There is nobody
+looking at a dropdown here to notice that Brands Hatch just became `indy`, so
+guessing would write a plausible wrong answer into a race under cover of a save
+about something else.
+
+**`Track` marks nothing selected when the event's track isn't installed.** ACSM
+renders one option per installed track, so an event on a removed or misspelled
+track matches none of them. The first option then wins, and a finalize about lap
+count moves the race to another circuit — measured, a `suzuka` event on a
+manager without Suzuka came back as `ks_black_cat_county`, which is
+alphabetically first and nothing more meaningful than that.
+
+There is no correct value to post, so `findEventForm` refuses the write and says
+why. `trackIsMissingFromServer` is the test: a `Track` select with no selected
+option.
+
+Two things follow for anything else on this form:
+
+- **A fixture that renders these as inputs is a fixture that cannot fail.**
+  That is precisely why the suite missed this for so long — `test/support/`
+  rendered `<select name="TrackLayout"><option value="" selected>`, which
+  submits `""` under any reading. `trackSelectHtml` and
+  `trackLayoutSelectHtml` now reproduce the real shape, including that every
+  other track sorts ahead of the event's own.
+- **Ask whether the page's JavaScript rewrites a field before writing it.**
+  This is the third measured departure from browser form rules, after the
+  checkbox encoding (§4) and `RaceExtraLap` (§14). The pattern is the same
+  every time: ACSM's form is not a browser-standard payload, it is whatever its
+  own JavaScript produces.

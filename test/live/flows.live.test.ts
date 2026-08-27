@@ -226,6 +226,36 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       )
     }, 60_000)
 
+    /**
+     * The assertion this suite exists for, and the one it was missing.
+     *
+     * ACSM renders `TrackLayout` as a select of every track's layouts with
+     * nothing marked `selected`, so a browser-correct round-trip posts the
+     * first option — a layout belonging to some other track. Every finalize
+     * champctl ran moved the round's layout, and no scripted-fetch test could
+     * have seen it: the fixture rendered a select that submits `""` under any
+     * reading. Only a real manager's HTML has the shape that breaks.
+     */
+    it("leaves the track and layout exactly as they were", async () => {
+      const { id, export: champ } = await seeded()
+      const eventId = firstEventId(champ)
+      const before = events(champ)[0]!.RaceSetup
+
+      const plan = await planFinalize(live(), {
+        championship: champ,
+        championshipId: id,
+        eventId,
+        format: wanted,
+        profile: PROFILE,
+      })
+      assertWouldChange(plan, "the finalize under test")
+      await applyFinalize(live(), plan, { acknowledgeWarnings: true })
+
+      const after = events(await live().getJson<Championship>(`/championship/${id}/export`))[0]!
+      expect(after.RaceSetup?.Track, "a finalize is about laps").toBe(before?.Track)
+      expect(after.RaceSetup?.TrackLayout, "a finalize is about laps").toBe(before?.TrackLayout)
+    }, 60_000)
+
     it("keeps every entrant, with their own car and skin", async () => {
       // The whole reason the write round-trips the form. A save that quietly
       // drops entrants, or hands one person another's car, is the failure mode

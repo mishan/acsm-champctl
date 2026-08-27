@@ -36,7 +36,6 @@ import { LoginThrottle } from "../src/web/throttle.js"
 import {
   eventFormHtml,
   fakeImportPage,
-  layoutSelectHtml,
   scheduleFormHtml,
   type FormEntrant,
 } from "./support/acsm-html.js"
@@ -118,7 +117,9 @@ afterEach(async () => {
 
 function harness(options: HarnessOptions = {}): Harness {
   const posts: { url: string; body: string }[] = []
-  const pages = options.eventPages ?? [eventFormHtml(CHAMP_ID, TWO)]
+  const pages = options.eventPages ?? [
+    eventFormHtml(CHAMP_ID, TWO, {}, { layoutSelect: !options.noLayoutSelect }),
+  ]
   let eventGets = 0
   let stored = ""
 
@@ -169,13 +170,10 @@ function harness(options: HarnessOptions = {}): Harness {
     }
     const page = pages[Math.min(eventGets, pages.length - 1)] as string
     eventGets++
-    // Real event forms carry the TrackLayout select, which is the only place
-    // ACSM lists a track's layouts.
-    if (options.noLayoutSelect) return new Response(page, { status: 200 })
-    return new Response(
-      page + layoutSelectHtml(["ks_brands_hatch:indy", "ks_brands_hatch:gp", "spa:<default>"]),
-      { status: 200 },
-    )
+    // The TrackLayout select is part of the event form fixture now — it is the
+    // only place ACSM lists a track's layouts, and it is also the field a save
+    // has to round-trip, so the two cannot be tested against different pages.
+    return new Response(page, { status: 200 })
   }
 
   const app = buildServer({

@@ -20,10 +20,13 @@
 
 import { createHash } from "node:crypto"
 
+import { currentTrackLayout, trackIsMissingFromServer } from "../acsm/event-form.js"
 import {
+  count,
   findFormByAction,
   getAll,
   getOne,
+  setOne,
   shape,
   NON_ARRAY_ENTRY_LIST_FIELDS,
   UNPAIRED_ENTRY_LIST_CHECKBOXES,
@@ -189,7 +192,15 @@ export function entryListFingerprint(fields: readonly FormField[]): string {
   return h.digest("hex")
 }
 
-/** Finds the event edit form on the page, by action rather than position. */
+/**
+ * Finds the event edit form on the page, by action rather than position.
+ *
+ * Every event-form write goes through here, which is why the `TrackLayout`
+ * correction lives here rather than at each call site. Read `acsm/event-form.ts`
+ * before touching it: the parsed value is the first option of a list of every
+ * track on the server, and posting it back is how a Brands Hatch event ends up
+ * on a layout belonging to Black Cat County.
+ */
 export function findEventForm(html: string, pageUrl: string, championshipId: string): ParsedForm {
   const form = findFormByAction(html, eventSubmitPath(championshipId), { pageUrl })
   if (!form) {
@@ -199,6 +210,26 @@ export function findEventForm(html: string, pageUrl: string, championshipId: str
         `ACSM renders the event form differently and the recon capture needs redoing.`,
     )
   }
+
+  // Fail closed rather than write a track nobody chose. There is no correct
+  // value to post here: ACSM's own form cannot express a track it doesn't have,
+  // so every possible payload moves the race somewhere else.
+  if (trackIsMissingFromServer(html)) {
+    throw new FinalizeError(
+      `This event's track isn't installed on the server, so ACSM's track list has nothing ` +
+        `selected and saving would move the race to ${getOne(form.fields, "Track") ?? "another track"} — ` +
+        `the first track in the list, and nothing more meaningful than that. Install the track, ` +
+        `or set the event to one this server has, before saving anything else about it.`,
+    )
+  }
+
+  // Only when the form carries the field. A build that doesn't render it is one
+  // champctl has never seen, and inventing the key would post a field ACSM
+  // didn't ask for — the opposite of round-tripping.
+  if (count(form.fields, "TrackLayout") === 1) {
+    setOne(form.fields, "TrackLayout", currentTrackLayout(html, getOne(form.fields, "Track") ?? ""))
+  }
+
   return form
 }
 

@@ -40,6 +40,9 @@ export interface FakeEventFormOptions {
   raceLaps?: number
   raceTime?: number
   pitWindowStart?: number
+  /** The event's track, and the layout the select marks `:current`. */
+  track?: string
+  layout?: string
 }
 
 export function fakeEventForm(options: FakeEventFormOptions): string {
@@ -51,6 +54,8 @@ export function fakeEventForm(options: FakeEventFormOptions): string {
     raceLaps = 20,
     raceTime = 0,
     pitWindowStart = 0,
+    track = "suzuka",
+    layout = "",
   } = options
 
   const ro = championshipEvent ? ` readonly="readonly"` : ""
@@ -95,8 +100,8 @@ export function fakeEventForm(options: FakeEventFormOptions): string {
 <form action="${action}" method="post">
   <input type="hidden" name="Editing" value="event-1">
   <input type="hidden" name="action" value="saveChampionship">
-  <input type="text" name="Track" value="suzuka">
-  <select name="TrackLayout"><option value="" selected="selected">Default</option></select>
+  <input type="text" name="Track" value="${track}">
+  ${trackLayoutSelectHtml(FIXTURE_LAYOUTS, layout ? { track, layout } : undefined)}
   <input type="number" name="MaxClients" value="18">
   <input type="number" name="Sessions.Race.Laps" value="${raceLaps}">
   <input type="number" name="Sessions.Race.Time" value="${raceTime}">
@@ -115,6 +120,72 @@ export function fakeEventForm(options: FakeEventFormOptions): string {
   <button type="submit" name="submitButton" value="save">Save</button>
 </form>
 </body></html>`
+}
+
+/**
+ * The `TrackLayout` select, as ACSM actually renders it.
+ *
+ * Every detail here is load-bearing and was measured on 2.4.15, because the
+ * tidy version this replaced — one `<option value="" selected>` — is a select
+ * no manager has ever sent, and it exempted the whole suite from the bug it
+ * was standing in for:
+ *
+ * - **Every track on the server** is listed, not this event's. The select is a
+ *   data source for the page's JavaScript, which empties it on load and
+ *   rebuilds it from the chosen track alone.
+ * - **Nothing is `selected`.** So the HTML rules say a submit sends the first
+ *   option — a layout belonging to whichever track sorts first.
+ * - **`{track}:{layout}`**, with `{track}:<default>` for a track that has no
+ *   layouts, and a third `:current` segment on the one the event is on.
+ */
+export function trackLayoutSelectHtml(
+  layouts: Readonly<Record<string, readonly string[]>>,
+  current?: { track: string; layout: string },
+): string {
+  const options: string[] = []
+  for (const [track, list] of Object.entries(layouts)) {
+    for (const layout of list.length > 0 ? list : ["<default>"]) {
+      const isCurrent = current && current.track === track && current.layout === layout
+      const value = `${track}:${layout}${isCurrent ? ":current" : ""}`
+      options.push(`<option value="${value}" data-track-name="${layout}">${layout}</option>`)
+    }
+  }
+  return `<select class="form-control" name="TrackLayout" id="TrackLayout">${options.join("")}</select>`
+}
+
+/**
+ * The `Track` select, as ACSM renders it: one option per *installed* track,
+ * with the event's own marked `selected`.
+ *
+ * Pass `installed: false` for the case that matters — an event on a track the
+ * server no longer has. ACSM renders no option for it, so nothing is selected,
+ * and the HTML rules make a submit send the first track in the list. That is a
+ * save moving the race to another circuit.
+ */
+export function trackSelectHtml(track: string, installed = true): string {
+  // Every other track sorts before the event's own, so a fixture where the
+  // first option happens to be the right answer cannot exist here.
+  const options = Object.keys(FIXTURE_LAYOUTS)
+    .filter((t) => t !== track)
+    .map((t) => `<option value="${t}">${t}</option>`)
+  const own = installed ? [`<option value="${track}" selected="selected">${track}</option>`] : []
+  return `<select class="form-control" name="Track" id="Track">${[...options, ...own].join("")}</select>`
+}
+
+/**
+ * The layouts the fixtures use unless a test says otherwise.
+ *
+ * `ks_black_cat_county` sorts first on a stock install, which is why the real
+ * bug wrote `ks_black_cat_county:layout_int` into a Brands Hatch event. Keeping
+ * it first here keeps that failure reachable.
+ */
+export const FIXTURE_LAYOUTS: Readonly<Record<string, readonly string[]>> = {
+  ks_black_cat_county: ["layout_int"],
+  ks_brands_hatch: ["indy", "gp"],
+  // Layout-less, so `<default>` is in every fixture and the code that drops it
+  // has something to drop.
+  spa: [],
+  suzuka: [],
 }
 
 export function fakeLoginPage(): string {
@@ -179,11 +250,35 @@ export interface FormEntrant {
   pit: number
 }
 
+export interface EventFormOptions {
+  /**
+   * Whether the server has the event's track.
+   *
+   * Off renders the select ACSM produces for a track that has been removed:
+   * every other track, and nothing selected.
+   */
+  trackInstalled?: boolean
+  /**
+   * Whether the page carries a `TrackLayout` select at all.
+   *
+   * Off for a build that renders the form differently — the case that has to
+   * read as "champctl has no layout index" rather than "no track here has a
+   * layout".
+   */
+  layoutSelect?: boolean
+}
+
 export function eventFormHtml(
   championshipId: string,
   entrants: readonly FormEntrant[],
   over: Record<string, string> = {},
+  options: EventFormOptions = {},
 ): string {
+  // Track and TrackLayout are pulled out of the scalars and rendered as the
+  // selects ACSM really uses. A fixture with plain inputs is one where the
+  // round-trip is trivially right, and it was: it hid a save that moved the
+  // race to another track. See `trackSelectHtml` and `trackLayoutSelectHtml`.
+  const { TrackLayout: layout = "", ...rest } = over
   const base: Record<string, string> = {
     Track: "suzuka",
     "Race.Laps": "20",
@@ -192,9 +287,10 @@ export function eventFormHtml(
     ReversedGridRacePositions: "0",
     RaceExtraLap: "0",
     MaxClients: "18",
-    ...over,
+    ...rest,
   }
-  const scalars = Object.entries(base)
+  const { Track: track = "", ...scalarFields } = base
+  const scalars = Object.entries(scalarFields)
     .map(([k, v]) => `<input name="${k}" value="${v}">`)
     .join("")
   const list = entrants
@@ -215,7 +311,17 @@ export function eventFormHtml(
   return `<html><body>
     <form action="/search" method="GET"><input name="q" value=""></form>
     <form action="/championship/${championshipId}/event/submit" method="POST">
-      ${scalars}${list}
+      ${scalars}
+      ${trackSelectHtml(track, options.trackInstalled ?? true)}
+      ${
+        options.layoutSelect === false
+          ? ""
+          : trackLayoutSelectHtml(
+              { ...FIXTURE_LAYOUTS, ...(track in FIXTURE_LAYOUTS ? {} : { [track]: [] }) },
+              layout ? { track, layout } : undefined,
+            )
+      }
+      ${list}
       <input name="EntryList.NumEntrants" value="${entrants.length}">
     </form>
   </body></html>`
@@ -246,20 +352,4 @@ export function entrant(name: string, over: Partial<FakeEntrant> = {}): FakeEntr
     skin: `${name.toLowerCase()}_01`,
     ...over,
   }
-}
-
-/**
- * The `TrackLayout` select ACSM renders on an event edit form.
- *
- * The only place it says what layouts a track has. `<default>` is how it spells
- * a track with no choice — never mixed with real layouts, measured on 2.4.15.
- */
-export function layoutSelectHtml(values: readonly string[]): string {
-  const options = values
-    .map(
-      (v) =>
-        `<option value="${v}" data-track-name="${v.split(":")[1]}">${v.split(":")[1]}</option>`,
-    )
-    .join("")
-  return `<select class="form-control" name="TrackLayout" id="TrackLayout">${options}</select>`
 }
