@@ -15,6 +15,7 @@ src/
   profile/     league profile schema + loader
   gridmom/     the checker: findings model, check registry, formatters
   finalize/    race format, schedule maths, plan + apply
+  reorder/     moving rounds around the calendar, plan + apply
   emit/        template merge, championship generation, clone
   web/         the HTTP service: Fastify routes, session and plan stores,
                error translation, and the wire types the client shares
@@ -122,6 +123,32 @@ derived        // what the emitter set rather than inherited
 previous championship as the
 template and the spec read back out of it — deliberately not a second code path
 with its own bugs.
+
+Reordering is plan-then-apply too, over the same event form.
+
+```ts
+const plan = await planReorder(session, {
+  championship, championshipId,
+  order: [3, 1, 2],   // 1-based source rounds: "round 3 comes first"
+  profile, pits,
+})
+
+plan.moves    // one per round that changes, each with its own fingerprint
+plan.gridmom  // against the finished rearrangement, not a half-done one
+
+await applyReorder(session, plan, { acknowledgeWarnings: true })
+```
+
+**A reorder moves what a round is between the slots.** The track, the layout
+and the format travel; the date, the name and the entry list stay where they
+are. `reordered(championship, order)` is the pure function that says so, and is
+what gridmom is checked against.
+
+`applyReorder` is several `saveEventForm` calls with no transaction under them,
+which is the fact the module is shaped around: `PartialReorderError` names the
+rounds that were written and the rounds that were not, and the first round's
+failure is rethrown as itself because nothing landed and the underlying reason
+is the whole story.
 
 ## Test harness
 
@@ -291,12 +318,19 @@ Two copies of that list is one that gets updated and one that doesn't.
   export before the round-trip regression test can cover the real schema. The
   archive's first run produces one; it needs sanitising before it can be
   committed.
-- **The client has no tests of its own.** `test/web.test.ts` drives the API end
-  to end over a scripted ACSM, and the components are typed against the same
-  `wire.ts` the server implements, so a renamed field fails the typecheck. What
-  is not covered is the screen's own behaviour: the debounce, the abort on a
-  superseded preview, the acknowledgement being retired when the plan changes.
-  Those are stated in comments and checked by hand, which is not the same thing.
+- **The client's tests cannot see layout.** The components have their own tests
+  now, under `client/src/`, covering the debounce, the abort on a superseded
+  preview and the acknowledgement being retired when the plan changes. What
+  they cannot cover is where a dragged row lands: jsdom runs no layout engine,
+  so every `getBoundingClientRect` returns zeroes and a drag can only be told
+  apart as "upwards" or "downwards". The geometry lives in pure functions in
+  `client/src/reorder.ts` and is tested against measurements written down in
+  `reorder.test.ts`; the DOM tests cover the wiring. Anything asserting a drop
+  position through a rendered list would be asserting nothing.
+- **Nothing drives a reorder against a real ACSM.** `test/reorder.test.ts` runs
+  the whole plan-and-apply over a scripted `fetch`, so the refusals and the
+  partial-write reporting are covered, but the live suite has no reorder case —
+  and a reorder is the write path that touches the most event forms in one go.
 - **`champctl-serve` has no live test.** `test/live/flows.live.test.ts` drives
   finalize against the Docker harness through the engine; nothing drives it
   through HTTP. The engine is where the risk is, so this is a gap in coverage
