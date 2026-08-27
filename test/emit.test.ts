@@ -57,6 +57,11 @@ const EXPECTED_EMIT_CHANGES = [
   /^Classes\[\d+\]\.Entrants/,
   // Derived rather than inherited.
   /^Events\[\d+\]\.RaceSetup\.(Cars|MaxClients)$/,
+  // Set per round, and empty unless the spec named one. Every round is built
+  // from the same template event, so an inherited name is the template's track
+  // on all of them — see "does not name every round after the template's
+  // track". `""` is what ACSM writes for an event it created.
+  /^Events\[\d+\]\.Name$/,
   /^SignUpForm\.Responses/,
 ]
 
@@ -402,6 +407,41 @@ describe("emitting a championship", () => {
   it("makes one event per round, in order", () => {
     const { championship: c } = emit()
     expect(events(c).map((e) => e.RaceSetup?.Track)).toEqual(["spa", "suzuka"])
+  })
+
+  /**
+   * Every round is built from the *same* template event, so anything on it that
+   * describes a track and isn't `RaceSetup.Track` gets copied onto all of them.
+   * `Name` is exactly that, and it is what a person reads.
+   *
+   * BATL's first championship built this way came out with all five rounds
+   * called "Donington Park National, Great Britain" — July's round one — while
+   * `RaceSetup.Track` was correct throughout, so gridmom reported the right
+   * tracks and the manager displayed the wrong ones. Nothing caught it because
+   * ACSM writes `Name: ""` on every event it creates, so every fixture had an
+   * empty string to copy and copying it looked like working.
+   */
+  it("does not name every round after the template's track", () => {
+    const t = template()
+    for (const ev of events(t)) ev.Name = "Donington Park National, Great Britain"
+
+    const { championship: c } = emit({ template: t })
+    expect(events(c).map((e) => e.Name)).toEqual(["", ""])
+    // And the tracks are still the ones asked for, which was never the problem.
+    expect(events(c).map((e) => e.RaceSetup?.Track)).toEqual(["spa", "suzuka"])
+  })
+
+  it("uses a round's own name when the spec gives one", () => {
+    // `RoundSpec.name` has been declared since the emitter was written and was
+    // never read — so a spec that named a round was quietly ignored, and the
+    // template's name won anyway.
+    const { championship: c } = emit({
+      spec: {
+        ...spec(),
+        rounds: [{ track: "spa", name: "Season opener" }, { track: "suzuka" }],
+      },
+    })
+    expect(events(c).map((e) => e.Name)).toEqual(["Season opener", ""])
   })
 
   it("stamps Created rather than inheriting the template's", () => {

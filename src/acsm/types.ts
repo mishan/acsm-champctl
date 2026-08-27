@@ -191,6 +191,18 @@ export interface EventSession extends Unknowns {
 
 export interface ChampionshipEvent extends Unknowns {
   ID?: string
+  /**
+   * What the manager calls this round, and what it shows *instead of* the
+   * track when it isn't empty.
+   *
+   * ACSM writes `""` for every event it creates and derives the label from
+   * `RaceSetup.Track`. A non-empty value is something a person or an older
+   * build put there. Modelled rather than left to flow through as an unknown,
+   * because the emitter builds every round from one template event — so an
+   * inherited name is the template's track on all of them, and a championship
+   * comes out with five rounds that all claim to be at Donington.
+   */
+  Name?: string
   /** Practice start, NOT quali start: `Scheduled = qualiStart − practice`
    *  (plan §4.3). ISO-8601 with a real UTC offset. */
   Scheduled?: string
