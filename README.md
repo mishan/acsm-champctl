@@ -349,6 +349,13 @@ check used to read ACSM's `AllowDuplicateSkinChoices` instead. That field is
 than a rule, so a normal entry list produced a screenful of errors that blocked
 every push and buried the findings that mattered.
 
+`excludedCarModels` is league furniture: cars that are always in the list and
+never worth a finding. BATL's `ford_transit` runs in every race for the stream,
+so naming it here stops both the car-list checks reporting it — whatever the
+spectator car setting says, since `SpectatorCar.Model` is empty on a real BATL
+export and there is nothing there to recognise the van by. Forgiven for being
+present, never required to be.
+
 `formats` is the league's own shorthand — BATL's `1x40` and `2x20` — offered as
 one-tap starting points in the web UI. They live in the profile rather than in
 the UI because they are league convention: another league's names and numbers
