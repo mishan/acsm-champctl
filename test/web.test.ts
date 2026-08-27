@@ -1068,8 +1068,14 @@ describe("logging out", () => {
 // ---------------------------------------------------------------------------
 
 describe("reordering rounds", () => {
-  /** Three rounds, each at its own track and its own length. */
-  const threeRounds = (over: Partial<ChampionshipEvent>[] = []): Championship =>
+  /**
+   * Two rounds, each at its own track and its own length.
+   *
+   * Two is the smallest championship a reorder means anything in, and every
+   * assertion below counts on it being exactly two — a swap is the whole
+   * order. `over` is indexed by round, so `[{}, { … }]` alters the second.
+   */
+  const twoRounds = (over: Partial<ChampionshipEvent>[] = []): Championship =>
     championship({
       ID: CHAMP_ID,
       Name: "Test Championship",
@@ -1103,7 +1109,7 @@ describe("reordering rounds", () => {
   }
 
   const reorderHarness = (over: Partial<ChampionshipEvent>[] = []): Harness =>
-    harness({ championship: threeRounds(over), roundTracks: TRACKS })
+    harness({ championship: twoRounds(over), roundTracks: TRACKS })
 
   const previewOrder = (h: Harness, order: number[]) =>
     h.app.inject({

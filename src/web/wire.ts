@@ -267,7 +267,12 @@ export interface ReorderedRoundView {
   round: number
   /** Where its track and format came from, 1-based. Equal to `round` if it stayed. */
   cameFrom: number
-  /** The track that ends up here. */
+  /**
+   * The track that ends up here, as `trackLabel` spells it — so
+   * `ks_brands_hatch/indy` when the round has a layout, and the bare folder
+   * name when it doesn't. Not track-only, and not a sentence: it is the
+   * identifier form, the one ACSM uses and the pit table is keyed by.
+   */
   label: string
   /**
    * The date this slot keeps.
