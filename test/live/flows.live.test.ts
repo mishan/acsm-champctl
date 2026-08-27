@@ -256,6 +256,56 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       expect(after.RaceSetup?.TrackLayout, "a finalize is about laps").toBe(before?.TrackLayout)
     }, 60_000)
 
+    /**
+     * The repair, end to end, on a real manager.
+     *
+     * This is the state BATL is in on rounds champctl has already touched:
+     * a layout belonging to another track, which ACSM stores without complaint
+     * and cannot render. Nothing but writing `TrackLayout` fixes it, and until
+     * now nothing could write it.
+     */
+    it("moves a round to another track and layout", async () => {
+      const { id, export: champ } = await seeded()
+      const eventId = firstEventId(champ)
+
+      const plan = await planFinalize(live(), {
+        championship: champ,
+        championshipId: id,
+        eventId,
+        format: await seedFormat(),
+        profile: PROFILE,
+        // Stock content with real layouts, so this exercises the field that
+        // matters rather than a track ACSM stores as `TrackLayout: ""`.
+        venue: { track: "ks_silverstone", layout: "international" },
+      })
+      expect(plan.venue?.to).toEqual({ track: "ks_silverstone", layout: "international" })
+      await applyFinalize(live(), plan, { acknowledgeWarnings: true })
+
+      const after = events(await live().getJson<Championship>(`/championship/${id}/export`))[0]!
+      expect(after.RaceSetup?.Track).toBe("ks_silverstone")
+      expect(after.RaceSetup?.TrackLayout, "the layout ACSM stored").toBe("international")
+    }, 60_000)
+
+    /**
+     * A track this server doesn't have. ACSM's form cannot express it, so
+     * every payload champctl could send lands somewhere else — refusing is the
+     * only answer that doesn't move a race without being asked.
+     */
+    it("refuses to move a round to a track that isn't installed", async () => {
+      const { id, export: champ } = await seeded()
+      const err = await planFinalize(live(), {
+        championship: champ,
+        championshipId: id,
+        eventId: firstEventId(champ),
+        format: await seedFormat(),
+        profile: PROFILE,
+        venue: { track: "rt_bathurst", layout: "" },
+      }).catch((e: unknown) => e)
+
+      expect(err).toBeInstanceOf(Error)
+      expect((err as Error).message).toMatch(/isn't installed/)
+    }, 60_000)
+
     it("keeps every entrant, with their own car and skin", async () => {
       // The whole reason the write round-trips the form. A save that quietly
       // drops entrants, or hands one person another's car, is the failure mode

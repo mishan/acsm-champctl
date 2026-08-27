@@ -12,6 +12,17 @@ import type { PlanRequest } from "./api.js"
 
 /** The form as typed: strings, because that is what inputs hold. */
 export interface Draft {
+  /**
+   * Where the round runs, as the pickers hold it.
+   *
+   * `track` is always filled from the round; `layout` is `""` both for a track
+   * with one layout and for a round that never had one set. The screen tells
+   * those apart with the layout index, not with this.
+   */
+  track: string
+  layout: string
+  /** The round's track and layout as they arrived, so a no-op stays a no-op. */
+  venueWas: { track: string; layout: string }
   lengthKind: "laps" | "minutes"
   laps: string
   minutes: string
@@ -48,11 +59,34 @@ export function requestFrom(draft: Draft): PlanRequest | null {
   const qualiTime = draft.qualiTime.trim()
   if (Boolean(qualiDate) !== Boolean(qualiTime)) return null
 
+  // A track is required, so a blank one is a half-typed form rather than a
+  // request to move nowhere.
+  const track = draft.track.trim()
+  if (!track) return null
+
   return {
     ...(draft.lengthKind === "laps" ? { laps: length } : { minutes: length }),
     reversedGridPositions: reversed,
     mandatoryPit: draft.mandatoryPit,
     extraLap: draft.extraLap,
     ...(qualiDate && qualiTime ? { quali: { date: qualiDate, time: qualiTime } } : {}),
+    ...venueOf(draft),
   }
+}
+
+/**
+ * The move, when there is one.
+ *
+ * Sent only when it differs from what the round arrived with. Sending it every
+ * time would be harmless on the server — planFinalize compares against the
+ * export and drops a no-op — but it would mean every preview of a lap-count
+ * change asked to write the track too, and the server would then refuse the
+ * whole preview for a round whose layout is *already* wrong. The screen has to
+ * be able to show that round before it can offer to fix it.
+ */
+function venueOf(draft: Draft): { venue?: { track: string; layout: string } } {
+  const track = draft.track.trim()
+  const layout = draft.layout.trim()
+  if (track === draft.venueWas.track && layout === draft.venueWas.layout) return {}
+  return { venue: { track, layout } }
 }

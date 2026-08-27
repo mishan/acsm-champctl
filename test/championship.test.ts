@@ -502,6 +502,20 @@ describe("track layouts", () => {
     expect(f?.data).toMatchObject({ layout: "ks_black_cat_county:layout_int" })
   })
 
+  /**
+   * A single-layout track with a layout set is wrong too, and it was the
+   * shape sitting on a real round: the index has nothing to compare against,
+   * so an "is it one of the track's layouts?" test alone said nothing.
+   */
+  it("warns about a layout on a track that has none", () => {
+    const f = runLayouts(
+      at({ Track: "spa", TrackLayout: "ks_black_cat_county:layout_int" }),
+      BRANDS,
+    ).findings.find((x) => x.code === "content.track-layout-unknown")
+    expect(f?.severity).toBe("WARN")
+    expect(f?.message).toContain("offers no layouts for spa")
+  })
+
   it("does not block a push", () => {
     // BATL ran a full practice session on a round in this state. Worth saying,
     // not worth refusing a lap-count change over.

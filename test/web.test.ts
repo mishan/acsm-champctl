@@ -604,6 +604,36 @@ describe("previewing a change", () => {
     expect(plan.formChanges.map((f: { name: string }) => f.name)).toEqual(["Race.Laps"])
   })
 
+  /**
+   * Moving a round, and the only repair for one whose layout ACSM can't
+   * resolve. The screen offers it beside the lap count, so the API takes it in
+   * the same preview.
+   */
+  it("previews a move to another track", async () => {
+    const h = harness()
+    await h.login()
+    const { plan } = (
+      await preview(h, { venue: { track: "ks_brands_hatch", layout: "indy" } })
+    ).json()
+
+    expect(plan.changes).toContainEqual({
+      label: "Track",
+      before: "suzuka",
+      after: "ks_brands_hatch/indy",
+    })
+    expect(plan.formChanges.map((f: { name: string }) => f.name)).toEqual(
+      expect.arrayContaining(["Track", "TrackLayout"]),
+    )
+  })
+
+  it("declines a move ACSM could not hold, rather than landing it elsewhere", async () => {
+    const h = harness()
+    await h.login()
+    const res = await preview(h, { venue: { track: "ks_brands_hatch", layout: "club" } })
+    expect(res.statusCode).toBe(422)
+    expect(res.json().error.message).toContain("no club layout")
+  })
+
   it("refuses laps and minutes together", async () => {
     const h = harness()
     await h.login()
@@ -886,7 +916,7 @@ describe("reading a championship", () => {
     expect(body.championship.rounds).toHaveLength(1)
     const round = body.championship.rounds[0]
     expect(round.round).toBe(1)
-    expect(round.track).toBe("suzuka")
+    expect(round.venue).toEqual({ track: "suzuka", layout: "" })
     expect(round.format.length).toEqual({ kind: "laps", laps: 20 })
     // Scheduled is practice start; quali is an hour later. Anyone reading
     // `Scheduled` as the quali time is an hour out.

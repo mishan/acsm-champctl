@@ -154,6 +154,15 @@ export async function applyFinalize(
       setOne(fields, name, value)
     }
 
+    // The move, after the format and last of all. `findEventForm` has already
+    // corrected `TrackLayout` to the layout the event *has*; this is the one
+    // caller that wants a different answer, and setting it here rather than
+    // there keeps the correction honest for every write that isn't a move.
+    if (plan.venue) {
+      setOne(fields, "Track", plan.venue.to.track)
+      setOne(fields, "TrackLayout", plan.venue.to.layout)
+    }
+
     // postForm re-checks the EntryList.* arity before sending.
     const res = await session.postForm(eventSubmitPath(plan.championshipId), fields)
     assertAccepted(res, "event", eventSubmitPath(plan.championshipId))

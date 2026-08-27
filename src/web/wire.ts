@@ -79,8 +79,16 @@ export interface RoundView {
   /** 1-based, as a league counts rounds. */
   round: number
   eventId: string
-  /** `suzuka` or `ks_silverstone/international`. Empty if the event has none. */
-  track: string
+  /**
+   * Where the round runs, in parts rather than as one string.
+   *
+   * Parts because the screen writes it as well as showing it: the track and
+   * the layout are two selects and two form fields, and a `track/layout` label
+   * would have to be taken apart to fill either. `layout` is `""` for a track
+   * with a single layout — how ACSM stores it — and also for a round that
+   * never had one set, which gridmom is what tells apart.
+   */
+  venue: { track: string; layout: string }
   label: string
   /**
    * True once anything in the round has run.
@@ -177,6 +185,18 @@ export interface PlanRequest {
   extraLap?: boolean
   /** League-local wall clock. Omit to leave the schedule alone. */
   quali?: { date: string; time: string }
+  /**
+   * Move the round to another track, or set the layout it should have had.
+   *
+   * Omit to leave both alone. `layout` is `""` for a track with a single
+   * layout, which is how ACSM stores it — so this is not the same shape as the
+   * create screen's optional `layout`, where absent means "don't care".
+   *
+   * Refused rather than approximated: a track the server doesn't have, a layout
+   * the track doesn't have, or an empty layout on a track that needs one all
+   * come back as a 422. There is no partially-correct place for a race.
+   */
+  venue?: { track: string; layout: string }
 }
 
 /** One field that will be posted. `null` is JSON for "the form doesn't carry it". */

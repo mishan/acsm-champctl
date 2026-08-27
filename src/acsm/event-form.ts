@@ -31,6 +31,24 @@ import * as cheerio from "cheerio"
 const NO_LAYOUT = "<default>"
 
 /**
+ * Every track the form will accept, off the `Track` select.
+ *
+ * The set ACSM is willing to store: a value outside it cannot be selected, so
+ * posting one either fails or lands somewhere else. Empty when the page renders
+ * an input rather than a select, which means "no opinion" rather than "no
+ * tracks" — a caller with an empty set should not conclude anything.
+ */
+export function offeredTracks(html: string): Set<string> {
+  const $ = cheerio.load(html)
+  const out = new Set<string>()
+  for (const el of $('select[name="Track"] option').toArray()) {
+    const value = ($(el).attr("value") ?? "").trim()
+    if (value) out.add(value)
+  }
+  return out
+}
+
+/**
  * The event's track is not installed on this server.
  *
  * The `Track` select marks nothing selected, which happens for exactly one

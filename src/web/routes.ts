@@ -184,6 +184,24 @@ const planBodySchema = {
         time: { type: "string", pattern: "^\\d{2}:\\d{2}$" },
       },
     },
+    /**
+     * Where the round runs. Both fields together or neither.
+     *
+     * `layout` may be empty, unlike the one on the create screen: `""` is how
+     * ACSM spells a track with a single layout, and a move to such a track has
+     * to be able to say so. `track` is required alongside it because a layout
+     * without a track is not a location — the pair is the unit that gets
+     * validated against what the server has, and against each other.
+     */
+    venue: {
+      type: "object",
+      additionalProperties: false,
+      required: ["track", "layout"],
+      properties: {
+        track: { type: "string", minLength: 1, maxLength: 200 },
+        layout: { type: "string", maxLength: 200 },
+      },
+    },
   },
 } as const
 
@@ -593,6 +611,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           eventId: ev.ID,
           format: withOverrides(readFormat(ev), body),
           ...(body.quali ? { qualiStart: body.quali } : {}),
+          ...(body.venue ? { venue: body.venue } : {}),
           profile: ctx.profile,
           pits: ctx.pits,
           now: ctx.now(),

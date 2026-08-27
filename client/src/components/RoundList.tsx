@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 
 import { useAuthAware } from "../App"
 import { api, type CheckReport, type ChampionshipView, type RoundView } from "../api"
-import { describeFormat } from "../format"
+import { describeFormat, venueLabel } from "../format"
 import { Findings, findingSummary } from "./Findings"
 import { Message } from "./Message"
 
@@ -94,7 +94,7 @@ function Round({ round, onOpen }: { round: RoundView; onOpen: () => void }): Rea
       <span className="row-main">
         <span className="row-title">
           <span className="round-number">{round.round}</span>
-          {round.track || "no track set"}
+          {venueLabel(round.venue) || "no track set"}
         </span>
         <span className="row-sub">
           {describeFormat(round.format)}

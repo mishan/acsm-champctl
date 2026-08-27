@@ -138,12 +138,28 @@ export const trackLayoutUnusable: Check = {
       const track = (ev.RaceSetup?.Track ?? "").trim()
       if (!track) return
 
-      const available = layouts[track]
-      if (!available || available.length === 0) return
-
+      const available = layouts[track] ?? []
       const label = eventLabel(ev, i + 1)
       const loc = { round: i + 1, event: label, path: `Events[${i}].RaceSetup.TrackLayout` }
       const layout = (ev.RaceSetup?.TrackLayout ?? "").trim()
+
+      // A track the index doesn't mention has one layout, which ACSM stores as
+      // `""`. Anything else on such a track is wrong however plausible it
+      // looks — and this is the shape the old save bug left on a single-layout
+      // track, where the "available" list has nothing to compare against.
+      if (available.length === 0) {
+        if (!layout) return
+        emit(
+          "WARN",
+          "content.track-layout-unknown",
+          `${label} is set to the ${layout} layout, and this server offers no layouts for ` +
+            `${track} — a single-layout track is stored with none set. Most likely a save wrote ` +
+            `it: champctl did that to every event it touched before it learned to read this field.`,
+          loc,
+          { track, layout, available },
+        )
+        return
+      }
 
       if (!layout) {
         emit(

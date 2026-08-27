@@ -21,7 +21,7 @@
 import { createHash } from "node:crypto"
 
 import { layoutsFrom } from "../acsm/content.js"
-import { currentTrackLayout, trackIsMissingFromServer } from "../acsm/event-form.js"
+import { currentTrackLayout, offeredTracks, trackIsMissingFromServer } from "../acsm/event-form.js"
 import {
   count,
   findFormByAction,
@@ -38,6 +38,7 @@ import type { AcsmSession } from "../acsm/session.js"
 import type { Championship, ChampionshipEvent } from "../acsm/types.js"
 import { eventEditPath, eventSubmitPath } from "../acsm/write.js"
 import { events } from "../acsm/view.js"
+import { humanList } from "../gridmom/finding.js"
 import { check, type CheckReport } from "../gridmom/index.js"
 import type { LeagueProfile } from "../profile/types.js"
 import type { PitTable } from "../pits/table.js"
@@ -73,6 +74,13 @@ export class FinalizeError extends Error {
 // bundle cannot resolve, so a client can follow the type there and stop.
 export type { Change, FormFieldChange }
 
+/** Where a round runs: a track folder, and a layout when the track has any. */
+export interface Venue {
+  track: string
+  /** `""` for a track with no layouts, which is how ACSM stores that. */
+  layout: string
+}
+
 export interface FinalizePlan {
   championshipId: string
   eventId: string
@@ -94,6 +102,15 @@ export interface FinalizePlan {
   /** Nothing to do — the event already matches. */
   noop: boolean
   /**
+   * The round's track, and where it would move to.
+   *
+   * Present only when a move was asked for and would change something. The
+   * write posts `venue.to` rather than re-deriving it, because the fresh form's
+   * own `Track` is the *old* one and the correction in `findEventForm` is about
+   * the layout the event has, not the one it is moving to.
+   */
+  venue?: { from: Venue; to: Venue }
+  /**
    * Fingerprint of the entry list as rendered at plan time. Opaque; compared
    * for equality against a re-fetch just before the write.
    */
@@ -107,6 +124,15 @@ export interface PlanOptions {
   championshipId: string
   eventId: string
   format: RaceFormat
+  /**
+   * Move the round to a different track, or fix the layout it is on.
+   *
+   * Omit to leave both alone, which is what a routine finalize does. The UI
+   * does not offer this beside the lap count by accident: a round on a layout
+   * ACSM can't resolve is only fixable by writing this field, and until now
+   * there was no way to write it at all (`docs/acsm-write-path.md` §15).
+   */
+  venue?: Venue
   /** League-local quali start. Omit to leave the schedule alone. */
   qualiStart?: { date: string; time: string }
   profile: LeagueProfile
@@ -234,6 +260,85 @@ export function findEventForm(html: string, pageUrl: string, championshipId: str
   return form
 }
 
+/**
+ * Where the round would move, or undefined for "it isn't moving".
+ *
+ * Refuses rather than approximates, because there is no such thing as a
+ * partially-correct track. ACSM's form can only hold what its selects offer, so
+ * a value outside them is not a request champctl can honour — it is one that
+ * would land somewhere else and look like it worked, which is the exact failure
+ * this whole area is being fixed for.
+ */
+function planVenue(
+  ev: ChampionshipEvent,
+  html: string,
+  wanted: Venue | undefined,
+): { from: Venue; to: Venue } | undefined {
+  if (!wanted) return undefined
+
+  const track = wanted.track.trim()
+  const layout = wanted.layout.trim()
+  if (!track) {
+    throw new FinalizeError(
+      `A round has to be somewhere: no track was named. Leave the track alone to keep the one ` +
+        `it already has.`,
+    )
+  }
+
+  // The set the form will actually accept. Empty means the page renders an
+  // input rather than a select and has no opinion, so there is nothing to
+  // check against — every build champctl has met renders a select.
+  const offered = offeredTracks(html)
+  if (offered.size > 0 && !offered.has(track)) {
+    throw new FinalizeError(
+      `${track} isn't installed on the server, so ACSM's track list has no option for it and ` +
+        `saving would put the round on something else. Install it, or pick a track from the list.`,
+    )
+  }
+
+  const available = layoutsFrom(html)?.[track] ?? []
+  if (layout && !available.includes(layout)) {
+    throw new FinalizeError(
+      available.length > 0
+        ? `${track} has no ${layout} layout. Its layouts are ${humanList(available)}.`
+        : `${track} has no layouts to choose from, so it can't be set to ${layout}. Leave the ` +
+            `layout empty — that is how ACSM spells a track with a single layout.`,
+    )
+  }
+  if (!layout && available.length > 0) {
+    throw new FinalizeError(
+      `${track} needs a layout: it has ${humanList(available)}. Leaving it unset is what puts a ` +
+        `round on a circuit ACSM can't render.`,
+    )
+  }
+
+  const from: Venue = {
+    track: (ev.RaceSetup?.Track ?? "").trim(),
+    layout: (ev.RaceSetup?.TrackLayout ?? "").trim(),
+  }
+  const to: Venue = { track, layout }
+
+  // Compared against the export rather than against the form. The form's own
+  // `TrackLayout` is the corrected value — what a browser *would* submit — and
+  // for a round already broken that is `""` while the export holds the wrong
+  // layout. Reading the form here would call that move a no-op and leave the
+  // round broken, which is the one case this feature exists for.
+  if (from.track === to.track && from.layout === to.layout) return undefined
+  return { from, to }
+}
+
+/** The two form fields a move writes, or nothing at all when it isn't moving. */
+function venueFields(venue: { to: Venue } | undefined): Record<string, string> {
+  if (!venue) return {}
+  return { Track: venue.to.track, TrackLayout: venue.to.layout }
+}
+
+/** "Track: ks_brands_hatch/gp → spa" — the move as a person reads it. */
+function describeVenue(venue: { from: Venue; to: Venue }): Change {
+  const name = (v: Venue): string => (v.layout ? `${v.track}/${v.layout}` : v.track || "unset")
+  return { label: "Track", before: name(venue.from), after: name(venue.to) }
+}
+
 export async function planFinalize(
   session: AcsmSession,
   options: PlanOptions,
@@ -256,13 +361,26 @@ export async function planFinalize(
   const current = readFormat(ev)
   const changes = describeChanges(current, format)
 
+  const venue = planVenue(ev, html, options.venue)
+  if (venue) changes.push(describeVenue(venue))
+
   // What the form would actually send, compared against what it currently
   // holds. A field already at the target value is not a change.
+  //
+  // Except for a move, which is compared against the export and listed even
+  // when the form agrees. On a round whose stored layout belongs to another
+  // track, the form's own `TrackLayout` is already the corrected `""` — so a
+  // repair setting it to `""` looked like a change to nothing, the plan came
+  // back a no-op, and ACSM kept the broken value. Measured on 2.4.15 against a
+  // round in exactly that state.
   const wanted = formFieldsFor(format)
   const formChanges: FormFieldChange[] = []
   for (const [name, after] of Object.entries(wanted)) {
     const before = getOne(form.fields, name)
     if (before !== after) formChanges.push({ name, before, after })
+  }
+  for (const [name, after] of Object.entries(venueFields(venue))) {
+    formChanges.push({ name, before: getOne(form.fields, name), after })
   }
 
   const planned = planSchedule(ev, options)
@@ -280,6 +398,16 @@ export async function planFinalize(
   // demanded an acknowledgement for a warning the change was fixing.
   const wouldBeEvent = applyFormat(ev, format)
   if (planned) wouldBeEvent.Scheduled = planned.scheduled
+  // The move too, so every check that reads the track sees where the round is
+  // going rather than where it has been: the pit count that caps the grid, the
+  // layout checks, and "two rounds at the same circuit".
+  if (venue) {
+    wouldBeEvent.RaceSetup = {
+      ...(wouldBeEvent.RaceSetup ?? {}),
+      Track: venue.to.track,
+      TrackLayout: venue.to.layout,
+    }
+  }
   const wouldBe = withEvent(championship, round - 1, wouldBeEvent)
   // The layout index comes out of the page this function already fetched — the
   // event edit form is where ACSM lists layouts, and it is the same page. So
@@ -295,6 +423,7 @@ export async function planFinalize(
   })
 
   return {
+    ...(venue ? { venue } : {}),
     championshipId,
     eventId,
     round,
