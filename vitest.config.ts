@@ -34,7 +34,11 @@ export default defineConfig({
         plugins: [react()],
         test: {
           name: "client",
-          include: ["client/src/**/*.test.tsx"],
+          // `.ts` as well as `.tsx`, because not everything the browser half
+          // owns renders. `reorder.ts` is drag arithmetic with a hook on top,
+          // and a test file beside it matched neither project's include — so
+          // it would have been collected by nothing and reported as nothing.
+          include: ["client/src/**/*.test.{ts,tsx}"],
           environment: "jsdom",
           restoreMocks: true,
         },
