@@ -36,6 +36,7 @@ import { LoginThrottle } from "../src/web/throttle.js"
 import {
   eventFormHtml,
   fakeImportPage,
+  layoutSelectHtml,
   scheduleFormHtml,
   type FormEntrant,
 } from "./support/acsm-html.js"
@@ -166,7 +167,12 @@ function harness(options: HarnessOptions = {}): Harness {
     }
     const page = pages[Math.min(eventGets, pages.length - 1)] as string
     eventGets++
-    return new Response(page, { status: 200 })
+    // Real event forms carry the TrackLayout select, which is the only place
+    // ACSM lists a track's layouts.
+    return new Response(
+      page + layoutSelectHtml(["ks_brands_hatch:indy", "ks_brands_hatch:gp", "spa:<default>"]),
+      { status: 200 },
+    )
   }
 
   const app = buildServer({
@@ -1306,10 +1312,27 @@ describe("what content is installed", () => {
     expect(res.statusCode, res.body).toBe(200)
     // Both halves: the folder name is what a championship stores, the display
     // name is the only part anybody knows.
-    expect(res.json()).toEqual({
+    expect(res.json()).toMatchObject({
       cars: [{ id: "ks_porsche_911_gt3_r_2016", name: "Porsche 911 GT3 R" }],
       tracks: [{ id: "ks_brands_hatch", name: "Brands Hatch" }],
     })
+  })
+
+  it("includes each track's layouts, off the event form", async () => {
+    // Not from the listing pages: ACSM carries layouts nowhere but here.
+    // `spa:<default>` means Spa has no layout to choose, so it gets no entry —
+    // absent rather than an empty array, so the screen can hide the field.
+    const h = harness()
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/api/content",
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.statusCode, res.body).toBe(200)
+    const body = res.json() as { layouts: Record<string, string[]> }
+    expect(body.layouts["ks_brands_hatch"]).toEqual(["indy", "gp"])
+    expect("spa" in body.layouts).toBe(false)
   })
 
   it("needs a session, like every other read", async () => {

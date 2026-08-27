@@ -43,35 +43,45 @@ const DEFAULT_TTL_MS = 60 * 60 * 1000
  * An interface rather than a path, so the tests do not need a filesystem and
  * so an on-host deployment could keep it wherever it likes.
  */
-export interface ContentStore {
-  read(): Promise<{ at: number; value: InstalledContent } | undefined>
-  write(entry: { at: number; value: InstalledContent }): Promise<void>
+export interface ContentStore<T = InstalledContent> {
+  read(): Promise<{ at: number; value: T } | undefined>
+  write(entry: { at: number; value: T }): Promise<void>
 }
 
-export interface ContentCacheOptions {
-  load: () => Promise<InstalledContent>
-  /** Persists the index across restarts. Without one, every boot re-walks. */
-  store?: ContentStore
+export interface ContentCacheOptions<T = InstalledContent> {
+  /**
+   * How to read it, when that can be decided up front.
+   *
+   * Optional because it cannot always be. The cars-and-tracks index reads
+   * without credentials, so `champctl-serve` builds its loader at boot and
+   * `warm()` runs it there. The layout index comes off an event edit form,
+   * which ACSM only serves to a logged-in session — and this process holds no
+   * credentials of its own, by design. That loader can only be built from the
+   * session of whoever is asking, so it arrives at `get()` instead.
+   */
+  load?: () => Promise<T>
+  /** Persists the index across restarts. Without one, every boot re-reads. */
+  store?: ContentStore<T>
   ttlMs?: number
   now?: () => number
 }
 
-export class ContentCache {
-  readonly #load: () => Promise<InstalledContent>
-  readonly #store: ContentStore | undefined
+export class ContentCache<T = InstalledContent> {
+  readonly #load: (() => Promise<T>) | undefined
+  readonly #store: ContentStore<T> | undefined
   readonly #ttlMs: number
   readonly #now: () => number
-  #held: { at: number; value: InstalledContent } | undefined
-  #inFlight: Promise<InstalledContent> | undefined
+  #held: { at: number; value: T } | undefined
+  #inFlight: Promise<T> | undefined
 
-  constructor(options: ContentCacheOptions) {
+  constructor(options: ContentCacheOptions<T> = {}) {
     this.#load = options.load
     this.#store = options.store
     this.#ttlMs = options.ttlMs ?? DEFAULT_TTL_MS
     this.#now = options.now ?? Date.now
   }
 
-  async get(): Promise<InstalledContent> {
+  async get(load?: () => Promise<T>): Promise<T> {
     const held = this.#held
     if (held && this.#now() - held.at < this.#ttlMs) return held.value
 
@@ -82,7 +92,7 @@ export class ContentCache {
     // only if somebody installed one in the last hour. The first load has
     // nothing to serve and does have to wait; `warm()` is how that stops
     // landing on a person.
-    const refresh = this.#refresh()
+    const refresh = this.#refresh(load)
     return held ? held.value : refresh
   }
 
@@ -110,13 +120,21 @@ export class ContentCache {
     void this.#refresh().catch(() => undefined)
   }
 
-  #refresh(): Promise<InstalledContent> {
+  #refresh(load?: () => Promise<T>): Promise<T> {
+    const read = load ?? this.#load
+    if (!read) {
+      // A cache with no way to fill itself, asked to fill itself. That is a
+      // wiring mistake rather than anything a manager did, so it says so.
+      return Promise.reject(
+        new Error("This index has no loader: pass one to the constructor or to get()."),
+      )
+    }
     // One read for however many callers arrive while it is in flight. Two
     // people opening the screen at once is the ordinary case, and without this
     // it is two full walks of `/cars` — which is more requests than the
     // limiter allows in its window, so the second person waits out the first
     // one's rate limiting rather than on their own answer.
-    this.#inFlight ??= this.#load()
+    this.#inFlight ??= read()
       .then(async (value) => {
         const entry = { at: this.#now(), value }
         this.#held = entry

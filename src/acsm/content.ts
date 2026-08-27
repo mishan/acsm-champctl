@@ -90,6 +90,52 @@ function headingFor(node: ReturnType<ReturnType<typeof cheerio.load>>): string {
 }
 
 /**
+ * Every track's layouts, off an event edit form.
+ *
+ * The only place ACSM will say. `/tracks` lists tracks and no layouts, the
+ * track page renders `track-layout-wrapper` from JavaScript, and
+ * `ui/meta_data.json` carries a `layouts` key that was `{}` for a track this
+ * very select said had three. `/content/tracks/{id}/ui/` is a browsable
+ * directory but holds no layout folders — measured on ac.batlracing.com, where
+ * those directories are empty, so a manager's real content is not there to
+ * read.
+ *
+ * The form spells each one `{track}:{layout}` in the option's value, which is
+ * why this returns a map rather than a list: the caller has a track and wants
+ * that track's layouts.
+ *
+ * A track with no layouts is spelled `{track}:<default>`, and comes back with
+ * no entry at all rather than one holding a sentinel. Measured on 2.4.15:
+ * `<default>` is never mixed with real layouts — ten tracks had only it, seven
+ * had only real ones, none had both — so it means "nothing to choose here" and
+ * a caller wants an absent key, not a fake option somebody could pick. What
+ * ACSM stores for such a track is `TrackLayout: ""`.
+ */
+const NO_LAYOUT = "<default>"
+export function layoutsFrom(html: string): Record<string, string[]> {
+  const $ = cheerio.load(html)
+  const out: Record<string, string[]> = {}
+
+  $('select[name="TrackLayout"] option').each((_, el) => {
+    // The value, not the label: 2.4.15 labels the option with the layout's
+    // folder name, but a build that labelled it "Indy Circuit" would still
+    // have to submit the folder name, and that is the half champctl stores.
+    const value = $(el).attr("value") ?? ""
+    const at = value.indexOf(":")
+    if (at <= 0) return
+    const track = value.slice(0, at).trim()
+    const layout = value.slice(at + 1).trim()
+    if (!track || !layout || layout === NO_LAYOUT) return
+
+    const list = out[track] ?? []
+    if (!list.includes(layout)) list.push(layout)
+    out[track] = list
+  })
+
+  return out
+}
+
+/**
  * Further pages of a listing, as paths to fetch.
  *
  * Keyed by page *number*, not by URL. The paginator links the same page under

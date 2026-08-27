@@ -65,6 +65,12 @@ const TRACKS = [
   { id: "ks_brands_hatch", name: "Brands Hatch" },
   { id: "monza", name: "Monza" },
 ]
+/**
+ * Only tracks with a choice appear. Spa and Monza have one layout each, which
+ * ACSM spells `<default>` and champctl drops — so they have no entry, and the
+ * screen shows no layout field for them.
+ */
+const LAYOUTS = { ks_brands_hatch: ["indy", "gp"] }
 
 function report(findings: Finding[] = []): CheckReport {
   return {
@@ -164,7 +170,7 @@ beforeEach(() => {
   championshipsMock.mockResolvedValue({
     championships: [{ id: SOURCE, name: "August 2026" }],
   })
-  contentMock.mockResolvedValue({ cars: CARS, tracks: TRACKS })
+  contentMock.mockResolvedValue({ cars: CARS, tracks: TRACKS, layouts: LAYOUTS })
   // The source, read so the Cars field can show what a clone would inherit.
   championshipMock.mockResolvedValue({
     championship: {
@@ -480,12 +486,40 @@ describe("the track list", () => {
 
   it("carries the layout when there is one", async () => {
     await filled("Brands Hatch")
-    fireEvent.change(screen.getByLabelText(/Round 1 layout/), { target: { value: "indy" } })
+    // A picker now, filled from what ACSM says that track has — layouts live
+    // nowhere but the event edit form, so the screen could not offer them
+    // before.
+    await pick(/Round 1 layout/, "indy")
     await settle()
     expect(planMock.mock.lastCall?.[0]).toMatchObject({
-      // The folder name the picker committed, not the name that was typed.
       tracks: [{ track: "ks_brands_hatch", layout: "indy" }],
     })
+  })
+
+  it("offers no layout field for a track that has one layout", async () => {
+    // Spa is not in the layout map: ACSM spells that `<default>`, meaning
+    // there is nothing to choose. A disabled box on most rounds would be a
+    // control that never does anything.
+    await filled("Spa")
+    expect(screen.queryByLabelText(/Round 1 layout/)).toBeNull()
+  })
+
+  /**
+   * A layout belongs to one track — `indy` means nothing at Monza — so changing
+   * the track has to drop it. Keeping it would leave the round pointing at a
+   * pair the server does not have, set by somebody who only changed the track.
+   */
+  it("drops the layout when the track changes under it", async () => {
+    await filled("Brands Hatch")
+    await pick(/Round 1 layout/, "indy")
+    await settle()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({ tracks: [{ layout: "indy" }] })
+
+    await pick(/Round 1 track/, "Monza")
+    await settle()
+    const sent = planMock.mock.lastCall?.[0] as { tracks: { track: string; layout?: string }[] }
+    expect(sent.tracks[0]?.track).toBe("monza")
+    expect("layout" in (sent.tracks[0] ?? {})).toBe(false)
   })
 
   it("removes a round", async () => {

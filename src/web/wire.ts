@@ -142,6 +142,14 @@ export interface ChampionshipListResponse {
 export interface ContentResponse {
   cars: InstalledItem[]
   tracks: InstalledItem[]
+  /**
+   * Track folder name to its layouts.
+   *
+   * A track with no layout to choose has no entry at all, rather than an empty
+   * array — ACSM spells that case `<default>` and champctl drops it, so the
+   * screen can treat "absent" as "this field does not apply here".
+   */
+  layouts: Record<string, string[]>
 }
 
 export interface ChampionshipResponse {

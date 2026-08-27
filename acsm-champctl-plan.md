@@ -176,8 +176,21 @@ Open devtools against the live manager and "Copy as cURL" for:
    is part of managing an event, distinct from championship settings. Still
    needs capturing; it is the one remaining unknown in the write path.
 5. **The sign-up approve/reject POST** — see §5.3.
-6. Whatever XHR the event form uses to populate track/layout info, including
-   pit box counts.
+6. ~~Whatever XHR the event form uses to populate track/layout info~~ — done,
+   and there is no XHR. The event edit form renders a `<select
+   name="TrackLayout">` server-side carrying **every** track's layouts as
+   `{track}:{layout}`, with `{track}:<default>` for a track that has none.
+   Measured on 2.4.15: `<default>` is never mixed with real layouts.
+
+   Nowhere else has them. `/tracks` lists tracks only; the track page builds
+   `track-layout-wrapper` from JavaScript; `ui/meta_data.json` has a `layouts`
+   key that was `{}` for a track the form said had three; and
+   `/content/tracks/{id}/ui/` is a browsable directory whose contents are empty
+   on `ac.batlracing.com` — `npm run recon:layouts` is the script that asked.
+
+   So layouts cost a login, which is why `web/layouts.ts` reads them on the
+   caller's session rather than in the credential-free content walk. Pit box
+   counts are still not in there; they remain the `scan` source (§4.5).
 
 ---
 

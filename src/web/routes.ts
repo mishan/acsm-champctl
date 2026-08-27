@@ -31,6 +31,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest 
 import type { AcsmReader } from "../acsm/client.js"
 import { AcsmAuthError, AcsmSession } from "../acsm/session.js"
 import { ContentCache } from "./content-cache.js"
+import { readTrackLayouts, type TrackLayouts } from "./layouts.js"
 import { events } from "../acsm/view.js"
 import { importChampionship } from "../acsm/write.js"
 import { cloneChampionship } from "../emit/clone.js"
@@ -120,6 +121,12 @@ export interface ApiContext {
    * that Brands Hatch is `ks_brands_hatch`.
    */
   content: ContentCache
+  /**
+   * Track layouts, held the same way — but read on a caller's session rather
+   * than at boot, because the only page that lists them needs a login. See
+   * `layouts.ts`.
+   */
+  layouts: ContentCache<TrackLayouts>
   throttle: LoginThrottle
   /** Injectable so a test can drive a session over a stub `fetch`. */
   createSession: (baseUrl: string) => AcsmSession
@@ -150,6 +157,7 @@ export function apiContext(options: ApiContextOptions): ApiContext {
     newChampionships:
       options.newChampionships ?? new PlanStore({ label: "unconfirmed new championships" }),
     content: options.content ?? new ContentCache({ load: () => options.reader.listContent() }),
+    layouts: options.layouts ?? new ContentCache<TrackLayouts>(),
     throttle: options.throttle ?? new LoginThrottle(),
     createSession: options.createSession ?? ((baseUrl) => new AcsmSession({ baseUrl })),
     secureCookies: options.secureCookies ?? true,
@@ -482,7 +490,25 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
      * unauthenticated endpoint that walks five pages of a league's manager is
      * something a stranger could point at that manager on a loop.
      */
-    app.get("/content", async (): Promise<ContentResponse> => await ctx.content.get())
+    app.get("/content", async (req): Promise<ContentResponse> => {
+      const s = requireSession(ctx, req)
+      const [content, layouts] = await Promise.all([
+        ctx.content.get(),
+        // On this person's ACSM session, because the form that lists layouts
+        // is the one page ACSM will not serve without a login — and champctl
+        // holds no credentials of its own to do it with. Held for an hour
+        // afterwards, so it is one read per manager rather than one per
+        // screen.
+        ctx.layouts
+          .get(() => readTrackLayouts(s.acsm, ctx.reader))
+          // Layouts are the one part of this the screen can do without: the
+          // field falls back to free text and the rest of the form still
+          // works. Failing the whole request would take the car and track
+          // pickers down with it.
+          .catch(() => ({}) as TrackLayouts),
+      ])
+      return { ...content, layouts }
+    })
 
     app.get<{ Params: { id: string } }>(
       "/championships/:id",
