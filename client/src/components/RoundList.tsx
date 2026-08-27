@@ -9,7 +9,7 @@ import {
   type RoundView,
 } from "../api"
 import { describeFormat, venueLabel } from "../format"
-import { moveItem, useReorder } from "../reorder"
+import { moveItem, movedPositions, useReorder } from "../reorder"
 import { Findings, findingSummary } from "./Findings"
 import { Message } from "./Message"
 
@@ -274,8 +274,38 @@ function Reorder({
     }
   }, [])
 
+  /**
+   * A position nothing may move out of or into.
+   *
+   * Two ways to be fixed and they are different facts. `round.started` is the
+   * round currently sitting here having raced, so it cannot be moved. And
+   * `slot.started` is the *night* having happened, so nothing can be moved onto
+   * it — putting a future round on a date that has passed is not a reorder, it
+   * is a rewrite of history.
+   */
+  const isFixed = (i: number): boolean =>
+    byRound.get(order[i] ?? 0)?.started === true || rounds[i]?.started === true
+
+  /**
+   * Whether this move is one the server would accept.
+   *
+   * Every position between `from` and `to` inclusive changes its occupant —
+   * `moveItem` lifts one row out and the rest close up behind it — so the
+   * whole span has to be movable, not just the ends. Dragging round 3 above a
+   * raced round 1 would otherwise pass a check on its endpoints and still
+   * shift round 2 onto a night that has already happened.
+   */
+  const canMove = (from: number, to: number): boolean => {
+    const touched = movedPositions(order.length, from, to)
+    return touched.length > 0 && !touched.some(isFixed)
+  }
+
   const move = (from: number, to: number): void => {
-    if (to < 0 || to >= order.length) return
+    // Refused rather than sent and rejected. The server says no to this by
+    // name, and a screen that announces "spa is now round 1", retires the
+    // preview and then shows a refusal has told the person three things, two
+    // of which are wrong.
+    if (!canMove(from, to)) return
     const label = byRound.get(order[from] ?? 0)
     setAnnouncement(
       `${label ? venueLabel(label.venue) || `round ${order[from]}` : "the round"} is now round ${to + 1} of ${order.length}.`,
@@ -326,8 +356,10 @@ function Reorder({
           const round = byRound.get(source)
           const slot = rounds[i]
           // A raced round cannot move and nothing can move into its slot. No
-          // handle and no arrows, rather than controls that produce a refusal.
-          const fixed = round?.started === true || slot?.started === true
+          // handle, rather than a grip that produces a refusal. The arrows ask
+          // `canMove`, because a row can be perfectly movable and still have
+          // nowhere to go in one direction.
+          const fixed = isFixed(i)
           return (
             <li
               // biome-ignore lint/suspicious/noArrayIndexKey: a row is its position
@@ -354,7 +386,7 @@ function Reorder({
                 type="button"
                 className="icon"
                 aria-label={`Move round ${i + 1} up`}
-                disabled={fixed || i === 0}
+                disabled={!canMove(i, i - 1)}
                 onClick={() => move(i, i - 1)}
               >
                 ↑
@@ -363,7 +395,7 @@ function Reorder({
                 type="button"
                 className="icon"
                 aria-label={`Move round ${i + 1} down`}
-                disabled={fixed || i === order.length - 1}
+                disabled={!canMove(i, i + 1)}
                 onClick={() => move(i, i + 1)}
               >
                 ↓

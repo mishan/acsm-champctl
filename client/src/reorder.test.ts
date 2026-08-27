@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from "vitest"
 
-import { dropTarget, moveItem, slideBy } from "./reorder"
+import { dropTarget, moveItem, movedPositions, slideBy } from "./reorder"
 
 const CENTRES = [20, 70, 120, 170]
 /** Centre to centre. A row that moves one place moves by exactly this. */
@@ -39,6 +39,27 @@ describe("moveItem", () => {
     expect(moveItem(["a", "b"], 0, 5)).toEqual(["a", "b"])
     expect(moveItem(["a", "b"], -1, 0)).toEqual(["a", "b"])
     expect(moveItem(["a", "b"], 1, 1)).toEqual(["a", "b"])
+  })
+})
+
+describe("movedPositions", () => {
+  /**
+   * The rule a "may this move?" check has to apply. A move is not a swap: the
+   * row is lifted out and the others close up, so everything between the ends
+   * changes hands too.
+   */
+  it("covers both ends and everything between", () => {
+    expect(movedPositions(4, 3, 0)).toEqual([0, 1, 2, 3])
+    expect(movedPositions(4, 0, 3)).toEqual([0, 1, 2, 3])
+    expect(movedPositions(4, 1, 2)).toEqual([1, 2])
+  })
+
+  it("disturbs nothing when nothing moves", () => {
+    // Matching moveItem, which returns the list unchanged for each of these.
+    expect(movedPositions(4, 2, 2)).toEqual([])
+    expect(movedPositions(4, -1, 2)).toEqual([])
+    expect(movedPositions(4, 2, 4)).toEqual([])
+    expect(movedPositions(0, 0, 0)).toEqual([])
   })
 })
 

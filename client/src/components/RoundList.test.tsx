@@ -292,6 +292,27 @@ describe("reordering the rounds", () => {
     expect(document.querySelectorAll(".tracks.reorder .round-grip")).toHaveLength(2)
   })
 
+  /**
+   * The other half of the same rule, and the half that was only enforced on
+   * the server: a raced round cannot move, *and nothing can move into its
+   * slot*. Round 2's up arrow points at round 1's night, which has happened.
+   */
+  it("will not offer to move a round onto a night that has already happened", async () => {
+    await reordering([
+      round({ round: 1, started: true }),
+      round({ round: 2, eventId: "event-2", venue: { track: "spa", layout: "" } }),
+      round({ round: 3, eventId: "event-3", venue: { track: "monza", layout: "" } }),
+    ])
+    expect(
+      (screen.getByRole("button", { name: /Move round 2 up/ }) as HTMLButtonElement).disabled,
+      "round 1 has raced, so round 2 has nowhere above it",
+    ).toBe(true)
+    // Down is still fine — round 3 has not run.
+    expect(
+      (screen.getByRole("button", { name: /Move round 2 down/ }) as HTMLButtonElement).disabled,
+    ).toBe(false)
+  })
+
   it("applies with the plan id and nothing else", async () => {
     await reordering()
     fireEvent.click(screen.getByRole("button", { name: /Move round 2 up/ }))

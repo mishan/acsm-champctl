@@ -39,6 +39,25 @@ export function moveItem<T>(items: readonly T[], from: number, to: number): T[] 
 }
 
 /**
+ * Every position a move disturbs: both ends and everything between them.
+ *
+ * `moveItem` lifts one row out and the rest close up behind it, so a move from
+ * 3 to 0 does not swap two rows — it changes the occupant of positions 0, 1, 2
+ * and 3. A caller asking "may this move happen?" has to ask about all of them.
+ * Asking only about the ends is how dragging a round above a raced one shifts
+ * the round in between onto a night that has already happened.
+ *
+ * Empty when the move is a no-op or out of bounds, matching `moveItem`, so
+ * "nothing is disturbed" and "nothing happens" are the same answer.
+ */
+export function movedPositions(length: number, from: number, to: number): number[] {
+  if (from < 0 || from >= length || to < 0 || to >= length || from === to) return []
+  const out: number[] = []
+  for (let i = Math.min(from, to); i <= Math.max(from, to); i++) out.push(i)
+  return out
+}
+
+/**
  * Where a row dragged `dy` pixels from `from` would land.
  *
  * `centres` are the rows' vertical centres as they were when the drag started,
