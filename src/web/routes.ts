@@ -30,6 +30,8 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest 
 
 import type { AcsmReader } from "../acsm/client.js"
 import { AcsmAuthError, AcsmSession } from "../acsm/session.js"
+import { ContentCache } from "./content-cache.js"
+import { readTrackLayouts, type TrackLayouts } from "./layouts.js"
 import { events } from "../acsm/view.js"
 import { importChampionship } from "../acsm/write.js"
 import { cloneChampionship } from "../emit/clone.js"
@@ -76,6 +78,7 @@ import type {
   ChampionshipListResponse,
   ChampionshipResponse,
   ConfigResponse,
+  ContentResponse,
   LoginResponse,
   NewChampionshipResponse,
   NewChampionshipRequest,
@@ -112,6 +115,18 @@ export interface ApiContext {
    * it is the same store with the same guarantees.
    */
   newChampionships: PlanStore<HeldChampionship>
+  /**
+   * Installed cars and tracks, held for an hour. The new-championship screen
+   * offers only what is in here, so this is what stops anyone having to know
+   * that Brands Hatch is `ks_brands_hatch`.
+   */
+  content: ContentCache
+  /**
+   * Track layouts, held the same way — but read on a caller's session rather
+   * than at boot, because the only page that lists them needs a login. See
+   * `layouts.ts`.
+   */
+  layouts: ContentCache<TrackLayouts | null>
   throttle: LoginThrottle
   /** Injectable so a test can drive a session over a stub `fetch`. */
   createSession: (baseUrl: string) => AcsmSession
@@ -141,6 +156,8 @@ export function apiContext(options: ApiContextOptions): ApiContext {
     plans: options.plans ?? new PlanStore({ label: "finalize plans" }),
     newChampionships:
       options.newChampionships ?? new PlanStore({ label: "unconfirmed new championships" }),
+    content: options.content ?? new ContentCache({ load: () => options.reader.listContent() }),
+    layouts: options.layouts ?? new ContentCache<TrackLayouts | null>(),
     throttle: options.throttle ?? new LoginThrottle(),
     createSession: options.createSession ?? ((baseUrl) => new AcsmSession({ baseUrl })),
     secureCookies: options.secureCookies ?? true,
@@ -187,7 +204,14 @@ export interface HeldChampionship {
 
 /** One track from the browser as the emitter's round spec. */
 function roundSpecFrom(t: TrackRequest): RoundSpec {
-  return { track: t.track, ...(t.layout ? { layout: t.layout } : {}) }
+  return {
+    track: t.track,
+    ...(t.layout ? { layout: t.layout } : {}),
+    // Trimmed to nothing is no name, not a name made of spaces — and a round
+    // with no name is the normal case, so it must not become one that renders
+    // as blank in the manager.
+    ...(t.name?.trim() ? { name: t.name.trim() } : {}),
+  }
 }
 
 const newChampionshipBodySchema = {
@@ -198,6 +222,33 @@ const newChampionshipBodySchema = {
     sourceId: { type: "string", minLength: 1, maxLength: 200 },
     name: { type: "string", minLength: 1, maxLength: 200 },
     startDate: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+    /**
+     * The class car list, as folder names.
+     *
+     * Absent means "whatever the source ran", which is what a clone did before
+     * this existed and is still the common case. Present replaces it outright
+     * rather than adding to it — the same rule as `tracks`, and the one
+     * somebody changing a championship's class expects.
+     *
+     * `minItems: 1` because an empty array is not "inherit", it is a class
+     * with no cars, and `emitChampionship` refuses that with a message about
+     * an empty car list. Better to refuse the request than to produce a
+     * plausible-looking 422 about something the person did not ask for.
+     */
+    cars: {
+      type: "array",
+      minItems: 1,
+      // A multi-make championship is a handful of models; the Legends one ran
+      // ten. The bound is here for the same reason every other bound is.
+      maxItems: 200,
+      items: { type: "string", minLength: 1, maxLength: 200 },
+    },
+    /**
+     * The championship blurb. Empty is a value, not an omission — someone who
+     * cleared the box wants it cleared — so there is no `minLength` here and
+     * the handler tests for `undefined` rather than for truthiness.
+     */
+    description: { type: "string", maxLength: 20_000 },
     tracks: {
       type: "array",
       minItems: 1,
@@ -215,6 +266,10 @@ const newChampionshipBodySchema = {
           // so an empty string would arrive as a track without one and hide
           // whatever produced it — omit the key instead.
           layout: { type: "string", minLength: 1, maxLength: 200 },
+          // Empty *is* allowed, unlike layout: the screen sends whatever is in
+          // the box, and clearing it means "no name, show the track". No
+          // minLength, so that stays expressible.
+          name: { type: "string", maxLength: 200 },
         },
       },
     },
@@ -425,6 +480,44 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
       }),
     )
 
+    /**
+     * What is installed on the server, so the screen can offer it rather than
+     * ask someone to type `ks_brands_hatch` from memory.
+     *
+     * Behind a session like every other read, even though ACSM serves both
+     * listings without credentials. Not for secrecy — it is a list of folder
+     * names — but because it is champctl's most expensive read, and an
+     * unauthenticated endpoint that walks five pages of a league's manager is
+     * something a stranger could point at that manager on a loop.
+     */
+    app.get("/content", async (req): Promise<ContentResponse> => {
+      const s = requireSession(ctx, req)
+      const [content, layouts] = await Promise.all([
+        ctx.content.get(),
+        // On this person's ACSM session, because the form that lists layouts
+        // is the one page ACSM will not serve without a login — and champctl
+        // holds no credentials of its own to do it with. Held for an hour
+        // afterwards, so it is one read per manager rather than one per
+        // screen.
+        ctx.layouts
+          .get(() => readTrackLayouts(s.acsm, ctx.reader))
+          // Layouts are the one part of this the screen can do without: the
+          // field falls back to free text and the rest of the form still
+          // works. Failing the whole request would take the car and track
+          // pickers down with it.
+          //
+          // Logged, though. Swallowed silently, this reads on the screen as a
+          // manager whose tracks have one layout each — a wrong answer that
+          // looks like a right one, and the only place the difference is
+          // visible is here.
+          .catch((err: unknown) => {
+            req.log.warn({ err }, "could not read track layouts")
+            return null
+          }),
+      ])
+      return { ...content, layouts }
+    })
+
     app.get<{ Params: { id: string } }>(
       "/championships/:id",
       {
@@ -537,6 +630,8 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
         const overrides: Partial<ChampionshipSpec> = {
           ...(body.name ? { name: body.name } : {}),
           ...(body.startDate ? { startDate: body.startDate } : {}),
+          ...(body.cars?.length ? { cars: body.cars } : {}),
+          ...(body.description === undefined ? {} : { description: body.description }),
           ...(body.tracks ? { rounds: body.tracks.map(roundSpecFrom) } : {}),
         }
 

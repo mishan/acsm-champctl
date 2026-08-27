@@ -52,6 +52,7 @@
     "test:live": "vitest run --config vitest.live.config.ts",
     "recon:forms": "tsx scripts/recon/forms.ts",
     "recon:roundtrip": "tsx scripts/recon/roundtrip.ts",
+    "recon:layouts": "tsx scripts/recon/layouts.ts",
     "championship": "tsx src/cli/championship.ts",
     "test:e2e": "playwright test"
   },

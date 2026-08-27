@@ -27,6 +27,8 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { HttpAcsmReader } from "../acsm/client.js"
 import { SqliteCache } from "../acsm/cache.js"
 import { loadProfile } from "../profile/load.js"
+import { ContentCache } from "../web/content-cache.js"
+import { contentStore } from "../web/content-store.js"
 import { buildServer } from "../web/server.js"
 import { loadPits, runCli, UsageError } from "./args.js"
 
@@ -268,6 +270,58 @@ async function main(argv: readonly string[]): Promise<number> {
     ? await SqliteCache.open({ path: resolve(process.cwd(), ".cache/acsm/cache.db") })
     : undefined
 
+  /**
+   * The installed-content index reads through a reader of its own, at its own
+   * pace.
+   *
+   * Both halves matter, and the second one is a number somebody has to sit
+   * through. Sharing the interactive limiter meant a walk took every slot in
+   * the window and the `/api/championships` request from the same screen
+   * queued behind it — the championship list hung while champctl was being
+   * polite about a dropdown. But keeping the interactive *rate* was just as
+   * bad: five requests per twenty seconds is a quarter of a request a second,
+   * and BATL's 504 cars are eleven pages of fifty, so reading them took over a
+   * minute of somebody watching a field say "Reading what's installed".
+   *
+   * That rate is not protecting anything here. ACSM limits `/login` and
+   * nothing else — measured on 2.4.15, eight rapid `GET /championships` and
+   * eight `GET /healthcheck.json` all answered 200 while the sixth login in a
+   * second got a 429. champctl's read limiter is self-imposed politeness for a
+   * person clicking around a manager all evening, and this is one bulk read of
+   * static pages that happens at boot and at most hourly after.
+   *
+   * Four a second, so eleven pages is under three seconds and a burst that
+   * size is nothing a web server notices.
+   */
+  const contentReader = new HttpAcsmReader({
+    baseUrl,
+    ...(args.unthrottledReads
+      ? { rateLimit: false as const }
+      : { rateLimit: { limit: 4, windowMs: 1000 } }),
+  })
+
+  const content = new ContentCache({
+    load: async () => {
+      // Timed and logged, because how long this takes is a property of the
+      // league's manager — how many cars they have installed, how far away it
+      // is — and the only way anyone found out it was slow was by watching a
+      // field say "Reading what's installed" for a minute.
+      const startedAt = Date.now()
+      const value = await contentReader.listContent()
+      app?.log.info(
+        `Read ${value.cars.length} cars and ${value.tracks.length} tracks from Server Manager ` +
+          `in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`,
+      )
+      return value
+    },
+    // Kept across restarts, in the response cache's own database. Re-walking
+    // `/cars` on every boot is minutes against a league's manager, and the
+    // person who just restarted champctl is usually the person about to open
+    // the screen. `--no-cache` opts out of this too, which is what that flag
+    // means.
+    ...(cache ? { store: contentStore(cache, baseUrl) } : {}),
+  })
+
   // Everything after the cache is open runs inside try/finally, because the
   // cache is a SQLite handle with WAL state and only the clean shutdown path
   // used to close it. A pit table that won't load, a port already in use, or a
@@ -278,6 +332,7 @@ async function main(argv: readonly string[]): Promise<number> {
     app = buildServer({
       profile,
       baseUrl,
+      content,
       reader: new HttpAcsmReader({
         baseUrl,
         ...(cache ? { cache } : {}),
@@ -297,6 +352,11 @@ async function main(argv: readonly string[]): Promise<number> {
           "against one you can throw away.",
       )
     }
+
+    // Before listening, so the read is already going when the first request
+    // arrives — and so a stored index from the last run is in hand rather than
+    // being fetched while somebody waits on a dropdown.
+    await content.warm()
 
     await app.listen({ port: args.port, host: args.host })
     await shutdownSignal()

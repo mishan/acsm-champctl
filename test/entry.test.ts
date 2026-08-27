@@ -91,11 +91,29 @@ describe("grid capacity", () => {
     expect(f?.message).toContain("only has 30 pit boxes")
   })
 
-  it("counts the spectator car against capacity", () => {
+  /**
+   * The spectator car is not counted, and used to be.
+   *
+   * Plan §4.5 had the cap as `pitboxes - spectatorCars`, on the reading that a
+   * car on the grid needs a box. The league that runs one says it occupies
+   * nothing — it is an observer, and their pits have clipping off — so
+   * counting it fired this a car early and made the emitter cap every
+   * championship a car below what the track allows.
+   */
+  it("does not count the spectator car against capacity", () => {
     const c = championship({
       SpectatorCarEnabled: true,
       SpectatorCar: { Model: "ford_transit", PitBox: 29, Name: "Spectator" },
       Events: [raceEvent({ RaceSetup: { MaxClients: 30 } })],
+    })
+    expect(codes(c)).not.toContain("grid.max-clients")
+  })
+
+  it("still errors on a grid that genuinely will not fit", () => {
+    const c = championship({
+      SpectatorCarEnabled: true,
+      SpectatorCar: { Model: "ford_transit", PitBox: 29, Name: "Spectator" },
+      Events: [raceEvent({ RaceSetup: { MaxClients: 31 } })],
     })
     expect(codes(c)).toContain("grid.max-clients")
   })
@@ -144,7 +162,17 @@ describe("grid capacity", () => {
 })
 
 describe("spectator car", () => {
-  it("errors when it shares a pit box with an entrant", () => {
+  /**
+   * There is no `entry.spectator-pit-box` check any more, and this is what
+   * used to fail.
+   *
+   * It reported an ERROR whenever the spectator car's box matched an
+   * entrant's. The league that runs one says it occupies no box at all — an
+   * observer, with pit clipping off besides — so on their July championship it
+   * fired for every event and the class list, named a real driver each time,
+   * and blocked every push over something that has never gone wrong.
+   */
+  it("does not report sharing a pit box with an entrant", () => {
     const c = championship({
       SpectatorCarEnabled: true,
       SpectatorCar: { Model: "ford_transit", PitBox: 2, Name: "Spectator" },
@@ -154,20 +182,9 @@ describe("spectator car", () => {
         }),
       ],
     })
-    // Reported for every list the box collides in; the event one names a driver.
-    const found = run(c).findings.filter((x) => x.code === "entry.spectator-pit-box")
-    expect(found.length).toBeGreaterThan(0)
-    expect(found.every((f) => f.severity === "ERROR")).toBe(true)
-    expect(found.some((f) => f.message.includes("clash"))).toBe(true)
-  })
-
-  it("is ignored while disabled", () => {
-    const c = championship({
-      SpectatorCarEnabled: false,
-      SpectatorCar: { Model: "ford_transit", PitBox: 0 },
-      Events: [raceEvent({ EntryList: entryList([driver("a")]) })],
-    })
     expect(codes(c)).not.toContain("entry.spectator-pit-box")
+    // And nothing else took up the complaint: sharing a box is simply fine.
+    expect(run(c).findings.filter((f) => f.severity === "ERROR")).toEqual([])
   })
 })
 
@@ -255,8 +272,21 @@ describe("cross-list comparison", () => {
 })
 
 describe("skins", () => {
-  it("errors on duplicates when they're disallowed", () => {
-    const c = championship({
+  /**
+   * A league that has said it enforces unique skins, and only that league.
+   *
+   * `testProfile()` does not set `uniqueSkins`, so `run` finds nothing — which
+   * is the case that matters most and is checked below.
+   */
+  const strict = (c: Parameters<typeof check>[0]) =>
+    check(c, testProfile({ entryList: { targetSlots: 30, uniqueSkins: true } }), {
+      pits: pitTable([suzukaPits]),
+      now: NOW,
+      checks: entryChecks,
+    })
+
+  const twoInOneSkin = () =>
+    championship({
       Events: [
         raceEvent({
           EntryList: entryList([
@@ -267,16 +297,27 @@ describe("skins", () => {
       ],
       Classes: [championshipClass({ Entrants: entryList(emptySlots(2)) })],
     })
-    const f = run(c).findings.find((x) => x.code === "entry.duplicate-skin")
-    expect(f?.severity).toBe("ERROR")
-    expect(f?.message).toContain("red_07")
+
+  /**
+   * The default, and the whole point of the change.
+   *
+   * This used to key off ACSM's `AllowDuplicateSkinChoices`, which is `false`
+   * in every export anyone has looked at — Go's zero value for a field nobody
+   * sets, not a league declaring a rule. Reading it as one turned a BATL
+   * championship into 27 ERRORs, blocked every push, and buried the two
+   * findings that were real. Most leagues share skins because not everyone has
+   * one of their own.
+   */
+  it("says nothing unless the league asked", () => {
+    expect(codes(twoInOneSkin())).not.toContain("entry.duplicate-skin")
   })
 
-  it("stays quiet when duplicates are allowed", () => {
+  it("does not read ACSM's AllowDuplicateSkinChoices as a league rule", () => {
+    // Explicitly `false`, as every real export carries it. Still silent.
     const c = championship({
       Events: [
         raceEvent({
-          RaceSetup: { AllowDuplicateSkinChoices: true },
+          RaceSetup: { AllowDuplicateSkinChoices: false },
           EntryList: entryList([
             driver("alice", { Skin: "red_07" }),
             driver("bob", { Skin: "red_07" }),
@@ -288,7 +329,17 @@ describe("skins", () => {
     expect(codes(c)).not.toContain("entry.duplicate-skin")
   })
 
+  it("warns, not errors, for a league that does mind", () => {
+    // WARN because two identical cars is confusing on a broadcast, not a
+    // broken or unfair race — and an ERROR would block the push.
+    const f = strict(twoInOneSkin()).findings.find((x) => x.code === "entry.duplicate-skin")
+    expect(f?.severity).toBe("WARN")
+    expect(f?.message).toContain("red_07")
+  })
+
   it("allows the same skin name on different models", () => {
+    // Skins are per-model folders, so `car_a/red_07` and `car_b/red_07` are
+    // two different skins that happen to share a name.
     const c = championship({
       Classes: [
         championshipClass({
@@ -305,7 +356,7 @@ describe("skins", () => {
         }),
       ],
     })
-    expect(codes(c)).not.toContain("entry.duplicate-skin")
+    expect(strict(c).findings.map((f) => f.code)).not.toContain("entry.duplicate-skin")
   })
 })
 

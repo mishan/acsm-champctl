@@ -41,6 +41,26 @@ export interface EntryListPolicy {
    * in every entry list.
    */
   raceNumberFromSkin?: string
+  /**
+   * Whether this league minds two entrants sharing a skin.
+   *
+   * Off by default, and the check does not run without it — the same shape as
+   * `raceNumberFromSkin` above, and for the same reason.
+   *
+   * This used to be read off ACSM's `AllowDuplicateSkinChoices`, which is
+   * `false` in every export anyone has looked at, including leagues where
+   * duplicate skins are entirely routine because not everyone has one of their
+   * own. That is Go's zero value for a field nobody sets, not a league
+   * declaring it enforces unique skins — the same trap as
+   * `PracticeEntryListType` in plan §5.4. Reading it as a rule turned one BATL
+   * championship into 27 duplicate-skin ERRORs, which blocked every push and
+   * buried the two findings that were real.
+   *
+   * A league where everyone does have a custom skin can set this and hear
+   * about it when two people turn up in the same car. As a warning: two
+   * identical cars is confusing on a broadcast, not a broken or unfair race.
+   */
+  uniqueSkins?: boolean
 }
 
 /**

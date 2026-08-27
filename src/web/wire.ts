@@ -21,11 +21,12 @@
  * restriction.
  */
 
+import type { InstalledItem } from "../acsm/types.js"
 import type { Change, FormFieldChange, RaceFormat } from "../finalize/format.js"
 import type { CheckReport } from "../gridmom/finding.js"
 import type { FormatPreset } from "../profile/types.js"
 
-export type { Change, CheckReport, FormatPreset, FormFieldChange, RaceFormat }
+export type { Change, CheckReport, FormatPreset, FormFieldChange, InstalledItem, RaceFormat }
 
 // ---------------------------------------------------------------------------
 // Session
@@ -103,6 +104,22 @@ export interface ChampionshipView {
   name: string
   /** The league zone every time above is expressed in. */
   timezone: string
+  /**
+   * The class car list, as folder names.
+   *
+   * Here so the create screen can show what a clone would inherit instead of
+   * carrying it silently. Off the first class: champctl builds one class per
+   * championship, and a hand-made multi-class one is not something this screen
+   * can represent anyway.
+   */
+  cars: string[]
+  /**
+   * The blurb ACSM shows on the championship page. Here for the same reason.
+   *
+   * Verbatim, whitespace and all: a clone starts from this, so normalising it
+   * here would edit somebody's prose on the way past.
+   */
+  description: string
   rounds: RoundView[]
 }
 
@@ -113,6 +130,32 @@ export interface ChampionshipListItem {
 
 export interface ChampionshipListResponse {
   championships: ChampionshipListItem[]
+}
+
+/**
+ * Cars and tracks installed on the league's manager.
+ *
+ * `id` is the folder name a championship stores; `name` is what the manager
+ * calls it. The screen searches the name and submits the id, which is the
+ * entire point of carrying both.
+ */
+export interface ContentResponse {
+  cars: InstalledItem[]
+  tracks: InstalledItem[]
+  /**
+   * Track folder name to its layouts, or `null` for "champctl has no index".
+   *
+   * A track with no layout to choose has no entry at all, rather than an empty
+   * array — ACSM spells that case `<default>` and champctl drops it, so the
+   * screen can treat "absent" as "this field does not apply here".
+   *
+   * `null` is a different statement, and the client has to tell them apart:
+   * ACSM lists layouts on exactly one page and reading it can fail, so `null`
+   * means champctl does not know, and a field that then offers no choice is
+   * claiming something it has not checked. The screen falls back to letting a
+   * layout be typed.
+   */
+  layouts: Record<string, string[]> | null
 }
 
 export interface ChampionshipResponse {
@@ -202,6 +245,24 @@ export interface NewChampionshipRequest {
   /** `YYYY-MM-DD`, the first race night. Later rounds follow the weekday rule. */
   startDate?: string
   /**
+   * The class car list, as folder names, replacing the source's outright.
+   *
+   * Absent means the source's cars, which is what a clone has always done —
+   * and doing it invisibly is what let the screen ask which tracks a
+   * championship runs at without ever mentioning what anyone would drive.
+   */
+  cars?: string[]
+  /**
+   * The championship's blurb.
+   *
+   * Sent whenever the screen has one to send, *including* an empty string —
+   * which is why this is checked against `undefined` rather than for
+   * truthiness on the way through. Absent means "inherit the source's", and a
+   * clone inheriting one silently is how a September championship ends up
+   * describing August's tracks.
+   */
+  description?: string
+  /**
    * The track list, in order, replacing the source's outright.
    *
    * Replaced rather than merged, matching `cloneChampionship`: someone who sends four
@@ -214,6 +275,15 @@ export interface NewChampionshipRequest {
 export interface TrackRequest {
   track: string
   layout?: string
+  /**
+   * What to call this round, or absent for the track's own name.
+   *
+   * Absent and empty mean the same thing here and both reach the emitter as
+   * "no name", which is what ACSM writes for an event it creates — the manager
+   * then shows the track. There is deliberately no default: champctl inventing
+   * a label would go stale the moment somebody changed the track under it.
+   */
+  name?: string
 }
 
 /** One race night, as the review screen shows it. */

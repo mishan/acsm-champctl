@@ -8,7 +8,7 @@
  */
 
 import { spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { readFileSync, statSync } from "node:fs"
 import { existsSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -31,6 +31,28 @@ describe("bin entry points", () => {
 
   it.each(bins)("%s exists where package.json says", (_name, rel) => {
     expect(existsSync(join(root, rel))).toBe(true)
+  })
+
+  /**
+   * Executable, because people run them from a checkout.
+   *
+   * `npm install` sets the bit on the symlinks it puts in `node_modules/.bin`,
+   * so a linked `gridmom` works whatever this says — which is why four of the
+   * five sat at 0644 in git without anyone noticing. `./bin/gridmom.js` is how
+   * you run one from a clone, and that is "permission denied" until the bit is
+   * set. Every one of them has a `#!/usr/bin/env node` line saying it expects
+   * to be run this way.
+   *
+   * Read off the filesystem rather than out of git: what matters is the file a
+   * checkout produces. On a filesystem with no execute bit at all this would
+   * be checking nothing, which is a fair description of running these there.
+   */
+  it.each(bins)("%s is executable", (_name, rel) => {
+    expect(statSync(join(root, rel)).mode & 0o111, `${rel} is not executable`).not.toBe(0)
+  })
+
+  it.each(bins)("%s starts with a shebang, since it is run directly", (_name, rel) => {
+    expect(readFileSync(join(root, rel), "utf8").startsWith("#!")).toBe(true)
   })
 
   it.each(bins)("%s imports a module the build emits", (_name, rel) => {

@@ -12,24 +12,30 @@
  * championships to tell apart and delete by hand.
  */
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ApiFailure } from "../api"
 import type {
   ChampionshipListResponse,
+  ChampionshipResponse,
   CheckReport,
+  ContentResponse,
   Finding,
   NewChampionshipResponse,
   NewChampionshipPlanResponse,
   NewChampionshipPlan,
 } from "../api"
 
-const { championshipsMock, planMock, createMock } = vi.hoisted(() => ({
-  championshipsMock: vi.fn<(...a: unknown[]) => Promise<ChampionshipListResponse>>(),
-  planMock: vi.fn<(...a: unknown[]) => Promise<NewChampionshipPlanResponse>>(),
-  createMock: vi.fn<(...a: unknown[]) => Promise<NewChampionshipResponse>>(),
-}))
+const { championshipsMock, championshipMock, contentMock, planMock, createMock } = vi.hoisted(
+  () => ({
+    championshipsMock: vi.fn<(...a: unknown[]) => Promise<ChampionshipListResponse>>(),
+    championshipMock: vi.fn<(...a: unknown[]) => Promise<ChampionshipResponse>>(),
+    contentMock: vi.fn<(...a: unknown[]) => Promise<ContentResponse>>(),
+    planMock: vi.fn<(...a: unknown[]) => Promise<NewChampionshipPlanResponse>>(),
+    createMock: vi.fn<(...a: unknown[]) => Promise<NewChampionshipResponse>>(),
+  }),
+)
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>()
@@ -38,6 +44,8 @@ vi.mock("../api", async (importOriginal) => {
     api: {
       ...actual.api,
       championships: championshipsMock,
+      championship: championshipMock,
+      content: contentMock,
       planNewChampionship: planMock,
       createChampionship: createMock,
     },
@@ -47,6 +55,22 @@ vi.mock("../api", async (importOriginal) => {
 const { NewChampionship } = await import("./NewChampionship")
 
 const SOURCE = "champ-august"
+/** What the manager has installed, which is all either picker will offer. */
+const CARS = [
+  { id: "rss_formula_hybrid_2021", name: "RSS Formula Hybrid 2021" },
+  { id: "ks_porsche_911_gt3_r_2016", name: "Porsche 911 GT3 R" },
+]
+const TRACKS = [
+  { id: "spa", name: "Spa" },
+  { id: "ks_brands_hatch", name: "Brands Hatch" },
+  { id: "monza", name: "Monza" },
+]
+/**
+ * Only tracks with a choice appear. Spa and Monza have one layout each, which
+ * ACSM spells `<default>` and champctl drops — so they have no entry, and the
+ * screen shows no layout field for them.
+ */
+const LAYOUTS = { ks_brands_hatch: ["indy", "gp"] }
 
 function report(findings: Finding[] = []): CheckReport {
   return {
@@ -98,14 +122,36 @@ async function settle() {
   })
 }
 
+/**
+ * Choose something in a `Picker`, the way a person does: focus it, type part
+ * of the name, click the suggestion.
+ *
+ * Not `fireEvent.change` on the input — that is what these tests did when the
+ * field was free text, and it no longer commits anything. The value a picker
+ * holds is only ever one of the offered items, which is the point of it.
+ */
+async function pick(label: RegExp, query: string): Promise<void> {
+  const input = screen.getByLabelText(label)
+  fireEvent.focus(input)
+  fireEvent.change(input, { target: { value: query } })
+  const list = await screen.findByRole("listbox", { name: label })
+  const options = within(list).getAllByRole("option")
+  const first = options[0]
+  if (!first) throw new Error(`nothing installed matches ${query}`)
+  fireEvent.mouseDown(first)
+}
+
 /** Pick a source, name it and add one track — the smallest previewable championship. */
-async function filled(track = "spa") {
+async function filled(track = "Spa") {
   const r = renderScreen()
   await screen.findByLabelText(/Clone from/)
   fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+  // The source's cars arrive on their own; wait for them, since a draft with
+  // no cars is not previewable.
+  await screen.findByText("RSS Formula Hybrid 2021")
   fireEvent.change(screen.getByLabelText(/^Name$/), { target: { value: "September 2026" } })
   fireEvent.click(screen.getByRole("button", { name: /Add a round/ }))
-  fireEvent.change(screen.getByLabelText(/Round 1 track/), { target: { value: track } })
+  await pick(/Round 1 track/, track)
   await settle()
   return r
 }
@@ -117,10 +163,25 @@ function createButton(): HTMLButtonElement {
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   championshipsMock.mockReset()
+  championshipMock.mockReset()
+  contentMock.mockReset()
   planMock.mockReset()
   createMock.mockReset()
   championshipsMock.mockResolvedValue({
     championships: [{ id: SOURCE, name: "August 2026" }],
+  })
+  contentMock.mockResolvedValue({ cars: CARS, tracks: TRACKS, layouts: LAYOUTS })
+  // The source, read so the Cars field can show what a clone would inherit.
+  championshipMock.mockResolvedValue({
+    championship: {
+      id: SOURCE,
+      name: "August 2026",
+      timezone: "America/Los_Angeles",
+      cars: ["rss_formula_hybrid_2021"],
+      description: "August was a good month.",
+      rounds: [],
+    },
+    gridmom: report(),
   })
   planMock.mockResolvedValue({ plan: planView() })
   createMock.mockResolvedValue({
@@ -190,11 +251,173 @@ describe("choosing what to clone", () => {
   })
 })
 
+/**
+ * The field this screen was missing.
+ *
+ * A clone inherited the source's cars and never said so, so the form asked
+ * which tracks a season runs at and never mentioned what anyone would drive —
+ * the one thing about a championship that cannot be worked out from the rest
+ * of the form.
+ */
+describe("the car list", () => {
+  it("shows the cars the source runs, without being asked", async () => {
+    renderScreen()
+    await screen.findByLabelText(/Clone from/)
+    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+    // By the name the manager gives it, with the folder name beside it.
+    expect(await screen.findByText("RSS Formula Hybrid 2021")).toBeTruthy()
+    expect(screen.getByText("rss_formula_hybrid_2021")).toBeTruthy()
+  })
+
+  it("sends the cars, so they are not silently inherited", async () => {
+    await filled()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({ cars: ["rss_formula_hybrid_2021"] })
+  })
+
+  it("adds a car and re-previews with it", async () => {
+    await filled()
+    await pick(/Add a car/, "Porsche")
+    await settle()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({
+      cars: ["rss_formula_hybrid_2021", "ks_porsche_911_gt3_r_2016"],
+    })
+  })
+
+  it("removes a car", async () => {
+    await filled()
+    await pick(/Add a car/, "Porsche")
+    await settle()
+    fireEvent.click(screen.getByRole("button", { name: /Remove RSS Formula Hybrid 2021/ }))
+    await settle()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({ cars: ["ks_porsche_911_gt3_r_2016"] })
+  })
+
+  it("does not offer a car that is already chosen", async () => {
+    await filled()
+    fireEvent.focus(screen.getByLabelText(/Add a car/))
+    const list = await screen.findByRole("listbox", { name: /Add a car/ })
+    expect(within(list).queryByText("RSS Formula Hybrid 2021")).toBeNull()
+    expect(within(list).getByText("Porsche 911 GT3 R")).toBeTruthy()
+  })
+
+  /**
+   * An empty list before anything has arrived is not somebody's mistake.
+   *
+   * The screen used to say "this championship would have nothing to drive" for
+   * the moment between picking a source and its cars landing — a sentence
+   * about a problem nobody had, on a form that was working correctly.
+   */
+  it("says it is still reading rather than that there are no cars", async () => {
+    let release: ((r: ChampionshipResponse) => void) | undefined
+    championshipMock.mockReturnValue(
+      new Promise<ChampionshipResponse>((r) => {
+        release = r
+      }),
+    )
+
+    renderScreen()
+    await screen.findByLabelText(/Clone from/)
+    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+
+    expect(await screen.findByText(/Reading the cars from the championship above/)).toBeTruthy()
+    expect(screen.queryByText(/nothing to drive/)).toBeNull()
+
+    release?.({
+      championship: {
+        id: SOURCE,
+        name: "August 2026",
+        timezone: "America/Los_Angeles",
+        cars: ["rss_formula_hybrid_2021"],
+        description: "",
+        rounds: [],
+      },
+      gridmom: report(),
+    })
+    await waitFor(() => expect(screen.getByText("RSS Formula Hybrid 2021")).toBeTruthy())
+  })
+
+  /**
+   * An empty list is not "inherit". Sending no `cars` key would fall back to
+   * the source's, so the screen would show no cars and create a championship
+   * full of them — the invisible inheritance this field exists to end, wearing
+   * a disguise.
+   */
+  it("previews nothing while the car list is empty", async () => {
+    await filled()
+    planMock.mockClear()
+    fireEvent.click(screen.getByRole("button", { name: /Remove RSS Formula Hybrid 2021/ }))
+    await settle()
+    expect(planMock).not.toHaveBeenCalled()
+    expect(screen.getByText(/nothing to drive/i)).toBeTruthy()
+  })
+})
+
+/**
+ * The blurb ACSM shows on the championship page.
+ *
+ * Same invisible-inheritance problem the cars had: a clone carried the
+ * source's description silently, which is how a September championship ends up
+ * describing August's tracks.
+ */
+describe("the description", () => {
+  it("shows what the source has, without being asked", async () => {
+    renderScreen()
+    await screen.findByLabelText(/Clone from/)
+    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+    const box = (await screen.findByLabelText(/Description/)) as HTMLTextAreaElement
+    await waitFor(() => expect(box.value).toBe("August was a good month."))
+  })
+
+  it("sends what is in the box", async () => {
+    await filled()
+    fireEvent.change(screen.getByLabelText(/Description/), {
+      target: { value: "September, and five new tracks." },
+    })
+    await settle()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({
+      description: "September, and five new tracks.",
+    })
+  })
+
+  /**
+   * Empty is a value, not an omission. The server reads an absent `description`
+   * as "inherit the source's", so a cleared box that sent nothing would put
+   * last month's blurb on this month's championship — the exact thing this
+   * field exists to stop.
+   */
+  it("sends an empty description rather than omitting it", async () => {
+    await filled()
+    fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "" } })
+    await settle()
+    const sent = planMock.mock.lastCall?.[0] as { description?: string }
+    expect(sent.description).toBe("")
+    expect("description" in sent).toBe(true)
+  })
+})
+
+describe("when champctl cannot read what is installed", () => {
+  /**
+   * A strict picker with nothing to pick is a dead end, so it has to say why
+   * rather than render an empty list somebody keeps typing into.
+   */
+  it("says so in the field rather than failing the screen", async () => {
+    contentMock.mockRejectedValue(new Error("manager is down"))
+    renderScreen()
+    await screen.findByLabelText(/Clone from/)
+    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+
+    expect(await screen.findByText(/couldn't read the cars installed/i)).toBeTruthy()
+    // And the rest of the screen is still usable.
+    expect(screen.getByLabelText(/^Name$/)).toBeTruthy()
+    expect((screen.getByLabelText(/Add a car/) as HTMLInputElement).disabled).toBe(true)
+  })
+})
+
 describe("the track list", () => {
   it("sends the tracks in the order shown", async () => {
-    await filled("spa")
+    await filled("Spa")
     fireEvent.click(screen.getByRole("button", { name: /Add a round/ }))
-    fireEvent.change(screen.getByLabelText(/Round 2 track/), { target: { value: "monza" } })
+    await pick(/Round 2 track/, "Monza")
     await settle()
     expect(planMock.mock.lastCall?.[0]).toMatchObject({
       tracks: [{ track: "spa" }, { track: "monza" }],
@@ -202,9 +425,9 @@ describe("the track list", () => {
   })
 
   it("reorders a round and re-previews", async () => {
-    await filled("spa")
+    await filled("Spa")
     fireEvent.click(screen.getByRole("button", { name: /Add a round/ }))
-    fireEvent.change(screen.getByLabelText(/Round 2 track/), { target: { value: "monza" } })
+    await pick(/Round 2 track/, "Monza")
     await settle()
 
     fireEvent.click(screen.getByRole("button", { name: /Move round 2 up/ }))
@@ -215,7 +438,7 @@ describe("the track list", () => {
   })
 
   it("will not move the first round up or the last one down", async () => {
-    await filled("spa")
+    await filled("Spa")
     expect(
       (screen.getByRole("button", { name: /Move round 1 up/ }) as HTMLButtonElement).disabled,
     ).toBe(true)
@@ -224,19 +447,107 @@ describe("the track list", () => {
     ).toBe(true)
   })
 
-  it("carries the layout when there is one", async () => {
-    await filled("brands_hatch")
-    fireEvent.change(screen.getByLabelText(/Round 1 layout/), { target: { value: "indy" } })
+  /**
+   * Named rounds, because ACSM shows an event's name instead of its track.
+   *
+   * The default is blank on purpose — that is what ACSM writes and it makes the
+   * manager show the track — so this only sends a name when somebody types one.
+   */
+  it("carries a round name when one is typed", async () => {
+    await filled("Spa")
+    fireEvent.change(screen.getByLabelText(/Round 1 name/), {
+      target: { value: "Season opener" },
+    })
     await settle()
     expect(planMock.mock.lastCall?.[0]).toMatchObject({
-      tracks: [{ track: "brands_hatch", layout: "indy" }],
+      tracks: [{ track: "spa", name: "Season opener" }],
     })
   })
 
-  it("removes a round", async () => {
-    await filled("spa")
+  it("sends no name for a round left unnamed", async () => {
+    await filled("Spa")
+    const sent = planMock.mock.lastCall?.[0] as { tracks: { name?: string }[] }
+    expect("name" in (sent.tracks[0] ?? {})).toBe(false)
+  })
+
+  it("names rounds one at a time, not all of them", async () => {
+    // Every round is built from the same template event server-side, which is
+    // how they all ended up called "Donington Park National". The form must
+    // not repeat that trick.
+    await filled("Spa")
     fireEvent.click(screen.getByRole("button", { name: /Add a round/ }))
-    fireEvent.change(screen.getByLabelText(/Round 2 track/), { target: { value: "monza" } })
+    await pick(/Round 2 track/, "Monza")
+    fireEvent.change(screen.getByLabelText(/Round 1 name/), { target: { value: "Opener" } })
+    await settle()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({
+      tracks: [{ track: "spa", name: "Opener" }, { track: "monza" }],
+    })
+  })
+
+  it("carries the layout when there is one", async () => {
+    await filled("Brands Hatch")
+    // A picker now, filled from what ACSM says that track has — layouts live
+    // nowhere but the event edit form, so the screen could not offer them
+    // before.
+    await pick(/Round 1 layout/, "indy")
+    await settle()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({
+      tracks: [{ track: "ks_brands_hatch", layout: "indy" }],
+    })
+  })
+
+  it("offers no layout field for a track that has one layout", async () => {
+    // Spa is not in the layout map: ACSM spells that `<default>`, meaning
+    // there is nothing to choose. A disabled box on most rounds would be a
+    // control that never does anything.
+    await filled("Spa")
+    expect(screen.queryByLabelText(/Round 1 layout/)).toBeNull()
+  })
+
+  /**
+   * Free text when champctl has no index at all, which is not the same state
+   * as a track with nothing to choose.
+   *
+   * ACSM lists layouts on exactly one page and reading it can fail. Treating
+   * that failure as "no track here has a layout" hides the field on a server
+   * whose tracks do have them, and a round at Brands Hatch then has no way to
+   * say `indy` — the field is worse than a picker and it is not a dead end.
+   */
+  it("lets a layout be typed when it could not read the list", async () => {
+    contentMock.mockResolvedValue({ cars: CARS, tracks: TRACKS, layouts: null })
+    await filled("Brands Hatch")
+
+    const box = screen.getByLabelText(/Round 1 layout/)
+    expect(box.getAttribute("role"), "free text, not a picker").not.toBe("combobox")
+    fireEvent.change(box, { target: { value: "indy" } })
+    await settle()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({
+      tracks: [{ track: "ks_brands_hatch", layout: "indy" }],
+    })
+  })
+
+  /**
+   * A layout belongs to one track — `indy` means nothing at Monza — so changing
+   * the track has to drop it. Keeping it would leave the round pointing at a
+   * pair the server does not have, set by somebody who only changed the track.
+   */
+  it("drops the layout when the track changes under it", async () => {
+    await filled("Brands Hatch")
+    await pick(/Round 1 layout/, "indy")
+    await settle()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({ tracks: [{ layout: "indy" }] })
+
+    await pick(/Round 1 track/, "Monza")
+    await settle()
+    const sent = planMock.mock.lastCall?.[0] as { tracks: { track: string; layout?: string }[] }
+    expect(sent.tracks[0]?.track).toBe("monza")
+    expect("layout" in (sent.tracks[0] ?? {})).toBe(false)
+  })
+
+  it("removes a round", async () => {
+    await filled("Spa")
+    fireEvent.click(screen.getByRole("button", { name: /Add a round/ }))
+    await pick(/Round 2 track/, "Monza")
     await settle()
 
     fireEvent.click(screen.getByRole("button", { name: /Remove round 1/ }))
@@ -346,7 +657,7 @@ describe("the create button", () => {
     expect(createButton().disabled).toBe(false)
 
     fireEvent.click(screen.getByRole("button", { name: /Add a round/ }))
-    fireEvent.change(screen.getByLabelText(/Round 2 track/), { target: { value: "monza" } })
+    await pick(/Round 2 track/, "Monza")
     await settle()
 
     expect((screen.getByLabelText(/read the warnings/i) as HTMLInputElement).checked).toBe(false)
@@ -394,7 +705,7 @@ describe("when the server refuses", () => {
     fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
     fireEvent.change(screen.getByLabelText(/^Name$/), { target: { value: "September 2026" } })
     fireEvent.click(screen.getByRole("button", { name: /Add a round/ }))
-    fireEvent.change(screen.getByLabelText(/Round 1 track/), { target: { value: "spa" } })
+    await pick(/Round 1 track/, "spa")
     await settle()
 
     expect(await screen.findByText(/Server Manager answered 503/)).toBeTruthy()

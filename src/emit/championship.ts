@@ -214,13 +214,12 @@ export function emitChampionship(options: EmitOptions): EmitResult {
     DateTime.fromJSDate(now).setZone(profile.schedule.timezone),
     practiceMinutes,
   )
-  // The spectator car takes a pit box, and gridmom counts it against the
-  // track's capacity, so the cap has to leave room for it.
-  const spectatorBoxes = mergeAll<Championship>(template, profile.baseline.championship ?? {})
-    .SpectatorCarEnabled
-    ? 1
-    : 0
-  const grid = gridCap(rounds, options.pits, { reservedBoxes: spectatorBoxes })
+  // No box reserved for the spectator car. It used to take one, on the reading
+  // that a car on the grid needs somewhere to sit — but the league that runs
+  // one says it occupies nothing: it is an observer, and the pits have
+  // clipping off besides. Reserving a box for it capped every championship one
+  // car below what the track allows.
+  const grid = gridCap(rounds, options.pits)
 
   // Start from the template, then the league baseline. Both are whole-object
   // overlays, so anything neither mentions survives from the template.
@@ -331,6 +330,16 @@ export function emitChampionship(options: EmitOptions): EmitResult {
       format: round.format ?? spec.format,
     }),
   )
+
+  // Only worth saying when there was something to clear. A template event
+  // whose name is already empty is the normal case and not a decision anyone
+  // needs to read about.
+  if ((templateEvent.Name ?? "").trim() !== "") {
+    derived.push(
+      `every round's name cleared, so each shows its own track rather than ` +
+        `"${templateEvent.Name?.trim()}"`,
+    )
+  }
 
   const signUpsEnabled = spec.signUpsEnabled ?? base.SignUpForm?.Enabled === true
 
@@ -532,6 +541,24 @@ function buildEvent(o: BuildEventOptions): ChampionshipEvent {
     // rounds need distinct IDs, and no reference to the template event could
     // have meant "all of them" anyway.
     ID: randomUUID(),
+    /**
+     * The round's own name, and empty when it hasn't got one.
+     *
+     * Set rather than inherited, because every round is built from the *same*
+     * template event — so anything on it that describes a track and isn't
+     * `RaceSetup.Track` lands on all of them. `Name` is exactly that, and it is
+     * the part a person reads: BATL's first generated championship came out
+     * with all five rounds called "Donington Park National, Great Britain",
+     * July's round one, while `RaceSetup.Track` was correct throughout. gridmom
+     * reported the right tracks and the manager displayed the wrong ones.
+     *
+     * Empty rather than a label champctl invents, because that is what ACSM
+     * itself writes — every event in a championship it created exports as
+     * `Name: ""` — and the manager derives the display name from the track.
+     * Making one up here would be a second answer to a question ACSM already
+     * answers, and it would go stale the moment somebody changed the track.
+     */
+    Name: o.round.name?.trim() || "",
     Scheduled: o.scheduled.scheduled,
     EntryList: o.entryList,
     // A template event carries the results of the race it ran. Carrying those

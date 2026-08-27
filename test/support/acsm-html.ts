@@ -247,3 +247,19 @@ export function entrant(name: string, over: Partial<FakeEntrant> = {}): FakeEntr
     ...over,
   }
 }
+
+/**
+ * The `TrackLayout` select ACSM renders on an event edit form.
+ *
+ * The only place it says what layouts a track has. `<default>` is how it spells
+ * a track with no choice — never mixed with real layouts, measured on 2.4.15.
+ */
+export function layoutSelectHtml(values: readonly string[]): string {
+  const options = values
+    .map(
+      (v) =>
+        `<option value="${v}" data-track-name="${v.split(":")[1]}">${v.split(":")[1]}</option>`,
+    )
+    .join("")
+  return `<select class="form-control" name="TrackLayout" id="TrackLayout">${options}</select>`
+}

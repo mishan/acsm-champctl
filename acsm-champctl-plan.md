@@ -176,8 +176,21 @@ Open devtools against the live manager and "Copy as cURL" for:
    is part of managing an event, distinct from championship settings. Still
    needs capturing; it is the one remaining unknown in the write path.
 5. **The sign-up approve/reject POST** — see §5.3.
-6. Whatever XHR the event form uses to populate track/layout info, including
-   pit box counts.
+6. ~~Whatever XHR the event form uses to populate track/layout info~~ — done,
+   and there is no XHR. The event edit form renders a `<select
+   name="TrackLayout">` server-side carrying **every** track's layouts as
+   `{track}:{layout}`, with `{track}:<default>` for a track that has none.
+   Measured on 2.4.15: `<default>` is never mixed with real layouts.
+
+   Nowhere else has them. `/tracks` lists tracks only; the track page builds
+   `track-layout-wrapper` from JavaScript; `ui/meta_data.json` has a `layouts`
+   key that was `{}` for a track the form said had three; and
+   `/content/tracks/{id}/ui/` is a browsable directory whose contents are empty
+   on `ac.batlracing.com` — `npm run recon:layouts` is the script that asked.
+
+   So layouts cost a login, which is why `web/layouts.ts` reads them on the
+   caller's session rather than in the credential-free content walk. Pit box
+   counts are still not in there; they remain the `scan` source (§4.5).
 
 ---
 
@@ -334,8 +347,14 @@ where source is `acsm` | `scan` | `manual`, manual always winning.
 Grid maths:
 
 ```
-MaxClients ≤ min(pitboxes across selected tracks) − spectatorCars
+MaxClients ≤ min(pitboxes across selected tracks)
 ```
+
+**Corrected: the spectator car is not subtracted.** This said
+`− spectatorCars`, on the reading that a car on the grid needs a box. BATL,
+who run a Ford Transit in every race for the stream, say it occupies nothing —
+it is an observer, and their pits have clipping off besides. Subtracting for it
+capped every generated championship one car below what the track allows.
 
 Entry list length is set separately by league policy — see §4.4.
 
@@ -500,13 +519,12 @@ Three severities:
 | Check | Severity |
 |---|---|
 | Duplicate `PitBox` within a class entrant list or any event entry list | ERROR |
-| Spectator car pit box collides with an entrant | ERROR |
-| `MaxClients` + spectator cars > pit boxes at that track | ERROR |
+| `MaxClients` > pit boxes at that track | ERROR |
 | `PitBox` value ≥ track pit count | ERROR |
 | Entrant `Model` not in the class `AvailableCars` | ERROR |
 | Event entry list differs from the championship class entry list | WARN |
 | Duplicate race numbers | WARN |
-| Duplicate skins while `AllowDuplicateSkinChoices` is false | ERROR |
+| Duplicate skins, for a league that says it wants unique ones | WARN |
 | Accepted sign-ups exceed available slots | WARN |
 | Entry list length differs between events | WARN |
 | Accepted sign-ups exceed total entry list slots | WARN |

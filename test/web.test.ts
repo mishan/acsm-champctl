@@ -26,6 +26,7 @@ import { IMPORT_PATH } from "../src/acsm/paths.js"
 import { AcsmSession } from "../src/acsm/session.js"
 import type { Championship } from "../src/acsm/types.js"
 import type { FinalizePlan } from "../src/finalize/plan.js"
+import { ContentCache } from "../src/web/content-cache.js"
 import { PlanStore } from "../src/web/plans.js"
 import type { HeldChampionship } from "../src/web/routes.js"
 import type { NewChampionshipResponse, NewChampionshipPlanResponse } from "../src/web/wire.js"
@@ -35,6 +36,7 @@ import { LoginThrottle } from "../src/web/throttle.js"
 import {
   eventFormHtml,
   fakeImportPage,
+  layoutSelectHtml,
   scheduleFormHtml,
   type FormEntrant,
 } from "./support/acsm-html.js"
@@ -88,6 +90,10 @@ interface HarnessOptions {
   /** How ACSM answers the import POST. Default: the redirect a real one sends. */
   importOutcome?: "no-redirect"
   newChampionships?: PlanStore<HeldChampionship>
+  /** Installed cars and tracks. Default: whatever the static reader has, i.e. none. */
+  content?: ContentCache
+  /** Serve event forms with no `TrackLayout` select, as an older build does. */
+  noLayoutSelect?: boolean
   throttle?: LoginThrottle
   /**
    * Held open until the test resolves it, so two requests can be in the write
@@ -163,7 +169,13 @@ function harness(options: HarnessOptions = {}): Harness {
     }
     const page = pages[Math.min(eventGets, pages.length - 1)] as string
     eventGets++
-    return new Response(page, { status: 200 })
+    // Real event forms carry the TrackLayout select, which is the only place
+    // ACSM lists a track's layouts.
+    if (options.noLayoutSelect) return new Response(page, { status: 200 })
+    return new Response(
+      page + layoutSelectHtml(["ks_brands_hatch:indy", "ks_brands_hatch:gp", "spa:<default>"]),
+      { status: 200 },
+    )
   }
 
   const app = buildServer({
@@ -177,6 +189,7 @@ function harness(options: HarnessOptions = {}): Harness {
     ...(options.sessions ? { sessions: options.sessions } : {}),
     ...(options.plans ? { plans: options.plans } : {}),
     ...(options.newChampionships ? { newChampionships: options.newChampionships } : {}),
+    ...(options.content ? { content: options.content } : {}),
     ...(options.throttle ? { throttle: options.throttle } : {}),
     // Off so the Set-Cookie assertions below are about SameSite and HttpOnly
     // rather than about a flag every test would have to opt out of anyway.
@@ -921,6 +934,28 @@ describe("reading a championship", () => {
     expect(res.json().gridmom.counts.ERROR).toBeGreaterThan(0)
   })
 
+  /**
+   * The description is prose, and the create screen clones it.
+   *
+   * Trimming it here would edit somebody's writing on the way past — a blank
+   * first line or a trailing newline they put there deliberately, gone, with
+   * the change landing in the new championship rather than on screen where
+   * anyone could see it happen. Names and ids are trimmed because whitespace
+   * in an identifier is noise; this is not one of those.
+   */
+  it("carries the description verbatim, whitespace and all", async () => {
+    const h = harness({
+      championship: champ({ Description: "\n  August was a good month.\n\n" }),
+    })
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/api/championships/${CHAMP_ID}`,
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.json().championship.description).toBe("\n  August was a good month.\n\n")
+  })
+
   it("lists championships as id and name", async () => {
     const h = harness()
     await h.login()
@@ -1098,6 +1133,234 @@ describe("previewing a new championship", () => {
       url: "/api/championships/plan",
       payload: { sourceId: CHAMP_ID },
     })
+    expect(res.statusCode).toBe(401)
+  })
+
+  /**
+   * The car list a clone inherits, made changeable.
+   *
+   * It was always inherited and never mentioned, so the screen asked which
+   * tracks a championship runs at and never what anyone would drive — the one
+   * thing about a championship that cannot be worked out from the rest of the
+   * form. A different model from the fixture's on purpose: asserting the
+   * source's own car would pass whether the override reached the emitter or
+   * not.
+   */
+  it("takes a car list, and replaces the source's rather than adding to it", async () => {
+    const h = harness()
+    await h.login()
+    const planId = await previewedWith(h, { cars: ["ks_porsche_911_gt3_r_2016"] })
+
+    const created = await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+    expect(created.statusCode, created.body).toBe(200)
+
+    const champ = importedChampionship(h)
+    expect(champ.Classes?.[0]?.AvailableCars).toEqual(["ks_porsche_911_gt3_r_2016"])
+    // Derived from the class list rather than inherited, which is the bug plan
+    // §5.5 found: a template's `Cars` string outlived the class it came from.
+    expect(champ.Events?.[0]?.RaceSetup?.Cars).toBe("ks_porsche_911_gt3_r_2016")
+  })
+
+  it("keeps the source's cars when none are named", async () => {
+    const h = harness()
+    await h.login()
+    const planId = await previewedWith(h, {})
+    await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+    expect(importedChampionship(h).Classes?.[0]?.AvailableCars).toEqual(["rss_formula_hybrid_2021"])
+  })
+
+  /**
+   * A name per round, which ACSM shows instead of the track.
+   *
+   * The bug this closes is the other half of the one in emit.test.ts: every
+   * round used to inherit the template event's name, so a championship came out
+   * with five rounds all called "Donington Park National, Great Britain". They
+   * are named one at a time now, or not at all.
+   */
+  it("names each round separately, or not at all", async () => {
+    const h = harness()
+    await h.login()
+    const planId = await previewedWith(h, {
+      tracks: [{ track: "spa", name: "Season opener" }, { track: "monza" }],
+    })
+    await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+
+    const evs = importedChampionship(h).Events ?? []
+    expect(evs.map((e) => e.Name)).toEqual(["Season opener", ""])
+    expect(evs.map((e) => e.RaceSetup?.Track)).toEqual(["spa", "monza"])
+  })
+
+  it("treats a name of only spaces as no name", async () => {
+    // Otherwise the manager shows a blank label where it would have shown the
+    // track, which looks like champctl lost the track.
+    const h = harness()
+    await h.login()
+    const planId = await previewedWith(h, { tracks: [{ track: "spa", name: "   " }] })
+    await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+    expect((importedChampionship(h).Events ?? [])[0]?.Name).toBe("")
+  })
+
+  it("takes a description, and sends it as written", async () => {
+    const h = harness()
+    await h.login()
+    const planId = await previewedWith(h, { description: "September, and five new tracks." })
+    await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+    expect(importedChampionship(h).Description).toBe("September, and five new tracks.")
+  })
+
+  /**
+   * An empty string is a value, and `""` is falsy — so a handler that tested
+   * for truthiness would drop it and fall back to inheriting. That would put
+   * the cloned championship's blurb on a championship whose author had just
+   * cleared the box.
+   */
+  it("clears the description when asked to, rather than inheriting one", async () => {
+    const h = harness({
+      championship: champ({ Description: "August was a good month." }),
+    })
+    await h.login()
+    const planId = await previewedWith(h, { description: "" })
+    await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+    expect(importedChampionship(h).Description).toBe("")
+  })
+
+  it("keeps the source's description when none is named", async () => {
+    const h = harness({
+      championship: champ({ Description: "August was a good month." }),
+    })
+    await h.login()
+    const planId = await previewedWith(h, {})
+    await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+    expect(importedChampionship(h).Description).toBe("August was a good month.")
+  })
+
+  it("refuses an empty car list rather than reading it as 'inherit'", async () => {
+    // `[]` is a class with no cars, not "leave it alone". The emitter refuses
+    // it, and refusing at the schema says so about the request instead of
+    // producing a 422 about something nobody asked for.
+    const h = harness()
+    await h.login()
+    const res = await planChampionship(h, { name: "September 2026", cars: [] })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().error.code).toBe("bad-request")
+  })
+
+  const previewedWith = async (h: Harness, body: Record<string, unknown>): Promise<string> => {
+    const res = await planChampionship(h, { name: "September 2026", ...body })
+    expect(res.statusCode, res.body).toBe(200)
+    return (res.json() as NewChampionshipPlanResponse).plan.planId
+  }
+
+  /** The championship JSON that reached ACSM's import form. */
+  const importedChampionship = (h: Harness): Championship => {
+    const sent = h.posts.find((p) => p.url.endsWith(IMPORT_PATH))
+    expect(sent, "the championship should have been imported").toBeTruthy()
+    const field = new URLSearchParams(sent!.body).get("import")
+    expect(field, "the import form's field should carry the championship").toBeTruthy()
+    return JSON.parse(field as string) as Championship
+  }
+})
+
+describe("what content is installed", () => {
+  it("answers with the cars and tracks the reader found", async () => {
+    const h = harness({
+      content: new ContentCache({
+        load: async () => ({
+          cars: [{ id: "ks_porsche_911_gt3_r_2016", name: "Porsche 911 GT3 R" }],
+          tracks: [{ id: "ks_brands_hatch", name: "Brands Hatch" }],
+        }),
+      }),
+    })
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/api/content",
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.statusCode, res.body).toBe(200)
+    // Both halves: the folder name is what a championship stores, the display
+    // name is the only part anybody knows.
+    expect(res.json()).toMatchObject({
+      cars: [{ id: "ks_porsche_911_gt3_r_2016", name: "Porsche 911 GT3 R" }],
+      tracks: [{ id: "ks_brands_hatch", name: "Brands Hatch" }],
+    })
+  })
+
+  it("includes each track's layouts, off the event form", async () => {
+    // Not from the listing pages: ACSM carries layouts nowhere but here.
+    // `spa:<default>` means Spa has no layout to choose, so it gets no entry —
+    // absent rather than an empty array, so the screen can hide the field.
+    const h = harness()
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/api/content",
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.statusCode, res.body).toBe(200)
+    const body = res.json() as { layouts: Record<string, string[]> }
+    expect(body.layouts["ks_brands_hatch"]).toEqual(["indy", "gp"])
+    expect("spa" in body.layouts).toBe(false)
+  })
+
+  /**
+   * "No layouts here" and "champctl could not find the list" are different
+   * answers and the screen acts differently on each: the first hides the
+   * field, the second offers free text. Returning an empty map for both is
+   * what left a manager with layouts showing none, and no way to type one.
+   */
+  it("says it has no layout index when the form carries no select", async () => {
+    const h = harness({ noLayoutSelect: true })
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/api/content",
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.statusCode, res.body).toBe(200)
+    expect((res.json() as { layouts: unknown }).layouts).toBeNull()
+  })
+
+  it("needs a session, like every other read", async () => {
+    // Not secrecy — it is a list of folder names — but it is champctl's most
+    // expensive read, and it walks several pages of a league's manager.
+    const h = harness()
+    const res = await h.app.inject({ method: "GET", url: "/api/content" })
     expect(res.statusCode).toBe(401)
   })
 })
