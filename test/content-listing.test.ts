@@ -102,11 +102,32 @@ describe("installed content off the listing pages", () => {
 
     /**
      * `/cars` renders its "previous" control as `?page=-1` while on the first
-     * page. Following it costs a request to be handed page one again, under a
-     * limiter that allows five reads in twenty seconds.
+     * page. Following it costs a request to be handed page one again.
      */
     it("does not follow the previous-page control off the front page", () => {
       expect(pageLinksFrom(`<a href="/cars?page=-1">Previous</a>`, "/cars")).toEqual([])
+    })
+
+    /**
+     * The paginator spells the first page three ways on every page it renders:
+     * the bare path, the "first page" control and `?page=0`. Counting those as
+     * three destinations means fetching a page already in hand two more times,
+     * on every page of the walk — which is most of why reading BATL's eleven
+     * pages of cars took over a minute.
+     */
+    it("counts one page once, however many ways it is linked", () => {
+      const html = `
+        <a href="/cars">Cars</a>
+        <a href="/cars?page=0">First</a>
+        <a href="/cars?page=1">2</a>`
+      expect(pageLinksFrom(html, "/cars?page=2")).toEqual(["/cars", "/cars?page=1"])
+    })
+
+    it("does not treat the bare path as a page apart from page zero", () => {
+      // Standing on `/cars`, a link to `/cars?page=0` is where you are.
+      expect(pageLinksFrom(`<a href="/cars?page=0">First</a>`, "/cars")).toEqual([])
+      // And standing on `?page=0`, the bare path is too.
+      expect(pageLinksFrom(`<a href="/cars">Cars</a>`, "/cars?page=0")).toEqual([])
     })
 
     it("does not treat the page it is on as a further page", () => {
@@ -122,6 +143,32 @@ describe("installed content off the listing pages", () => {
       const content = await readInstalledContent(async (p) => pages[p] ?? "")
       expect(content.cars.map((c) => c.id)).toEqual(["a", "b"])
       expect(content.tracks.map((t) => t.id)).toEqual(["spa"])
+    })
+
+    /**
+     * The cost is measured in requests, not in pages: each one is paced, and
+     * against a real manager they are the whole of the time this takes. A walk
+     * that re-fetches the first page under its other names does three requests
+     * where two would do — and does it again from every page it visits.
+     */
+    it("fetches each page once", async () => {
+      const fetched: string[] = []
+      const pages: Record<string, string> = {
+        // Every page links the first one three ways, as ACSM's paginator does.
+        "/cars": `${card("car", "a", "Alfa")}<a href="/cars?page=0">First</a><a href="/cars?page=1">2</a>`,
+        // Page one links page zero only as `?page=0` — a different string from
+        // the `/cars` the walk began at, and the same page. A walk that
+        // remembers paths rather than pages fetches it again here.
+        "/cars?page=1": `${card("car", "b", "BMW")}<a href="/cars?page=0">First</a>`,
+        "/tracks": card("track", "spa", "Spa"),
+      }
+      await readInstalledContent(async (p) => {
+        fetched.push(p)
+        return pages[p] ?? ""
+      })
+      // Sorted: the two listings are walked concurrently, so which of them
+      // gets a given moment is not something to pin.
+      expect([...fetched].sort()).toEqual(["/cars", "/cars?page=1", "/tracks"])
     })
 
     /**

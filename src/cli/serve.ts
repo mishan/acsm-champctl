@@ -271,28 +271,49 @@ async function main(argv: readonly string[]): Promise<number> {
     : undefined
 
   /**
-   * The installed-content index reads through a reader of its own.
+   * The installed-content index reads through a reader of its own, at its own
+   * pace.
    *
-   * Not tidiness — a rate limiter of its own. Walking `/cars` is several
-   * requests, more on a league running mod content, and champctl paces its
-   * reads at five per twenty seconds. Sharing one limiter meant a walk could
-   * take every slot in the window while the `/api/championships` request from
-   * the same screen waited for a budget spent on a dropdown: opening the
-   * create screen hung the championship list beside it, which reads as champctl
-   * being broken rather than as champctl being polite.
+   * Both halves matter, and the second one is a number somebody has to sit
+   * through. Sharing the interactive limiter meant a walk took every slot in
+   * the window and the `/api/championships` request from the same screen
+   * queued behind it — the championship list hung while champctl was being
+   * polite about a dropdown. But keeping the interactive *rate* was just as
+   * bad: five requests per twenty seconds is a quarter of a request a second,
+   * and BATL's 504 cars are eleven pages of fifty, so reading them took over a
+   * minute of somebody watching a field say "Reading what's installed".
    *
-   * Its own budget rather than a slice of one, because the two are different
-   * shapes of load. The interactive limiter paces a person clicking around a
-   * manager all evening; this paces one bulk read that happens at boot and at
-   * most once an hour after. Splitting the five would have made a cold walk
-   * take minutes to save a burst nobody is there for.
+   * That rate is not protecting anything here. ACSM limits `/login` and
+   * nothing else — measured on 2.4.15, eight rapid `GET /championships` and
+   * eight `GET /healthcheck.json` all answered 200 while the sixth login in a
+   * second got a 429. champctl's read limiter is self-imposed politeness for a
+   * person clicking around a manager all evening, and this is one bulk read of
+   * static pages that happens at boot and at most hourly after.
+   *
+   * Four a second, so eleven pages is under three seconds and a burst that
+   * size is nothing a web server notices.
    */
   const contentReader = new HttpAcsmReader({
     baseUrl,
-    ...(args.unthrottledReads ? { rateLimit: false as const } : {}),
+    ...(args.unthrottledReads
+      ? { rateLimit: false as const }
+      : { rateLimit: { limit: 4, windowMs: 1000 } }),
   })
+
   const content = new ContentCache({
-    load: () => contentReader.listContent(),
+    load: async () => {
+      // Timed and logged, because how long this takes is a property of the
+      // league's manager — how many cars they have installed, how far away it
+      // is — and the only way anyone found out it was slow was by watching a
+      // field say "Reading what's installed" for a minute.
+      const startedAt = Date.now()
+      const value = await contentReader.listContent()
+      app?.log.info(
+        `Read ${value.cars.length} cars and ${value.tracks.length} tracks from Server Manager ` +
+          `in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`,
+      )
+      return value
+    },
     // Kept across restarts, in the response cache's own database. Re-walking
     // `/cars` on every boot is minutes against a league's manager, and the
     // person who just restarted champctl is usually the person about to open

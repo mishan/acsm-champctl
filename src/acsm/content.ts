@@ -92,27 +92,39 @@ function headingFor(node: ReturnType<ReturnType<typeof cheerio.load>>): string {
 /**
  * Further pages of a listing, as paths to fetch.
  *
- * `/cars` links `?page=0`, `?page=1` and also `?page=-1`, which is its
- * "previous" control sitting at the first page. Anything that parses as a page
- * number below zero is that control rather than a page, and following it costs
- * a request to be handed page one again.
+ * Keyed by page *number*, not by URL. The paginator links the same page under
+ * more than one href — `/cars` and `/cars?page=0` are both the first page, and
+ * the "first page" and "previous page" controls point at it again — so
+ * treating each distinct query string as a page to visit fetches the first one
+ * two or three times over. At five requests per twenty seconds that is a
+ * quarter of a minute spent re-reading a page already in hand.
+ *
+ * `?page=-1` is the "previous" control sitting on the first page, not a page.
  */
 export function pageLinksFrom(html: string, path: string): string[] {
   const $ = cheerio.load(html)
   const here = new URL(path, BASE)
-  const out = new Set<string>()
+  const current = pageNumber(here)
+  const out = new Map<number, string>()
 
   $("a[href]").each((_, el) => {
     const url = parse($(el).attr("href") ?? "")
     if (!url) return
     if (url.pathname.replace(/\/$/, "") !== here.pathname.replace(/\/$/, "")) return
-    if (url.search === here.search) return
-    const page = Number(url.searchParams.get("page"))
-    if (Number.isFinite(page) && page < 0) return
-    out.add(`${url.pathname}${url.search}`)
+    const page = pageNumber(url)
+    if (page < 0 || page === current || out.has(page)) return
+    out.set(page, `${url.pathname}${url.search}`)
   })
 
-  return [...out]
+  return [...out.values()]
+}
+
+/** A listing URL's page, with a missing or unreadable `page` meaning the first. */
+function pageNumber(url: URL): number {
+  const raw = url.searchParams.get("page")
+  if (raw === null) return 0
+  const n = Number(raw)
+  return Number.isInteger(n) ? n : 0
 }
 
 const BASE = "http://acsm.invalid/"
@@ -179,17 +191,23 @@ async function walk(
   kind: "car" | "track",
 ): Promise<InstalledItem[]> {
   const found = new Map<string, InstalledItem>()
-  const seen = new Set<string>()
+  // By page number rather than by path, for the same reason `pageLinksFrom`
+  // is: one page has several spellings, and a set of paths lets the first one
+  // be fetched again under a different one.
+  const seen = new Set<number>()
   const queue = [start]
 
-  for (let page = 0; queue.length > 0 && page < MAX_PAGES; page++) {
+  for (let fetched = 0; queue.length > 0 && fetched < MAX_PAGES; fetched++) {
     const path = queue.shift()!
-    if (seen.has(path)) continue
-    seen.add(path)
+    const page = pageNumber(new URL(path, BASE))
+    if (seen.has(page)) continue
+    seen.add(page)
 
     const html = await fetchPath(path)
     for (const item of itemsFrom(html, kind)) if (!found.has(item.id)) found.set(item.id, item)
-    for (const next of pageLinksFrom(html, path)) if (!seen.has(next)) queue.push(next)
+    for (const next of pageLinksFrom(html, path)) {
+      if (!seen.has(pageNumber(new URL(next, BASE)))) queue.push(next)
+    }
   }
 
   // Sorted by the name people read, not by folder name, because this is only
