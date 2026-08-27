@@ -260,6 +260,34 @@ export function emitChampionship(options: EmitOptions): EmitResult {
     `RaceSetup.Cars from the class car list${spectatorEnabled ? " plus the spectator car" : ""}`,
   )
 
+  /**
+   * The spectator car, moved out of the entry list this emitter just built.
+   *
+   * The entry list is generated, not inherited: `unclaimedEntryList` numbers
+   * entrants `CAR_0..CAR_{n-1}` and `CAR_n` *is* the pit box, so the entrants
+   * cannot move. The spectator car can, and has to — a template whose car sits
+   * in box 0, which is what a real export carries because that is the field's
+   * zero value, produced a championship with CAR_0 on top of it. gridmom calls
+   * that an ERROR and an ERROR blocks the import, so champctl was generating
+   * championships champctl then refused to create.
+   *
+   * Placed one past the last entrant. That is the only box the entry list
+   * definitely does not claim, and it is deliberately not tied to `MaxClients`:
+   * a league oversubscribes on purpose (plan §4.4 — thirty slots against an
+   * eighteen-car race), so anything inside the list would collide with a slot
+   * somebody can still sign up for.
+   *
+   * Only when the car is switched on. Rewriting a disabled car's pit box would
+   * be a diff nobody asked for, and it occupies nothing.
+   */
+  const spectatorCar =
+    spectatorEnabled && base.SpectatorCar
+      ? { ...base.SpectatorCar, PitBox: slots }
+      : base.SpectatorCar
+  if (spectatorEnabled && base.SpectatorCar?.PitBox !== slots) {
+    derived.push(`the spectator car moved to pit box ${slots}, clear of the ${slots} entry slots`)
+  }
+
   const championshipClass: ChampionshipClass = {
     ...(templateClass ?? {}),
     // Keep the template's class ID and let the sweep at the end rename it —
@@ -340,6 +368,7 @@ export function emitChampionship(options: EmitOptions): EmitResult {
     Classes: [championshipClass],
     Events: eventList,
     SignUpForm: signUpForm(base.SignUpForm, signUpsEnabled),
+    ...(spectatorCar === undefined ? {} : { SpectatorCar: spectatorCar }),
     ...(spec.description === undefined ? {} : { Description: spec.description }),
   }
 
