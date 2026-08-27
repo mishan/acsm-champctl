@@ -225,15 +225,17 @@ describe("car models", () => {
 })
 
 describe("RaceSetup.Cars", () => {
-  it("catches a spectator model left in the car list while disabled", () => {
-    // The exact bug the import test exposed (plan §5.5).
+  it("catches a model left in the car list that the class can't drive", () => {
+    // The bug the import test exposed (plan §5.5), with a model the profile
+    // has not excluded. `ford_transit` no longer serves here: BATL declares it
+    // in `excludedCarModels`, so it is forgiven by design — see below.
     const c = championship({
       SpectatorCarEnabled: false,
-      Events: [raceEvent({ RaceSetup: { Cars: "rss_formula_hybrid_2021;ford_transit" } })],
+      Events: [raceEvent({ RaceSetup: { Cars: "rss_formula_hybrid_2021;ks_mazda_miata" } })],
     })
     const f = run(c).findings.find((x) => x.code === "grid.race-setup-cars")
     expect(f?.severity).toBe("WARN")
-    expect(f?.message).toContain("ford_transit")
+    expect(f?.message).toContain("ks_mazda_miata")
   })
 
   it("accepts the spectator model when the spectator car is on", () => {
@@ -243,6 +245,68 @@ describe("RaceSetup.Cars", () => {
       Events: [raceEvent({ RaceSetup: { Cars: "rss_formula_hybrid_2021;ford_transit" } })],
     })
     expect(codes(c)).not.toContain("grid.race-setup-cars")
+  })
+
+  /**
+   * `excludedCarModels` is league furniture, and it applies here too.
+   *
+   * It always did in `entry.model-not-available` and never did in this check,
+   * so BATL — who run a Ford Transit in every race for the stream, and whose
+   * `SpectatorCar.Model` is `""` so the branch above forgives nothing — got the
+   * same van reported once per round, on every championship, for ever.
+   *
+   * The trade is deliberate: a league that names a model here is saying "this
+   * is ours, stop telling me about it", so champctl stops, including in the
+   * case §5.5 was about. Any *other* stray model is still caught.
+   */
+  it("forgives an excluded model however the spectator car is set", () => {
+    for (const enabled of [true, false]) {
+      const c = championship({
+        SpectatorCarEnabled: enabled,
+        Events: [raceEvent({ RaceSetup: { Cars: "rss_formula_hybrid_2021;ford_transit" } })],
+      })
+      expect(codes(c)).not.toContain("grid.race-setup-cars")
+    }
+  })
+
+  it("does not turn an excluded model into a missing one", () => {
+    // Forgiven in one direction only. Folding the exclusions into the expected
+    // set would swap "still lists ford_transit" for "is missing ford_transit"
+    // on every championship that doesn't run one.
+    const c = championship({
+      SpectatorCarEnabled: false,
+      Events: [raceEvent({ RaceSetup: { Cars: "rss_formula_hybrid_2021" } })],
+    })
+    expect(codes(c)).not.toContain("grid.race-setup-cars")
+  })
+})
+
+describe("the spectator car's model", () => {
+  /**
+   * Found on a live BATL championship: switched on, model `""`.
+   *
+   * It is also why `grid.race-setup-cars` had nothing to forgive the Transit
+   * with — every check that reasons about "the spectator model" was reasoning
+   * about an empty string.
+   */
+  it("warns when the spectator car is on with no model", () => {
+    const c = championship({ SpectatorCarEnabled: true, SpectatorCar: { Model: "" } })
+    const f = run(c).findings.find((x) => x.code === "entry.spectator-no-model")
+    expect(f?.severity).toBe("WARN")
+    expect(f?.message).toContain("no car model set")
+  })
+
+  it("says nothing when the spectator car is off", () => {
+    const c = championship({ SpectatorCarEnabled: false, SpectatorCar: { Model: "" } })
+    expect(codes(c)).not.toContain("entry.spectator-no-model")
+  })
+
+  it("says nothing when it has a model", () => {
+    const c = championship({
+      SpectatorCarEnabled: true,
+      SpectatorCar: { Model: "ford_transit" },
+    })
+    expect(codes(c)).not.toContain("entry.spectator-no-model")
   })
 })
 
@@ -257,6 +321,43 @@ describe("cross-list comparison", () => {
     const f = run(c).findings.find((x) => x.code === "entry.event-differs-from-class")
     expect(f?.severity).toBe("WARN")
     expect(f?.message).toContain("bob")
+    // And what to do about it, because champctl cannot: `postForm` strips
+    // `EntryList.OverwriteAllEvents`, so no champctl save ever propagates the
+    // class list to an event.
+    expect(f?.message).toContain("Server Manager")
+  })
+
+  /**
+   * Every claimed entrant missing, which is a different fact.
+   *
+   * The shape a freshly created championship is in before anyone has been
+   * through the events: the class list has people, every event list is
+   * unclaimed slots. Reported per-name it reads as one driver's problem —
+   * "misha is in the championship but not in this event" — when what it means
+   * is that the round has nobody in it at all.
+   */
+  it("says an event list is empty rather than naming everyone in it", () => {
+    const c = championship({
+      Classes: [championshipClass({ Entrants: entryList([driver("alice"), driver("bob")]) })],
+      Events: [raceEvent({ EntryList: entryList(emptySlots(30)) })],
+    })
+    const f = run(c).findings.find((x) => x.code === "entry.event-differs-from-class")
+    expect(f?.severity).toBe("WARN")
+    expect(f?.message).toContain("Nobody is in")
+    expect(f?.message).toContain("2 drivers")
+    expect(f?.message).toContain("Server Manager")
+    expect(f?.data).toMatchObject({ empty: true })
+  })
+
+  it("does not call a partly-populated list empty", () => {
+    const alice = driver("alice")
+    const c = championship({
+      Classes: [championshipClass({ Entrants: entryList([alice, driver("bob")]) })],
+      Events: [raceEvent({ EntryList: entryList([alice]) })],
+    })
+    const f = run(c).findings.find((x) => x.code === "entry.event-differs-from-class")
+    expect(f?.message).not.toContain("Nobody is in")
+    expect(f?.data).toMatchObject({ empty: false })
   })
 
   it("warns when events disagree on how many slots exist", () => {

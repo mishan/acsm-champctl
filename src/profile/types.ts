@@ -99,6 +99,21 @@ export interface LeagueProfile {
   baseline: Baseline
   /** Named format shorthands, offered as one-tap starting points in the UI. */
   formats?: FormatPreset[]
-  /** Cars that never count toward stats or grid checks, e.g. `ford_transit`. */
+  /**
+   * League furniture: cars that are always there and never worth a finding.
+   *
+   * BATL's Ford Transit, which runs in every race for the stream. Naming a
+   * model here means "this is ours, stop telling me about it", and champctl
+   * takes that literally — `entry.model-not-available` and
+   * `grid.race-setup-cars` both forgive it, whatever `SpectatorCarEnabled`
+   * says. That is a deliberate widening: the second check only forgave
+   * `SpectatorCar.Model`, which is `""` on BATL's exports, so the same van was
+   * reported once per round on every championship for ever. Five warnings that
+   * are noise cost more than the one case they were guarding, because the
+   * value of the report is that people read it.
+   *
+   * Forgiven for being *present*, never required to be. A model listed here
+   * and absent from a car list is not a finding.
+   */
   excludedCarModels?: string[]
 }

@@ -289,6 +289,15 @@ export const modelNotInClass: Check = {
  * `RaceSetup.Cars` must be derived from the class cars plus the spectator
  * model, never inherited from a template — the import test shipped a
  * `ford_transit` that way (plan §5.5).
+ *
+ * `excludedCarModels` is forgiven here as well as in
+ * `entry.model-not-available`, which is what the profile field was always for
+ * and what this check did not do. BATL runs a Ford Transit in every race for
+ * the stream, so `ford_transit` is in every event's `Cars` and always will be
+ * — and `SpectatorCar.Model` is `""` on their exports, so the spectator branch
+ * below has nothing to forgive with. The result was the same van reported once
+ * per round, on every championship, for ever: five warnings that are noise, in
+ * a report whose whole value is that people read it.
  */
 export const raceSetupCarsMismatch: Check = {
   id: "grid.race-setup-cars",
@@ -299,13 +308,24 @@ export const raceSetupCarsMismatch: Check = {
       for (const m of cls.AvailableCars ?? []) if (m) expected.add(m)
     }
     if (expected.size === 0) return
-    const spectatorModel = spectatorCar(ctx.championship)?.Model
+    const spectatorModel = spectatorCar(ctx.championship)?.Model?.trim()
     if (spectatorModel) expected.add(spectatorModel)
+
+    // Forgiven in one direction only, which is the whole subtlety. An excluded
+    // model in the list is fine; the same model *absent* is not a complaint,
+    // because the profile is saying "ignore this", not "require it". Folding
+    // these into `expected` would swap five "still lists ford_transit"
+    // warnings for five "is missing ford_transit" ones.
+    const forgiven = new Set<string>()
+    for (const m of ctx.profile.excludedCarModels ?? []) {
+      const t = m.trim()
+      if (t) forgiven.add(t)
+    }
 
     events(ctx.championship).forEach((ev, i) => {
       const actual = new Set(raceSetupCars(ev.RaceSetup))
       if (actual.size === 0) return
-      const extra = [...actual].filter((m) => !expected.has(m))
+      const extra = [...actual].filter((m) => !expected.has(m) && !forgiven.has(m))
       const missing = [...expected].filter((m) => !actual.has(m))
       if (extra.length === 0 && missing.length === 0) return
 
@@ -324,6 +344,22 @@ export const raceSetupCarsMismatch: Check = {
   },
 }
 
+/**
+ * The event entry list and the championship class list disagree.
+ *
+ * Two shapes, and they want different sentences. One or two people missing
+ * from a round is a list that has drifted. *Every* claimed entrant missing —
+ * an event list that is all unclaimed slots while the championship has people
+ * in it — is a round that has never been populated at all, which is what a
+ * freshly created championship looks like before anyone has been through the
+ * events. Reporting the second as "misha is in the championship but not in
+ * this event" is true, technically, and reads like one person's problem.
+ *
+ * The message says what to do, because the answer is not obvious and is not
+ * something champctl can do: ACSM propagates the class list to events from the
+ * championship entry list page, and `postForm` deliberately strips
+ * `EntryList.OverwriteAllEvents` so a champctl save never does it (docs §4).
+ */
 export const eventListDiffersFromClass: Check = {
   id: "entry.event-differs-from-class",
   section: "6.1",
@@ -349,6 +385,24 @@ export const eventListDiffersFromClass: Check = {
 
       const label = eventLabel(ev, i + 1)
       const nameOf = (guid: string) => guidName(ctx, guid) ?? guid
+
+      // Nobody at all, while the championship has people. Worth its own
+      // sentence: it is one fact about the round rather than a list of names,
+      // and it is the state every event is in until somebody populates it.
+      const empty = eventGuids.size === 0 && extra.length === 0
+      if (empty) {
+        emit(
+          "WARN",
+          "entry.event-differs-from-class",
+          `Nobody is in ${label}'s entry list, though ${missing.length} ${pluralize(missing.length, "driver")} ${pluralize(missing.length, "is", "are")} in the championship. ` +
+            `Open the championship's entry list in Server Manager and save it over every event — ` +
+            `champctl won't do it, because that same save replaces each event's whole list.`,
+          { round: i + 1, event: label, path: `Events[${i}].EntryList` },
+          { missing, extra, empty },
+        )
+        return
+      }
+
       const parts: string[] = []
       if (missing.length) {
         parts.push(
@@ -363,9 +417,11 @@ export const eventListDiffersFromClass: Check = {
       emit(
         "WARN",
         "entry.event-differs-from-class",
-        `${cap(label)} doesn't match the championship entry list: ${parts.join("; ")}.`,
+        `${cap(label)} doesn't match the championship entry list: ${parts.join("; ")}. ` +
+          `Whoever is missing can't be given a slot by champctl — fix it on the championship's ` +
+          `entry list in Server Manager.`,
         { round: i + 1, event: label, path: `Events[${i}].EntryList` },
-        { missing, extra },
+        { missing, extra, empty },
       )
     })
   },
@@ -618,6 +674,37 @@ export const unclaimedSlotNotSentinel: Check = {
   },
 }
 
+/**
+ * The spectator car is switched on and has no model.
+ *
+ * Found on a live BATL championship, and it is why `grid.race-setup-cars` had
+ * nothing to forgive the Ford Transit with: `SpectatorCarEnabled` is `true`
+ * while `SpectatorCar.Model` is `""`, so every check that reasons about "the
+ * spectator model" reasons about an empty string and does nothing.
+ *
+ * WARN rather than ERROR because the race still runs — the van is in
+ * `RaceSetup.Cars` and somebody can drive it — but nothing in the export says
+ * *which* car is the spectator, so champctl cannot tell the stream car apart
+ * from a competitor, and neither can anyone reading the entry list.
+ */
+export const spectatorCarWithoutModel: Check = {
+  id: "entry.spectator-no-model",
+  section: "6.1",
+  run(ctx, emit) {
+    if (ctx.championship.SpectatorCarEnabled !== true) return
+    if ((ctx.championship.SpectatorCar?.Model ?? "").trim()) return
+
+    emit(
+      "WARN",
+      "entry.spectator-no-model",
+      `The spectator car is switched on but has no car model set, so nothing in the championship ` +
+        `says which car it is.`,
+      { path: "SpectatorCar.Model" },
+      {},
+    )
+  },
+}
+
 export const entryChecks: readonly Check[] = [
   duplicatePitBox,
   maxClientsExceedsPits,
@@ -631,6 +718,7 @@ export const entryChecks: readonly Check[] = [
   signUpsExceedSlots,
   acceptedSignUpWithoutSlot,
   unclaimedSlotNotSentinel,
+  spectatorCarWithoutModel,
 ]
 
 // Re-exported for the emit signature's benefit; keeps imports honest.
