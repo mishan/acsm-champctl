@@ -228,6 +228,12 @@ const newChampionshipBodySchema = {
       maxItems: 200,
       items: { type: "string", minLength: 1, maxLength: 200 },
     },
+    /**
+     * The championship blurb. Empty is a value, not an omission — someone who
+     * cleared the box wants it cleared — so there is no `minLength` here and
+     * the handler tests for `undefined` rather than for truthiness.
+     */
+    description: { type: "string", maxLength: 20_000 },
     tracks: {
       type: "array",
       minItems: 1,
@@ -580,6 +586,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           ...(body.name ? { name: body.name } : {}),
           ...(body.startDate ? { startDate: body.startDate } : {}),
           ...(body.cars?.length ? { cars: body.cars } : {}),
+          ...(body.description === undefined ? {} : { description: body.description }),
           ...(body.tracks ? { rounds: body.tracks.map(roundSpecFrom) } : {}),
         }
 

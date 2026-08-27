@@ -56,6 +56,15 @@ interface Draft {
    * what anyone would be driving.
    */
   cars: string[]
+  /**
+   * The blurb ACSM shows on the championship page.
+   *
+   * Filled in from the source for the same reason the cars are: a clone
+   * inherits it, and inheriting it invisibly is how a September championship
+   * ends up describing August's tracks. Empty is a value — somebody who
+   * clears the box gets an empty description, not last month's.
+   */
+  description: string
   tracks: TrackRow[]
 }
 
@@ -239,6 +248,7 @@ export function NewChampionship({
       name: "",
       startDate: "",
       cars: [],
+      description: "",
       tracks: [],
     })
 
@@ -253,7 +263,11 @@ export function NewChampionship({
         // Only if they are still on the same source. Picking one, changing
         // your mind, and having the first one's cars land a moment later is
         // the exact shape of bug the preview effect's `generation` exists for.
-        setDraft((d) => (d && d.sourceId === id ? { ...d, cars: championship.cars } : d))
+        setDraft((d) =>
+          d && d.sourceId === id
+            ? { ...d, cars: championship.cars, description: championship.description }
+            : d,
+        )
       } catch (e) {
         setError(describe(e))
       } finally {
@@ -357,6 +371,18 @@ export function NewChampionship({
             />
             <p className="fineprint">
               Later rounds follow the league's weekday rule. Leave it blank for the next one.
+            </p>
+
+            <label htmlFor="description">Description</label>
+            <textarea
+              id="description"
+              rows={4}
+              value={draft.description}
+              placeholder="Shown on the championship page in Server Manager."
+              onChange={(e) => set({ description: e.target.value })}
+            />
+            <p className="fineprint">
+              Cloned from the championship above. Clear it for no description at all.
             </p>
           </section>
 
@@ -699,6 +725,7 @@ export function requestFrom(draft: Draft): {
   name: string
   startDate?: string
   cars?: string[]
+  description?: string
   tracks?: TrackRequest[]
 } | null {
   if (!draft.sourceId) return null
@@ -719,6 +746,9 @@ export function requestFrom(draft: Draft): {
     name,
     ...(draft.startDate ? { startDate: draft.startDate } : {}),
     cars,
+    // Always sent, empty included: the server reads an absent key as "inherit
+    // the source's", which is exactly what a cleared box is not asking for.
+    description: draft.description,
     tracks: tracks.map((r) => ({ track: r.track, ...(r.layout ? { layout: r.layout } : {}) })),
   }
 }

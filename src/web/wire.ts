@@ -113,6 +113,8 @@ export interface ChampionshipView {
    * can represent anyway.
    */
   cars: string[]
+  /** The blurb ACSM shows on the championship page. Here for the same reason. */
+  description: string
   rounds: RoundView[]
 }
 
@@ -231,6 +233,16 @@ export interface NewChampionshipRequest {
    * championship runs at without ever mentioning what anyone would drive.
    */
   cars?: string[]
+  /**
+   * The championship's blurb.
+   *
+   * Sent whenever the screen has one to send, *including* an empty string —
+   * which is why this is checked against `undefined` rather than for
+   * truthiness on the way through. Absent means "inherit the source's", and a
+   * clone inheriting one silently is how a September championship ends up
+   * describing August's tracks.
+   */
+  description?: string
   /**
    * The track list, in order, replacing the source's outright.
    *

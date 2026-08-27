@@ -70,6 +70,7 @@ export function championshipView(c: Championship, profile: LeagueProfile): Champ
     // semicolon-joined copy which may carry a spectator model the class never
     // had (plan §5.5), and this is what a clone would start from.
     cars: [...(classes(c)[0]?.AvailableCars ?? [])],
+    description: (c.Description ?? "").trim(),
     rounds: events(c).map((ev, i) => roundView(ev, i + 1, profile)),
   }
 }

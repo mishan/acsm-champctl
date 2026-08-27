@@ -1148,6 +1148,55 @@ describe("previewing a new championship", () => {
     expect(importedChampionship(h).Classes?.[0]?.AvailableCars).toEqual(["rss_formula_hybrid_2021"])
   })
 
+  it("takes a description, and sends it as written", async () => {
+    const h = harness()
+    await h.login()
+    const planId = await previewedWith(h, { description: "September, and five new tracks." })
+    await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+    expect(importedChampionship(h).Description).toBe("September, and five new tracks.")
+  })
+
+  /**
+   * An empty string is a value, and `""` is falsy — so a handler that tested
+   * for truthiness would drop it and fall back to inheriting. That would put
+   * the cloned championship's blurb on a championship whose author had just
+   * cleared the box.
+   */
+  it("clears the description when asked to, rather than inheriting one", async () => {
+    const h = harness({
+      championship: champ({ Description: "August was a good month." }),
+    })
+    await h.login()
+    const planId = await previewedWith(h, { description: "" })
+    await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+    expect(importedChampionship(h).Description).toBe("")
+  })
+
+  it("keeps the source's description when none is named", async () => {
+    const h = harness({
+      championship: champ({ Description: "August was a good month." }),
+    })
+    await h.login()
+    const planId = await previewedWith(h, {})
+    await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+    expect(importedChampionship(h).Description).toBe("August was a good month.")
+  })
+
   it("refuses an empty car list rather than reading it as 'inherit'", async () => {
     // `[]` is a class with no cars, not "leave it alone". The emitter refuses
     // it, and refusing at the schema says so about the request instead of

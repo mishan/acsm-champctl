@@ -172,6 +172,7 @@ beforeEach(() => {
       name: "August 2026",
       timezone: "America/Los_Angeles",
       cars: ["rss_formula_hybrid_2021"],
+      description: "August was a good month.",
       rounds: [],
     },
     gridmom: report(),
@@ -321,6 +322,7 @@ describe("the car list", () => {
         name: "August 2026",
         timezone: "America/Los_Angeles",
         cars: ["rss_formula_hybrid_2021"],
+        description: "",
         rounds: [],
       },
       gridmom: report(),
@@ -341,6 +343,49 @@ describe("the car list", () => {
     await settle()
     expect(planMock).not.toHaveBeenCalled()
     expect(screen.getByText(/nothing to drive/i)).toBeTruthy()
+  })
+})
+
+/**
+ * The blurb ACSM shows on the championship page.
+ *
+ * Same invisible-inheritance problem the cars had: a clone carried the
+ * source's description silently, which is how a September championship ends up
+ * describing August's tracks.
+ */
+describe("the description", () => {
+  it("shows what the source has, without being asked", async () => {
+    renderScreen()
+    await screen.findByLabelText(/Clone from/)
+    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+    const box = (await screen.findByLabelText(/Description/)) as HTMLTextAreaElement
+    await waitFor(() => expect(box.value).toBe("August was a good month."))
+  })
+
+  it("sends what is in the box", async () => {
+    await filled()
+    fireEvent.change(screen.getByLabelText(/Description/), {
+      target: { value: "September, and five new tracks." },
+    })
+    await settle()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({
+      description: "September, and five new tracks.",
+    })
+  })
+
+  /**
+   * Empty is a value, not an omission. The server reads an absent `description`
+   * as "inherit the source's", so a cleared box that sent nothing would put
+   * last month's blurb on this month's championship — the exact thing this
+   * field exists to stop.
+   */
+  it("sends an empty description rather than omitting it", async () => {
+    await filled()
+    fireEvent.change(screen.getByLabelText(/Description/), { target: { value: "" } })
+    await settle()
+    const sent = planMock.mock.lastCall?.[0] as { description?: string }
+    expect(sent.description).toBe("")
+    expect("description" in sent).toBe(true)
   })
 })
 
