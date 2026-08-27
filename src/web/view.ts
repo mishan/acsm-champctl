@@ -70,7 +70,12 @@ export function championshipView(c: Championship, profile: LeagueProfile): Champ
     // semicolon-joined copy which may carry a spectator model the class never
     // had (plan §5.5), and this is what a clone would start from.
     cars: [...(classes(c)[0]?.AvailableCars ?? [])],
-    description: (c.Description ?? "").trim(),
+    // Untrimmed, unlike the name and id above. Those are identifiers where
+    // stray whitespace is noise; this is prose someone wrote, and a clone
+    // starts from what is shown here. Trimming would quietly drop a leading
+    // blank line or trailing newline the author put there — a change to their
+    // text that nobody asked for and nobody would see happen.
+    description: c.Description ?? "",
     rounds: events(c).map((ev, i) => roundView(ev, i + 1, profile)),
   }
 }

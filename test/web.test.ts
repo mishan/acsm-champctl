@@ -925,6 +925,28 @@ describe("reading a championship", () => {
     expect(res.json().gridmom.counts.ERROR).toBeGreaterThan(0)
   })
 
+  /**
+   * The description is prose, and the create screen clones it.
+   *
+   * Trimming it here would edit somebody's writing on the way past — a blank
+   * first line or a trailing newline they put there deliberately, gone, with
+   * the change landing in the new championship rather than on screen where
+   * anyone could see it happen. Names and ids are trimmed because whitespace
+   * in an identifier is noise; this is not one of those.
+   */
+  it("carries the description verbatim, whitespace and all", async () => {
+    const h = harness({
+      championship: champ({ Description: "\n  August was a good month.\n\n" }),
+    })
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/api/championships/${CHAMP_ID}`,
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.json().championship.description).toBe("\n  August was a good month.\n\n")
+  })
+
   it("lists championships as id and name", async () => {
     const h = harness()
     await h.login()
