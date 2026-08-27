@@ -125,6 +125,23 @@ h2 {
   margin: 0.4rem 0 0;
 }
 
+/*
+ * Announcements for people who can't see the rows move. Off screen rather than
+ * `display: none`, which would take it out of the accessibility tree and stop
+ * it being announced at all — the one thing it is for.
+ */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 .round-number {
   display: inline-grid;
   place-items: center;
@@ -691,6 +708,43 @@ button.link:hover {
   grid-template-columns: auto minmax(0, 2fr) minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 0.4rem;
+  /* So the held row can be lifted over the ones it is passing. */
+  position: relative;
+  background: var(--surface);
+}
+
+/*
+ * Only while a row is held.
+ *
+ * The rows sliding out of the way want the transition; the held one must not
+ * have it or it trails the finger. And on release the class goes at the same
+ * moment the list reorders, so nothing animates from a transform that now
+ * belongs to a different round.
+ */
+.tracks.dragging li {
+  transition: transform 120ms ease;
+  user-select: none;
+}
+
+.tracks.dragging li.held {
+  transition: none;
+  box-shadow: 0 6px 16px rgb(0 0 0 / 45%);
+}
+
+/*
+ * The round number doubles as the drag handle.
+ *
+ * `touch-action: none` is what makes this work on a phone at all: without it
+ * the browser claims the gesture for scrolling before the first pointermove
+ * arrives, and the row never moves.
+ */
+.tracks .round-grip {
+  cursor: grab;
+  touch-action: none;
+}
+
+.tracks .round-grip:active {
+  cursor: grabbing;
 }
 
 .tracks input {

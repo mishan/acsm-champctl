@@ -9,6 +9,7 @@ import {
   type NewChampionshipPlan,
   type TrackRequest,
 } from "../api"
+import { moveItem, useReorder } from "../reorder"
 import { Findings } from "./Findings"
 import { Message } from "./Message"
 import { Picker } from "./Picker"
@@ -560,9 +561,15 @@ function CarList({
 /**
  * The track list, in order, one race night each.
  *
- * Up and down rather than drag: it works with a keyboard, it works on a phone
- * without a long-press, and the order is the only thing being expressed. Drag
- * can be added later without changing what a row is.
+ * Two ways to move a row, and both are the point. Up and down work with a
+ * keyboard and on a phone without a long-press; dragging is what someone
+ * reorders six rounds with, because six taps of ↑ to move the last round to
+ * the front is the kind of thing people stop bothering to fix.
+ *
+ * The round number is the handle rather than a seventh control. Six already
+ * share this row on a screen built for a phone, and the badge saying which
+ * round this is happens to be exactly the thing somebody reaches for when they
+ * want to move it.
  */
 function TrackList({
   rows,
@@ -584,13 +591,23 @@ function TrackList({
   loading: boolean
   onChange: (rows: TrackRow[]) => void
 }): React.JSX.Element {
+  /**
+   * What moved and where it ended up, for anyone not watching the rows.
+   *
+   * Both paths announce, not just the drag: the arrows never said anything
+   * either, and "round 3 is now round 1" is the whole result of pressing one.
+   */
+  const [announcement, setAnnouncement] = useState("")
+
   const move = (from: number, to: number): void => {
     if (to < 0 || to >= rows.length) return
-    const next = [...rows]
-    const [row] = next.splice(from, 1)
-    if (row) next.splice(to, 0, row)
+    const next = moveItem(rows, from, to)
+    const label = rows[from]?.name?.trim() || rows[from]?.track || `round ${from + 1}`
+    setAnnouncement(`${label} is now round ${to + 1} of ${next.length}.`)
     onChange(next)
   }
+
+  const reorder = useReorder(rows.length, move)
 
   const update = (i: number, patch: Partial<TrackRow>): void => {
     onChange(rows.map((r, at) => (at === i ? { ...r, ...patch } : r)))
@@ -612,13 +629,31 @@ function TrackList({
       <h2>Tracks</h2>
       <p className="fineprint">One race night each, in this order.</p>
 
-      <ol className="tracks">
+      <ol className={reorder.dragging ? "tracks dragging" : "tracks"}>
         {rows.map((row, i) => (
           // The index is the identity here on purpose: rows have no id, and
           // two rounds at the same track is legal.
-          // biome-ignore lint/suspicious/noArrayIndexKey: a row is its position
-          <li key={i}>
-            <span className="round-number">{i + 1}</span>
+          <li
+            // biome-ignore lint/suspicious/noArrayIndexKey: a row is its position
+            key={i}
+            ref={reorder.rowRef(i)}
+            className={reorder.from === i ? "held" : undefined}
+            style={reorder.styleFor(i)}
+          >
+            {/*
+              A span rather than a button, and hidden from assistive tech,
+              because the accessible way to move a round is the labelled ↑ and
+              ↓ beside it. A third control announcing itself here would be a
+              tab stop that does nothing without a pointer.
+            */}
+            <span
+              className="round-number round-grip"
+              title="Drag to reorder"
+              aria-hidden="true"
+              {...reorder.handleProps(i)}
+            >
+              {i + 1}
+            </span>
             <Picker
               label={`Round ${i + 1} track`}
               value={row.track}
@@ -709,6 +744,10 @@ function TrackList({
           </li>
         ))}
       </ol>
+
+      <p className="visually-hidden" aria-live="polite">
+        {announcement}
+      </p>
 
       <button
         type="button"

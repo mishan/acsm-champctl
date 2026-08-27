@@ -554,6 +554,116 @@ describe("the track list", () => {
     await settle()
     expect(planMock.mock.lastCall?.[0]).toMatchObject({ tracks: [{ track: "monza" }] })
   })
+
+  it("says what moved and where it ended up", async () => {
+    // The arrows never announced anything either, and "spa is now round 2" is
+    // the entire result of pressing one.
+    await filled("Spa")
+    fireEvent.click(screen.getByRole("button", { name: /Add a round/ }))
+    await pick(/Round 2 track/, "Monza")
+    await settle()
+
+    fireEvent.click(screen.getByRole("button", { name: /Move round 1 down/ }))
+    expect(screen.getByText("spa is now round 2 of 2.")).toBeTruthy()
+  })
+})
+
+/**
+ * Dragging a round, as far as a DOM without layout can be asked about it.
+ *
+ * **These cover the wiring, not the geometry**, and the difference matters:
+ * jsdom runs no layout engine, so every `getBoundingClientRect` here returns
+ * zeroes and every row's centre measures the same. `dropTarget` therefore sees
+ * one row's centre pushed above or below all the others by the drag distance
+ * and nothing in between — which makes a downward drag land at the end of the
+ * list and an upward one at the front, whatever the distance.
+ *
+ * So what is asserted below is that a gesture commits exactly once and only on
+ * release, that a cancelled one commits nothing, and that the direction
+ * reaches the list. Where a row lands for a given drag is `reorder.test.ts`,
+ * against measurements a test can state.
+ */
+describe("dragging a round", () => {
+  /** The round-number badge, which doubles as the handle. */
+  function grip(round: number): Element {
+    const grips = document.querySelectorAll(".tracks .round-grip")
+    const el = grips[round - 1]
+    if (!el) throw new Error(`no round ${round} on screen`)
+    return el
+  }
+
+  async function twoRounds() {
+    await filled("Spa")
+    fireEvent.click(screen.getByRole("button", { name: /Add a round/ }))
+    await pick(/Round 2 track/, "Monza")
+    await settle()
+    planMock.mockClear()
+  }
+
+  it("reorders on release and re-previews", async () => {
+    await twoRounds()
+
+    fireEvent.pointerDown(grip(2), { button: 0, pointerId: 1, clientY: 200 })
+    fireEvent.pointerMove(window, { pointerId: 1, clientY: 100 })
+    fireEvent.pointerUp(window, { pointerId: 1, clientY: 100 })
+    await settle()
+
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({
+      tracks: [{ track: "monza" }, { track: "spa" }],
+    })
+  })
+
+  it("commits nothing until the pointer is released", async () => {
+    // The sliding rows are a preview. A drag that reordered the list as it
+    // went would re-preview on every pointermove, and each of those is a
+    // request to the server about a championship nobody has asked for yet.
+    await twoRounds()
+
+    fireEvent.pointerDown(grip(2), { button: 0, pointerId: 1, clientY: 200 })
+    fireEvent.pointerMove(window, { pointerId: 1, clientY: 100 })
+    await settle()
+
+    expect(planMock).not.toHaveBeenCalled()
+    // Still Spa, still round 1: the rows on screen have slid, and that is all.
+    expect(screen.getByLabelText(/Round 1 track/).getAttribute("value")).toBe("Spa")
+  })
+
+  it("leaves the order alone when the drag is abandoned", async () => {
+    await twoRounds()
+
+    fireEvent.pointerDown(grip(2), { button: 0, pointerId: 1, clientY: 200 })
+    fireEvent.pointerMove(window, { pointerId: 1, clientY: 100 })
+    fireEvent.pointerCancel(window, { pointerId: 1 })
+    fireEvent.pointerUp(window, { pointerId: 1, clientY: 100 })
+    await settle()
+
+    expect(planMock).not.toHaveBeenCalled()
+  })
+
+  it("lets Escape put a drag back", async () => {
+    await twoRounds()
+
+    fireEvent.pointerDown(grip(2), { button: 0, pointerId: 1, clientY: 200 })
+    fireEvent.pointerMove(window, { pointerId: 1, clientY: 100 })
+    fireEvent.keyDown(window, { key: "Escape" })
+    fireEvent.pointerUp(window, { pointerId: 1, clientY: 100 })
+    await settle()
+
+    expect(planMock).not.toHaveBeenCalled()
+  })
+
+  it("ignores a drag that starts on the right mouse button", async () => {
+    // That gesture is a context menu on its way, and holding a row hostage
+    // behind one is how a list ends up reordered by a right-click.
+    await twoRounds()
+
+    fireEvent.pointerDown(grip(2), { button: 2, pointerId: 1, clientY: 200 })
+    fireEvent.pointerMove(window, { pointerId: 1, clientY: 100 })
+    fireEvent.pointerUp(window, { pointerId: 1, clientY: 100 })
+    await settle()
+
+    expect(planMock).not.toHaveBeenCalled()
+  })
 })
 
 describe("the review", () => {
