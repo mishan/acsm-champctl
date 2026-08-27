@@ -29,6 +29,7 @@ import type { CheckReport } from "../gridmom/finding.js"
 import type { EmitResult } from "../emit/championship.js"
 import type { FinalizePlan } from "../finalize/plan.js"
 import { currentQualiStart, practiceMinutesFor } from "../finalize/schedule.js"
+import type { ReorderPlan } from "../reorder/plan.js"
 import type { LeagueProfile } from "../profile/types.js"
 import type {
   ChampionshipListItem,
@@ -38,6 +39,8 @@ import type {
   PlannedRoundView,
   PlanView,
   PostedField,
+  ReorderedRoundView,
+  ReorderPlanView,
   RoundView,
 } from "./wire.js"
 
@@ -202,6 +205,65 @@ export function planView(planId: string, plan: FinalizePlan): PlanView {
           fields: Object.entries(plan.schedule.values).map(([name, value]) => ({ name, value })),
         }
       : null,
+    gridmom: plan.gridmom,
+    blocked: plan.blocked,
+    needsAcknowledgement: plan.gridmom.counts.WARN > 0,
+    noop: plan.noop,
+  }
+}
+
+/**
+ * A reorder as a review screen: the whole calendar, not only what moves.
+ *
+ * The rounds that stay put are in here on purpose. A reorder is a statement
+ * about the order of a season, and showing only the three rows that change
+ * makes it impossible to check the one thing worth checking — that the result
+ * is the calendar you wanted. The dates come along for the same reason: they
+ * are what people expect to travel with the track and don't, so the review has
+ * to show round 1 keeping round 1's date.
+ *
+ * Nothing about the entry lists crosses, for the same reason `planView` sends
+ * none: a reorder plan holds one parsed event form per moved round.
+ */
+export function reorderPlanView(
+  planId: string,
+  plan: ReorderPlan,
+  championship: Championship,
+  profile: LeagueProfile,
+): ReorderPlanView {
+  const evs = events(championship)
+  const zone = profile.schedule.timezone
+  const movedTo = new Map(plan.moves.map((m) => [m.round, m]))
+
+  const rounds: ReorderedRoundView[] = plan.order.map((source, i) => {
+    // The slot keeps its own date and its own started flag; what arrives from
+    // elsewhere is the track. Reading those off two different events is the
+    // whole slot/contents split, spelled out.
+    const slot = evs[i]
+    const from = evs[source - 1]
+    const practiceMinutes = slot ? practiceMinutesFor(slot, profile.schedule.practiceMinutes) : 0
+    const quali = slot ? currentQualiStart(slot, zone, practiceMinutes) : null
+
+    return {
+      round: i + 1,
+      cameFrom: source,
+      label: from ? trackLabel(from.RaceSetup) : "",
+      quali: quali ? localTime(quali) : null,
+      moved: movedTo.has(i + 1),
+      started: slot ? eventHasStarted(slot) : false,
+    }
+  })
+
+  return {
+    planId,
+    championshipId: plan.championshipId,
+    rounds,
+    moves: plan.moves.map((m) => ({
+      round: m.round,
+      cameFrom: m.cameFrom,
+      changes: m.changes,
+      formChanges: m.formChanges.map(postedField),
+    })),
     gridmom: plan.gridmom,
     blocked: plan.blocked,
     needsAcknowledgement: plan.gridmom.counts.WARN > 0,

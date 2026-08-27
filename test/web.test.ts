@@ -24,12 +24,17 @@ import { afterEach, describe, expect, it } from "vitest"
 import { StaticAcsmReader } from "../src/acsm/client.js"
 import { IMPORT_PATH } from "../src/acsm/paths.js"
 import { AcsmSession } from "../src/acsm/session.js"
-import type { Championship } from "../src/acsm/types.js"
+import type { Championship, ChampionshipEvent } from "../src/acsm/types.js"
 import type { FinalizePlan } from "../src/finalize/plan.js"
 import { ContentCache } from "../src/web/content-cache.js"
 import { PlanStore } from "../src/web/plans.js"
 import type { HeldChampionship } from "../src/web/routes.js"
-import type { NewChampionshipResponse, NewChampionshipPlanResponse } from "../src/web/wire.js"
+import type {
+  NewChampionshipResponse,
+  NewChampionshipPlanResponse,
+  ReorderPlanResponse,
+  ReorderResponse,
+} from "../src/web/wire.js"
 import { buildServer } from "../src/web/server.js"
 import { SessionStore } from "../src/web/sessions.js"
 import { LoginThrottle } from "../src/web/throttle.js"
@@ -93,6 +98,15 @@ interface HarnessOptions {
   content?: ContentCache
   /** Serve event forms with no `TrackLayout` select, as an older build does. */
   noLayoutSelect?: boolean
+  /**
+   * Event id to the track its edit form renders, for a multi-round fixture.
+   *
+   * Without this the harness answers every event's page with the same form,
+   * which is fine for finalize — one round is being edited — and useless for a
+   * reorder, where serving one round's track for all of them would let a
+   * rearrangement that read the wrong event pass.
+   */
+  roundTracks?: Record<string, { track: string; layout?: string; laps?: number }>
   throttle?: LoginThrottle
   /**
    * Held open until the test resolves it, so two requests can be in the write
@@ -167,6 +181,20 @@ function harness(options: HarnessOptions = {}): Harness {
     // shape no real manager would answer.
     if (url.includes(`/championship/${CHAMP_ID}`) && !url.includes("/event/")) {
       return new Response(scheduleFormHtml(CHAMP_ID, EVENT_ID), { status: 200 })
+    }
+    if (options.roundTracks) {
+      const id = /\/event\/([^/]+)\/edit/.exec(url)?.[1] ?? ""
+      const at = options.roundTracks[id]
+      if (at) {
+        return new Response(
+          eventFormHtml(CHAMP_ID, TWO, {
+            Track: at.track,
+            TrackLayout: at.layout ?? "",
+            "Race.Laps": String(at.laps ?? 20),
+          }),
+          { status: 200 },
+        )
+      }
     }
     const page = pages[Math.min(eventGets, pages.length - 1)] as string
     eventGets++
@@ -247,6 +275,10 @@ const ROUTES: { method: "GET" | "POST"; url: string; public: boolean }[] = [
   { method: "GET", url: `/api/championships/${CHAMP_ID}`, public: false },
   { method: "POST", url: `/api/championships/${CHAMP_ID}/rounds/1/plan`, public: false },
   { method: "POST", url: "/api/plans/whatever/apply", public: false },
+  { method: "POST", url: `/api/championships/${CHAMP_ID}/reorder/plan`, public: false },
+  { method: "POST", url: "/api/reorders/whatever/apply", public: false },
+  { method: "POST", url: "/api/championships/plan", public: false },
+  { method: "POST", url: "/api/championships/whatever/create", public: false },
 ]
 
 describe("authentication", () => {
@@ -1028,6 +1060,204 @@ describe("logging out", () => {
     })
     expect(res.statusCode).toBe(204)
     expect(String(res.headers["set-cookie"])).toContain("Max-Age=0")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Reordering the rounds of an existing championship
+// ---------------------------------------------------------------------------
+
+describe("reordering rounds", () => {
+  /** Three rounds, each at its own track and its own length. */
+  const threeRounds = (over: Partial<ChampionshipEvent>[] = []): Championship =>
+    championship({
+      ID: CHAMP_ID,
+      Name: "Test Championship",
+      Events: [
+        raceEvent({
+          ID: "event-1",
+          Scheduled: "2026-09-02T19:00:00-07:00",
+          EntryList: entryList([driver("Ada"), driver("Grace")]),
+          RaceSetup: {
+            Track: "suzuka",
+            Sessions: { RACE: { Name: "Race", Time: 0, Laps: 20, IsOpen: 1 } },
+          },
+          ...(over[0] ?? {}),
+        }),
+        raceEvent({
+          ID: "event-2",
+          Scheduled: "2026-09-09T19:00:00-07:00",
+          EntryList: entryList([driver("Ada"), driver("Grace")]),
+          RaceSetup: {
+            Track: "spa",
+            Sessions: { RACE: { Name: "Race", Time: 0, Laps: 30, IsOpen: 1 } },
+          },
+          ...(over[1] ?? {}),
+        }),
+      ],
+    })
+
+  const TRACKS = {
+    "event-1": { track: "suzuka", laps: 20 },
+    "event-2": { track: "spa", laps: 30 },
+  }
+
+  const reorderHarness = (over: Partial<ChampionshipEvent>[] = []): Harness =>
+    harness({ championship: threeRounds(over), roundTracks: TRACKS })
+
+  const previewOrder = (h: Harness, order: number[]) =>
+    h.app.inject({
+      method: "POST",
+      url: `/api/championships/${CHAMP_ID}/reorder/plan`,
+      headers: { cookie: h.cookie() },
+      payload: { order },
+    })
+
+  const applyOrder = (h: Harness, planId: string, acknowledgeWarnings = true) =>
+    h.app.inject({
+      method: "POST",
+      url: `/api/reorders/${planId}/apply`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings },
+    })
+
+  async function previewed(h: Harness, order: number[]) {
+    const res = await previewOrder(h, order)
+    if (res.statusCode !== 200) throw new Error(`preview failed: ${res.body}`)
+    return (res.json() as ReorderPlanResponse).plan
+  }
+
+  it("previews without writing anything", async () => {
+    const h = reorderHarness()
+    await h.login()
+    const plan = await previewed(h, [2, 1])
+
+    expect(plan.rounds.map((r) => r.label)).toEqual(["spa", "suzuka"])
+    expect(plan.rounds.map((r) => r.cameFrom)).toEqual([2, 1])
+    expect(h.posts).toHaveLength(0)
+  })
+
+  it("keeps each slot's own date", async () => {
+    // The thing people expect to travel with the track and doesn't. Round 1
+    // keeps round 1's night, whatever ends up racing on it.
+    const h = reorderHarness()
+    await h.login()
+    const plan = await previewed(h, [2, 1])
+    expect(plan.rounds.map((r) => r.quali?.date)).toEqual(["2026-09-02", "2026-09-09"])
+  })
+
+  it("refuses an order that isn't a rearrangement", async () => {
+    const h = reorderHarness()
+    await h.login()
+    const res = await previewOrder(h, [1, 1])
+    expect(res.statusCode).toBe(422)
+    expect(res.json().error.code).toBe("reorder")
+    expect(h.posts).toHaveLength(0)
+  })
+
+  it("refuses to move a round that has been raced", async () => {
+    const h = reorderHarness([{ StartedTime: "2026-09-02T20:00:00-07:00" }])
+    await h.login()
+    const res = await previewOrder(h, [2, 1])
+    expect(res.statusCode).toBe(422)
+    expect(res.json().error.message).toMatch(/already been raced/)
+    expect(h.posts).toHaveLength(0)
+  })
+
+  it("posts one event save per moved round", async () => {
+    const h = reorderHarness()
+    await h.login()
+    const plan = await previewed(h, [2, 1])
+
+    const res = await applyOrder(h, plan.planId)
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as ReorderResponse).rounds).toEqual([1, 2])
+    expect(h.posts).toHaveLength(2)
+
+    const first = new URLSearchParams(h.posts[0]?.body ?? "")
+    expect(first.get("Editing")).toBe("event-1")
+    expect(first.get("Track")).toBe("spa")
+    expect(first.get("Race.Laps")).toBe("30")
+    // The full-list replace still carries everyone. A reorder that dropped the
+    // entry list would delete the grid of every round it touched.
+    expect(first.getAll("EntryList.Name")).toEqual(["Ada", "Grace"])
+  })
+
+  it("takes a plan id and nothing else", async () => {
+    // The plan holds an entry-list fingerprint per round about to be written.
+    // Re-planning at push time would take each of them one round trip before
+    // comparing it, which is a guard comparing a form against itself.
+    const h = reorderHarness()
+    await h.login()
+    const plan = await previewed(h, [2, 1])
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/api/reorders/${plan.planId}/apply`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true, order: [1, 2] },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(h.posts).toHaveLength(0)
+  })
+
+  it("spends a plan once", async () => {
+    // Applying twice would move every round a second time, which for a swap
+    // puts the calendar back where it started and for anything else scrambles
+    // it.
+    const h = reorderHarness()
+    await h.login()
+    const plan = await previewed(h, [2, 1])
+
+    expect((await applyOrder(h, plan.planId)).statusCode).toBe(200)
+    const again = await applyOrder(h, plan.planId)
+    expect(again.statusCode).toBe(404)
+    expect(h.posts).toHaveLength(2)
+  })
+
+  it("will not apply without an acknowledgement when gridmom warns", async () => {
+    const h = reorderHarness()
+    await h.login()
+    const plan = await previewed(h, [2, 1])
+    if (!plan.needsAcknowledgement) throw new Error("fixture raised no warnings")
+
+    const res = await applyOrder(h, plan.planId, false)
+    expect(res.statusCode).toBe(422)
+    expect(h.posts).toHaveLength(0)
+
+    // Kept, not spent: ticking the box and pressing again is the normal path.
+    expect((await applyOrder(h, plan.planId, true)).statusCode).toBe(200)
+  })
+
+  it("writes nothing for an order that is already the order", async () => {
+    const h = reorderHarness()
+    await h.login()
+    const plan = await previewed(h, [1, 2])
+    expect(plan.noop).toBe(true)
+    expect((await applyOrder(h, plan.planId)).statusCode).toBe(200)
+    expect(h.posts).toHaveLength(0)
+  })
+
+  it("sends no entrant to the browser", async () => {
+    // A reorder plan holds a parsed event form per moved round, which is the
+    // league's driver names and Steam GUIDs several times over. `view.ts`
+    // builds the response by naming what goes out; this is the assertion that
+    // it stayed that way.
+    const h = reorderHarness()
+    await h.login()
+    const res = await previewOrder(h, [2, 1])
+    expect(res.body).not.toContain("Ada")
+    expect(res.body).not.toContain("76561198000000001")
+  })
+
+  it("drops a session's reorder plans on logout", async () => {
+    const h = reorderHarness()
+    await h.login()
+    const plan = await previewed(h, [2, 1])
+
+    await h.app.inject({ method: "POST", url: "/api/logout", headers: { cookie: h.cookie() } })
+    const after = await applyOrder(h, plan.planId)
+    expect(after.statusCode).toBe(401)
+    expect(h.posts).toHaveLength(0)
   })
 })
 
