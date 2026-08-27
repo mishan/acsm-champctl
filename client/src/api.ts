@@ -37,6 +37,10 @@ import type {
   PlanResponse,
   PlanView,
   RaceFormat,
+  ReorderedRoundView,
+  ReorderPlanResponse,
+  ReorderPlanView,
+  ReorderResponse,
   RoundView,
   SessionResponse,
   TrackRequest,
@@ -67,6 +71,10 @@ export type {
   PlanResponse,
   PlanView,
   RaceFormat,
+  ReorderedRoundView,
+  ReorderPlanResponse,
+  ReorderPlanView,
+  ReorderResponse,
   RoundView,
   Severity,
   TrackRequest,
@@ -218,4 +226,23 @@ export const api = {
     acknowledgeWarnings: boolean,
   ): Promise<NewChampionshipResponse> =>
     request(`/championships/${encodeURIComponent(planId)}/create`, json({ acknowledgeWarnings })),
+
+  /**
+   * Preview a different running order for a championship that exists. Writes
+   * nothing, and costs one read per round that would move.
+   *
+   * `order` is 1-based source rounds: `[3, 1, 2]` is "round 3 comes first".
+   */
+  planReorder: (id: string, order: number[], signal?: AbortSignal): Promise<ReorderPlanResponse> =>
+    request(`/championships/${encodeURIComponent(id)}/reorder/plan`, {
+      ...json({ order }),
+      ...(signal ? { signal } : {}),
+    }),
+
+  /**
+   * Apply it. Takes the plan id, because the plan is the only thing holding an
+   * entry-list fingerprint for every round about to be written.
+   */
+  applyReorder: (planId: string, acknowledgeWarnings: boolean): Promise<ReorderResponse> =>
+    request(`/reorders/${encodeURIComponent(planId)}/apply`, json({ acknowledgeWarnings })),
 }

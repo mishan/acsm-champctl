@@ -897,6 +897,28 @@ button.link:hover {
 }
 
 /*
+ * The reorder list reuses `.tracks` for the drag machinery and nothing else:
+ * these rows are a number, a track, the night it keeps and the two arrows.
+ */
+.tracks.reorder li {
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+}
+
+.tracks.reorder .row-sub {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* "was 3" beside a round that has moved. Quieter than the "raced" chip. */
+.tag-quiet {
+  margin-left: 0.4rem;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+/*
  * A round's name, on its own line under the track.
  *
  * Spanning every column rather than adding a seventh: six controls already
