@@ -1354,6 +1354,31 @@ describe("what content is installed", () => {
     expect((res.json() as { layouts: unknown }).layouts).toBeNull()
   })
 
+  /**
+   * The check that would have caught what BATL hit: a round on a track with
+   * layouts, with none set. It reaches the screen through the same report the
+   * round list already carries, so there is nowhere new to look.
+   */
+  it("warns on the round list about a round with no layout set", async () => {
+    const h = harness({
+      championship: champ({
+        Events: [raceEvent({ ID: EVENT_ID, RaceSetup: { Track: "ks_brands_hatch" } })],
+      }),
+    })
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/api/championships/${CHAMP_ID}`,
+      headers: { cookie: h.cookie() },
+    })
+
+    const f = res
+      .json()
+      .gridmom.findings.find((x: { code: string }) => x.code === "content.track-layout-unset")
+    expect(f?.severity).toBe("WARN")
+    expect(f?.message).toContain("indy and gp")
+  })
+
   it("needs a session, like every other read", async () => {
     // Not secrecy — it is a list of folder names — but it is champctl's most
     // expensive read, and it walks several pages of a league's manager.

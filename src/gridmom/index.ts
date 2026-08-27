@@ -7,6 +7,7 @@
  * from the CLI, and nightly from the bot.
  */
 
+import type { TrackLayouts } from "../acsm/content.js"
 import type { Championship } from "../acsm/types.js"
 import type { ContentIndex } from "../content/index.js"
 import { EMPTY_PIT_TABLE, type PitTable } from "../pits/table.js"
@@ -38,6 +39,8 @@ export const ALL_CHECKS: readonly Check[] = [
 export interface CheckOptions {
   pits?: PitTable
   content?: ContentIndex
+  /** Track layouts, when a caller has been able to read them. See CheckContext. */
+  layouts?: TrackLayouts | null
   /** Injected so time-dependent checks are deterministic under test. */
   now?: Date
   /** Finding codes to drop, e.g. a league that genuinely runs a track twice. */
@@ -57,6 +60,7 @@ export function check(
     pits: options.pits ?? EMPTY_PIT_TABLE,
     now: options.now ?? new Date(),
     content: options.content,
+    layouts: options.layouts,
   }
 
   const suppressed = new Set(options.suppress ?? [])

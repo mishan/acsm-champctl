@@ -20,6 +20,7 @@
 
 import { createHash } from "node:crypto"
 
+import { layoutsFrom } from "../acsm/content.js"
 import { currentTrackLayout, trackIsMissingFromServer } from "../acsm/event-form.js"
 import {
   count,
@@ -280,9 +281,17 @@ export async function planFinalize(
   const wouldBeEvent = applyFormat(ev, format)
   if (planned) wouldBeEvent.Scheduled = planned.scheduled
   const wouldBe = withEvent(championship, round - 1, wouldBeEvent)
+  // The layout index comes out of the page this function already fetched — the
+  // event edit form is where ACSM lists layouts, and it is the same page. So
+  // the layout checks cost nothing here, need no session of their own, and are
+  // never stale, unlike the hour-old copy the other gridmom call sites read
+  // from the cache.
+  const layouts = layoutsFrom(html)
+
   const gridmom = check(wouldBe, profile, {
     ...(options.pits ? { pits: options.pits } : {}),
     ...(options.now ? { now: options.now } : {}),
+    ...(layouts === undefined ? {} : { layouts }),
   })
 
   return {

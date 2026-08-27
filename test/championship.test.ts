@@ -432,6 +432,83 @@ describe("installed tracks", () => {
   })
 })
 
+/**
+ * The layouts index is separate from the content index, and so is this check.
+ * See `CheckContext.layouts`: layouts come off an event edit form, which needs
+ * a login, so a caller can have one of the two and not the other.
+ */
+describe("track layouts", () => {
+  const BRANDS = { ks_brands_hatch: ["indy", "gp"] }
+  const at = (over: { Track: string; TrackLayout?: string }) =>
+    championship({ Events: [raceEvent({ RaceSetup: over })] })
+
+  const runLayouts = (c: Export, layouts?: Record<string, string[]> | null) =>
+    check(c, testProfile(), {
+      pits: pitTable(),
+      now: NOW,
+      checks: contentChecks,
+      ...(layouts === undefined ? {} : { layouts }),
+    })
+
+  // Only this check's findings. The fixture's tracks have no pit count on
+  // file, so `content.pit-count-unknown` rides along on every run and is
+  // nothing to do with layouts.
+  const codes = (c: Export, layouts?: Record<string, string[]> | null) =>
+    runLayouts(c, layouts)
+      .findings.map((f) => f.code)
+      .filter((code) => code.startsWith("content.track-layout"))
+
+  it("says nothing without a layout index", () => {
+    // Nor with a read that failed, which is what null means on the wire.
+    const c = at({ Track: "ks_brands_hatch" })
+    expect(codes(c)).not.toContain("content.track-layout-unset")
+    expect(codes(c, null)).not.toContain("content.track-layout-unset")
+  })
+
+  it("is quiet about a track that has no layout to choose", () => {
+    // Absent from a present index means one layout, which ACSM stores as "".
+    expect(codes(at({ Track: "spa" }), BRANDS)).toEqual([])
+  })
+
+  it("is quiet when the layout is one the track has", () => {
+    expect(codes(at({ Track: "ks_brands_hatch", TrackLayout: "gp" }), BRANDS)).toEqual([])
+  })
+
+  /**
+   * What the create screen produced before it asked for a layout: a clone
+   * inherits `TrackLayout: ""`, and on a track with layouts that is a round
+   * ACSM can't render and a race at whatever it falls back to.
+   */
+  it("warns when a track with layouts has none set", () => {
+    const f = runLayouts(at({ Track: "ks_brands_hatch" }), BRANDS).findings.find(
+      (x) => x.code === "content.track-layout-unset",
+    )
+    expect(f?.severity).toBe("WARN")
+    expect(f?.message).toContain("indy and gp")
+    expect(f?.location?.round).toBe(1)
+    expect(f?.data).toMatchObject({ track: "ks_brands_hatch", available: ["indy", "gp"] })
+  })
+
+  /**
+   * What every champctl event save wrote before `acsm/event-form.ts`: the
+   * first option of a select listing every track on the server, so a Brands
+   * Hatch round came back on a Black Cat County layout.
+   */
+  it("warns when the layout belongs to another track", () => {
+    const c = at({ Track: "ks_brands_hatch", TrackLayout: "ks_black_cat_county:layout_int" })
+    const f = runLayouts(c, BRANDS).findings.find((x) => x.code === "content.track-layout-unknown")
+    expect(f?.severity).toBe("WARN")
+    expect(f?.message).toContain("isn't one ks_brands_hatch has")
+    expect(f?.data).toMatchObject({ layout: "ks_black_cat_county:layout_int" })
+  })
+
+  it("does not block a push", () => {
+    // BATL ran a full practice session on a round in this state. Worth saying,
+    // not worth refusing a lap-count change over.
+    expect(runLayouts(at({ Track: "ks_brands_hatch" }), BRANDS).ok).toBe(true)
+  })
+})
+
 describe("installed cars", () => {
   it("is quiet when every class model is installed", () => {
     expect(contentCodes(championship(), stubContent(suzukaInstalled))).not.toContain(

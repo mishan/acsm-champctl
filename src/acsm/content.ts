@@ -123,6 +123,16 @@ function headingFor(node: ReturnType<ReturnType<typeof cheerio.load>>): string {
  * screen show "one layout" beside every track on a manager where champctl had
  * simply failed to find the list.
  */
+/**
+ * Track folder name to its layouts. A track with no choice has no entry.
+ *
+ * Declared here, with the parser that produces it, rather than in the web
+ * layer that first needed it: gridmom reads this too, and gridmom is a pure
+ * function of an export plus some facts about the server. Reaching into
+ * `web/` for a type would make the checker depend on the service.
+ */
+export type TrackLayouts = Record<string, string[]>
+
 const NO_LAYOUT = "<default>"
 
 export function layoutsFrom(html: string): Record<string, string[]> | undefined {

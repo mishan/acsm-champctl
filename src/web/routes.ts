@@ -490,31 +490,37 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
      * unauthenticated endpoint that walks five pages of a league's manager is
      * something a stranger could point at that manager on a loop.
      */
+    /**
+     * The layout index, on this caller's session, and never fatal.
+     *
+     * On the caller's session because the form that lists layouts is the one
+     * page ACSM will not serve without a login, and champctl holds no
+     * credentials of its own. Held for an hour afterwards, so it is one read
+     * per manager rather than one per screen.
+     *
+     * Nothing here is worth failing a request over: the create screen falls
+     * back to a free-text layout field, and gridmom skips its layout checks.
+     * Both degrade to what champctl did before it could read layouts at all.
+     *
+     * Logged, though, and that is not decoration. Swallowed silently this reads
+     * as a manager whose tracks each have one layout — a wrong answer shaped
+     * exactly like a right one, and the log is the only place the difference
+     * shows.
+     */
+    const layoutsFor = async (
+      s: { acsm: AcsmSession },
+      req: FastifyRequest,
+    ): Promise<TrackLayouts | null> =>
+      ctx.layouts
+        .get(() => readTrackLayouts(s.acsm, ctx.reader))
+        .catch((err: unknown) => {
+          req.log.warn({ err }, "could not read track layouts")
+          return null
+        })
+
     app.get("/content", async (req): Promise<ContentResponse> => {
       const s = requireSession(ctx, req)
-      const [content, layouts] = await Promise.all([
-        ctx.content.get(),
-        // On this person's ACSM session, because the form that lists layouts
-        // is the one page ACSM will not serve without a login — and champctl
-        // holds no credentials of its own to do it with. Held for an hour
-        // afterwards, so it is one read per manager rather than one per
-        // screen.
-        ctx.layouts
-          .get(() => readTrackLayouts(s.acsm, ctx.reader))
-          // Layouts are the one part of this the screen can do without: the
-          // field falls back to free text and the rest of the form still
-          // works. Failing the whole request would take the car and track
-          // pickers down with it.
-          //
-          // Logged, though. Swallowed silently, this reads on the screen as a
-          // manager whose tracks have one layout each — a wrong answer that
-          // looks like a right one, and the only place the difference is
-          // visible is here.
-          .catch((err: unknown) => {
-            req.log.warn({ err }, "could not read track layouts")
-            return null
-          }),
-      ])
+      const [content, layouts] = await Promise.all([ctx.content.get(), layoutsFor(s, req)])
       return { ...content, layouts }
     })
 
@@ -530,14 +536,21 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
         },
       },
       async (req): Promise<ChampionshipResponse> => {
-        const c = await ctx.reader.exportChampionship(req.params.id)
+        const s = requireSession(ctx, req)
+        const [c, layouts] = await Promise.all([
+          ctx.reader.exportChampionship(req.params.id),
+          // Costs a page fetch the first time and nothing for the hour after.
+          // Worth it here of all places: this is the screen that shows a round
+          // with no layout set, and the screen where it gets fixed.
+          layoutsFor(s, req),
+        ])
         return {
           championship: championshipView(c, ctx.profile),
           // The championship as it stands, before anyone edits anything. Plan
           // §1's third job — "checking a championship for mistakes before
           // people show up to race" — is most of this tool's value and costs
           // one pure function call over an export already in hand.
-          gridmom: check(c, ctx.profile, { pits: ctx.pits, now: ctx.now() }),
+          gridmom: check(c, ctx.profile, { pits: ctx.pits, now: ctx.now(), layouts }),
         }
       },
     )
@@ -653,7 +666,11 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           throw e
         }
 
-        const gridmom = check(result.championship, ctx.profile, { pits: ctx.pits, now })
+        const gridmom = check(result.championship, ctx.profile, {
+          pits: ctx.pits,
+          now,
+          layouts: await layoutsFor(s, req),
+        })
 
         return {
           plan: newChampionshipPlanView(
