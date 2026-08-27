@@ -374,11 +374,8 @@ export const eventListDiffersFromClass: Check = {
     if (classGuids.size === 0) return
 
     events(ctx.championship).forEach((ev, i) => {
-      const eventGuids = new Set(
-        claimedSlots(ev.EntryList)
-          .map((s) => normGuid(s.entrant.GUID))
-          .filter(Boolean),
-      )
+      const claimed = claimedSlots(ev.EntryList)
+      const eventGuids = new Set(claimed.map((s) => normGuid(s.entrant.GUID)).filter(Boolean))
       const missing = [...classGuids].filter((g) => !eventGuids.has(g))
       const extra = [...eventGuids].filter((g) => !classGuids.has(g))
       if (missing.length === 0 && extra.length === 0) return
@@ -389,7 +386,13 @@ export const eventListDiffersFromClass: Check = {
       // Nobody at all, while the championship has people. Worth its own
       // sentence: it is one fact about the round rather than a list of names,
       // and it is the state every event is in until somebody populates it.
-      const empty = eventGuids.size === 0 && extra.length === 0
+      //
+      // Claimed slots, not GUIDs. A slot with a name and no GUID is somebody —
+      // ACSM lets an entrant be added by name alone, and BATL's lists carry
+      // them — so counting GUIDs called a round with people in it empty and
+      // told whoever read it to go and populate a list that was populated.
+      // `extra` needs no separate test: it is derived from these same slots.
+      const empty = claimed.length === 0
       if (empty) {
         emit(
           "WARN",

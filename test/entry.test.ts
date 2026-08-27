@@ -349,6 +349,25 @@ describe("cross-list comparison", () => {
     expect(f?.data).toMatchObject({ empty: true })
   })
 
+  /**
+   * A name with no GUID is a person, and the finding used to say otherwise.
+   *
+   * ACSM lets an entrant be added by name alone — no Steam GUID until they
+   * first connect — and `claimedSlots` counts those, correctly. Counting GUIDs
+   * instead reported a round with people in it as "Nobody is in this entry
+   * list", and told whoever read it to go and populate a list that already had
+   * somebody in it.
+   */
+  it("does not call a list of unregistered drivers empty", () => {
+    const c = championship({
+      Classes: [championshipClass({ Entrants: entryList([driver("alice"), driver("bob")]) })],
+      Events: [raceEvent({ EntryList: entryList([driver("carol", { GUID: "" })]) })],
+    })
+    const f = run(c).findings.find((x) => x.code === "entry.event-differs-from-class")
+    expect(f?.message).not.toContain("Nobody is in")
+    expect(f?.data).toMatchObject({ empty: false })
+  })
+
   it("does not call a partly-populated list empty", () => {
     const alice = driver("alice")
     const c = championship({
