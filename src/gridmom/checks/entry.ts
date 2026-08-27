@@ -20,7 +20,6 @@ import {
   raceSetupCars,
   slots,
   spectatorCar,
-  spectatorCarCount,
   trackLabel,
   type Slot,
 } from "../../acsm/view.js"
@@ -134,34 +133,26 @@ function freeBoxes(used: Set<number>, size: number): number[] {
   return gaps
 }
 
-export const spectatorPitBoxCollision: Check = {
-  id: "entry.spectator-pit-box",
-  section: "6.1",
-  run(ctx, emit) {
-    const spectator = spectatorCar(ctx.championship)
-    const box = spectator?.PitBox
-    if (spectator == null || box == null) return
-
-    for (const { list, label, location } of allLists(ctx)) {
-      const clash = slots(list).filter((s) => s.entrant.PitBox === box)
-      if (clash.length === 0) continue
-      const who = clash.map((s) => s.entrant.Name || s.key)
-      emit(
-        "ERROR",
-        "entry.spectator-pit-box",
-        `The spectator car sits in pit box ${box}, which ${humanList(who)} also ${pluralize(who.length, "uses", "use")} in ${label}.`,
-        location,
-        { pitBox: box, entrants: who },
-      )
-    }
-  },
-}
+/*
+ * There was an `entry.spectator-pit-box` check here, and it was wrong.
+ *
+ * It reported an ERROR when the spectator car's pit box matched an entrant's,
+ * on the reading that two cars cannot share a box. The league that runs one
+ * says otherwise: it is an observer that occupies no box, and their pits have
+ * clipping off besides. On BATL's July championship it fired for every event
+ * and the class list, naming a real driver each time, and an ERROR blocks a
+ * push — so it stopped work over something that has never once gone wrong.
+ *
+ * Deleted rather than made opt-in, unlike `entry.duplicate-skin` below. That
+ * one describes a policy a league might genuinely hold; this one described a
+ * collision that does not happen, and an option to be told about it anyway is
+ * an option nobody should take.
+ */
 
 export const maxClientsExceedsPits: Check = {
   id: "grid.max-clients",
   section: "6.1",
   run(ctx, emit) {
-    const spectators = spectatorCarCount(ctx.championship)
     events(ctx.championship).forEach((ev, i) => {
       const rs = ev.RaceSetup
       const track = trackLabel(rs)
@@ -169,18 +160,20 @@ export const maxClientsExceedsPits: Check = {
       const record = ctx.pits.get(rs?.Track ?? "", rs?.TrackLayout)
       if (!record) return // handled by the unknown-pit-count check
 
+      // The spectator car is not counted. It used to be — plan §4.5 has the
+      // cap as `pitboxes - spectatorCars` — but it occupies no box, so adding
+      // one made this fire a car early and made the emitter cap every
+      // championship a car low to stay ahead of it.
       const maxClients = rs?.MaxClients ?? 0
-      const needed = maxClients + spectators
-      if (needed <= record.pitboxes) return
+      if (maxClients <= record.pitboxes) return
 
       const label = eventLabel(ev, i + 1)
-      const spectatorNote = spectators > 0 ? ` plus the spectator car` : ""
       emit(
         "ERROR",
         "grid.max-clients",
-        `${cap(label)} lets ${maxClients} cars on track${spectatorNote}, but ${track} only has ${record.pitboxes} pit ${pluralize(record.pitboxes, "box", "boxes")}.`,
+        `${cap(label)} lets ${maxClients} cars on track, but ${track} only has ${record.pitboxes} pit ${pluralize(record.pitboxes, "box", "boxes")}.`,
         { round: i + 1, event: label, path: `Events[${i}].RaceSetup.MaxClients` },
-        { maxClients, spectators, pitboxes: record.pitboxes, track },
+        { maxClients, pitboxes: record.pitboxes, track },
       )
     })
   },
@@ -392,16 +385,35 @@ function guidName(ctx: CheckContext, guid: string): string | undefined {
   return undefined
 }
 
+/**
+ * Two entrants in the same skin, for a league that minds.
+ *
+ * **Opt-in, and it used not to be.** This read ACSM's
+ * `AllowDuplicateSkinChoices` and took `false` to mean "this league enforces
+ * unique skins". That field is `false` in every export anyone has looked at,
+ * including leagues where sharing a skin is completely routine because not
+ * everyone has one of their own — so `false` is Go's zero value for a field
+ * nobody sets, not a rule. The same trap as `PracticeEntryListType` in plan
+ * §5.4, and the plan's own §6.1 listed this as an ERROR on the strength of it.
+ *
+ * What that cost was not theoretical. One BATL championship produced 27 of
+ * these, every one an ERROR, so every push was blocked — and the two findings
+ * that mattered, five duplicate pit boxes and a driver sharing a box with the
+ * spectator van, sat in the middle of a wall of noise about skins. A check
+ * that fires on a normal condition does not just waste a line; it buries the
+ * ones that don't.
+ *
+ * So: only when a profile says `entryList.uniqueSkins`, and a warning rather
+ * than a block. Two identical cars is confusing on a broadcast. It is not a
+ * broken or unfair race, which is what ERROR is for.
+ */
 export const duplicateSkins: Check = {
   id: "entry.duplicate-skin",
   section: "6.1",
   run(ctx, emit) {
-    for (const { list, label, location } of allLists(ctx)) {
-      // The flag is per-event; for class lists fall back to the strictest
-      // setting any event uses, since the class list feeds all of them.
-      const allowDupes = allowsDuplicateSkins(ctx, location.round)
-      if (allowDupes) continue
+    if (ctx.profile.entryList.uniqueSkins !== true) return
 
+    for (const { list, label, location } of allLists(ctx)) {
       const claimed = claimedSlots(list)
       // Same skin on different models is fine — skins are per-model folders.
       const dupes = duplicates(claimed, (s) => {
@@ -414,22 +426,15 @@ export const duplicateSkins: Check = {
       for (const [key, ss] of dupes) {
         const who = ss.map((s) => s.entrant.Name || s.key)
         emit(
-          "ERROR",
+          "WARN",
           "entry.duplicate-skin",
-          `${humanList(who)} are all using the ${key.split("/").slice(1).join("/")} skin in ${label}, and duplicate skins are turned off.`,
+          `${humanList(who)} are all using the ${key.split("/").slice(1).join("/")} skin in ${label}.`,
           location,
           { skin: key, entrants: who },
         )
       }
     }
   },
-}
-
-function allowsDuplicateSkins(ctx: CheckContext, round: number | undefined): boolean {
-  const evs = events(ctx.championship)
-  if (round != null) return evs[round - 1]?.RaceSetup?.AllowDuplicateSkinChoices === true
-  if (evs.length === 0) return ctx.profile.baseline.raceSetup?.AllowDuplicateSkinChoices === true
-  return evs.every((ev) => ev.RaceSetup?.AllowDuplicateSkinChoices === true)
 }
 
 export const duplicateRaceNumbers: Check = {
@@ -615,7 +620,6 @@ export const unclaimedSlotNotSentinel: Check = {
 
 export const entryChecks: readonly Check[] = [
   duplicatePitBox,
-  spectatorPitBoxCollision,
   maxClientsExceedsPits,
   pitBoxBeyondTrackCapacity,
   modelNotInClass,

@@ -642,59 +642,10 @@ describe("emitting a championship", () => {
     // The spectator car occupies a pit box, so gridmom counts it against the
     // track's capacity. gridCap did not, so any template with one emitted a
     // championship whose MaxClients was exactly one too many for its tightest track.
-    //
-    // `PitBox: 0` because that is what a real export carries: BATL's Ford
-    // Transit is in every race for the stream, and its box is either set to 0
-    // or left at Go's zero for the field. Without it this fixture had *no* pit
-    // box, `entry.spectator-pit-box` returned early, and the collision the
-    // next test is about went unnoticed for as long as the emitter existed.
-    const t = template({
-      SpectatorCarEnabled: true,
-      SpectatorCar: { Model: "ford_transit", PitBox: 0 },
-    })
+    const t = template({ SpectatorCarEnabled: true, SpectatorCar: { Model: "ford_transit" } })
     const { championship: c } = emit({ template: t })
     const report = check(c, testProfile(), { pits, now: NOW })
     expect(report.findings.filter((f) => f.severity === "ERROR")).toEqual([])
-  })
-
-  /**
-   * The emitter numbers entrants `CAR_0..CAR_{n-1}` with matching pit boxes,
-   * and carried the template's spectator car through untouched — so a template
-   * whose van sits in box 0 produced a championship where CAR_0 sits on top of
-   * it. gridmom calls that an ERROR, which blocks the import: champctl
-   * generating something champctl then refuses to create.
-   */
-  it("moves the spectator car clear of the entry list it just generated", () => {
-    const t = template({
-      SpectatorCarEnabled: true,
-      SpectatorCar: { Name: "Spectator", Model: "ford_transit", PitBox: 0 },
-    })
-    const { championship: c, derived } = emit({
-      template: t,
-      spec: { ...spec(), entryListSlots: 12 },
-    })
-
-    const entrants = slots(c.Classes?.[0]?.Entrants)
-    expect(entrants).toHaveLength(12)
-    // Entrants keep 0..11: `CAR_n` *is* the pit box, so they cannot move.
-    expect(entrants.map((s) => s.entrant.PitBox)).toEqual([...Array(12).keys()])
-    // The van goes past them, and keeps everything else it had.
-    expect(c.SpectatorCar?.PitBox).toBe(12)
-    expect(c.SpectatorCar?.Model).toBe("ford_transit")
-    expect(c.SpectatorCar?.Name).toBe("Spectator")
-    // Said out loud, because it is a value champctl chose rather than inherited.
-    expect(derived.some((d) => /spectator car/i.test(d))).toBe(true)
-  })
-
-  it("leaves the spectator car alone when it is switched off", () => {
-    // Nothing occupies a pit box, so there is nothing to move — and rewriting
-    // a disabled car's box is a diff nobody asked for.
-    const t = template({
-      SpectatorCarEnabled: false,
-      SpectatorCar: { Model: "ford_transit", PitBox: 0 },
-    })
-    const { championship: c } = emit({ template: t })
-    expect(c.SpectatorCar?.PitBox).toBe(0)
   })
 
   it("derives Scheduled from the event's practice length, not the profile's", () => {

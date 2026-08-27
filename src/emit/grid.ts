@@ -50,10 +50,15 @@ export function gridCap(
   options: { fallback?: number; reservedBoxes?: number } = {},
 ): GridCap {
   const fallback = options.fallback ?? 0
-  // Boxes that are spoken for before any driver is. The spectator car occupies
-  // one, and gridmom's grid.max-clients counts it against the track's capacity
-  // — so a cap set to the raw pit count emitted a championship its own checker
-  // refused, off by exactly the number of spectator cars.
+  /**
+   * Boxes spoken for before any driver is.
+   *
+   * The spectator car used to be one of them, and is not: it is an observer
+   * that occupies no pit box, so reserving one capped every championship a car
+   * below what the track allows. Kept as an option because a league that
+   * genuinely holds boxes back — for a safety car, say — has somewhere to say
+   * so, and nothing sets it today.
+   */
   const reserved = options.reservedBoxes ?? 0
   const unknownTracks: string[] = []
   let smallest: { label: string; boxes: number } | undefined
@@ -93,7 +98,7 @@ export function gridCap(
     }
   }
 
-  const reservedNote = reserved > 0 ? ` (${reserved} reserved for the spectator car)` : ""
+  const reservedNote = reserved > 0 ? ` (${reserved} reserved)` : ""
   const summary =
     unknownTracks.length === 0
       ? `Capped at ${smallest.boxes} by ${smallest.label}${reservedNote}.`

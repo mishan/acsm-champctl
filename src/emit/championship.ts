@@ -214,13 +214,12 @@ export function emitChampionship(options: EmitOptions): EmitResult {
     DateTime.fromJSDate(now).setZone(profile.schedule.timezone),
     practiceMinutes,
   )
-  // The spectator car takes a pit box, and gridmom counts it against the
-  // track's capacity, so the cap has to leave room for it.
-  const spectatorBoxes = mergeAll<Championship>(template, profile.baseline.championship ?? {})
-    .SpectatorCarEnabled
-    ? 1
-    : 0
-  const grid = gridCap(rounds, options.pits, { reservedBoxes: spectatorBoxes })
+  // No box reserved for the spectator car. It used to take one, on the reading
+  // that a car on the grid needs somewhere to sit — but the league that runs
+  // one says it occupies nothing: it is an observer, and the pits have
+  // clipping off besides. Reserving a box for it capped every championship one
+  // car below what the track allows.
+  const grid = gridCap(rounds, options.pits)
 
   // Start from the template, then the league baseline. Both are whole-object
   // overlays, so anything neither mentions survives from the template.
@@ -259,34 +258,6 @@ export function emitChampionship(options: EmitOptions): EmitResult {
   derived.push(
     `RaceSetup.Cars from the class car list${spectatorEnabled ? " plus the spectator car" : ""}`,
   )
-
-  /**
-   * The spectator car, moved out of the entry list this emitter just built.
-   *
-   * The entry list is generated, not inherited: `unclaimedEntryList` numbers
-   * entrants `CAR_0..CAR_{n-1}` and `CAR_n` *is* the pit box, so the entrants
-   * cannot move. The spectator car can, and has to — a template whose car sits
-   * in box 0, which is what a real export carries because that is the field's
-   * zero value, produced a championship with CAR_0 on top of it. gridmom calls
-   * that an ERROR and an ERROR blocks the import, so champctl was generating
-   * championships champctl then refused to create.
-   *
-   * Placed one past the last entrant. That is the only box the entry list
-   * definitely does not claim, and it is deliberately not tied to `MaxClients`:
-   * a league oversubscribes on purpose (plan §4.4 — thirty slots against an
-   * eighteen-car race), so anything inside the list would collide with a slot
-   * somebody can still sign up for.
-   *
-   * Only when the car is switched on. Rewriting a disabled car's pit box would
-   * be a diff nobody asked for, and it occupies nothing.
-   */
-  const spectatorCar =
-    spectatorEnabled && base.SpectatorCar
-      ? { ...base.SpectatorCar, PitBox: slots }
-      : base.SpectatorCar
-  if (spectatorEnabled && base.SpectatorCar?.PitBox !== slots) {
-    derived.push(`the spectator car moved to pit box ${slots}, clear of the ${slots} entry slots`)
-  }
 
   const championshipClass: ChampionshipClass = {
     ...(templateClass ?? {}),
@@ -368,7 +339,6 @@ export function emitChampionship(options: EmitOptions): EmitResult {
     Classes: [championshipClass],
     Events: eventList,
     SignUpForm: signUpForm(base.SignUpForm, signUpsEnabled),
-    ...(spectatorCar === undefined ? {} : { SpectatorCar: spectatorCar }),
     ...(spec.description === undefined ? {} : { Description: spec.description }),
   }
 

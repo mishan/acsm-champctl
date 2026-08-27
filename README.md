@@ -334,11 +334,20 @@ drops in their own and passes `--profile ./my-league.json`. It holds the ACSM
 base URL, the race weekday and quali time, the timezone, and the defaults
 gridmom compares against.
 
-One profile field is load-bearing for a check rather than cosmetic:
+Two profile fields are load-bearing for a check rather than cosmetic, and both
+turn one *on*:
+
 `entryList.raceNumberFromSkin`, a regex for how your skin folder names encode a
 race number. ACSM has no race number field, so without it the duplicate-race-
 number check doesn't run — guessing at digits inside arbitrary skin names finds
 a "duplicate" in every entry list.
+
+`entryList.uniqueSkins`, if your league expects everyone to have their own. Off
+by default, because most leagues share skins — not everyone has one — and this
+check used to read ACSM's `AllowDuplicateSkinChoices` instead. That field is
+`false` in every export anyone has looked at, which is Go's zero value rather
+than a rule, so a normal entry list produced a screenful of errors that blocked
+every push and buried the findings that mattered.
 
 `formats` is the league's own shorthand — BATL's `1x40` and `2x20` — offered as
 one-tap starting points in the web UI. They live in the profile rather than in

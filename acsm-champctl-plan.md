@@ -334,8 +334,14 @@ where source is `acsm` | `scan` | `manual`, manual always winning.
 Grid maths:
 
 ```
-MaxClients ≤ min(pitboxes across selected tracks) − spectatorCars
+MaxClients ≤ min(pitboxes across selected tracks)
 ```
+
+**Corrected: the spectator car is not subtracted.** This said
+`− spectatorCars`, on the reading that a car on the grid needs a box. BATL,
+who run a Ford Transit in every race for the stream, say it occupies nothing —
+it is an observer, and their pits have clipping off besides. Subtracting for it
+capped every generated championship one car below what the track allows.
 
 Entry list length is set separately by league policy — see §4.4.
 
@@ -500,13 +506,12 @@ Three severities:
 | Check | Severity |
 |---|---|
 | Duplicate `PitBox` within a class entrant list or any event entry list | ERROR |
-| Spectator car pit box collides with an entrant | ERROR |
-| `MaxClients` + spectator cars > pit boxes at that track | ERROR |
+| `MaxClients` > pit boxes at that track | ERROR |
 | `PitBox` value ≥ track pit count | ERROR |
 | Entrant `Model` not in the class `AvailableCars` | ERROR |
 | Event entry list differs from the championship class entry list | WARN |
 | Duplicate race numbers | WARN |
-| Duplicate skins while `AllowDuplicateSkinChoices` is false | ERROR |
+| Duplicate skins, for a league that says it wants unique ones | WARN |
 | Accepted sign-ups exceed available slots | WARN |
 | Entry list length differs between events | WARN |
 | Accepted sign-ups exceed total entry list slots | WARN |
