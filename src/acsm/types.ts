@@ -96,9 +96,6 @@ export interface RaceSetup extends Unknowns {
    *  friendly spellings, depending on version. Use `session()` to read it. */
   Sessions?: Record<string, SessionConfig>
 
-  EntryListType?: number
-  PracticeEntryListType?: number
-
   /** Lap the pit window opens. BATL sets 1 for a mandatory stop, 0 otherwise
    *  — this is the mandatory-pit switch (plan §4.2). */
   RacePitWindowStart?: number
@@ -271,6 +268,29 @@ export interface Championship extends Unknowns {
   OpenEntrants?: boolean
   PersistOpenEntrants?: boolean
   IgnoreXWorstEvents?: number
+
+  /**
+   * How locked the entry list is (plan §4.4). **Championship-level, not
+   * `RaceSetup`.**
+   *
+   * These sat on `RaceSetup` here for months, and everything downstream
+   * agreed: the BATL profile put them in `baseline.raceSetup`, the emitter
+   * wrote them into every event, and `signup.no-slot` read them back off an
+   * event. Measured against a real 2.4.5 export of a championship champctl
+   * itself created — five events, 129 `RaceSetup` keys each, and neither field
+   * on any of them, while the championship object carries exactly one of each.
+   * Go marshals every struct field, so absent from `RaceSetup` means not on
+   * the struct rather than merely unset.
+   *
+   * Nothing errored, which is why it lasted. ACSM dropped the keys the emitter
+   * put in the wrong place, the checker looked for them where they had never
+   * been and found `undefined`, and every synthetic fixture was written to
+   * agree with the mistake. `signup.no-slot` gates on `EntryListType === 1`,
+   * so the check that catches "this accepted sign-up cannot join the race"
+   * could not fire on any real championship.
+   */
+  EntryListType?: number
+  PracticeEntryListType?: number
 
   SpectatorCarEnabled?: boolean
   SpectatorCar?: Entrant

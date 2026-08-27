@@ -289,7 +289,54 @@ export const noEntrants: Check = {
   },
 }
 
+/**
+ * Championship-level baseline drift, the mirror of `format.baseline`.
+ *
+ * `baseline.championship` has been a supported profile section all along and
+ * nothing ever checked it, so the emitter applied it and gridmom had no
+ * opinion about whether it survived. That gap hid a real one: BATL's profile
+ * asks for a partially locked practice list, a cloned championship came back
+ * with practice fully locked, and the report said nothing about it — because
+ * the fields were in `baseline.raceSetup`, where the emitter wrote them onto
+ * events and ACSM dropped them. See the note on `Championship.EntryListType`.
+ *
+ * INFO rather than WARN, matching the event-level one: a league that votes on
+ * everything differs from its own baseline routinely, and a report that nags
+ * about it is a report people stop reading. The value is that it is visible.
+ */
+export const differsFromChampionshipBaseline: Check = {
+  id: "champ.baseline",
+  section: "6.5",
+  run(ctx, emit) {
+    const baseline = ctx.profile.baseline.championship
+    if (!baseline) return
+
+    for (const [key, expected] of Object.entries(baseline)) {
+      const actual = (ctx.championship as Record<string, unknown>)[key]
+      // Absent is not "differs". A build that doesn't carry the field at all
+      // is making a different statement from one that carries another value,
+      // and reporting the first as drift would put a finding on every export
+      // from an ACSM that has since renamed or dropped it.
+      if (actual === undefined) continue
+      if (Object.is(actual, expected)) continue
+      emit(
+        "INFO",
+        "champ.baseline",
+        `The championship has ${key} set to ${describeValue(actual)} rather than the league's usual ${describeValue(expected)}.`,
+        { path: key },
+        { field: key, actual, expected },
+      )
+    }
+  },
+}
+
+function describeValue(v: unknown): string {
+  if (typeof v === "boolean") return v ? "on" : "off"
+  return String(v)
+}
+
 export const championshipChecks: readonly Check[] = [
+  differsFromChampionshipBaseline,
   dropScoresExceedRounds,
   pointsShorterThanGrid,
   repeatedTrack,

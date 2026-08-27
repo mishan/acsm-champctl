@@ -35,13 +35,13 @@
 
   "baseline": {
     "raceSetup": {
-      "EntryListType": 1,
-      "PracticeEntryListType": 2,
       "RaceExtraLap": 0,
       "AllowDuplicateSkinChoices": false
     },
     "championship": {
-      "StartNextPracticeOnEventComplete": true
+      "StartNextPracticeOnEventComplete": true,
+      "EntryListType": 1,
+      "PracticeEntryListType": 2
     }
   },
 

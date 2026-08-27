@@ -13,8 +13,10 @@
   },
   "baseline": {
     "raceSetup": {
-      "EntryListType": 1,
       "RaceExtraLap": 0
+    },
+    "championship": {
+      "EntryListType": 1
     }
   }
 }

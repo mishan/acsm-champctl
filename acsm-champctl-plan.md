@@ -310,6 +310,20 @@ locked* practice list, both fed by the sign-up form:
 | 1 | Locked — only defined GUIDs connect | `EntryListType` |
 | 2 | Partially locked — defined GUIDs hold their slot, anyone takes a free one | `PracticeEntryListType` |
 
+**Both are championship-level fields, not `RaceSetup` ones.** Measured on a real
+2.4.5 export of a championship champctl created: five events, 129 `RaceSetup`
+keys each, neither field on any of them, and exactly one of each on the
+championship object. Go marshals every struct field, so absent from `RaceSetup`
+means not on that struct rather than merely unset.
+
+champctl had them on `RaceSetup` everywhere — the type, BATL's
+`baseline.raceSetup`, the emitter, and `signup.no-slot`, which gated on
+`ev.RaceSetup.EntryListType` and therefore never fired on any real
+championship. Nothing errored: ACSM dropped the keys the emitter put in the
+wrong place, the checker found `undefined` where it looked, and every synthetic
+fixture was written to agree. The visible symptom was a clone of a
+locked-practice championship staying locked however the profile was set.
+
 That combination is deliberate and worth preserving in the profile: the race is
 exactly the people who signed up, while practice stays open to drop-ins on any
 unclaimed slot. It also explains the blank-name slots in the entry list — under
@@ -763,7 +777,13 @@ interfaces from day one so that's a config change, not a rewrite.
   `any_car_model` slots absorb late sign-ups regardless of chosen car. The only
   real limit is total slots.
 - ~~`EntryListType` / `PracticeEntryListType` enum~~ — answered: 1 is locked,
-  2 is partially locked. See §4.4.
+  2 is partially locked, and both live on the championship rather than on
+  `RaceSetup`. See §4.4.
+- ~~Why `PracticeEntryListType` came back as 1 having been sent as 2 (§5.4)~~ —
+  at least partly answered by the above: champctl was writing it onto every
+  event, where ACSM has no such field to read. Whether the championship-level
+  value is *also* rewritten is still open, and now testable against the
+  harness by sending 2 in the right place.
 
 ---
 
