@@ -841,3 +841,14 @@ button.link:hover {
 .chips .picker-id {
   font-size: 0.75rem;
 }
+
+/*
+ * A round's name, on its own line under the track.
+ *
+ * Spanning every column rather than adding a seventh: six controls already
+ * share that row on a screen built for a phone, and a name is a sentence
+ * rather than a token.
+ */
+.tracks .round-name {
+  grid-column: 1 / -1;
+}

@@ -441,6 +441,43 @@ describe("the track list", () => {
     ).toBe(true)
   })
 
+  /**
+   * Named rounds, because ACSM shows an event's name instead of its track.
+   *
+   * The default is blank on purpose — that is what ACSM writes and it makes the
+   * manager show the track — so this only sends a name when somebody types one.
+   */
+  it("carries a round name when one is typed", async () => {
+    await filled("Spa")
+    fireEvent.change(screen.getByLabelText(/Round 1 name/), {
+      target: { value: "Season opener" },
+    })
+    await settle()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({
+      tracks: [{ track: "spa", name: "Season opener" }],
+    })
+  })
+
+  it("sends no name for a round left unnamed", async () => {
+    await filled("Spa")
+    const sent = planMock.mock.lastCall?.[0] as { tracks: { name?: string }[] }
+    expect("name" in (sent.tracks[0] ?? {})).toBe(false)
+  })
+
+  it("names rounds one at a time, not all of them", async () => {
+    // Every round is built from the same template event server-side, which is
+    // how they all ended up called "Donington Park National". The form must
+    // not repeat that trick.
+    await filled("Spa")
+    fireEvent.click(screen.getByRole("button", { name: /Add a round/ }))
+    await pick(/Round 2 track/, "Monza")
+    fireEvent.change(screen.getByLabelText(/Round 1 name/), { target: { value: "Opener" } })
+    await settle()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({
+      tracks: [{ track: "spa", name: "Opener" }, { track: "monza" }],
+    })
+  })
+
   it("carries the layout when there is one", async () => {
     await filled("Brands Hatch")
     fireEvent.change(screen.getByLabelText(/Round 1 layout/), { target: { value: "indy" } })

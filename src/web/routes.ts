@@ -196,7 +196,14 @@ export interface HeldChampionship {
 
 /** One track from the browser as the emitter's round spec. */
 function roundSpecFrom(t: TrackRequest): RoundSpec {
-  return { track: t.track, ...(t.layout ? { layout: t.layout } : {}) }
+  return {
+    track: t.track,
+    ...(t.layout ? { layout: t.layout } : {}),
+    // Trimmed to nothing is no name, not a name made of spaces — and a round
+    // with no name is the normal case, so it must not become one that renders
+    // as blank in the manager.
+    ...(t.name?.trim() ? { name: t.name.trim() } : {}),
+  }
 }
 
 const newChampionshipBodySchema = {
@@ -251,6 +258,10 @@ const newChampionshipBodySchema = {
           // so an empty string would arrive as a track without one and hide
           // whatever produced it — omit the key instead.
           layout: { type: "string", minLength: 1, maxLength: 200 },
+          // Empty *is* allowed, unlike layout: the screen sends whatever is in
+          // the box, and clearing it means "no name, show the track". No
+          // minLength, so that stays expressible.
+          name: { type: "string", maxLength: 200 },
         },
       },
     },

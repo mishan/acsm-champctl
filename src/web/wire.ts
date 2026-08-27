@@ -256,6 +256,15 @@ export interface NewChampionshipRequest {
 export interface TrackRequest {
   track: string
   layout?: string
+  /**
+   * What to call this round, or absent for the track's own name.
+   *
+   * Absent and empty mean the same thing here and both reach the emitter as
+   * "no name", which is what ACSM writes for an event it creates — the manager
+   * then shows the track. There is deliberately no default: champctl inventing
+   * a label would go stale the moment somebody changed the track under it.
+   */
+  name?: string
 }
 
 /** One race night, as the review screen shows it. */

@@ -71,6 +71,14 @@ interface Draft {
 interface TrackRow {
   track: string
   layout: string
+  /**
+   * What to call this round, or empty for the track's own name.
+   *
+   * Empty is the normal case and the right default: ACSM shows the track when
+   * an event has no name, and champctl inventing one would go stale the moment
+   * the track under it changed.
+   */
+  name: string
 }
 
 /** Long enough to finish typing a track name, short enough to feel live. */
@@ -637,6 +645,19 @@ function TrackList({
             >
               ×
             </button>
+            {/*
+              Its own line, via `grid-column: 1 / -1`, rather than a seventh
+              column. Six controls already share this row on a screen built for
+              a phone, and a name is a sentence rather than a token.
+            */}
+            <input
+              className="round-name"
+              type="text"
+              aria-label={`Round ${i + 1} name`}
+              value={row.name}
+              placeholder="Round name (optional — blank shows the track)"
+              onChange={(e) => update(i, { name: e.target.value })}
+            />
           </li>
         ))}
       </ol>
@@ -644,7 +665,7 @@ function TrackList({
       <button
         type="button"
         className="secondary"
-        onClick={() => onChange([...rows, { track: "", layout: "" }])}
+        onClick={() => onChange([...rows, { track: "", layout: "", name: "" }])}
       >
         Add a round
       </button>
@@ -736,7 +757,7 @@ export function requestFrom(draft: Draft): {
   if (cars.length === 0) return null
 
   const tracks = draft.tracks
-    .map((r) => ({ track: r.track.trim(), layout: r.layout.trim() }))
+    .map((r) => ({ track: r.track.trim(), layout: r.layout.trim(), name: r.name.trim() }))
     .filter((r) => r.track !== "")
   if (draft.tracks.length > 0 && tracks.length !== draft.tracks.length) return null
   if (draft.tracks.length === 0) return null
@@ -749,6 +770,10 @@ export function requestFrom(draft: Draft): {
     // Always sent, empty included: the server reads an absent key as "inherit
     // the source's", which is exactly what a cleared box is not asking for.
     description: draft.description,
-    tracks: tracks.map((r) => ({ track: r.track, ...(r.layout ? { layout: r.layout } : {}) })),
+    tracks: tracks.map((r) => ({
+      track: r.track,
+      ...(r.layout ? { layout: r.layout } : {}),
+      ...(r.name ? { name: r.name } : {}),
+    })),
   }
 }

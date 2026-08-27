@@ -1148,6 +1148,47 @@ describe("previewing a new championship", () => {
     expect(importedChampionship(h).Classes?.[0]?.AvailableCars).toEqual(["rss_formula_hybrid_2021"])
   })
 
+  /**
+   * A name per round, which ACSM shows instead of the track.
+   *
+   * The bug this closes is the other half of the one in emit.test.ts: every
+   * round used to inherit the template event's name, so a championship came out
+   * with five rounds all called "Donington Park National, Great Britain". They
+   * are named one at a time now, or not at all.
+   */
+  it("names each round separately, or not at all", async () => {
+    const h = harness()
+    await h.login()
+    const planId = await previewedWith(h, {
+      tracks: [{ track: "spa", name: "Season opener" }, { track: "monza" }],
+    })
+    await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+
+    const evs = importedChampionship(h).Events ?? []
+    expect(evs.map((e) => e.Name)).toEqual(["Season opener", ""])
+    expect(evs.map((e) => e.RaceSetup?.Track)).toEqual(["spa", "monza"])
+  })
+
+  it("treats a name of only spaces as no name", async () => {
+    // Otherwise the manager shows a blank label where it would have shown the
+    // track, which looks like champctl lost the track.
+    const h = harness()
+    await h.login()
+    const planId = await previewedWith(h, { tracks: [{ track: "spa", name: "   " }] })
+    await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+    expect((importedChampionship(h).Events ?? [])[0]?.Name).toBe("")
+  })
+
   it("takes a description, and sends it as written", async () => {
     const h = harness()
     await h.login()
