@@ -52,6 +52,22 @@ describe("layouts off the event form", () => {
     expect(map["ks_highlands"]).toEqual(["layout_int"])
   })
 
+  /**
+   * The option for the layout the event is on carries a third segment, and it
+   * is not part of the layout's name.
+   *
+   * Exactly one option per page has it, which is how it survived: the index
+   * looked right for every track except the one being looked at. It reached
+   * the create screen as an unpickable option, and it would have had gridmom
+   * report the layout ACSM is actually running as one its track does not have.
+   */
+  it("drops the marker on the layout the event is currently using", () => {
+    const map = layoutsFrom(
+      select(["ks_highlands:layout_short:current", "ks_highlands:layout_int"]),
+    )
+    expect(map?.["ks_highlands"]).toEqual(["layout_short", "layout_int"])
+  })
+
   it("reads the value, not the label", () => {
     // A build that labelled the option "Indy Circuit" would still have to
     // submit the folder name, and the folder name is what champctl stores.
