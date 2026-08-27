@@ -780,10 +780,18 @@ interfaces from day one so that's a config change, not a rewrite.
   2 is partially locked, and both live on the championship rather than on
   `RaceSetup`. See §4.4.
 - ~~Why `PracticeEntryListType` came back as 1 having been sent as 2 (§5.4)~~ —
-  at least partly answered by the above: champctl was writing it onto every
-  event, where ACSM has no such field to read. Whether the championship-level
-  value is *also* rewritten is still open, and now testable against the
-  harness by sending 2 in the right place.
+  answered, and it was never a rewrite. champctl was writing both fields onto
+  every event's `RaceSetup`, where ACSM has no such field, and sending
+  *nothing* at championship level. Measured on 2.4.15: the recon seeds carry
+  `EntryListType: 1` and `PracticeEntryListType: 2` on `RaceSetup` and nothing
+  at the top, and come back with championship-level `1` and `1`. So ACSM's
+  default for an absent value is 1, and "sent 2, got 1" was champctl reading
+  its own misplaced field back out of the wrong object.
+
+  What that does *not* settle is whether a championship-level `2`, now that the
+  emitter sends one, survives the round trip. `npm run recon:entry-list-type`
+  answers it in one run and needs a 2.4.x harness; a 1.7.x answer would settle
+  nothing (docs §0).
 
 ---
 
