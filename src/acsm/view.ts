@@ -199,9 +199,22 @@ export function eventHasStarted(ev: ChampionshipEvent): boolean {
   return false
 }
 
-/** The spectator car occupies a pit box and must be counted against capacity. */
+/**
+ * The stream car, or undefined when there isn't one.
+ *
+ * **`SpectatorCars[0]` first, `SpectatorCar` second.** ACSM 2.4.x carries both
+ * and populates only the plural one: BATL's export has a `ford_transit` called
+ * "BATL TV" in the array and a blank `Entrant` in the singular field. Reading
+ * the singular one gave every caller an empty model on every real
+ * championship, silently — `derivedCars` left the van out of `RaceSetup.Cars`,
+ * and the "spectator car has no model" check fired on a championship that had
+ * one. The fallback stays because an older build may only have the singular,
+ * and a blank singular loses to a populated array either way.
+ */
 export function spectatorCar(c: Championship | undefined): Entrant | undefined {
-  return c?.SpectatorCarEnabled ? c.SpectatorCar : undefined
+  if (!c?.SpectatorCarEnabled) return undefined
+  const first = c.SpectatorCars?.find((e) => e && (e.Model ?? "").trim())
+  return first ?? c.SpectatorCars?.[0] ?? c.SpectatorCar
 }
 
 /** How many pit boxes the spectator car consumes: 1 when enabled, else 0. */

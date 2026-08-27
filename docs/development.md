@@ -219,6 +219,16 @@ ACSM source rather than guessed. The load-bearing parts:
   see plan §4.4. A field in the wrong place fails silently in both directions:
   ACSM drops what the emitter writes, and a check reading it back finds
   `undefined` and quietly does nothing.
+- **The spectator car is `SpectatorCars[0]`, not `SpectatorCar`.** 2.4.x
+  carries both fields and populates only the plural one; the singular is a
+  blank `Entrant` with `Model: ""`. Always read it through `spectatorCar()`.
+  Reading the singular field is why the emitter left the van out of
+  `RaceSetup.Cars`, and why a "spectator car has no model" check fired on a
+  championship whose spectator car was configured perfectly.
+- **The spectator car parks after the last entry slot.** `CAR_n` is pit box n,
+  so any box below the slot count belongs to an entrant and `AddInPitBox`
+  overwrites on collision. The emitter sets it; `entry.spectator-pit-box-taken`
+  catches a championship champctl didn't build.
 - **Types are deliberately loose.** ACSM's championship schema is a large
   undocumented Go struct that drifts across versions, so we model only what we
   read and let everything else flow through. Don't tighten them.

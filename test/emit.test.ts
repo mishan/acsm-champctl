@@ -460,6 +460,57 @@ describe("emitting a championship", () => {
     }
   })
 
+  /**
+   * The stream car parks after the last entry slot, never inside one.
+   *
+   * `CAR_n` is pit box n, so a spectator car below the slot count shares a box
+   * with an entrant and `AddInPitBox` overwrites on collision. A clone
+   * inherits the template's box, and the championship this rule comes from
+   * inherited box 0 from one where the van sat at 29.
+   */
+  it("parks the spectator car past the last entry slot", () => {
+    const { championship: c, derived } = emit({
+      template: template({
+        SpectatorCarEnabled: true,
+        SpectatorCars: [{ Model: "ford_transit", Name: "BATL TV", PitBox: 0 }],
+      }),
+      spec: spec({ entryListSlots: 12 }),
+    })
+    expect(c.SpectatorCars?.[0]?.PitBox).toBe(12)
+    // Everything else about the car survives; only the box is decided here.
+    expect(c.SpectatorCars?.[0]?.Model).toBe("ford_transit")
+    expect(c.SpectatorCars?.[0]?.Name).toBe("BATL TV")
+    expect(derived.join(" ")).toContain("pit box 12")
+  })
+
+  it("derives Cars from the spectator car ACSM actually populates", () => {
+    // 2.4.x keeps it in `SpectatorCars[0]` and leaves the singular field
+    // blank, so reading the singular one left the van out of the car list.
+    const { championship: c } = emit({
+      template: template({
+        SpectatorCarEnabled: true,
+        SpectatorCar: { Model: "" },
+        SpectatorCars: [{ Model: "ford_transit", PitBox: 0 }],
+      }),
+      spec: spec(),
+    })
+    for (const ev of events(c)) {
+      expect(ev.RaceSetup?.Cars).toContain("ford_transit")
+    }
+  })
+
+  it("leaves the spectator car alone when it is switched off", () => {
+    const { championship: c } = emit({
+      template: template({
+        SpectatorCarEnabled: false,
+        SpectatorCars: [{ Model: "ford_transit", PitBox: 3 }],
+      }),
+      spec: spec({ entryListSlots: 12 }),
+    })
+    expect(c.SpectatorCars?.[0]?.PitBox).toBe(3)
+    for (const ev of events(c)) expect(ev.RaceSetup?.Cars).not.toContain("ford_transit")
+  })
+
   it("turns off ExportSecondRaceToACSR when ACSR is off", () => {
     // §5.5: harmless in itself, but exactly the contradiction to not emit.
     const { championship: c } = emit({

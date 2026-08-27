@@ -683,32 +683,76 @@ export const unclaimedSlotNotSentinel: Check = {
 }
 
 /**
- * The spectator car is switched on and has no model.
+ * The spectator car is switched on and no model is set anywhere.
  *
- * Found on a live BATL championship, and it is why `grid.race-setup-cars` had
- * nothing to forgive the Ford Transit with: `SpectatorCarEnabled` is `true`
- * while `SpectatorCar.Model` is `""`, so every check that reasons about "the
- * spectator model" reasons about an empty string and does nothing.
+ * **Through `spectatorCar()`, which is the whole point of this check's
+ * history.** It first read `championship.SpectatorCar.Model` directly, which
+ * is blank on every 2.4.x export because the real car lives in
+ * `SpectatorCars[0]` — so it fired on a championship whose spectator car was
+ * configured perfectly, in the middle of a report about a championship that
+ * was actually broken. A check that cries wolf on a healthy championship is
+ * worse than no check, for the same reason an unrunnable one is.
  *
  * WARN rather than ERROR because the race still runs — the van is in
- * `RaceSetup.Cars` and somebody can drive it — but nothing in the export says
- * *which* car is the spectator, so champctl cannot tell the stream car apart
- * from a competitor, and neither can anyone reading the entry list.
+ * `RaceSetup.Cars` and somebody can drive it — but nothing then says *which*
+ * car is the stream car, so neither champctl nor anyone reading the entry list
+ * can tell it from a competitor.
  */
 export const spectatorCarWithoutModel: Check = {
   id: "entry.spectator-no-model",
   section: "6.1",
   run(ctx, emit) {
-    if (ctx.championship.SpectatorCarEnabled !== true) return
-    if ((ctx.championship.SpectatorCar?.Model ?? "").trim()) return
+    const spectator = spectatorCar(ctx.championship)
+    if (!spectator) return
+    if ((spectator.Model ?? "").trim()) return
 
     emit(
       "WARN",
       "entry.spectator-no-model",
       `The spectator car is switched on but has no car model set, so nothing in the championship ` +
         `says which car it is.`,
-      { path: "SpectatorCar.Model" },
+      { path: "SpectatorCars[0].Model" },
       {},
+    )
+  },
+}
+
+/**
+ * The stream car is parked in a box an entrant can hold.
+ *
+ * `CAR_n` *is* pit box n, so any box below the entry list's length belongs to
+ * a slot. `AddInPitBox` overwrites on collision (docs §3), so the next form
+ * save drops one of the two — and which one is not something anybody chose.
+ *
+ * Found on a live championship whose spectator car sat at box 0, cloned from a
+ * template where it sat at 29. It had not bitten yet only because no entrant
+ * had reached box 0; the league's working championship parks the van past the
+ * end of the list, which is the convention this states.
+ *
+ * The box is compared against the *longest* list in the championship, since the
+ * class list and each event's are meant to be the same length and a save
+ * propagates between them.
+ */
+export const spectatorCarInAnEntrantsBox: Check = {
+  id: "entry.spectator-pit-box-taken",
+  section: "6.1",
+  run(ctx, emit) {
+    const spectator = spectatorCar(ctx.championship)
+    if (!spectator) return
+    const box = spectator.PitBox
+    if (typeof box !== "number" || !Number.isFinite(box)) return
+
+    const longest = Math.max(0, ...[...allLists(ctx)].map(({ list }) => slots(list).length))
+    if (longest === 0 || box >= longest) return
+
+    emit(
+      "WARN",
+      "entry.spectator-pit-box-taken",
+      `The spectator car is in pit box ${box}, which is one of the ${longest} entry list slots. ` +
+        `Two cars in one box means the next save drops one of them — park it at ${longest}, ` +
+        `past the end of the list.`,
+      { path: "SpectatorCars[0].PitBox" },
+      { pitBox: box, slots: longest, suggested: longest },
     )
   },
 }
@@ -727,6 +771,7 @@ export const entryChecks: readonly Check[] = [
   acceptedSignUpWithoutSlot,
   unclaimedSlotNotSentinel,
   spectatorCarWithoutModel,
+  spectatorCarInAnEntrantsBox,
 ]
 
 // Re-exported for the emit signature's benefit; keeps imports honest.

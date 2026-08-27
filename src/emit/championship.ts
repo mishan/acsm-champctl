@@ -35,7 +35,7 @@ import {
   type SignUpForm,
 } from "../acsm/types.js"
 import { FORBIDDEN_KEYS, regenerateIds } from "../acsm/write.js"
-import { classes, events } from "../acsm/view.js"
+import { classes, events, spectatorCar } from "../acsm/view.js"
 import type { RaceFormat } from "../finalize/format.js"
 import { applyFormat } from "../finalize/format.js"
 import { practiceMinutesFor } from "../finalize/schedule.js"
@@ -253,11 +253,34 @@ export function emitChampionship(options: EmitOptions): EmitResult {
   const slots = spec.entryListSlots ?? profile.entryList.targetSlots
   const entryList = unclaimedEntryList(slots)
 
-  const spectatorEnabled = base.SpectatorCarEnabled === true
-  const carList = derivedCars(cars, spectatorEnabled ? base.SpectatorCar?.Model : undefined)
+  // Through `spectatorCar`, not off `base.SpectatorCar`: 2.4.x keeps the real
+  // one in `SpectatorCars[0]` and leaves the singular field blank, so reading
+  // it directly derived the car list without the van in it.
+  const spectator = spectatorCar(base)
+  const spectatorEnabled = spectator !== undefined
+  const carList = derivedCars(cars, spectator?.Model)
   derived.push(
     `RaceSetup.Cars from the class car list${spectatorEnabled ? " plus the spectator car" : ""}`,
   )
+
+  /**
+   * The stream car goes after every entry slot, never inside one.
+   *
+   * `unclaimedEntryList` numbers slots 0..slots-1 and `CAR_n` *is* pit box n,
+   * so `slots` is the first box no entrant can hold. A clone inherits whatever
+   * box the template's spectator car had, and the championship this rule comes
+   * from inherited box 0 — the same box as `CAR_0`, where `AddInPitBox`
+   * overwrites on collision and the next form save drops one of the two. The
+   * league's own working championship parks it past the end; this makes that
+   * automatic rather than remembered.
+   */
+  const spectatorBox = slots
+  const spectatorCars = spectatorEnabled
+    ? [{ ...spectator, PitBox: spectatorBox }, ...(base.SpectatorCars ?? []).slice(1)]
+    : base.SpectatorCars
+  if (spectatorEnabled) {
+    derived.push(`spectator car at pit box ${spectatorBox}, after the last entry slot`)
+  }
 
   const championshipClass: ChampionshipClass = {
     ...(templateClass ?? {}),
@@ -349,6 +372,7 @@ export function emitChampionship(options: EmitOptions): EmitResult {
     Classes: [championshipClass],
     Events: eventList,
     SignUpForm: signUpForm(base.SignUpForm, signUpsEnabled),
+    ...(spectatorCars ? { SpectatorCars: spectatorCars } : {}),
     ...(spec.description === undefined ? {} : { Description: spec.description }),
   }
 
