@@ -44,10 +44,19 @@ export type TrackLayouts = Record<string, string[]>
  */
 const MAX_CANDIDATES = 5
 
+/**
+ * The layout index, or `null` for "champctl could not find one".
+ *
+ * The distinction is the whole reason for the return type. An empty map is an
+ * answer — a manager where every track has a single layout — and a screen can
+ * act on it by not offering a choice. `null` is the absence of an answer, and
+ * a screen that treats the two alike hides the layout field on a server whose
+ * layouts champctl simply failed to read, leaving no way to set one at all.
+ */
 export async function readTrackLayouts(
   session: AcsmSession,
   reader: AcsmReader,
-): Promise<TrackLayouts> {
+): Promise<TrackLayouts | null> {
   const summaries = await reader.listChampionships()
 
   let looked = 0
@@ -72,16 +81,16 @@ export async function readTrackLayouts(
     // The form for *some* event. Which one does not matter: the select lists
     // every track on the server, not the ones this event uses.
     const html = await session.getText(eventEditPath(id, eventId))
-    const layouts = layoutsFrom(html)
-    // An empty map from a page that had the select is a real answer — a server
-    // where no track has more than one layout. An empty map from a page with no
-    // select at all is a build that renders it differently, and looking at
-    // another championship will not change that.
-    return layouts
+    // `undefined` means the page had no `TrackLayout` select — a build that
+    // renders the form differently, and another championship's event form
+    // would be the same page. Reported as "no index" rather than as an empty
+    // one, so the screen offers free text instead of insisting every track
+    // here has a single layout.
+    return layoutsFrom(html) ?? null
   }
 
-  // Nothing to read a form off. A manager with no championships is one where
-  // the create screen has nothing to clone either, so this is not the failure
-  // anyone is about to hit.
-  return {}
+  // Nothing to read a form off, so there is nothing to say about layouts. A
+  // manager with no championships is one where the create screen has nothing
+  // to clone either, so this is not the failure anyone is about to hit.
+  return null
 }

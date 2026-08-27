@@ -143,13 +143,19 @@ export interface ContentResponse {
   cars: InstalledItem[]
   tracks: InstalledItem[]
   /**
-   * Track folder name to its layouts.
+   * Track folder name to its layouts, or `null` for "champctl has no index".
    *
    * A track with no layout to choose has no entry at all, rather than an empty
    * array — ACSM spells that case `<default>` and champctl drops it, so the
    * screen can treat "absent" as "this field does not apply here".
+   *
+   * `null` is a different statement, and the client has to tell them apart:
+   * ACSM lists layouts on exactly one page and reading it can fail, so `null`
+   * means champctl does not know, and a field that then offers no choice is
+   * claiming something it has not checked. The screen falls back to letting a
+   * layout be typed.
    */
-  layouts: Record<string, string[]>
+  layouts: Record<string, string[]> | null
 }
 
 export interface ChampionshipResponse {

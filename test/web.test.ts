@@ -92,6 +92,8 @@ interface HarnessOptions {
   newChampionships?: PlanStore<HeldChampionship>
   /** Installed cars and tracks. Default: whatever the static reader has, i.e. none. */
   content?: ContentCache
+  /** Serve event forms with no `TrackLayout` select, as an older build does. */
+  noLayoutSelect?: boolean
   throttle?: LoginThrottle
   /**
    * Held open until the test resolves it, so two requests can be in the write
@@ -169,6 +171,7 @@ function harness(options: HarnessOptions = {}): Harness {
     eventGets++
     // Real event forms carry the TrackLayout select, which is the only place
     // ACSM lists a track's layouts.
+    if (options.noLayoutSelect) return new Response(page, { status: 200 })
     return new Response(
       page + layoutSelectHtml(["ks_brands_hatch:indy", "ks_brands_hatch:gp", "spa:<default>"]),
       { status: 200 },
@@ -1333,6 +1336,24 @@ describe("what content is installed", () => {
     const body = res.json() as { layouts: Record<string, string[]> }
     expect(body.layouts["ks_brands_hatch"]).toEqual(["indy", "gp"])
     expect("spa" in body.layouts).toBe(false)
+  })
+
+  /**
+   * "No layouts here" and "champctl could not find the list" are different
+   * answers and the screen acts differently on each: the first hides the
+   * field, the second offers free text. Returning an empty map for both is
+   * what left a manager with layouts showing none, and no way to type one.
+   */
+  it("says it has no layout index when the form carries no select", async () => {
+    const h = harness({ noLayoutSelect: true })
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/api/content",
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.statusCode, res.body).toBe(200)
+    expect((res.json() as { layouts: unknown }).layouts).toBeNull()
   })
 
   it("needs a session, like every other read", async () => {

@@ -505,6 +505,28 @@ describe("the track list", () => {
   })
 
   /**
+   * Free text when champctl has no index at all, which is not the same state
+   * as a track with nothing to choose.
+   *
+   * ACSM lists layouts on exactly one page and reading it can fail. Treating
+   * that failure as "no track here has a layout" hides the field on a server
+   * whose tracks do have them, and a round at Brands Hatch then has no way to
+   * say `indy` — the field is worse than a picker and it is not a dead end.
+   */
+  it("lets a layout be typed when it could not read the list", async () => {
+    contentMock.mockResolvedValue({ cars: CARS, tracks: TRACKS, layouts: null })
+    await filled("Brands Hatch")
+
+    const box = screen.getByLabelText(/Round 1 layout/)
+    expect(box.getAttribute("role"), "free text, not a picker").not.toBe("combobox")
+    fireEvent.change(box, { target: { value: "indy" } })
+    await settle()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({
+      tracks: [{ track: "ks_brands_hatch", layout: "indy" }],
+    })
+  })
+
+  /**
    * A layout belongs to one track — `indy` means nothing at Monza — so changing
    * the track has to drop it. Keeping it would leave the round pointing at a
    * pair the server does not have, set by somebody who only changed the track.

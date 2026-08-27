@@ -110,13 +110,23 @@ function headingFor(node: ReturnType<ReturnType<typeof cheerio.load>>): string {
  * had only real ones, none had both — so it means "nothing to choose here" and
  * a caller wants an absent key, not a fake option somebody could pick. What
  * ACSM stores for such a track is `TrackLayout: ""`.
+ *
+ * **`undefined` when the page carries no such select at all**, which is a
+ * different thing from a select offering nothing: the first says champctl is
+ * reading a build it does not understand, the second says this server's tracks
+ * happen to have one layout each. Collapsing both into `{}` is what let a
+ * screen show "one layout" beside every track on a manager where champctl had
+ * simply failed to find the list.
  */
 const NO_LAYOUT = "<default>"
-export function layoutsFrom(html: string): Record<string, string[]> {
+export function layoutsFrom(html: string): Record<string, string[]> | undefined {
   const $ = cheerio.load(html)
+  const select = $('select[name="TrackLayout"]')
+  if (select.length === 0) return undefined
+
   const out: Record<string, string[]> = {}
 
-  $('select[name="TrackLayout"] option').each((_, el) => {
+  select.find("option").each((_, el) => {
     // The value, not the label: 2.4.15 labels the option with the layout's
     // folder name, but a build that labelled it "Indy Circuit" would still
     // have to submit the folder name, and that is the half champctl stores.

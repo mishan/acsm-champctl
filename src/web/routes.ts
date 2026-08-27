@@ -126,7 +126,7 @@ export interface ApiContext {
    * than at boot, because the only page that lists them needs a login. See
    * `layouts.ts`.
    */
-  layouts: ContentCache<TrackLayouts>
+  layouts: ContentCache<TrackLayouts | null>
   throttle: LoginThrottle
   /** Injectable so a test can drive a session over a stub `fetch`. */
   createSession: (baseUrl: string) => AcsmSession
@@ -157,7 +157,7 @@ export function apiContext(options: ApiContextOptions): ApiContext {
     newChampionships:
       options.newChampionships ?? new PlanStore({ label: "unconfirmed new championships" }),
     content: options.content ?? new ContentCache({ load: () => options.reader.listContent() }),
-    layouts: options.layouts ?? new ContentCache<TrackLayouts>(),
+    layouts: options.layouts ?? new ContentCache<TrackLayouts | null>(),
     throttle: options.throttle ?? new LoginThrottle(),
     createSession: options.createSession ?? ((baseUrl) => new AcsmSession({ baseUrl })),
     secureCookies: options.secureCookies ?? true,
@@ -505,7 +505,15 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           // field falls back to free text and the rest of the form still
           // works. Failing the whole request would take the car and track
           // pickers down with it.
-          .catch(() => ({}) as TrackLayouts),
+          //
+          // Logged, though. Swallowed silently, this reads on the screen as a
+          // manager whose tracks have one layout each — a wrong answer that
+          // looks like a right one, and the only place the difference is
+          // visible is here.
+          .catch((err: unknown) => {
+            req.log.warn({ err }, "could not read track layouts")
+            return null
+          }),
       ])
       return { ...content, layouts }
     })

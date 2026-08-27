@@ -100,7 +100,8 @@ export function NewChampionship({
   const [installed, setInstalled] = useState<{
     cars: InstalledItem[]
     tracks: InstalledItem[]
-    layouts: Record<string, string[]>
+    /** Null when champctl has no layout index — see `TrackList`. */
+    layouts: Record<string, string[]> | null
   } | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   /**
@@ -159,7 +160,7 @@ export function NewChampionship({
         // says "champctl couldn't read what's installed" in the field itself,
         // which is where somebody wondering why the list is empty is already
         // looking.
-        if (live) setInstalled({ cars: [], tracks: [], layouts: {} })
+        if (live) setInstalled({ cars: [], tracks: [], layouts: null })
       }
     })()
     return () => {
@@ -408,7 +409,7 @@ export function NewChampionship({
           <TrackList
             rows={draft.tracks}
             installed={installed?.tracks ?? []}
-            layouts={installed?.layouts ?? {}}
+            layouts={installed?.layouts ?? null}
             loading={installed === null}
             onChange={(tracks) => set({ tracks })}
           />
@@ -572,8 +573,14 @@ function TrackList({
 }: {
   rows: TrackRow[]
   installed: readonly InstalledItem[]
-  /** Track folder name to its layouts. A track with no choice has no entry. */
-  layouts: Record<string, string[]>
+  /**
+   * Track folder name to its layouts, or null when champctl has no index.
+   *
+   * A track absent from the map has one layout and needs no field. A null map
+   * is champctl not knowing, which is not the same claim and must not render
+   * as one.
+   */
+  layouts: Record<string, string[]> | null
   loading: boolean
   onChange: (rows: TrackRow[]) => void
 }): React.JSX.Element {
@@ -622,18 +629,38 @@ function TrackList({
               onChange={(track) => chooseTrack(i, track)}
             />
             {/*
-              A picker, and only when the track has something to choose. ACSM
-              lists layouts nowhere but the event edit form — see
-              `web/layouts.ts` — and a track it does not mention has exactly one
-              layout, which `RaceSetup.TrackLayout` spells as empty. Rendering a
-              disabled box for those would be a field that never does anything
-              on most rounds.
+              Three states, because there are three things to say. ACSM lists
+              layouts nowhere but the event edit form — see `web/layouts.ts` —
+              so champctl either has that list or it does not.
+
+              With the list: a picker when the track has a choice, and nothing
+              at all when it does not, since a track the form never mentions
+              has exactly one layout and `RaceSetup.TrackLayout` spells that as
+              empty. A disabled box on those rounds would be a field that never
+              does anything.
+
+              Without it (`layouts === null`): a text box, once a track is
+              chosen. Not a picker with nothing in it and not a hidden field —
+              this is the case where champctl could not read the index, and a
+              round at Brands Hatch still needs `indy` set. Free text is worse
+              than a list and it is the only thing here that is not a dead end.
+              Held back until there is a track because a layout belongs to one,
+              and because an empty index also looks like this while the first
+              read is still in flight.
             */}
-            {(layouts[row.track]?.length ?? 0) > 0 ? (
+            {layouts === null && row.track ? (
+              <input
+                type="text"
+                aria-label={`Round ${i + 1} layout`}
+                value={row.layout}
+                placeholder="Layout, if any"
+                onChange={(e) => update(i, { layout: e.target.value })}
+              />
+            ) : (layouts?.[row.track]?.length ?? 0) > 0 ? (
               <Picker
                 label={`Round ${i + 1} layout`}
                 value={row.layout}
-                items={(layouts[row.track] ?? []).map((l) => ({ id: l, name: l }))}
+                items={(layouts?.[row.track] ?? []).map((l) => ({ id: l, name: l }))}
                 placeholder="Layout"
                 onChange={(layout) => update(i, { layout })}
               />

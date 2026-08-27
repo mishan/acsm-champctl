@@ -47,7 +47,7 @@ describe("layouts off the event form", () => {
   })
 
   it("leaves a track out entirely when it has nothing to choose", () => {
-    const map = layoutsFrom(select(["spa:<default>", "ks_highlands:layout_int"]))
+    const map = layoutsFrom(select(["spa:<default>", "ks_highlands:layout_int"])) ?? {}
     expect("spa" in map).toBe(false)
     expect(map["ks_highlands"]).toEqual(["layout_int"])
   })
@@ -61,8 +61,17 @@ describe("layouts off the event form", () => {
     expect(layoutsFrom(html)).toEqual({ ks_brands_hatch: ["indy"] })
   })
 
-  it("has nothing to say about a page with no such select", () => {
-    expect(layoutsFrom("<html><body>no form here</body></html>")).toEqual({})
+  /**
+   * No select is not the same answer as a select with nothing in it.
+   *
+   * A manager where every track has one layout gives `{}`, and a screen should
+   * respond by not offering a choice. A page champctl cannot find the select
+   * on gives no answer at all, and the same response there would hide the
+   * layout field on a server that has layouts — leaving no way to set one.
+   */
+  it("says it found nothing, rather than that there is nothing", () => {
+    expect(layoutsFrom("<html><body>no form here</body></html>")).toBeUndefined()
+    expect(layoutsFrom(select(["spa:<default>"])), "a select with only defaults").toEqual({})
   })
 
   it("ignores an option that is not track:layout", () => {
