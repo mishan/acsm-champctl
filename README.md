@@ -280,7 +280,28 @@ does: pick the one to clone, name it, say when it starts, list the tracks in
 order, and read the review before anything is created. Cloning rather than
 uploading a template because a browser has no file on the server's disk, and
 because a league's cars, class, format and entry-list slots are the same as
-last time — what changes is the name, the date and the tracks.
+last time — what changes is the name, the date and the tracks. The track list
+is dragged into order, with up and down arrows beside it for a keyboard.
+
+**Rounds can be reordered after the fact too.** ACSM has no endpoint that moves
+an event, and the only write that could rewrite the running order is an import
+that overwrites the championship — refused outright once anything has been
+raced. So champctl moves what a round *is* between the slots instead:
+
+| | |
+|---|---|
+| **travels with the round** | the track, the layout, the race format |
+| **stays with the race night** | the date, the quali time, the round's name, the entry list |
+
+"Monza moves to week 1" means week 1 keeps being week 1, so the calendar and
+the round numbers cannot end up disagreeing. A lap count voted for Monza is
+about Monza, so it goes with it.
+
+That makes a reorder several event saves with no transaction behind them. It
+refuses to move a round that has already been raced — results belong to the
+track they were set at — and if a save fails part way it names every round that
+moved and every round that didn't, because "the reorder failed" sends someone
+to the wrong end of a season.
 
 ```sh
 champctl-serve                 # http://127.0.0.1:3000
@@ -388,11 +409,14 @@ response bodies — entry lists, so driver names and Steam GUIDs — and is crea
 ## Status
 
 gridmom, the archive, and the finalize and championship engines are done and driven by
-their CLIs. The finalize flow also has a web UI. What's left:
+their CLIs. Finalizing, creating a championship and reordering its rounds all
+have a web UI. What's left:
 
-- **The championship builder is CLI-only.** `champctl-serve` covers the weekly flow;
-  creating one still means `champctl-championship`. The sign-up approval queue
-  isn't built either — it needs the approve/reject POST captured first.
+- **No sign-up approval queue.** It needs the approve/reject POST captured
+  first, which is the last unread request in §3.4.
+- **Reordering is web-only.** The engine is in `src/reorder/`, and nothing on
+  the command line reaches it — unlike every other engine here, which has a CLI
+  as its first front end.
 - **No Discord bot**, so no polls, no announcements, no nightly gridmom report.
 - **Content checks have no source.** Three `content.*` checks need an index of
   what's installed on the server, and nothing populates one yet, so they can't

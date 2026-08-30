@@ -79,6 +79,64 @@ export class PartialWriteError extends FinalizeError {
   }
 }
 
+/**
+ * What one safe write to an event form needs.
+ *
+ * `fields` are applied to the *re-fetched* form in insertion order, so a caller
+ * that wants one key to win over another spells that by putting it last.
+ */
+export interface EventWrite {
+  championshipId: string
+  eventId: string
+  /** The entry list as it was when the plan the caller is spending was built. */
+  entryListFingerprint: string
+  fields: Record<string, string>
+}
+
+/**
+ * Round-trip an event form with `fields` replaced, refusing if the entry list
+ * moved underneath it.
+ *
+ * The one place that knows how to write an event form, because the guard in the
+ * module comment is a property of *every* event write rather than of finalizing
+ * — reordering a championship's rounds posts this form too, once per round it
+ * moves, and each of those is the same chance to silently delete a sign-up.
+ * Two copies of this would be one that keeps the guard and one that drifts.
+ */
+export async function saveEventForm(session: AcsmSession, write: EventWrite): Promise<void> {
+  const path = eventEditPath(write.championshipId, write.eventId)
+  const fresh = findEventForm(await session.getText(path), session.url(path), write.championshipId)
+
+  if (entryListFingerprint(fresh.fields) !== write.entryListFingerprint) {
+    throw new EntryListChangedError(write.championshipId, write.eventId)
+  }
+
+  // Post the *fresh* form's fields, not the planned one's. They are equivalent
+  // for the entry list — that is what the fingerprint just established — but
+  // anything else ACSM changed in the meantime should be echoed back as it now
+  // stands rather than reverted to what we first read.
+  const fields = [...fresh.fields]
+
+  // The two keys that say *which* save this is (plan §5.2). `Editing` is
+  // rendered by the form, so this only restates it; `action` is not — it is
+  // carried by the submit button, and `parseForm` drops buttons on purpose. So
+  // a payload built purely from the parsed form is missing it, which is how a
+  // browser and champctl come to send different things. Both live tests that
+  // drive this endpoint set them explicitly for the same reason.
+  setOne(fields, "Editing", write.eventId)
+  setOne(fields, "action", "saveChampionship")
+
+  for (const [name, value] of Object.entries(write.fields)) {
+    // setOne refuses a repeated key, so a build that renders one of these more
+    // than once fails loudly instead of scrambling a positional array.
+    setOne(fields, name, value)
+  }
+
+  // postForm re-checks the EntryList.* arity before sending.
+  const res = await session.postForm(eventSubmitPath(write.championshipId), fields)
+  assertAccepted(res, "event", eventSubmitPath(write.championshipId))
+}
+
 export interface ApplyOptions {
   /**
    * Proceed despite gridmom WARN findings. Has no effect on ERROR, which
@@ -123,49 +181,28 @@ export async function applyFinalize(
     )
   }
 
-  // Re-fetch immediately before writing. See the module comment.
-  const path = eventEditPath(plan.championshipId, plan.eventId)
-  const fresh = findEventForm(await session.getText(path), session.url(path), plan.championshipId)
-
-  if (entryListFingerprint(fresh.fields) !== plan.entryListFingerprint) {
-    throw new EntryListChangedError(plan.championshipId, plan.eventId)
-  }
-
   let eventSaved = false
   if (plan.formChanges.length > 0) {
-    // Post the *fresh* form's fields, not the planned one's. They are
-    // equivalent for the entry list — that is what the fingerprint just
-    // established — but anything else ACSM changed in the meantime should be
-    // echoed back as it now stands rather than reverted to what we first read.
-    const fields = [...fresh.fields]
-
-    // The two keys that say *which* save this is (plan §5.2). `Editing` is
-    // rendered by the form, so this only restates it; `action` is not — it is
-    // carried by the submit button, and `parseForm` drops buttons on purpose.
-    // So a payload built purely from the parsed form is missing it, which is
-    // how a browser and champctl come to send different things. Both live tests
-    // that drive this endpoint set them explicitly for the same reason.
-    setOne(fields, "Editing", plan.eventId)
-    setOne(fields, "action", "saveChampionship")
-
-    for (const [name, value] of Object.entries(formFieldsFor(plan.desired))) {
-      // setOne refuses a repeated key, so a build that renders one of these
-      // more than once fails loudly instead of scrambling a positional array.
-      setOne(fields, name, value)
-    }
-
-    // The move, after the format and last of all. `findEventForm` has already
-    // corrected `TrackLayout` to the layout the event *has*; this is the one
-    // caller that wants a different answer, and setting it here rather than
-    // there keeps the correction honest for every write that isn't a move.
-    if (plan.venue) {
-      setOne(fields, "Track", plan.venue.to.track)
-      setOne(fields, "TrackLayout", plan.venue.to.layout)
-    }
-
-    // postForm re-checks the EntryList.* arity before sending.
-    const res = await session.postForm(eventSubmitPath(plan.championshipId), fields)
-    assertAccepted(res, "event", eventSubmitPath(plan.championshipId))
+    // The re-fetch and the fingerprint check are inside `saveEventForm`, which
+    // means a schedule-only push no longer performs them. That is deliberate
+    // and it is where the guard belongs: the entry list is at risk because the
+    // *event* form replaces it wholesale, and the schedule POST is a different
+    // form on a different endpoint that never carries an entrant. Spending a
+    // request to re-read a list this write cannot touch protected nothing.
+    //
+    // The move goes in after the format and last of all. `findEventForm` has
+    // already corrected `TrackLayout` to the layout the event *has*; this is
+    // the one caller that wants a different answer, and setting it here rather
+    // than there keeps the correction honest for every write that isn't a move.
+    await saveEventForm(session, {
+      championshipId: plan.championshipId,
+      eventId: plan.eventId,
+      entryListFingerprint: plan.entryListFingerprint,
+      fields: {
+        ...formFieldsFor(plan.desired),
+        ...(plan.venue ? { Track: plan.venue.to.track, TrackLayout: plan.venue.to.layout } : {}),
+      },
+    })
     eventSaved = true
   }
 

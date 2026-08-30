@@ -35,7 +35,13 @@ import Fastify, {
 
 import { AcsmAuthError } from "../acsm/session.js"
 import { describeError } from "./errors.js"
-import { apiContext, apiRoutes, clearSessionCookie, type ApiContextOptions } from "./routes.js"
+import {
+  apiContext,
+  apiRoutes,
+  clearSessionCookie,
+  dropPlansFor,
+  type ApiContextOptions,
+} from "./routes.js"
 import { SESSION_COOKIE } from "./sessions.js"
 
 export interface ServerOptions extends ApiContextOptions {
@@ -220,7 +226,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     // deeper, and it doesn't leave a dead jar sitting in memory for an hour.
     const id = req.cookies[SESSION_COOKIE]
     if (id && error instanceof AcsmAuthError) {
-      ctx.plans.dropForSession(id)
+      dropPlansFor(ctx, id)
       ctx.sessions.destroy(id)
     }
 

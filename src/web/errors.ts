@@ -20,6 +20,8 @@ import { AcsmAuthError, AcsmWriteError, PasswordChangeRequiredError } from "../a
 import { EntryListChangedError, PartialWriteError } from "../finalize/apply.js"
 import { FinalizeError } from "../finalize/plan.js"
 import { ScheduleError } from "../finalize/schedule.js"
+import { PartialReorderError } from "../reorder/apply.js"
+import { ReorderError } from "../reorder/plan.js"
 
 export interface ErrorBody {
   error: {
@@ -74,6 +76,21 @@ export function describeError(e: unknown): DescribedError {
   // refusal nor something to retry; the message says which half landed.
   if (e instanceof PartialWriteError) {
     return { status: 500, body: { error: { code: "partial-write", message: e.message } }, ...OK }
+  }
+
+  // Before the ReorderError branch it extends, and the same reasoning as
+  // PartialWriteError above with a sharper edge: some rounds are already at
+  // their new tracks and some are not, so this is neither a refusal nor
+  // something to retry — re-running would move the ones that landed a second
+  // time. The message names both halves.
+  if (e instanceof PartialReorderError) {
+    return { status: 500, body: { error: { code: "partial-reorder", message: e.message } }, ...OK }
+  }
+
+  // gridmom blocked it, warnings weren't acknowledged, the order wasn't a
+  // rearrangement, a round has already been raced. Understood, and declined.
+  if (e instanceof ReorderError) {
+    return { status: 422, body: { error: { code: "reorder", message: e.message } }, ...OK }
   }
 
   // Something the person typed: a date the zone doesn't have, an ambiguous

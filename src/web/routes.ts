@@ -51,6 +51,8 @@ import {
   type FormatOverrides,
 } from "../finalize/format.js"
 import { planFinalize, type FinalizePlan } from "../finalize/plan.js"
+import { applyReorder, PartialReorderError } from "../reorder/apply.js"
+import { planReorder, type ReorderPlan } from "../reorder/plan.js"
 import type { CheckReport } from "../gridmom/finding.js"
 import { check } from "../gridmom/index.js"
 import type { PitTable } from "../pits/table.js"
@@ -71,6 +73,7 @@ import {
   championshipView,
   newChampionshipPlanView,
   planView,
+  reorderPlanView,
   roundView,
 } from "./view.js"
 import type {
@@ -85,6 +88,9 @@ import type {
   NewChampionshipPlanResponse,
   PlanRequest,
   PlanResponse,
+  ReorderPlanResponse,
+  ReorderRequest,
+  ReorderResponse,
   SessionResponse,
   TrackRequest,
 } from "./wire.js"
@@ -115,6 +121,12 @@ export interface ApiContext {
    * it is the same store with the same guarantees.
    */
   newChampionships: PlanStore<HeldChampionship>
+  /**
+   * Reorders awaiting confirmation. A third store for the same reason there is
+   * a second: one lease, three things worth leasing, and none of them should
+   * expire when another is spent.
+   */
+  reorders: PlanStore<ReorderPlan>
   /**
    * Installed cars and tracks, held for an hour. The new-championship screen
    * offers only what is in here, so this is what stops anyone having to know
@@ -156,6 +168,7 @@ export function apiContext(options: ApiContextOptions): ApiContext {
     plans: options.plans ?? new PlanStore({ label: "finalize plans" }),
     newChampionships:
       options.newChampionships ?? new PlanStore({ label: "unconfirmed new championships" }),
+    reorders: options.reorders ?? new PlanStore({ label: "unconfirmed round reorders" }),
     content: options.content ?? new ContentCache({ load: () => options.reader.listContent() }),
     layouts: options.layouts ?? new ContentCache<TrackLayouts | null>(),
     throttle: options.throttle ?? new LoginThrottle(),
@@ -298,6 +311,29 @@ const createChampionshipBodySchema = {
   type: "object",
   additionalProperties: false,
   properties: { acknowledgeWarnings: { type: "boolean" } },
+} as const
+
+/**
+ * The new calendar, as 1-based source rounds.
+ *
+ * Bounded like every other array here, and `maxItems` matches the create
+ * screen's track list because they are the same quantity — a championship is a
+ * handful of race nights. `planReorder` still checks it really is a
+ * rearrangement of the rounds that exist, which is the check that matters and
+ * is not expressible in a schema: it needs to know how many rounds there are.
+ */
+const reorderBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["order"],
+  properties: {
+    order: {
+      type: "array",
+      minItems: 1,
+      maxItems: 52,
+      items: { type: "integer", minimum: 1, maximum: 52 },
+    },
+  },
 } as const
 
 const planIdParamsSchema = {
@@ -480,7 +516,12 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
         // Plans before the session: dropping the session first would leave
         // every plan it owns unreachable but still resident, holding a parsed
         // entry list until the TTL swept it.
-        ctx.plans.dropForSession(id)
+        //
+        // All three stores, not just the finalize one. A reorder plan holds a
+        // parsed event form per round it moves, which is the league's driver
+        // names and Steam GUIDs several times over — exactly the thing this
+        // line exists to stop outliving the session that read it.
+        dropPlansFor(ctx, id)
         ctx.sessions.destroy(id)
       }
       clearSessionCookie(ctx, reply)
@@ -623,6 +664,119 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           // "before" side without a second request — and so a round that has
           // since been run says so before anyone pushes to it.
           round: roundView(ev, round, ctx.profile),
+        }
+      },
+    )
+
+    // -----------------------------------------------------------------------
+    // Reordering the rounds of a championship that already exists
+    // -----------------------------------------------------------------------
+
+    /**
+     * What the calendar would look like in a different order, written nowhere.
+     *
+     * The same `planReorder` a reorder push spends, so the review and the write
+     * cannot disagree about which rounds move. Held server-side like a finalize
+     * plan and for the sharper version of the same reason: a reorder is several
+     * event-form writes, each one a full-list replace, so each one carries its
+     * own entry-list fingerprint taken while the person was still reading.
+     */
+    app.post<{ Params: { id: string }; Body: ReorderRequest }>(
+      "/championships/:id/reorder/plan",
+      {
+        schema: {
+          params: {
+            type: "object",
+            required: ["id"],
+            properties: { id: { type: "string", minLength: 1, maxLength: 200 } },
+          },
+          body: reorderBodySchema,
+        },
+      },
+      async (req): Promise<ReorderPlanResponse> => {
+        const s = requireSession(ctx, req)
+        const { id } = req.params
+
+        const championship = await ctx.reader.exportChampionship(id)
+
+        // The engine's refusals — an order that isn't a rearrangement, a round
+        // that has been raced — reach the browser as a 422 through
+        // `describeError`, which is where `ReorderError` is mapped. Not caught
+        // and rewrapped here: the emitter needs that because `EmitError` has no
+        // branch there, and doing it for a class that does would be two places
+        // deciding one status.
+        const plan = await planReorder(s.acsm, {
+          championship,
+          championshipId: id,
+          order: req.body.order,
+          profile: ctx.profile,
+          pits: ctx.pits,
+          now: ctx.now(),
+        })
+
+        return {
+          plan: reorderPlanView(ctx.reorders.create(s.id, plan), plan, championship, ctx.profile),
+        }
+      },
+    )
+
+    /**
+     * Applies the reorder that was previewed, and only that one.
+     *
+     * Takes a plan id and nothing else. That matters more here than anywhere
+     * else in this file: the plan is the only thing holding the entry-list
+     * fingerprints for *every* round about to be written, and re-planning at
+     * push time would take each of them one round trip before comparing it —
+     * a guard comparing a form against itself.
+     */
+    app.post<{ Params: { planId: string }; Body: { acknowledgeWarnings?: boolean } }>(
+      "/reorders/:planId/apply",
+      { schema: { params: planIdParamsSchema, body: createChampionshipBodySchema } },
+      async (req): Promise<ReorderResponse> => {
+        const s = requireSession(ctx, req)
+        const { planId } = req.params
+
+        const taken = ctx.reorders.acquire(planId, s.id)
+        if (taken.kind === "not-found") {
+          throw new ApiError(
+            404,
+            "no-such-plan",
+            "That preview has expired, or it was already applied. Nothing was written. Open the " +
+              "championship again — the fresh preview will show the order it is in now.",
+          )
+        }
+        if (taken.kind === "in-flight") {
+          throw new ApiError(
+            409,
+            "plan-in-flight",
+            "This reorder is already being applied. Nothing extra was written. Wait for it to " +
+              "finish rather than sending it again — a second run would move the rounds twice.",
+          )
+        }
+        const plan = taken.plan
+
+        try {
+          const result = await applyReorder(s.acsm, plan, {
+            acknowledgeWarnings: req.body?.acknowledgeWarnings === true,
+          })
+          ctx.reorders.destroy(planId, s.id)
+          return { rounds: result.rounds }
+        } catch (e) {
+          // Terminal for *this* plan, and for different reasons. A changed
+          // entry list means the plan's fingerprints describe a championship
+          // that has moved on. A partial reorder means some rounds are already
+          // at their new tracks, so spending this plan again would move them a
+          // second time — which is exactly what its message tells the person
+          // not to do, and the store should not be the thing that allows it.
+          //
+          // Everything else keeps the plan, so ticking the acknowledgement box
+          // and pressing again is the normal path it looks like.
+          if (e instanceof EntryListChangedError || e instanceof PartialReorderError) {
+            ctx.reorders.destroy(planId, s.id)
+          } else {
+            ctx.reorders.release(planId, s.id)
+          }
+          throw e
         }
       },
     )
@@ -882,6 +1036,21 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
       },
     )
   }
+}
+
+/**
+ * Ends every lease a session holds, across all three stores.
+ *
+ * One function rather than three calls at each of the two sites that need it,
+ * because the failure mode is a store somebody forgot: the plan stays resident
+ * with a parsed entry list in it, unreachable and unswept until its TTL. That
+ * has already happened once — `newChampionships` was added and this was not
+ * updated.
+ */
+export function dropPlansFor(ctx: ApiContext, sessionId: string): void {
+  ctx.plans.dropForSession(sessionId)
+  ctx.newChampionships.dropForSession(sessionId)
+  ctx.reorders.dropForSession(sessionId)
 }
 
 /**

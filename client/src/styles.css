@@ -897,6 +897,35 @@ button.link:hover {
 }
 
 /*
+ * The reorder list reuses `.tracks` for the drag machinery and nothing else:
+ * these rows are a number, a track, the night it keeps, the two arrows, and a
+ * "raced" tag on the rounds that have already run.
+ *
+ * Six columns for six children, counted against the markup rather than
+ * eyeballed. The tag is rendered conditionally, so five columns looked right
+ * on every row that had not raced — and auto-placed the tag onto a second grid
+ * row on the ones that had, which are the rows a person is looking at when
+ * they wonder why they cannot move something.
+ */
+.tracks.reorder li {
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
+}
+
+.tracks.reorder .row-sub {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* "was 3" beside a round that has moved. Quieter than the "raced" chip. */
+.tag-quiet {
+  margin-left: 0.4rem;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+/*
  * A round's name, on its own line under the track.
  *
  * Spanning every column rather than adding a seventh: six controls already
