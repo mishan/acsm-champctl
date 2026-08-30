@@ -199,22 +199,48 @@ export function eventHasStarted(ev: ChampionshipEvent): boolean {
   return false
 }
 
+/** Which field a championship keeps its spectator car in. */
+export type SpectatorCarField = "SpectatorCars[0]" | "SpectatorCar"
+
+/** The stream car and the field it was read from. */
+export interface SpectatorCarRef {
+  entrant: Entrant
+  field: SpectatorCarField
+}
+
 /**
- * The stream car, or undefined when there isn't one.
+ * The stream car, where it lives, or undefined when nothing is configured.
  *
- * **`SpectatorCars[0]` first, `SpectatorCar` second.** ACSM 2.4.x carries both
- * and populates only the plural one: BATL's export has a `ford_transit` called
- * "BATL TV" in the array and a blank `Entrant` in the singular field. Reading
- * the singular one gave every caller an empty model on every real
- * championship, silently — `derivedCars` left the van out of `RaceSetup.Cars`,
- * and the "spectator car has no model" check fired on a championship that had
- * one. The fallback stays because an older build may only have the singular,
- * and a blank singular loses to a populated array either way.
+ * **`SpectatorCars[0]` first, `SpectatorCar` second — index 0 and no other.**
+ * ACSM 2.4.x carries both fields and populates only the plural one: BATL's
+ * export has a `ford_transit` called "BATL TV" in the array and a blank
+ * `Entrant` in the singular. Reading the singular gave every caller an empty
+ * model on every real championship, silently — `derivedCars` left the van out
+ * of `RaceSetup.Cars`, and the "spectator car has no model" check fired on a
+ * championship that had one.
+ *
+ * This scanned the array for the first entry with a model, which was a bug
+ * dressed as robustness: it could pick index 2, and the emitter rebuilds the
+ * array as `[spectator, ...rest.slice(1)]` — so a car at index 2 would be
+ * copied over index 0, duplicated, and index 0's own car lost. Nobody has seen
+ * an array whose first entry is not the stream car, and guessing at one is how
+ * a write goes somewhere nobody chose.
+ *
+ * The field comes back with the entrant because a caller that wants to *write*
+ * the car, or point a finding at it, has to name the same place this read it
+ * from. Two functions deciding that separately is two chances to disagree.
  */
-export function spectatorCar(c: Championship | undefined): Entrant | undefined {
+export function spectatorCarRef(c: Championship | undefined): SpectatorCarRef | undefined {
   if (!c?.SpectatorCarEnabled) return undefined
-  const first = c.SpectatorCars?.find((e) => e && (e.Model ?? "").trim())
-  return first ?? c.SpectatorCars?.[0] ?? c.SpectatorCar
+  const fromArray = c.SpectatorCars?.[0]
+  if (fromArray) return { entrant: fromArray, field: "SpectatorCars[0]" }
+  if (c.SpectatorCar) return { entrant: c.SpectatorCar, field: "SpectatorCar" }
+  return undefined
+}
+
+/** The stream car alone, for the callers that don't care where it lives. */
+export function spectatorCar(c: Championship | undefined): Entrant | undefined {
+  return spectatorCarRef(c)?.entrant
 }
 
 /** How many pit boxes the spectator car consumes: 1 when enabled, else 0. */

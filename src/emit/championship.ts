@@ -35,7 +35,7 @@ import {
   type SignUpForm,
 } from "../acsm/types.js"
 import { FORBIDDEN_KEYS, regenerateIds } from "../acsm/write.js"
-import { classes, events, spectatorCar } from "../acsm/view.js"
+import { classes, events, spectatorCarRef } from "../acsm/view.js"
 import type { RaceFormat } from "../finalize/format.js"
 import { applyFormat } from "../finalize/format.js"
 import { practiceMinutesFor } from "../finalize/schedule.js"
@@ -253,12 +253,14 @@ export function emitChampionship(options: EmitOptions): EmitResult {
   const slots = spec.entryListSlots ?? profile.entryList.targetSlots
   const entryList = unclaimedEntryList(slots)
 
-  // Through `spectatorCar`, not off `base.SpectatorCar`: 2.4.x keeps the real
-  // one in `SpectatorCars[0]` and leaves the singular field blank, so reading
-  // it directly derived the car list without the van in it.
-  const spectator = spectatorCar(base)
-  const spectatorEnabled = spectator !== undefined
-  const carList = derivedCars(cars, spectator?.Model)
+  // Through `spectatorCarRef`, not off `base.SpectatorCar`: 2.4.x keeps the
+  // real one in `SpectatorCars[0]` and leaves the singular field blank, so
+  // reading it directly derived the car list without the van in it. The `field`
+  // matters as well as the car, because the box below is written back to
+  // whichever one it came from.
+  const spectatorRef = spectatorCarRef(base)
+  const spectatorEnabled = spectatorRef !== undefined
+  const carList = derivedCars(cars, spectatorRef?.entrant.Model)
   derived.push(
     `RaceSetup.Cars from the class car list${spectatorEnabled ? " plus the spectator car" : ""}`,
   )
@@ -275,9 +277,25 @@ export function emitChampionship(options: EmitOptions): EmitResult {
    * automatic rather than remembered.
    */
   const spectatorBox = slots
-  const spectatorCars = spectatorEnabled
-    ? [{ ...spectator, PitBox: spectatorBox }, ...(base.SpectatorCars ?? []).slice(1)]
-    : base.SpectatorCars
+  /**
+   * Written back to the field it was read from, and only that one.
+   *
+   * A build that keeps the car in the singular `SpectatorCar` has no
+   * `SpectatorCars` array; inventing one would leave the box unchanged in the
+   * field ACSM actually reads and add a key it doesn't. Index 0 is the only
+   * element touched, which is safe precisely because `spectatorCarRef` reads
+   * index 0 and nothing else.
+   */
+  const spectatorOverlay: Partial<Championship> = !spectatorRef
+    ? {}
+    : spectatorRef.field === "SpectatorCars[0]"
+      ? {
+          SpectatorCars: [
+            { ...spectatorRef.entrant, PitBox: spectatorBox },
+            ...(base.SpectatorCars ?? []).slice(1),
+          ],
+        }
+      : { SpectatorCar: { ...spectatorRef.entrant, PitBox: spectatorBox } }
   if (spectatorEnabled) {
     derived.push(`spectator car at pit box ${spectatorBox}, after the last entry slot`)
   }
@@ -372,7 +390,7 @@ export function emitChampionship(options: EmitOptions): EmitResult {
     Classes: [championshipClass],
     Events: eventList,
     SignUpForm: signUpForm(base.SignUpForm, signUpsEnabled),
-    ...(spectatorCars ? { SpectatorCars: spectatorCars } : {}),
+    ...spectatorOverlay,
     ...(spec.description === undefined ? {} : { Description: spec.description }),
   }
 

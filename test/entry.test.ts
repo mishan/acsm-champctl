@@ -322,6 +322,34 @@ describe("the spectator car's model", () => {
     expect(codes(c)).toContain("entry.spectator-no-model")
   })
 
+  it("warns when the car is switched on and neither field exists at all", () => {
+    // The sharpest version of "nothing is set", and the one a check gated on
+    // *finding* a car skips: `spectatorCarRef` has nothing to return, so an
+    // early return there would have said the championship was fine.
+    const c = championship({ SpectatorCarEnabled: true })
+    delete c.SpectatorCar
+    delete c.SpectatorCars
+    expect(codes(c)).toContain("entry.spectator-no-model")
+  })
+
+  it("points at the field the model was actually read from", () => {
+    // Naming `SpectatorCars[0]` on a build that only has the singular sends
+    // someone to a key that isn't in their export.
+    const older = championship({ SpectatorCarEnabled: true, SpectatorCar: { Model: "" } })
+    delete older.SpectatorCars
+    expect(
+      run(older).findings.find((x) => x.code === "entry.spectator-no-model")?.location?.path,
+    ).toBe("SpectatorCar.Model")
+
+    const modern = championship({
+      SpectatorCarEnabled: true,
+      SpectatorCars: [{ Model: "", PitBox: 30 }],
+    })
+    expect(
+      run(modern).findings.find((x) => x.code === "entry.spectator-no-model")?.location?.path,
+    ).toBe("SpectatorCars[0].Model")
+  })
+
   it("says nothing when the spectator car is off", () => {
     const c = championship({ SpectatorCarEnabled: false, SpectatorCar: { Model: "" } })
     expect(codes(c)).not.toContain("entry.spectator-no-model")
@@ -374,6 +402,48 @@ describe("the spectator car's pit box", () => {
   it("says nothing when the spectator car is off", () => {
     const c = withBox(0)
     c.SpectatorCarEnabled = false
+    expect(codes(c)).not.toContain("entry.spectator-pit-box-taken")
+  })
+
+  it("points at the field the box was read from", () => {
+    expect(
+      run(withBox(0)).findings.find((x) => x.code === "entry.spectator-pit-box-taken")?.location
+        ?.path,
+    ).toBe("SpectatorCars[0].PitBox")
+
+    const older = championship({
+      SpectatorCarEnabled: true,
+      SpectatorCar: { Model: "ford_transit", PitBox: 0 },
+      Classes: [championshipClass({ Entrants: entryList(emptySlots(4)) })],
+      Events: [raceEvent({ EntryList: entryList(emptySlots(4)) })],
+    })
+    delete older.SpectatorCars
+    expect(
+      run(older).findings.find((x) => x.code === "entry.spectator-pit-box-taken")?.location?.path,
+    ).toBe("SpectatorCar.PitBox")
+  })
+
+  /**
+   * Index 0 and no other.
+   *
+   * This scanned the array for the first entry with a model, which could pick
+   * index 1 — and the emitter rebuilds the array as `[spectator, ...slice(1)]`,
+   * so that car would be copied over index 0, duplicated, and index 0's own
+   * entry lost. Nobody has seen an array whose first entry is not the stream
+   * car.
+   */
+  it("reads index 0 even when a later entry has a model", () => {
+    const c = championship({
+      SpectatorCarEnabled: true,
+      SpectatorCars: [
+        { Model: "", PitBox: 30 },
+        { Model: "ford_transit", PitBox: 0 },
+      ],
+      Classes: [championshipClass({ Entrants: entryList(emptySlots(4)) })],
+      Events: [raceEvent({ EntryList: entryList(emptySlots(4)) })],
+    })
+    // Box 30 is past the 4 slots, so reading index 0 means no finding. Reading
+    // index 1 would report box 0 as taken.
     expect(codes(c)).not.toContain("entry.spectator-pit-box-taken")
   })
 })

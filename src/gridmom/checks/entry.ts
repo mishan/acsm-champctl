@@ -20,6 +20,7 @@ import {
   raceSetupCars,
   slots,
   spectatorCar,
+  spectatorCarRef,
   trackLabel,
   type Slot,
 } from "../../acsm/view.js"
@@ -702,17 +703,26 @@ export const spectatorCarWithoutModel: Check = {
   id: "entry.spectator-no-model",
   section: "6.1",
   run(ctx, emit) {
-    const spectator = spectatorCar(ctx.championship)
-    if (!spectator) return
-    if ((spectator.Model ?? "").trim()) return
+    // Gated on the switch, not on finding a car. `spectatorCarRef` returns
+    // undefined when the championship has *neither* field populated, and that
+    // is the sharpest version of what this check is for — switched on with
+    // nothing configured at all. Returning early on it would have skipped the
+    // one case with no car to describe.
+    if (ctx.championship.SpectatorCarEnabled !== true) return
+    const ref = spectatorCarRef(ctx.championship)
+    if ((ref?.entrant.Model ?? "").trim()) return
 
     emit(
       "WARN",
       "entry.spectator-no-model",
       `The spectator car is switched on but has no car model set, so nothing in the championship ` +
         `says which car it is.`,
-      { path: "SpectatorCars[0].Model" },
-      {},
+      // The field it was actually read from. Naming `SpectatorCars[0]` on a
+      // build that only has the singular sends someone to a key that isn't
+      // there — and `SpectatorCar` is the honest answer when there is no car
+      // at all, since that is where an older manager would put one.
+      { path: `${ref?.field ?? "SpectatorCar"}.Model` },
+      { field: ref?.field ?? null },
     )
   },
 }
@@ -737,9 +747,9 @@ export const spectatorCarInAnEntrantsBox: Check = {
   id: "entry.spectator-pit-box-taken",
   section: "6.1",
   run(ctx, emit) {
-    const spectator = spectatorCar(ctx.championship)
-    if (!spectator) return
-    const box = spectator.PitBox
+    const ref = spectatorCarRef(ctx.championship)
+    if (!ref) return
+    const box = ref.entrant.PitBox
     if (typeof box !== "number" || !Number.isFinite(box)) return
 
     const longest = Math.max(0, ...[...allLists(ctx)].map(({ list }) => slots(list).length))
@@ -751,8 +761,9 @@ export const spectatorCarInAnEntrantsBox: Check = {
       `The spectator car is in pit box ${box}, which is one of the ${longest} entry list slots. ` +
         `Two cars in one box means the next save drops one of them — park it at ${longest}, ` +
         `past the end of the list.`,
-      { path: "SpectatorCars[0].PitBox" },
-      { pitBox: box, slots: longest, suggested: longest },
+      // Where the box was read from, so the path is somewhere to go and look.
+      { path: `${ref.field}.PitBox` },
+      { pitBox: box, slots: longest, suggested: longest, field: ref.field },
     )
   },
 }

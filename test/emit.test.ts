@@ -499,6 +499,37 @@ describe("emitting a championship", () => {
     }
   })
 
+  it("writes the box back to the field it read the car from", () => {
+    // A build that keeps the car in the singular field has no `SpectatorCars`
+    // array. Inventing one would leave the box unchanged where ACSM reads it
+    // and add a key it does not.
+    const t = template({
+      SpectatorCarEnabled: true,
+      SpectatorCar: { Model: "ford_transit", PitBox: 0 },
+    })
+    delete t.SpectatorCars
+    const { championship: c } = emit({ template: t, spec: spec({ entryListSlots: 12 }) })
+    expect(c.SpectatorCar?.PitBox).toBe(12)
+    expect(c.SpectatorCars).toBeUndefined()
+  })
+
+  it("touches only index 0 of the array, and keeps the rest", () => {
+    const { championship: c } = emit({
+      template: template({
+        SpectatorCarEnabled: true,
+        SpectatorCars: [
+          { Model: "ford_transit", PitBox: 0 },
+          { Model: "second_car", PitBox: 7 },
+        ],
+      }),
+      spec: spec({ entryListSlots: 12 }),
+    })
+    expect(c.SpectatorCars).toHaveLength(2)
+    expect(c.SpectatorCars?.[0]).toMatchObject({ Model: "ford_transit", PitBox: 12 })
+    // Untouched, and not overwritten by a copy of index 0.
+    expect(c.SpectatorCars?.[1]).toMatchObject({ Model: "second_car", PitBox: 7 })
+  })
+
   it("leaves the spectator car alone when it is switched off", () => {
     const { championship: c } = emit({
       template: template({
