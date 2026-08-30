@@ -1039,16 +1039,6 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
 }
 
 /**
- * The session behind this request, or a 401 that says which kind of nothing it
- * was.
- *
- * "You were never logged in" and "you were, an hour ago" want different words
- * on screen and the same status code, so the distinction is in `code` rather
- * than in the status. An expired cookie is also cleared on the way out: leaving
- * it means the browser keeps presenting a handle to a jar that no longer
- * exists, and every subsequent 401 looks like a bug rather than a timeout.
- */
-/**
  * Ends every lease a session holds, across all three stores.
  *
  * One function rather than three calls at each of the two sites that need it,
@@ -1063,6 +1053,16 @@ export function dropPlansFor(ctx: ApiContext, sessionId: string): void {
   ctx.reorders.dropForSession(sessionId)
 }
 
+/**
+ * The session behind this request, or a 401 that says which kind of nothing it
+ * was.
+ *
+ * "You were never logged in" and "you were, an hour ago" want different words
+ * on screen and the same status code, so the distinction is in `code` rather
+ * than in the status. An expired cookie is also cleared on the way out: leaving
+ * it means the browser keeps presenting a handle to a jar that no longer
+ * exists, and every subsequent 401 looks like a bug rather than a timeout.
+ */
 function requireSession(ctx: ApiContext, req: FastifyRequest): StoredSession {
   const id = req.cookies[SESSION_COOKIE]
   const found = ctx.sessions.get(id)
