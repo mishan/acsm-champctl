@@ -330,7 +330,7 @@ Two copies of that list is one that gets updated and one that doesn't.
   so every `getBoundingClientRect` returns zeroes and a drag can only be told
   apart as "upwards" or "downwards". The geometry lives in pure functions in
   `client/src/reorder.ts` and is tested against measurements written down in
-  `reorder.test.ts`; the DOM tests cover the wiring. Anything asserting a drop
+  `client/src/reorder.test.ts`; the DOM tests cover the wiring. Anything asserting a drop
   position through a rendered list would be asserting nothing.
 - **Nothing drives a reorder against a real ACSM.** `test/reorder.test.ts` runs
   the whole plan-and-apply over a scripted `fetch`, so the refusals and the

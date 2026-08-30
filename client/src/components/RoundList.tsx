@@ -211,7 +211,18 @@ function Reorder({
   onAuthLost: () => void
 }): React.JSX.Element {
   const [plan, setPlan] = useState<ReorderPlanView | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  /**
+   * What failed, as well as why.
+   *
+   * The two sources want different lifetimes. A *preview* failure is about an
+   * order that no longer exists the moment the rows move back, so it is
+   * retired with the preview. An *apply* failure is about a write that already
+   * happened — a reorder that landed part way names the rounds it moved — and
+   * dragging the rows around afterwards does not make it untrue. One flat
+   * string could only have one of those lifetimes, and the wrong one leaves
+   * "champctl refused this" on screen under a list nobody is previewing.
+   */
+  const [error, setError] = useState<{ from: "preview" | "apply"; message: string } | null>(null)
   const [previewing, setPreviewing] = useState(false)
   const [acknowledged, setAcknowledged] = useState(false)
   const [applying, setApplying] = useState(false)
@@ -228,7 +239,13 @@ function Reorder({
   // aborted — the same rule as the other two screens, and the same reason.
   useEffect(() => {
     if (unchanged) {
+      // Back where it started, so there is nothing to preview and nothing a
+      // preview could still be saying. `previewing` too: the cleanup above
+      // aborted whatever was in flight, and a spinner left spinning over a
+      // list that is not being previewed is the same lie as the message.
       setPlan(null)
+      setPreviewing(false)
+      setError((e) => (e?.from === "apply" ? e : null))
       lastSent.current = null
       return
     }
@@ -255,7 +272,7 @@ function Reorder({
           // another go.
           lastSent.current = null
           setPlan(null)
-          setError(describe(e))
+          setError({ from: "preview", message: describe(e) })
         })
         .finally(() => {
           if (mine === generation.current) setPreviewing(false)
@@ -327,7 +344,7 @@ function Reorder({
       await api.applyReorder(plan.planId, acknowledged)
       onDone()
     } catch (e) {
-      setError(describe(e))
+      setError({ from: "apply", message: describe(e) })
     } finally {
       setApplying(false)
     }
@@ -416,7 +433,7 @@ function Reorder({
           {previewing && <span className="spinner spinner-inline" aria-hidden="true" />}
         </h2>
 
-        {error && <Message kind="error" title="champctl refused this" body={error} />}
+        {error && <Message kind="error" title="champctl refused this" body={error.message} />}
         {plan && !plan.noop && (
           <ul className="list">
             {plan.moves.map((m) => (

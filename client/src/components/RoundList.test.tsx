@@ -390,6 +390,41 @@ describe("reordering the rounds", () => {
     expect(screen.getByText(/already been raced/)).toBeTruthy()
   })
 
+  it("drops a preview refusal once the order is put back", async () => {
+    // The message is about an order that no longer exists. Leaving it up says
+    // champctl refused something, under a list nobody is previewing.
+    planReorderMock.mockRejectedValue(
+      new ApiFailure(422, "reorder", "Round 1 has already been raced."),
+    )
+    await reordering()
+    fireEvent.click(screen.getByRole("button", { name: /Move round 2 up/ }))
+    await settle()
+    expect(screen.getByText(/already been raced/)).toBeTruthy()
+
+    // Back where it started.
+    fireEvent.click(screen.getByRole("button", { name: /Move round 1 down/ }))
+    await settle()
+    expect(screen.queryByText(/already been raced/)).toBeNull()
+    expect(screen.getByText(/Move a round to see what it would change/)).toBeTruthy()
+  })
+
+  it("keeps an apply failure, which is about a write that happened", async () => {
+    // A reorder that landed part way names the rounds it moved, and dragging
+    // the rows back afterwards does not make that untrue.
+    applyReorderMock.mockRejectedValue(
+      new ApiFailure(500, "partial-reorder", "Rounds 1, 2 were moved; round 3 still holds."),
+    )
+    await reordering()
+    fireEvent.click(screen.getByRole("button", { name: /Move round 2 up/ }))
+    await settle()
+    fireEvent.click(screen.getByRole("button", { name: /Apply the new order/ }))
+    await waitFor(() => expect(screen.getByText(/were moved/)).toBeTruthy())
+
+    fireEvent.click(screen.getByRole("button", { name: /Move round 1 down/ }))
+    await settle()
+    expect(screen.getByText(/were moved/)).toBeTruthy()
+  })
+
   it("leaves the order alone on cancel", async () => {
     await reordering()
     fireEvent.click(screen.getByRole("button", { name: /Move round 2 up/ }))
