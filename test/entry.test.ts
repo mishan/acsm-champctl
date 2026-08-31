@@ -296,6 +296,60 @@ describe("the spectator car's model", () => {
     expect(f?.message).toContain("no car model set")
   })
 
+  /**
+   * The shape every 2.4.x export has, and the one this check got wrong.
+   *
+   * ACSM keeps the real car in `SpectatorCars[0]` and leaves the singular
+   * `SpectatorCar` blank. Reading the singular field made this fire on a
+   * championship whose spectator car was configured perfectly — measured
+   * against a live BATL championship that had been running for months.
+   */
+  it("reads the model out of SpectatorCars, where 2.4.x keeps it", () => {
+    const c = championship({
+      SpectatorCarEnabled: true,
+      SpectatorCar: { Model: "" },
+      SpectatorCars: [{ Model: "ford_transit", Name: "BATL TV", PitBox: 30 }],
+    })
+    expect(codes(c)).not.toContain("entry.spectator-no-model")
+  })
+
+  it("still warns when neither field carries a model", () => {
+    const c = championship({
+      SpectatorCarEnabled: true,
+      SpectatorCar: { Model: "" },
+      SpectatorCars: [{ Model: "", PitBox: 30 }],
+    })
+    expect(codes(c)).toContain("entry.spectator-no-model")
+  })
+
+  it("warns when the car is switched on and neither field exists at all", () => {
+    // The sharpest version of "nothing is set", and the one a check gated on
+    // *finding* a car skips: `spectatorCarRef` has nothing to return, so an
+    // early return there would have said the championship was fine.
+    const c = championship({ SpectatorCarEnabled: true })
+    delete c.SpectatorCar
+    delete c.SpectatorCars
+    expect(codes(c)).toContain("entry.spectator-no-model")
+  })
+
+  it("points at the field the model was actually read from", () => {
+    // Naming `SpectatorCars[0]` on a build that only has the singular sends
+    // someone to a key that isn't in their export.
+    const older = championship({ SpectatorCarEnabled: true, SpectatorCar: { Model: "" } })
+    delete older.SpectatorCars
+    expect(
+      run(older).findings.find((x) => x.code === "entry.spectator-no-model")?.location?.path,
+    ).toBe("SpectatorCar.Model")
+
+    const modern = championship({
+      SpectatorCarEnabled: true,
+      SpectatorCars: [{ Model: "", PitBox: 30 }],
+    })
+    expect(
+      run(modern).findings.find((x) => x.code === "entry.spectator-no-model")?.location?.path,
+    ).toBe("SpectatorCars[0].Model")
+  })
+
   it("says nothing when the spectator car is off", () => {
     const c = championship({ SpectatorCarEnabled: false, SpectatorCar: { Model: "" } })
     expect(codes(c)).not.toContain("entry.spectator-no-model")
@@ -307,6 +361,90 @@ describe("the spectator car's model", () => {
       SpectatorCar: { Model: "ford_transit" },
     })
     expect(codes(c)).not.toContain("entry.spectator-no-model")
+  })
+})
+
+/**
+ * Where the stream car parks.
+ *
+ * `CAR_n` is pit box n, so a spectator car below the list's length is sharing
+ * a box with a slot, and `AddInPitBox` overwrites on collision. Found on a
+ * live championship at box 0, cloned from one where it sat at 29.
+ */
+describe("the spectator car's pit box", () => {
+  const withBox = (box: number, slotCount = 4) =>
+    championship({
+      SpectatorCarEnabled: true,
+      SpectatorCars: [{ Model: "ford_transit", Name: "BATL TV", PitBox: box }],
+      Classes: [championshipClass({ Entrants: entryList(emptySlots(slotCount)) })],
+      Events: [raceEvent({ EntryList: entryList(emptySlots(slotCount)) })],
+    })
+
+  it("warns when it sits in a slot an entrant can hold", () => {
+    const f = run(withBox(0)).findings.find((x) => x.code === "entry.spectator-pit-box-taken")
+    expect(f?.severity).toBe("WARN")
+    expect(f?.message).toContain("pit box 0")
+    // The fix, named: past the end of the list.
+    expect(f?.message).toContain("park it at 4")
+    expect(f?.data).toMatchObject({ pitBox: 0, slots: 4, suggested: 4 })
+  })
+
+  it("is quiet when it is parked past the last slot", () => {
+    expect(codes(withBox(4))).not.toContain("entry.spectator-pit-box-taken")
+    expect(codes(withBox(9))).not.toContain("entry.spectator-pit-box-taken")
+  })
+
+  it("catches the last slot itself, which is a real box", () => {
+    // Off-by-one guard: 4 slots are boxes 0..3, so box 3 is taken and 4 is free.
+    expect(codes(withBox(3))).toContain("entry.spectator-pit-box-taken")
+  })
+
+  it("says nothing when the spectator car is off", () => {
+    const c = withBox(0)
+    c.SpectatorCarEnabled = false
+    expect(codes(c)).not.toContain("entry.spectator-pit-box-taken")
+  })
+
+  it("points at the field the box was read from", () => {
+    expect(
+      run(withBox(0)).findings.find((x) => x.code === "entry.spectator-pit-box-taken")?.location
+        ?.path,
+    ).toBe("SpectatorCars[0].PitBox")
+
+    const older = championship({
+      SpectatorCarEnabled: true,
+      SpectatorCar: { Model: "ford_transit", PitBox: 0 },
+      Classes: [championshipClass({ Entrants: entryList(emptySlots(4)) })],
+      Events: [raceEvent({ EntryList: entryList(emptySlots(4)) })],
+    })
+    delete older.SpectatorCars
+    expect(
+      run(older).findings.find((x) => x.code === "entry.spectator-pit-box-taken")?.location?.path,
+    ).toBe("SpectatorCar.PitBox")
+  })
+
+  /**
+   * Index 0 and no other.
+   *
+   * This scanned the array for the first entry with a model, which could pick
+   * index 1 — and the emitter rebuilds the array as `[spectator, ...slice(1)]`,
+   * so that car would be copied over index 0, duplicated, and index 0's own
+   * entry lost. Nobody has seen an array whose first entry is not the stream
+   * car.
+   */
+  it("reads index 0 even when a later entry has a model", () => {
+    const c = championship({
+      SpectatorCarEnabled: true,
+      SpectatorCars: [
+        { Model: "", PitBox: 30 },
+        { Model: "ford_transit", PitBox: 0 },
+      ],
+      Classes: [championshipClass({ Entrants: entryList(emptySlots(4)) })],
+      Events: [raceEvent({ EntryList: entryList(emptySlots(4)) })],
+    })
+    // Box 30 is past the 4 slots, so reading index 0 means no finding. Reading
+    // index 1 would report box 0 as taken.
+    expect(codes(c)).not.toContain("entry.spectator-pit-box-taken")
   })
 })
 

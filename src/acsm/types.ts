@@ -293,7 +293,20 @@ export interface Championship extends Unknowns {
   PracticeEntryListType?: number
 
   SpectatorCarEnabled?: boolean
+  /**
+   * The stream car. **Read it through `spectatorCar()`, never directly.**
+   *
+   * There are two fields and only one of them is populated. On 2.4.x the real
+   * car is `SpectatorCars[0]` — BATL's is a `ford_transit` called "BATL TV" —
+   * while the singular `SpectatorCar` is present and blank, an `Entrant` with
+   * `Model: ""` and a nil UUID. champctl read the singular one, so every
+   * question it asked about "the spectator model" was asked about an empty
+   * string: the emitter left the van out of `RaceSetup.Cars`, and the check
+   * for a spectator car with no model fired on a championship whose spectator
+   * car was configured perfectly.
+   */
   SpectatorCar?: Entrant
+  SpectatorCars?: Entrant[]
 
   ACSR?: boolean
   ExportSecondRaceToACSR?: boolean
