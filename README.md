@@ -5,7 +5,7 @@
 Championship creation, validation and stats for Assetto Corsa Server Manager.
 Built for BATL, usable by any league.
 
-Five commands:
+Six commands:
 
 | | |
 |---|---|
@@ -14,6 +14,7 @@ Five commands:
 | `champctl-finalize` | set a race's format and push it |
 | `champctl-championship` | create a championship from a template |
 | `champctl-serve` | the finalize and create-a-championship flows as a web UI, for people without a terminal |
+| `champctl-bot` | say what gridmom found in Discord |
 
 Working on champctl itself? See [AGENTS.md](AGENTS.md) and
 [docs/development.md](docs/development.md).
@@ -28,8 +29,9 @@ npm install
 npm run gridmom -- check --file fixtures/synthetic/suzuka-duplicate-pitboxes.json
 ```
 
-Installed, the five commands are on your `PATH` as `gridmom`,
-`champctl-archive`, `champctl-finalize`, `champctl-championship` and `champctl-serve`.
+Installed, the six commands are on your `PATH` as `gridmom`,
+`champctl-archive`, `champctl-finalize`, `champctl-championship`,
+`champctl-serve` and `champctl-bot`.
 From a checkout, `npm run gridmom -- <args>` is the same thing.
 
 Every command takes `--profile` and `--base-url`; `--help` on any of them is
@@ -348,6 +350,88 @@ npm run serve      # the API and, if built, the client
 npm run dev        # Vite on :5173, proxying /api to a champctl-serve on :3000
 ```
 
+## champctl-bot
+
+What champctl says in Discord. One command so far: the nightly gridmom report.
+
+```
+champctl-bot report        check every championship and post what's wrong
+
+  --profile <id|path>   league profile (default: batl)
+  --channel <id>        override the profile's discord.adminChannelId
+  --min <severity>      ERROR | WARN | INFO     (default: WARN)
+  --suppress <codes>    comma-separated finding codes or prefixes to hide
+  --all                 include championships whose every round has been raced
+  --dry-run             print what would be posted; talk to nobody
+  --pits <path>         track pit table (default: data/track-pits.json)
+  --base-url <url>      override the profile's ACSM base URL
+  --no-cache            bypass the on-disk response cache
+```
+
+```
+$ champctl-bot report --dry-run
+
+checked    BATL September 2026 (1111…) — 2 errors, 0 warnings
+finished   BATL July 2026 (2222…) — every round has been raced
+FAILED     Deleted (3333…) — 404 Not Found from /championship/3333…/export
+
+**gridmom — BATL September 2026**
+Suzuka's entry list has duplicate pit boxes at 3 and 16. There are gaps at 0
+and 1 to move them into. Saving this event will drop 2 drivers from the list.
+Also Nobody set the race length for suzuka (round 1).
+
+**gridmom — Deleted**
+I couldn't read this one: 404 Not Found from /championship/3333…/export
+
+1 checked, 1 already run, 1 failed, 2 messages
+```
+
+**The bot holds no ACSM credentials, and there is no flag that would give it
+any.** It reads through Public Access, the same way gridmom and the archive do,
+and everything it can do to a league is say something in a channel. When the
+poll and proposal flows arrive they will post a *link* into `champctl-serve`,
+which a person opens under their own login — the bot proposes, a human applies.
+`src/bot/` importing anything from the write path is a failing test, not a code
+review note.
+
+Exit codes match gridmom's, so a timer can decide whether to page anyone: `0`
+nothing worth reporting, `1` warnings only, `2` at least one error or a
+championship that couldn't be read, `3` the run itself failed. A championship
+that fails never aborts the rest of the walk, and a failure outranks a clean
+night — twelve clean championships and one that timed out exits `2`.
+
+Three things worth knowing:
+
+- **A championship whose every round has been raced is skipped.** Its findings
+  can't be acted on — the duplicate pit boxes already dropped whoever they
+  dropped — so posting them says nothing but "here I am again", nightly, for as
+  long as the league keeps its history. That is how a report gets muted, and a
+  muted report is worse than none, because everyone still believes it is
+  watching. `--all` includes them.
+- **Nothing is posted about a clean championship.** A silent channel means a
+  clean server; whether the job ran is what the exit code is for.
+- **A long report is split rather than dropped.** Discord refuses a message over
+  2000 characters outright, so without splitting the championship with the most
+  wrong with it is the one whose report goes missing.
+
+Run it nightly, from cron or a timer, and point it at an admin channel: findings
+quote the entry list, so they name drivers.
+
+**Setup.** Create an application at
+<https://discord.com/developers/applications>, add a bot, invite it to the
+server with **Send Messages** in the channel you want, and put its token in
+`CHAMPCTL_DISCORD_TOKEN`. The channel id goes in the profile — right-click the
+channel, "Copy Channel ID". No intents are needed and none are requested; a
+report reads nothing from Discord.
+
+```sh
+CHAMPCTL_DISCORD_TOKEN=… champctl-bot report
+```
+
+The token is never a flag. A token on a command line is in your shell history
+and in every `ps` listing on the box, so `--token` is an error that says so
+rather than an option that quietly isn't there.
+
 ## Configuration
 
 **League profile.** BATL's baseline is `profiles/batl.json`; another league
@@ -395,6 +479,18 @@ with `manual` always winning, because mod tracks routinely lie in their ui file.
 The file is gitignored: it's league data, not code. Without it the grid checks
 degrade to a warning that the pit count is unknown rather than guessing.
 
+**Discord.** `discord.adminChannelId` in the profile, a channel id as "Copy
+Channel ID" gives it — 17 to 20 digits, not a name and not a link, both of which
+would otherwise fail at post time on a job nobody watches. It lives in the
+profile rather than the environment because a channel id is league
+configuration, not a secret; the token is the secret and stays in
+`CHAMPCTL_DISCORD_TOKEN`. `profiles/batl.json` deliberately ships without one,
+since a committed channel id is a channel every fork posts into.
+
+```json
+"discord": { "adminChannelId": "1234567890123456789" }
+```
+
 **Credentials.** `CHAMPCTL_USERNAME` and `CHAMPCTL_PASSWORD`, read from the
 environment and never written to disk. Only the write *commands* need them —
 `champctl-serve` deliberately does not read them at all, because a long-running
@@ -417,7 +513,14 @@ have a web UI. What's left:
 - **Reordering is web-only.** The engine is in `src/reorder/`, and nothing on
   the command line reaches it — unlike every other engine here, which has a CLI
   as its first front end.
-- **No Discord bot**, so no polls, no announcements, no nightly gridmom report.
+- **The bot only reports.** The nightly gridmom report is there; announcements,
+  standings, the format poll and the poll-to-proposal loop are not, and neither
+  are the `/stats` lookups, which want the archive projections that don't exist
+  yet.
+- **The nightly report has no memory.** It says the same thing every night until
+  someone fixes it, which is gridmom's voice by design but also means there is
+  nothing to lean on if a league wants "tell me once". A digest per championship
+  in the archive database would do it.
 - **Content checks have no source.** Three `content.*` checks need an index of
   what's installed on the server, and nothing populates one yet, so they can't
   fire. The pit-count check reads the pit table instead and works today.

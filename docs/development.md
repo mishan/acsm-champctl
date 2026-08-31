@@ -17,6 +17,8 @@ src/
   finalize/    race format, schedule maths, plan + apply
   reorder/     moving rounds around the calendar, plan + apply
   emit/        template merge, championship generation, clone
+  bot/         what champctl says in Discord: the nightly walk, the message
+               composer, and the one module that imports discord.js
   web/         the HTTP service: Fastify routes, session and plan stores,
                error translation, and the wire types the client shares
   cli/         the command-line entry points, over a shared args module
@@ -39,7 +41,25 @@ change" was CLI code until the UI needed the same rule.
 **The read client and the write session are separate types on purpose.**
 `AcsmReader` has no way to authenticate; `AcsmSession` holds a cookie jar. The
 bot and the archive import only the reader, which makes "the bot never holds
-write credentials" a property of the code rather than a promise.
+write credentials" a property of the code rather than a promise. `test/bot.test.ts`
+asserts it structurally — nothing under `src/bot/` may import `acsm/session`,
+`acsm/write`, either `apply` module or anything under `web/` — because the bot
+is the component most likely to grow a "just this once" convenience: it is the
+one that will be holding a poll result somebody wants applied.
+
+**The bot is three layers, and only the last one knows Discord exists.**
+`bot/nightly.ts` turns a server into a list of `CheckReport`s, `bot/message.ts`
+turns those into strings, and `bot/transport.ts` posts them. That is what lets
+the whole thing be tested without a token, a gateway or a network —
+`RecordingTransport` is the entire double, and it is also what `--dry-run`
+prints, so the preview a person checks before wiring up cron comes out of the
+code path under test rather than a second formatter that agrees with it today.
+
+Splitting a long report measures the *rendered* message rather than estimating
+from the findings, since the heading, the bullets and the "Also" joins are all
+characters. Discord refuses anything over 2000 outright rather than truncating,
+so the failure without it is the championship with the most wrong with it being
+the one whose report never arrives.
 
 ## Gates
 
@@ -346,6 +366,13 @@ Two copies of that list is one that gets updated and one that doesn't.
   the whole plan-and-apply over a scripted `fetch`, so the refusals and the
   partial-write reporting are covered, but the live suite has no reorder case —
   and a reorder is the write path that touches the most event forms in one go.
+- **Nothing exercises the real Discord gateway.** `GatewayTransport` is the one
+  module `test/bot.test.ts` cannot reach, because every test above it stops at
+  the transport interface. What that leaves uncovered is the login race the
+  class exists to close — `client.login()` resolves before `channels.fetch` can
+  see anything — and the two refusals for a channel that is missing or isn't
+  sendable. All three are one `champctl-bot report --channel` away from being
+  checked by hand against a scratch server, and none of them is checked by CI.
 - **`champctl-serve` has no live test.** `test/live/flows.live.test.ts` drives
   finalize against the Docker harness through the engine; nothing drives it
   through HTTP. The engine is where the risk is, so this is a gap in coverage
