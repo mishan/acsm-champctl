@@ -18,7 +18,7 @@ import { pathToFileURL } from "node:url"
 
 import { SqliteCache } from "../acsm/cache.js"
 import { HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
-import { announce, NothingToAnnounce, withZoneNote, type Announcement } from "../bot/announce.js"
+import { announce, NothingToAnnounce, type Announcement } from "../bot/announce.js"
 import { LIVERY_COMMANDS } from "../bot/commands.js"
 import { GatewayTransport } from "../bot/discord.js"
 import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
@@ -456,7 +456,7 @@ async function runAnnounce(
     throw e
   }
 
-  await post([withZoneNote(announcement.content, profile)])
+  await post([announcement.content])
   process.stdout.write(`Announced round ${announcement.round}.\n`)
   return 0
 }

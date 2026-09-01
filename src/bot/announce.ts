@@ -113,10 +113,19 @@ export function announce(c: Championship, options: AnnounceOptions): Announcemen
   }
 
   const parts = partsFor(options.profile)
+
+  // Computed once, and it is the instant everything time-shaped hangs off:
+  // the clock, the date, and the zone abbreviation at the end.
+  const quali = currentQualiStart(
+    ev,
+    options.profile.schedule.timezone,
+    practiceMinutesFor(ev, options.profile.schedule.practiceMinutes),
+  )
+
   const lines: string[] = [heading(c, ev, round, parts)]
 
   const detail = [
-    parts.quali ? qualiLine(ev, options.profile) : undefined,
+    parts.quali ? qualiLine(quali) : undefined,
     parts.format ? `Format: ${describeFormat(readFormat(ev), options.profile)}.` : undefined,
   ].filter((s): s is string => s !== undefined)
   lines.push(...detail)
@@ -126,7 +135,14 @@ export function announce(c: Championship, options: AnnounceOptions): Announcemen
     if (link) lines.push(`Sign up: ${link}`)
   }
 
-  return { round, content: lines.join("\n") }
+  const content = lines.join("\n")
+  // Appended here rather than by the caller, so it cannot end up on a message
+  // whose time it doesn't describe. Gated on a time having been *stated* rather
+  // than merely being known: a league that turns the quali line off gets a
+  // message with no clock in it, and a message with no clock has no zone to
+  // qualify.
+  const stated = parts.quali && quali?.isValid ? quali : undefined
+  return { round, content: stated ? withZoneNote(content, stated) : content }
 }
 
 function heading(
@@ -149,20 +165,14 @@ function heading(
  * would tell everyone to turn up an hour early — which is the single most
  * likely way this message could be confidently wrong.
  */
-function qualiLine(ev: ChampionshipEvent, profile: LeagueProfile): string {
-  const zone = profile.schedule.timezone
-  const quali = currentQualiStart(
-    ev,
-    zone,
-    practiceMinutesFor(ev, profile.schedule.practiceMinutes),
-  )
+function qualiLine(quali: DateTime | undefined): string {
   if (!quali || !quali.isValid) return "Quali time not set yet."
 
   // Locale pinned for the same reason gridmom pins it: the prose around the
   // date is English, so a host running under LANG=de_DE must not produce
   // "Mittwoch" in the middle of an English sentence.
-  const when = quali.setLocale(MESSAGE_LOCALE).toFormat("cccc d LLLL")
-  return `Quali ${quali.setLocale(MESSAGE_LOCALE).toFormat("HH:mm")} on ${when}.`
+  const at = quali.setLocale(MESSAGE_LOCALE)
+  return `Quali ${at.toFormat("HH:mm")} on ${at.toFormat("cccc d LLLL")}.`
 }
 
 function signUpLink(c: Championship, baseUrl: string | undefined): string | undefined {
@@ -170,9 +180,19 @@ function signUpLink(c: Championship, baseUrl: string | undefined): string | unde
   return `${baseUrl.replace(/\/+$/, "")}${championshipPath(c.ID)}`
 }
 
-/** The timezone is named once, at the end, rather than on every line. */
-export function withZoneNote(content: string, profile: LeagueProfile): string {
-  const zone = profile.schedule.timezone
-  const abbr = DateTime.now().setZone(zone).setLocale(MESSAGE_LOCALE).toFormat("ZZZZ")
-  return `${content}\n-# All times ${abbr}.`
+/**
+ * The timezone, named once at the end rather than on every line.
+ *
+ * **Read off the announced instant, never off the current one.** This took the
+ * profile and used `DateTime.now()`, which is right for about fifty weeks of
+ * the year and wrong across a clock change: a cron run in October announcing a
+ * race on 4 November said "All times PDT" about a race that runs in PST. The
+ * message is then an hour out, stated confidently, to the whole league — and
+ * the announcement is exactly the thing people set an alarm by.
+ *
+ * Takes the `DateTime` rather than a zone plus an instant, because those are
+ * two arguments that can disagree and this is one that cannot.
+ */
+export function withZoneNote(content: string, at: DateTime): string {
+  return `${content}\n-# All times ${at.setLocale(MESSAGE_LOCALE).toFormat("ZZZZ")}.`
 }
