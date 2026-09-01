@@ -425,3 +425,13 @@ have a web UI. What's left:
   archive's first run produces a real one, it just needs sanitising first.
 
 Full design in [`acsm-champctl-plan.md`](acsm-champctl-plan.md).
+
+## License
+
+MIT — see [LICENSE](LICENSE). champctl is deliberately public so another league
+can run it with its own profile; nothing here is BATL-specific except
+`profiles/batl.json`.
+
+Assetto Corsa Server Manager itself is separate software under its own terms,
+and none of it is redistributed here. The premium build and its licence key are
+a per-purchase thing you supply yourself — see [`docker/README.md`](docker/README.md).
