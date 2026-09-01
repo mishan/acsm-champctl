@@ -17,8 +17,9 @@ src/
   finalize/    race format, schedule maths, plan + apply
   reorder/     moving rounds around the calendar, plan + apply
   emit/        template merge, championship generation, clone
-  bot/         what champctl says in Discord: the nightly walk, the message
-               composer, and the one module that imports discord.js
+  bot/         what champctl says in Discord: the nightly walk, the week's
+               announcement, the message composer, and the one module that
+               imports discord.js
   web/         the HTTP service: Fastify routes, session and plan stores,
                error translation, and the wire types the client shares
   cli/         the command-line entry points, over a shared args module
@@ -60,6 +61,15 @@ from the findings, since the heading, the bullets and the "Also" joins are all
 characters. Discord refuses anything over 2000 outright rather than truncating,
 so the failure without it is the championship with the most wrong with it being
 the one whose report never arrives.
+
+**There is no schedule table, and there should not be one.** Plan §7 has the
+announcement coming "from the tool's own schedule table, not ACSM". The export
+already carries `Scheduled`, champctl already knows `Scheduled = qualiStart −
+practice`, and a second copy of the calendar is a second thing to be wrong. If
+the announcement and the manager ever disagreed about when the race was, the
+manager is what the server actually runs — so the manager is what gets read.
+`bot/announce.ts` derives quali start rather than printing `Scheduled`, which is
+the one way this message could be confidently wrong every week.
 
 ## Gates
 
