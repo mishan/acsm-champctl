@@ -21,6 +21,7 @@ import {
 } from "../gridmom/finding.js"
 import { DEFAULT_MIN_SEVERITY, filterBySeverity, formatDiscord } from "../gridmom/report.js"
 import type { NightlyEntry, NightlyReport } from "./nightly.js"
+import type { Standings } from "./standings.js"
 import { MESSAGE_LIMIT } from "./transport.js"
 
 export interface MessageOptions {
@@ -117,6 +118,56 @@ export function reportMessages(
   }
 
   flush()
+  return messages
+}
+
+/**
+ * A standings table as a Discord message.
+ *
+ * A code block, because Discord renders proportional text everywhere else and a
+ * table of points that doesn't line up is harder to read than a list. The
+ * source is named in the footer: when champctl worked the numbers out itself
+ * rather than asking ACSM, whoever reads this should know that before they
+ * argue with someone about a point.
+ */
+export function standingsMessage(
+  subject: string,
+  standings: Standings,
+  opts: MessageOptions = {},
+): string[] {
+  const limit = opts.limit ?? MESSAGE_LIMIT
+  const scored = standings.classes.filter((c) => c.rows.length > 0)
+  if (scored.length === 0) return []
+
+  const footer =
+    standings.source === "endpoint"
+      ? ""
+      : "\n-# Worked out from the championship export, not read from Server Manager."
+
+  const messages: string[] = []
+  for (const cls of scored) {
+    const heading = cls.name ? `**${subject} — ${cls.name}**` : `**${subject}**`
+    const width = String(Math.max(...cls.rows.map((r) => r.points))).length
+
+    // Chunked by rows so a 30-driver class still posts. The heading repeats for
+    // the same reason it does in a split gridmom report: Discord hides the
+    // author on consecutive messages.
+    let rows: string[] = []
+    const flush = (): void => {
+      if (rows.length === 0) return
+      const head = messages.length === 0 ? heading : `${heading} (continued)`
+      messages.push(`${head}\n\`\`\`\n${rows.join("\n")}\n\`\`\`${footer}`)
+      rows = []
+    }
+    for (const row of cls.rows) {
+      const line = `${String(row.position).padStart(2)}. ${row.driver.padEnd(20)} ${String(row.points).padStart(width)}`
+      const candidate = [...rows, line]
+      const size = heading.length + candidate.join("\n").length + footer.length + 20
+      if (size > limit && rows.length > 0) flush()
+      rows = rows.length === 0 ? [line] : candidate
+    }
+    flush()
+  }
   return messages
 }
 

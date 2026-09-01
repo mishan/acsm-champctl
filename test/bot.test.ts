@@ -493,9 +493,10 @@ describe("the CLI", () => {
     expect(parseArgs(["report", "--min", "info"]).min).toBe("INFO")
   })
 
-  it("takes a championship id and an optional round for announce", () => {
+  it("takes a championship id for announce and standings", () => {
     expect(parseArgs(["announce", "abc"]).championshipId).toBe("abc")
     expect(parseArgs(["announce", "abc", "2"]).round).toBe(2)
+    expect(parseArgs(["standings", "abc"]).championshipId).toBe("abc")
   })
 
   it("refuses a round it would have to guess at", () => {
@@ -517,6 +518,7 @@ describe("which channel each command posts to", () => {
     const p = profile({ adminChannelId: "1".repeat(18), announceChannelId: "2".repeat(18) })
     expect(channelFor("report", p).id).toBe("1".repeat(18))
     expect(channelFor("announce", p).id).toBe("2".repeat(18))
+    expect(channelFor("standings", p).id).toBe("2".repeat(18))
   })
 
   it("never falls back from one to the other", () => {

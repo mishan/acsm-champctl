@@ -18,8 +18,8 @@ src/
   reorder/     moving rounds around the calendar, plan + apply
   emit/        template merge, championship generation, clone
   bot/         what champctl says in Discord: the nightly walk, the week's
-               announcement, the message composer, and the one module that
-               imports discord.js
+               announcement, standings, the message composer, and the one
+               module that imports discord.js
   web/         the HTTP service: Fastify routes, session and plan stores,
                error translation, and the wire types the client shares
   cli/         the command-line entry points, over a shared args module
@@ -70,6 +70,26 @@ the announcement and the manager ever disagreed about when the race was, the
 manager is what the server actually runs — so the manager is what gets read.
 `bot/announce.ts` derives quali start rather than printing `Scheduled`, which is
 the one way this message could be confidently wrong every week.
+
+**Standings have two sources because neither one is enough.** `standings.json`
+is ACSM's own arithmetic and cannot disagree with the page drivers look at, but
+it is premium-only (docs/acsm-write-path.md §6) — no harness serves it, no
+fixture of it exists, and `parseStandings` is therefore written to *fail to
+recognise* rather than to dig hopefully through an object nobody has measured.
+The export works everywhere, at the cost of champctl doing the sums.
+
+`computeStandings` refuses where ACSM's scoring is unmeasured — `IgnoreXWorstEvents`,
+the three penalty-points fields, and the second race of a reversed-grid round —
+and names which one stopped it. That is the fail-closed rule applied to a read:
+a standings table posted to a league is believed, so being quietly wrong costs
+more than being unavailable. The refusal doubles as the to-do list, and
+`npm run recon:standings` is the script that would close it.
+
+`compareStandings` is what stops the fallback rotting. At a premium league the
+endpoint always answers, so the computation would otherwise sit unexercised
+until the day it was needed. Running both under `auto` and reporting the
+difference to stderr means it is exercised on every run, and a disagreement is
+worth having either way round.
 
 ## Gates
 
@@ -376,6 +396,17 @@ Two copies of that list is one that gets updated and one that doesn't.
   the whole plan-and-apply over a scripted `fetch`, so the refusals and the
   partial-write reporting are covered, but the live suite has no reorder case —
   and a reorder is the write path that touches the most event forms in one go.
+- **`parseStandings` has never met a real response.** Every case in
+  `test/standings.test.ts` is a shape someone thought plausible, which makes the
+  tests a record of an assumption rather than of a measurement. The one thing
+  they genuinely pin is that an unrecognised shape returns `undefined` instead
+  of a half-read table. Until `npm run recon:standings` is run against a premium
+  manager, treat the accepted spellings as guesses.
+- **The export scorer is unverified against ACSM.** It agrees with itself and
+  with the fixtures; nothing has yet confirmed that it agrees with the standings
+  page for even the simple places-only case it is willing to compute.
+  `compareStandings` is built to answer this the first time both sources are
+  available on one championship.
 - **Nothing exercises the real Discord gateway.** `GatewayTransport` is the one
   module `test/bot.test.ts` cannot reach, because every test above it stops at
   the transport interface. What that leaves uncovered is the login race the
