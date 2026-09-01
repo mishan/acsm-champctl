@@ -19,7 +19,7 @@ import {
   type CheckReport,
   type Finding,
 } from "../gridmom/finding.js"
-import { filterBySeverity, formatDiscord } from "../gridmom/report.js"
+import { DEFAULT_MIN_SEVERITY, filterBySeverity, formatDiscord } from "../gridmom/report.js"
 import type { NightlyEntry, NightlyReport } from "./nightly.js"
 import { MESSAGE_LIMIT } from "./transport.js"
 
@@ -73,7 +73,7 @@ export function reportMessages(
   opts: MessageOptions = {},
 ): string[] {
   const limit = opts.limit ?? MESSAGE_LIMIT
-  const findings = filterBySeverity(report.findings, opts.minSeverity ?? Severity.WARN)
+  const findings = filterBySeverity(report.findings, opts.minSeverity ?? DEFAULT_MIN_SEVERITY)
   if (findings.length === 0) return []
 
   const messages: string[] = []
@@ -123,6 +123,6 @@ export function reportMessages(
 function render(subject: string, findings: readonly Finding[], opts: MessageOptions): string {
   return formatDiscord(
     { findings: [...findings], counts: countBySeverity(findings), ok: !blocksPush(findings) },
-    { subject, minSeverity: opts.minSeverity ?? Severity.WARN },
+    { subject, minSeverity: opts.minSeverity ?? DEFAULT_MIN_SEVERITY },
   )
 }

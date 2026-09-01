@@ -10,6 +10,19 @@ import { Severity, type CheckReport, type Finding } from "./finding.js"
 
 export type ReportFormat = "text" | "json" | "discord"
 
+/**
+ * What a Discord report shows when nobody says otherwise.
+ *
+ * One constant rather than a `?? Severity.WARN` at each site, because the
+ * threshold decides two different things that have to agree: which findings get
+ * posted, and — through the bot's exit code — whether cron thinks the night was
+ * clean. Three independent copies of the same default agreed by coincidence,
+ * and nothing would have caught one of them changing. Drifting apart is silent
+ * in both directions: a bot that posts warnings and exits 0, or one that exits
+ * 1 having said nothing.
+ */
+export const DEFAULT_MIN_SEVERITY: Severity = Severity.WARN
+
 const ANSI = {
   reset: "[0m",
   dim: "[2m",
@@ -104,7 +117,7 @@ export function summaryLine(report: CheckReport): string {
  * > the lap count.
  */
 export function formatDiscord(report: CheckReport, opts: FormatOptions = {}): string {
-  const findings = filterBySeverity(report.findings, opts.minSeverity ?? Severity.WARN)
+  const findings = filterBySeverity(report.findings, opts.minSeverity ?? DEFAULT_MIN_SEVERITY)
   const title = report.championshipName ?? report.championshipId ?? "the championship"
 
   if (opts.subject !== undefined) {

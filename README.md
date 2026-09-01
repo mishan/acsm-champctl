@@ -366,6 +366,8 @@ champctl-bot report        check every championship and post what's wrong
   --pits <path>         track pit table (default: data/track-pits.json)
   --base-url <url>      override the profile's ACSM base URL
   --no-cache            bypass the on-disk response cache
+  --now <iso>           pretend it is this time (for the schedule checks)
+  -h, --help            this
 ```
 
 ```

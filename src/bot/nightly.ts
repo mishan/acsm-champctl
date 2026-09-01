@@ -21,7 +21,7 @@ import type { Championship } from "../acsm/types.js"
 import { eventHasStarted, events } from "../acsm/view.js"
 import { check } from "../gridmom/index.js"
 import { Severity, type CheckReport } from "../gridmom/finding.js"
-import { filterBySeverity } from "../gridmom/report.js"
+import { DEFAULT_MIN_SEVERITY, filterBySeverity } from "../gridmom/report.js"
 import type { PitTable } from "../pits/table.js"
 import type { LeagueProfile } from "../profile/types.js"
 
@@ -72,7 +72,7 @@ export function isFinished(c: Championship): boolean {
 /** Findings at or above `min`, across every championship that was checked. */
 export function findingsAtOrAbove(
   report: NightlyReport,
-  min: Severity = Severity.WARN,
+  min: Severity = DEFAULT_MIN_SEVERITY,
 ): Record<Severity, number> {
   const counts: Record<Severity, number> = { ERROR: 0, WARN: 0, INFO: 0 }
   for (const entry of report.entries) {

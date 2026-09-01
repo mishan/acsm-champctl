@@ -155,6 +155,69 @@ describe("a championship that can't be read", () => {
   })
 })
 
+describe("the severity threshold", () => {
+  /** A championship whose only problem is a warning, not an error. */
+  const warnOnly = () =>
+    championship({
+      ID: "44444444-4444-4444-4444-444444444444",
+      Name: "Warnings Only",
+      // Two events on the same night: champ-level, WARN, and nothing else.
+      Events: [raceEvent(), raceEvent()],
+    })
+
+  it("posts and counts against the same number", async () => {
+    // These decide different things — what goes in the channel, and what cron
+    // is told the night was like — off one default that used to be written out
+    // three times. Nothing made those three agree. Drifting apart is silent in
+    // both directions: warnings posted with exit 0, or exit 1 with an empty
+    // channel. Assert they move together rather than that either is WARN.
+    const report = await nightly(new StaticAcsmReader([warnOnly()]), opts())
+
+    for (const min of [Severity.ERROR, Severity.WARN, Severity.INFO] as const) {
+      const posted = nightlyMessages(report, { minSeverity: min }).length > 0
+      const counts = findingsAtOrAbove(report, min)
+      const wouldExitNonZero = exitCodeFor(counts, report.failed) !== 0
+      expect(wouldExitNonZero, `min=${min} posts ${posted} but exits ${wouldExitNonZero}`).toBe(
+        posted,
+      )
+    }
+  })
+
+  it("is written down once", () => {
+    // The structural half, and the one that actually stops the drift: the
+    // default lived in three modules as `?? Severity.WARN`, agreeing by
+    // coincidence. Asserting the *value* somewhere wouldn't catch a fourth copy
+    // appearing, so assert instead that the bot and its CLI name the constant
+    // rather than spelling the severity out.
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src")
+    const files = [
+      ...readdirSync(join(root, "bot"))
+        .filter((f) => f.endsWith(".ts"))
+        .map((f) => join(root, "bot", f)),
+      join(root, "cli", "bot.ts"),
+      join(root, "gridmom", "report.ts"),
+    ]
+
+    const offences: string[] = []
+    for (const file of files) {
+      for (const [i, line] of readFileSync(file, "utf8").split("\n").entries()) {
+        // Comments talk *about* the default — this file's own explanation of
+        // why it exists quotes `?? Severity.WARN` — so only code counts. An
+        // earlier version of this test flagged that prose and nothing else,
+        // which is the failure mode a source-scanning test is prone to.
+        const code = line.trim()
+        if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) continue
+        // The constant's own definition is the one place allowed to say it.
+        if (code.includes("DEFAULT_MIN_SEVERITY: Severity = Severity.WARN")) continue
+        if (/\?\?\s*Severity\.WARN|=\s*Severity\.WARN/.test(code)) {
+          offences.push(`${file.slice(root.length + 1)}:${i + 1}`)
+        }
+      }
+    }
+    expect(offences, "use DEFAULT_MIN_SEVERITY rather than a fresh copy").toEqual([])
+  })
+})
+
 describe("exit codes", () => {
   it("rank errors over warnings over silence", () => {
     expect(exitCodeFor({ ERROR: 0, WARN: 0, INFO: 9 }, 0)).toBe(0)

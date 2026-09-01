@@ -23,6 +23,7 @@ import { nightlyMessages } from "../bot/message.js"
 import { findingsAtOrAbove, nightly, type NightlyEntry } from "../bot/nightly.js"
 import { BotError, RecordingTransport, type DiscordTransport } from "../bot/transport.js"
 import type { Severity } from "../gridmom/finding.js"
+import { DEFAULT_MIN_SEVERITY } from "../gridmom/report.js"
 import { loadProfile } from "../profile/load.js"
 import { loadPits, reportUsageError, runCli, UsageError } from "./args.js"
 
@@ -263,9 +264,13 @@ async function runCommand(argv: readonly string[]): Promise<number> {
       onProgress: (entry) => process.stderr.write(`${describe(entry)}\n`),
     })
 
-    const messages = nightlyMessages(report, {
-      ...(args.min ? { minSeverity: args.min } : {}),
-    })
+    // Resolved once, used twice. These two decide different things — what goes
+    // in the channel, and what cron is told the night was like — and they have
+    // to be the same number. Reading the default separately at each call site
+    // is how they drift, silently and in both directions: a bot that posts
+    // warnings and exits 0, or one that exits 1 having said nothing.
+    const minSeverity = args.min ?? DEFAULT_MIN_SEVERITY
+    const messages = nightlyMessages(report, { minSeverity })
 
     for (const content of messages) {
       // `channelId` is non-empty here for a real post; a dry run records
@@ -277,7 +282,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
       for (const m of messages) process.stdout.write(`${m}\n\n`)
     }
 
-    const counts = findingsAtOrAbove(report, args.min)
+    const counts = findingsAtOrAbove(report, minSeverity)
     process.stdout.write(
       `${summarise(report.checked, report.finished, report.failed, messages.length)}\n`,
     )
