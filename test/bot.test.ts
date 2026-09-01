@@ -17,7 +17,7 @@ import type { Championship, ChampionshipSummary } from "../src/acsm/types.js"
 import { nightlyMessages, reportMessages } from "../src/bot/message.js"
 import { findingsAtOrAbove, isFinished, nightly } from "../src/bot/nightly.js"
 import { MESSAGE_LIMIT, RecordingTransport, type DiscordTransport } from "../src/bot/transport.js"
-import { exitCodeFor, parseArgs, withResources } from "../src/cli/bot.js"
+import { channelFor, exitCodeFor, parseArgs, withResources } from "../src/cli/bot.js"
 import { Severity, type Finding } from "../src/gridmom/finding.js"
 import { formatDiscord } from "../src/gridmom/report.js"
 import { validateProfile } from "../src/profile/load.js"
@@ -492,6 +492,48 @@ describe("the CLI", () => {
     expect(parseArgs(["report"]).min).toBeUndefined()
     expect(parseArgs(["report", "--min", "info"]).min).toBe("INFO")
   })
+
+  it("takes a championship id and an optional round for announce", () => {
+    expect(parseArgs(["announce", "abc"]).championshipId).toBe("abc")
+    expect(parseArgs(["announce", "abc", "2"]).round).toBe(2)
+  })
+
+  it("refuses a round it would have to guess at", () => {
+    // parseInt("2nd") is 2. Announcing round 2 because someone typed the round
+    // they meant in words is worse than saying what was wanted.
+    expect(() => parseArgs(["announce", "abc", "2nd"])).toThrow(/whole number/)
+    expect(() => parseArgs(["announce", "abc", "0"])).toThrow(/whole number/)
+  })
+
+  it("names an unknown command rather than treating it as an id", () => {
+    expect(() => parseArgs(["frobnicate", "abc"])).toThrow(/Unknown command/)
+  })
+})
+
+describe("which channel each command posts to", () => {
+  const profile = (discord: Record<string, string>) => testProfile({ discord })
+
+  it("sends gridmom to the admins and announcements to the league", () => {
+    const p = profile({ adminChannelId: "1".repeat(18), announceChannelId: "2".repeat(18) })
+    expect(channelFor("report", p).id).toBe("1".repeat(18))
+    expect(channelFor("announce", p).id).toBe("2".repeat(18))
+  })
+
+  it("never falls back from one to the other", () => {
+    // The safety property. gridmom quotes the entry list, so a report falling
+    // back to the announce channel would tell the whole league which three
+    // drivers are about to be dropped from the grid. Refusing is correct.
+    const adminOnly = profile({ adminChannelId: "1".repeat(18) })
+    expect(channelFor("announce", adminOnly).id).toBeUndefined()
+
+    const announceOnly = profile({ announceChannelId: "2".repeat(18) })
+    expect(channelFor("report", announceOnly).id).toBeUndefined()
+  })
+
+  it("names the key to set, so the refusal is actionable", () => {
+    expect(channelFor("report", testProfile()).key).toBe("adminChannelId")
+    expect(channelFor("announce", testProfile()).key).toBe("announceChannelId")
+  })
 })
 
 describe("the profile's Discord settings", () => {
@@ -528,6 +570,20 @@ describe("the profile's Discord settings", () => {
 
   it("is optional, because not every league runs a bot", () => {
     expect(withDiscord(undefined).discord).toBeUndefined()
+  })
+
+  it("checks the announce channel the same way as the admin one", () => {
+    expect(() => withDiscord({ announceChannelId: "#general" })).toThrow(/17 to 20 digits/)
+  })
+
+  it("rejects an announce part it doesn't know", () => {
+    // A typo in an opt-*out* block is silent in the worst direction: "quail"
+    // leaves quali on, and reads to whoever wrote it as already turned off.
+    expect(() => withDiscord({ announce: { quail: false } })).toThrow(/not a thing/)
+  })
+
+  it("rejects a non-boolean announce part", () => {
+    expect(() => withDiscord({ announce: { quali: "no" } })).toThrow(/true or false/)
   })
 })
 

@@ -110,6 +110,40 @@ export interface DiscordSettings {
    * looked at it.
    */
   adminChannelId?: string
+  /**
+   * Channel announcements and standings go into. The league's channel, not the
+   * admins' — this is the one drivers read.
+   *
+   * Separate from `adminChannelId` rather than defaulting to it, because the
+   * two carry different things: gridmom quotes the entry list and names who is
+   * about to be dropped from the grid, and an announcement says the race is on
+   * Wednesday. Falling back to one channel would put the first kind in front of
+   * the league the first time somebody forgot to set the second.
+   */
+  announceChannelId?: string
+  /**
+   * Which parts of an announcement champctl says.
+   *
+   * Configurable because ACSM has its own Discord integration and BATL already
+   * has it switched on, so some of this is said twice by default. Which parts
+   * overlap depends on how that integration is configured, which champctl
+   * cannot see — so the league decides rather than champctl guessing.
+   *
+   * Absent means all of them.
+   */
+  announce?: AnnounceParts
+}
+
+/** Each part of an announcement, on unless a league turns it off. */
+export interface AnnounceParts {
+  /** The track and the round number. */
+  track?: boolean
+  /** Quali time in league-local wall clock, with the date. */
+  quali?: boolean
+  /** The voted format, named as the league's own shorthand where one matches. */
+  format?: boolean
+  /** A link to the championship page, which is where sign-ups are. */
+  signUp?: boolean
 }
 
 export interface LeagueProfile {
