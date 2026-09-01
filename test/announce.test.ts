@@ -6,6 +6,7 @@
  * up an hour early — confidently, in public, once a week.
  */
 
+import { DateTime } from "luxon"
 import { describe, expect, it } from "vitest"
 
 import type { Championship } from "../src/acsm/types.js"
@@ -151,9 +152,45 @@ describe("what the announcement says", () => {
   })
 
   it("names the timezone once, at the end", () => {
-    const out = withZoneNote("Quali 20:00.", leagueProfile())
-    expect(out).toContain("Quali 20:00.")
-    expect(out.split("\n").at(-1)).toMatch(/All times /)
+    const out = announce(championship({ Events: [raceEvent()] }), { profile: leagueProfile() })
+    expect(out.content.split("\n").at(-1)).toMatch(/^-# All times /)
+    expect(out.content.match(/All times/g)).toHaveLength(1)
+  })
+
+  it("names the zone the *race* is in, not the one the job runs in", () => {
+    // This read `DateTime.now()`, which is right for about fifty weeks a year
+    // and wrong across a clock change: a cron run in October announcing a race
+    // on 4 November said "All times PDT" about a race that runs in PST — an
+    // hour out, stated confidently, to the whole league.
+    //
+    // Two rounds either side of the US transition, asserted together. Whatever
+    // the real date is when this suite runs, the old version gives both the
+    // same abbreviation, so one of the two has to fail.
+    const noteFor = (scheduled: string) =>
+      announce(championship({ Events: [raceEvent({ Scheduled: scheduled })] }), {
+        profile: leagueProfile(),
+      }).content
+
+    expect(noteFor("2026-07-01T19:00:00-07:00")).toContain("All times PDT")
+    expect(noteFor("2026-11-04T19:00:00-08:00")).toContain("All times PST")
+  })
+
+  it("says nothing about a timezone when it stated no time", () => {
+    // A message with no clock in it has no zone to qualify.
+    const noTime = announce(championship({ Events: [raceEvent({ Scheduled: "" })] }), {
+      profile: leagueProfile(),
+    }).content
+    expect(noTime).not.toContain("All times")
+
+    const noQuali = announce(championship({ Events: [raceEvent()] }), {
+      profile: testProfile({ discord: { announce: { quali: false } } }),
+    }).content
+    expect(noQuali).not.toContain("All times")
+  })
+
+  it("puts the abbreviation on the instant it was handed", () => {
+    const at = DateTime.fromISO("2026-11-04T20:00:00", { zone: "America/Los_Angeles" })
+    expect(withZoneNote("Quali 20:00.", at)).toBe("Quali 20:00.\n-# All times PST.")
   })
 })
 
