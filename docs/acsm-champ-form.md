@@ -6,8 +6,8 @@ is where a livery change belongs, and because nobody has read it yet.
 
 Everything below marked **source** is read off `JustaPenguin/assetto-server-manager`
 at `master` and needs confirming against the build BATL runs. Everything marked
-**measured** has a run behind it. Right now almost nothing is measured, which is
-the point of `npm run recon:champ-form`.
+**measured** has a run behind it — §4 is measured against BATL's own manager,
+premium **2.4.15**, one championship: 1 class, 29 entrants, 5 rounds.
 
 ---
 
@@ -126,34 +126,139 @@ Both cannot be true. If the plan is right, ticking `OverwriteAllEvents` reaches
 no round at all and reports success doing it, which is the worst failure mode a
 livery drop could have — nobody looks at a practice server until race night.
 
-`internalUuidJoin` in `scripts/recon/report.ts` counts the overlap off an
-export, and `recon:champ-form` prints it. **This is the question that decides
-whether the whole approach works**, and it needs answering against a real BATL
-export, not a harness seed: the seed's class and event lists were written by the
-same import, and a synthetic agreement proves nothing about a championship whose
-entry list has been edited in the UI for six weeks.
+**Measured, and it is worse than either of them expected.** On BATL's manager,
+all 29 class entrants come back with **no usable `InternalUUID` at all** — not a
+different one, none — so the overlap with every round is zero:
 
-### 4.2 The 8-against-6 count
+```
+classEntrants: 29, classEntrantsWithoutUuid: 29
+matchedPerRound: [0, 0, 0, 0, 0], matchedEverywhere: 0
+```
 
-**Measured, 2.4.15** (docs/acsm-2.4.15.md §5): on the championship form,
-`EntryList.OverwriteAllEvents` renders **8** times and
-`EntryList.TransferTeamPoints` **7** times for **6** entrants.
+If that holds up, the consequences run well past liveries:
 
-ACSM reads every `EntryList.*` key as a parallel positional array
-(acsm-write-path.md §1), so until those two numbers have an explanation there is
-no way to say which occurrence belongs to which driver — and getting it wrong
-does not fail, it gives entrants each other's settings.
+- **`CombineEntryLists` never applies an event's entry list.** Its guard is
+  `entrant.InternalUUID != uuid.Nil` on the *class* entrant, so with nil UUIDs
+  it never matches and returns `championship.AllEntrants()` untouched. The class
+  list is what races, and the per-event lists are inert for these entrants.
+- **A livery therefore only has to be set on the class list.**
+  `OverwriteAllEvents` is unnecessary.
+- **And it must not be set anyway.** `FindEntrantByInternalUUID` has no nil
+  guard, unlike `CombineEntryLists` — it returns the first entrant whose UUID
+  equals the one asked for, and with nil UUIDs on both sides that is a *real*
+  event entrant, chosen by Go map order. Ticking the box for 29 drivers would
+  copy 29 sets of properties onto arbitrary event entrants. Inert at race time,
+  corrupt in the stored export, and gridmom reads the stored export.
 
-The hypothesis worth testing first is a hidden clone-me template row behind the
-"add entrant" button, plus a spectator-car row. `describeControls` reports where
-each occurrence sits and whether an ancestor hides it, which distinguishes that
-from a seventh driver. Note that hidden is a *hint about why the count is what
-it is*, never a reason to omit a value: `display: none` has no effect on form
-submission, only `disabled` does.
+One thing is not yet nailed down, and it inverts the answer if it goes the other
+way: whether these entrants genuinely hold the nil UUID, or whether premium
+2.4.15 simply **omits `InternalUUID` from the export JSON**. The OSS struct has
+`ini:"-"` and no `json:"-"`, so OSS exports it — but premium is a different
+build. The form settles it, because its 32 hidden `EntryList.InternalUUID`
+inputs are rendered from the stored entrants: if those carry real UUIDs, the
+export is hiding the field and everything above is wrong. `uuidCensus` counts
+them without emitting any. **Re-run `recon:champ-form` and read that line before
+building on this.**
 
-`checkEntryListShape` currently refuses this form outright, and that refusal is
-correct until the counts are explained. Whatever explains them belongs in
-`NON_ARRAY_ENTRY_LIST_FIELDS` or in the writer — not in a loosened check.
+A third possibility, if the values are rendered *empty* rather than nil: a save
+would then give every entrant a fresh identity, because `BuildEntryList` starts
+from `NewEntrant()` and only overwrites the UUID when `uuid.Parse` succeeds.
+
+### 4.2 The extra rows — answered
+
+**Measured, 2.4.15, BATL's manager.** 29 class entrants in one class, and the
+form renders:
+
+| key | count |
+|---|---|
+| `Car` `Skin` `Name` `Team` `GUID` `Ballast` `Restrictor` `FixedSetup` `InternalUUID` `OverwriteAllEvents` | 32 |
+| `TransferTeamPoints` | 30 |
+| `Spectator` | 2 |
+| `EntrantID` | 0 |
+
+Which is exactly this, in document order:
+
+| index | row | submitted by a browser? | read by ACSM? |
+|---|---|---|---|
+| 0 | spectator-car `#entrantTemplate` | no — removed by JS | — |
+| 1 | the spectator car | yes | yes, as index 0 |
+| 2 | class `#entrantTemplate` | no — removed by JS | — |
+| 3–31 | the 29 class entrants | yes | yes, as indices 1–29 |
+
+`TransferTeamPoints` is 30 because the two spectator rows don't have it;
+`Spectator` is 2 because only they do.
+
+**Source, and this is the fourth departure of the kind in §15 of
+acsm-write-path.md.** `manager.js`:
+
+```js
+let $tmpl = this.$parent.find("#entrantTemplate");
+if (!$entrantTemplate && $tmpl.length > 0) {
+    $entrantTemplate = $tmpl.prop("id", "").clone(true, true);
+}
+$tmpl.remove();
+```
+
+The template is copied for the "Add Entrant(s)" button and then **removed from
+the DOM on load**. A browser therefore submits 30 rows where the server rendered
+32. champctl runs no JavaScript, so it parses all 32 — and since ACSM reads
+these as parallel positional arrays, keeping them shifts every entrant by two
+and drops the last two off the end of `start+length`. `templateRowIndices`
+reports them off ACSM's own id rather than off styling, because on this form the
+template row is not hidden at all.
+
+Then, **source**, from `HandleCreateChampionship`:
+
+```go
+previousNumEntrants := 0
+if Premium() {
+    entrants, _ := cm.BuildEntryList(r, previousNumEntrants, 1)   // index 0
+    championship.SpectatorCar = *(entrants.AsSlice()[0])
+    previousNumEntrants++
+}
+for i := range r.Form["ClassName"] {
+    numEntrantsForClass := formValueAsInt(r.Form["EntryList.NumEntrants"][i])
+    class.Entrants, _ = cm.BuildEntryList(r, previousNumEntrants, numEntrantsForClass)
+    previousNumEntrants += numEntrantsForClass
+}
+```
+
+So on premium **index 0 is the spectator car**, not an entrant, and each class
+takes the next `EntryList.NumEntrants` rows. A writer has to drop the two
+template rows and keep that ordering, or the spectator van becomes a driver.
+
+`EntryList.Spectator` is **rendered and never read** — the line that would read
+it is commented out in `BuildEntryList`:
+
+```go
+// Despite having the option for SpectatorMode, the server does not support it,
+// and panics if set to 1
+// SpectatorMode: formValueAsInt(r.Form["EntryList.Spectator"][i]),
+```
+
+`checkEntryListShape` refuses this form today on `EntryList.Spectator=2` and
+`EntryList.EntrantID=0`. Both now have an explanation, and neither belongs in a
+loosened check: `Spectator` is a rendered-but-unread field and `EntrantID` is
+§4.4. The writer drops the template rows first, and the arity check then runs on
+what actually goes out.
+
+### 4.2a The skin select carries only the current skin
+
+**Measured.** All 32 `EntryList.Skin` selects render **one** option each, except
+the two template rows, which render none — on a manager with far more than one
+skin installed per car.
+
+**Source.** `populateEntryListSkinsAndSetups` in `manager.js` empties the
+dropdown on load and rebuilds it from the chosen car, leading with
+`<option value='random_skin'>`. The server renders only what is currently
+selected.
+
+Benign for a round trip — the one rendered option *is* the current value, so
+echoing it back preserves the skin — but it means the form cannot be used to
+check that a skin name exists. A livery writer has to verify against
+`/car/{car}` or the upload it just made. `EntryList.Skin` also accepts the
+sentinel `random_skin`, which ACSM resolves at submit time, so it must never be
+treated as a literal folder (acsm-write-path.md §13).
 
 ### 4.3 `postForm` strips the field we need to send
 
@@ -212,12 +317,14 @@ replays the config it already had. The skins would be on disk and unused.
 
 | | |
 |---|---|
-| Do class and event `InternalUUID`s join? | **unanswered** — §4.1, and it decides everything |
-| What are the 8th and 7th `OverwriteAllEvents` / `TransferTeamPoints` rows? | **unanswered** — §4.2 |
-| Is `EntryList.EntrantID` rendered on the class list? | expected no (§4.4), unmeasured |
-| Is `EntryList.Skin` a select here, and does it carry the installed skins? | unmeasured |
-| Would `checkEntryListShape` pass this form as parsed? | unmeasured |
+| Are the rendered `EntryList.InternalUUID` values real, nil or empty? | **unanswered, and it decides everything** — §4.1 |
+| Do class and event `InternalUUID`s join? | no — zero of 29, in all 5 rounds (§4.1) |
+| What are the extra rows? | two `#entrantTemplate`s the JS removes, plus the spectator car (§4.2) |
+| Is `EntryList.EntrantID` rendered on the class list? | no, as predicted (§4.4) |
+| Is `EntryList.Skin` a select here, and does it carry the installed skins? | a select, carrying only the current skin (§4.2a) |
+| Would `checkEntryListShape` pass this form as parsed? | no — `Spectator=2`, `EntrantID=0`, both explained (§4.2) |
 | Does a skin upload appear in that select without a re-index? | source says yes (§2), unmeasured |
+| Does a save preserve `SpectatorCar`, points and the sign-up form untouched? | unmeasured, and §4.5 says it is a full replace |
 
 ```sh
 npm run recon:champ-form              # seed a throwaway, then read it

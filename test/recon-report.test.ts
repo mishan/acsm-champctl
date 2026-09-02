@@ -11,6 +11,8 @@ import {
   stableSource,
   stableUrl,
   summariseControls,
+  templateRowIndices,
+  uuidCensus,
 } from "../scripts/recon/report.js"
 import type { Entrant, EntryList } from "../src/acsm/types.js"
 import { championship, championshipClass, driver, entryList, raceEvent } from "./support/build.js"
@@ -282,6 +284,42 @@ describe("describeControls", () => {
     expect(Object.values(summary).sort()).toEqual([1, 3])
   })
 
+  it("finds the clone-me rows by ACSM's own id, wherever they sit", () => {
+    // manager.js does `$("#entrantTemplate").remove()` on load, so a browser
+    // never submits that row and champctl always does. The id is exact where
+    // `hidden` is a guess — and here the template is not hidden at all, which is
+    // what BATL's form actually looks like.
+    const html = `<form action="${SUBMIT}">
+      <div id="entrantTemplate" class="entrant"><div class="row"><div class="col-sm-8">
+        <input name="EntryList.Name"></div></div></div>
+      <div class="entrant"><div class="row"><div class="col-sm-8">
+        <input name="EntryList.Name"></div></div></div>
+      <div class="entrant"><div class="row"><div class="col-sm-8">
+        <input name="EntryList.Name"></div></div></div>
+    </form>`
+    const sites = describeControls(html, SUBMIT, ["EntryList.Name"]) ?? {}
+    expect(sites["EntryList.Name"]).toHaveLength(3)
+    expect(sites["EntryList.Name"]?.every((s) => !s.hidden)).toBe(true)
+    expect(templateRowIndices(sites["EntryList.Name"] ?? [])).toEqual([0])
+  })
+
+  it("walks past the depth limit to find the template id", () => {
+    // `ancestors` stops at four wrappers because the interesting class is always
+    // the innermost. #entrantTemplate is above all of them, so the id walk must
+    // not inherit that bound — it did, and found nothing.
+    const html = `<form action="${SUBMIT}">
+      <div id="entrantTemplate"><div><div><div><div><div>
+        <input name="EntryList.Name"></div></div></div></div></div></div>
+    </form>`
+    const sites = describeControls(html, SUBMIT, ["EntryList.Name"])
+    expect(templateRowIndices(sites["EntryList.Name"] ?? [])).toEqual([0])
+  })
+
+  it("reports no template rows when there are none", () => {
+    const sites = describeControls(page(3, 0), SUBMIT, ["EntryList.Name"])
+    expect(templateRowIndices(sites["EntryList.Name"] ?? [])).toEqual([])
+  })
+
   it("masks ids in the ancestor classes it reports", () => {
     // These artefacts are committed and public, and ACSM puts entrant UUIDs in
     // markup — an ancestor class is not obviously safe just because it is not a
@@ -290,6 +328,31 @@ describe("describeControls", () => {
       <input name="EntryList.Name"></div></form>`
     const sites = describeControls(html, SUBMIT, ["EntryList.Name"])
     expect(sites["EntryList.Name"]?.[0]?.ancestors).toEqual(["row entrant-{id}"])
+  })
+})
+
+describe("uuidCensus", () => {
+  const NIL = "00000000-0000-0000-0000-000000000000"
+  const REAL = "11111111-1111-1111-1111-111111111111"
+
+  it("keeps empty and nil apart, because a save treats them differently", () => {
+    // BuildEntryList starts from NewEntrant(), which mints a UUID, and only
+    // overwrites it when uuid.Parse succeeds. Parse fails on "" and succeeds on
+    // the nil UUID — so empty means a save re-identifies the entrant and nil
+    // means the nil survives. Folding them together loses exactly that.
+    expect(uuidCensus([REAL, NIL, "", undefined, "  "])).toEqual({ empty: 3, nil: 1, real: 1 })
+  })
+
+  // Case-insensitivity is not tested because there is nothing to test: the nil
+  // UUID is zeros and dashes. A test asserting it passed with the toLowerCase()
+  // removed, which is the definition of a test that guards nothing.
+
+  it("counts a whitespace-only value as absent rather than real", () => {
+    expect(uuidCensus(["   "])).toEqual({ empty: 1, nil: 0, real: 0 })
+  })
+
+  it("counts nothing as nothing", () => {
+    expect(uuidCensus([])).toEqual({ empty: 0, nil: 0, real: 0 })
   })
 })
 
