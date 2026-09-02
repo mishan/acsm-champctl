@@ -10,6 +10,8 @@
 
 import { basename, isAbsolute, relative } from "node:path"
 
+import * as cheerio from "cheerio"
+
 import { NON_ARRAY_ENTRY_LIST_FIELDS } from "../../src/acsm/form.js"
 import type { Championship } from "../../src/acsm/types.js"
 import { events, slots } from "../../src/acsm/view.js"
@@ -117,6 +119,207 @@ export function raggedKeys(shapes: Record<string, number>, expected: number): st
   return Object.entries(shapes)
     .filter(([k, n]) => k.startsWith("EntryList.") && !known.has(k) && n !== expected)
     .map(([k, n]) => `${k}=${n}`)
+}
+
+/** One occurrence of a named control, described by where it sits. */
+export interface ControlSite {
+  /** `input`, `select` or `textarea`. */
+  tag: string
+  /** An input's `type`, or the tag name for a select or textarea. */
+  type: string
+  /**
+   * Class names of the control's ancestors, nearest first, up to the form.
+   *
+   * The counts alone say a key appears eight times for six entrants and no more
+   * than that. Where those eight sit is the answer: ACSM's own "add entrant"
+   * button clones a hidden template row, so a template contributes an
+   * occurrence that no entrant owns.
+   */
+  ancestors: string[]
+  /**
+   * Hidden by an ancestor — the shape of a clone-me template row.
+   *
+   * A hidden occurrence is not one a browser omits: `display: none` has no
+   * effect on form submission, only `disabled` does. So this is a hint about
+   * *why* the count is what it is, never a reason to leave a value out.
+   */
+  hidden: boolean
+}
+
+/** Class names on an element, in source order. */
+function classesOf($el: cheerio.Cheerio<never>): string[] {
+  return ($el.attr("class") ?? "").split(/\s+/).filter(Boolean)
+}
+
+/** `display:none`, a `hidden` attribute, or a class that says the same. */
+function looksHidden($el: cheerio.Cheerio<never>): boolean {
+  if ($el.attr("hidden") !== undefined) return true
+  if (/display\s*:\s*none/i.test($el.attr("style") ?? "")) return true
+  return classesOf($el).some((c) => /^(d-none|hidden|invisible)$/i.test(c))
+}
+
+/**
+ * Where each occurrence of the named controls actually sits in a form.
+ *
+ * `shape()` answers "how many", which is enough to know a payload is ragged and
+ * not enough to know what to do about it. On 2.4.15 the championship form
+ * renders `EntryList.OverwriteAllEvents` eight times and `TransferTeamPoints`
+ * seven for six entrants (docs/acsm-2.4.15.md §5), and champctl cannot write
+ * that form until someone can say which occurrence belongs to which entrant.
+ *
+ * Deliberately returns structure and not values: this output is committed and
+ * public, and an entrant row carries a driver's name and Steam GUID.
+ *
+ * `depth` bounds the ancestor chain because ACSM's markup nests a dozen deep in
+ * Bootstrap wrappers, and the interesting class is always the innermost one.
+ */
+export function describeControls(
+  html: string,
+  actionNeedle: string,
+  names: readonly string[],
+  depth = 4,
+): Record<string, ControlSite[]> {
+  const $ = cheerio.load(html)
+  const form = $("form")
+    .toArray()
+    .find((el) => ($(el).attr("action") ?? "").includes(actionNeedle))
+
+  const out: Record<string, ControlSite[]> = {}
+  if (!form) return out
+
+  const $form = $(form)
+  for (const name of names) {
+    const sites: ControlSite[] = []
+    // Attribute-selector escaping: these names contain a dot, which cheerio
+    // would otherwise read as a class selector.
+    for (const el of $form.find(`[name="${name}"]`).toArray()) {
+      const $el = $(el) as unknown as cheerio.Cheerio<never>
+      const tag = (el as { tagName?: string }).tagName?.toLowerCase() ?? "?"
+      const ancestors: string[] = []
+      let hidden = looksHidden($el)
+
+      let $node = $el.parent() as unknown as cheerio.Cheerio<never>
+      for (let i = 0; i < depth && $node.length > 0; i++) {
+        if ($node.is("form")) break
+        const classes = classesOf($node)
+        if (classes.length > 0) ancestors.push(stableSource(classes.join(" ")))
+        if (looksHidden($node)) hidden = true
+        $node = $node.parent() as unknown as cheerio.Cheerio<never>
+      }
+
+      sites.push({
+        tag,
+        type: tag === "input" ? ($el.attr("type") ?? "text").toLowerCase() : tag,
+        ancestors,
+        hidden,
+      })
+    }
+    out[name] = sites
+  }
+  return out
+}
+
+/**
+ * The distinct shapes among a key's occurrences, with how many took each.
+ *
+ * Eight identical rows is a different finding from six of one shape and two of
+ * another, and only the second says "some of these are not entrants". Collapsing
+ * to shapes keeps the artefact readable when a real entry list has thirty.
+ */
+export function summariseControls(sites: readonly ControlSite[]): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const s of sites) {
+    const key = `${s.type}${s.hidden ? " (hidden)" : ""} in [${s.ancestors.join(" < ")}]`
+    out[key] = (out[key] ?? 0) + 1
+  }
+  return out
+}
+
+export interface InternalUuidJoin {
+  classEntrants: number
+  /** Class entrants whose InternalUUID is missing or the nil UUID. */
+  classEntrantsWithoutUuid: number
+  /** Per round: how many class entrants were found in that round's entry list. */
+  matchedPerRound: number[]
+  /** Rounds with no entry list of their own; those inherit the class list whole. */
+  roundsWithoutEntryList: number[]
+  /** Class entrants matched in every round. The ones a global change reaches. */
+  matchedEverywhere: number
+}
+
+/**
+ * Whether `EntryList.OverwriteAllEvents` can find anything to overwrite.
+ *
+ * The mechanism joins a class entrant to an event entrant on `InternalUUID`:
+ *
+ *   eventEntrant := event.EntryList.FindEntrantByInternalUUID(entrant.InternalUUID)
+ *   eventEntrant.OverwriteProperties(entrant)
+ *
+ * and `FindEntrantByInternalUUID` returns `&Entrant{}` on a miss — so a class
+ * entrant that matches nothing in a round is not an error, a warning or a log
+ * line. The properties are copied into a throwaway struct and dropped.
+ *
+ * That matters here because this repo's own plan §5.5 says the opposite of what
+ * ACSM assumes: "`InternalUUID` is a per-list identity, NOT a join key — the
+ * class list and each event list use different UUIDs for the same driver."
+ * Both cannot be true. If the plan is right, setting a skin at championship
+ * level reaches no round at all and does so silently, which is the worst
+ * possible failure mode for a livery drop nobody watches.
+ *
+ * One read of an export settles it, so this counts the overlap rather than
+ * arguing about it. Identity only — no names, no GUIDs.
+ */
+export function internalUuidJoin(championship: Championship): InternalUuidJoin {
+  const NIL = "00000000-0000-0000-0000-000000000000"
+  const usable = (id: unknown): id is string =>
+    typeof id === "string" && id.trim() !== "" && id !== NIL
+
+  const classUuids: string[] = []
+  let withoutUuid = 0
+  for (const cls of championship.Classes ?? []) {
+    for (const s of slots(cls?.Entrants)) {
+      if (usable(s.entrant.InternalUUID)) classUuids.push(s.entrant.InternalUUID)
+      else withoutUuid++
+    }
+  }
+
+  const matchedPerRound: number[] = []
+  const roundsWithoutEntryList: number[] = []
+  const matchCount = new Map<string, number>()
+
+  events(championship).forEach((ev, i) => {
+    const list = ev?.EntryList
+    // ACSM's own reading: an event with no entry list of its own uses the class
+    // list unchanged, so there is nothing to overwrite and nothing to miss.
+    if (!list || Object.keys(list).length === 0) {
+      roundsWithoutEntryList.push(i + 1)
+      matchedPerRound.push(classUuids.length)
+      for (const id of classUuids) matchCount.set(id, (matchCount.get(id) ?? 0) + 1)
+      return
+    }
+
+    const present = new Set(
+      slots(list)
+        .map((s) => s.entrant.InternalUUID)
+        .filter(usable),
+    )
+    let matched = 0
+    for (const id of classUuids) {
+      if (!present.has(id)) continue
+      matched++
+      matchCount.set(id, (matchCount.get(id) ?? 0) + 1)
+    }
+    matchedPerRound.push(matched)
+  })
+
+  const rounds = matchedPerRound.length
+  return {
+    classEntrants: classUuids.length + withoutUuid,
+    classEntrantsWithoutUuid: withoutUuid,
+    matchedPerRound,
+    roundsWithoutEntryList,
+    matchedEverywhere: classUuids.filter((id) => (matchCount.get(id) ?? 0) === rounds).length,
+  }
 }
 
 export interface PitBoxComparison {
