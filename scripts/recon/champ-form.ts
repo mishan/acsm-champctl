@@ -48,11 +48,12 @@ import {
   UNPAIRED_ENTRY_LIST_CHECKBOXES,
   checkEntryListShape,
   findFormByAction,
+  getAll,
   shape,
 } from "../../src/acsm/form.js"
 import type { AcsmSession } from "../../src/acsm/session.js"
 import type { Championship } from "../../src/acsm/types.js"
-import { events } from "../../src/acsm/view.js"
+import { events, slots } from "../../src/acsm/view.js"
 import {
   CHAMPIONSHIP_SUBMIT_PATH,
   championshipEditPath,
@@ -70,6 +71,8 @@ import {
   stableSource,
   stableUrl,
   summariseControls,
+  templateRowIndices,
+  uuidCensus,
 } from "./report.js"
 
 const FIXTURE = "fixtures/synthetic/recon-seed.json"
@@ -171,6 +174,20 @@ async function main(): Promise<void> {
   // and a miss is silent. Plan §5.5 says these UUIDs are per-list and therefore
   // never line up; ACSM's code assumes they do. Only one of those is true.
   const join = internalUuidJoin(exported)
+  const classUuids = uuidCensus(
+    classes.flatMap((c) => slots(c?.Entrants).map((s) => s.entrant.InternalUUID)),
+  )
+  const eventUuids = events(exported).map((ev) =>
+    uuidCensus(slots(ev?.EntryList).map((s) => s.entrant.InternalUUID)),
+  )
+  log("")
+  log(
+    `InternalUUID in the export — class: ${classUuids.real} real, ${classUuids.nil} nil, ` +
+      `${classUuids.empty} absent`,
+  )
+  for (const [i, c] of eventUuids.entries()) {
+    log(`  round ${i + 1}: ${c.real} real, ${c.nil} nil, ${c.empty} absent`)
+  }
   log("")
   log(`OverwriteAllEvents reach — class entrants found in each round's entry list:`)
   log(`  ${join.matchedPerRound.join(", ") || "(no rounds)"} of ${join.classEntrants}`)
@@ -238,13 +255,51 @@ async function main(): Promise<void> {
   const hiddenCounts = Object.fromEntries(
     Object.entries(sites).map(([key, list]) => [key, list.filter((s) => s.hidden).length]),
   )
-  const anyHidden = Object.values(hiddenCounts).some((n) => n > 0)
-  if (anyHidden) {
-    log("")
-    log(`  Some occurrences sit inside hidden markup, which is what ACSM's clone-me`)
-    log(`  "add entrant" template row looks like. Hidden does not mean unsubmitted —`)
-    log(`  display:none has no effect on submission, only disabled does — so a payload`)
-    log(`  built from this form carries them and they land on real entrants by position.`)
+
+  // ------------------------------------------------------- the template rows
+  // `manager.js` copies #entrantTemplate on load and then removes it from the
+  // DOM, so a browser never submits it and champctl, running no JavaScript,
+  // always does. Every count above is inflated by one per class block plus one
+  // for the spectator block, and a payload that keeps them shifts every entrant
+  // by that many positions.
+  const templateRows = Object.fromEntries(
+    Object.entries(sites).map(([key, list]) => [key, templateRowIndices(list)]),
+  )
+  const nameTemplates = templateRows["EntryList.Name"] ?? []
+  log("")
+  if (nameTemplates.length === 0) {
+    log(`No #entrantTemplate rows found. Either this build renders none, or the id moved —`)
+    log(`check before concluding the counts are clean, because manager.js still removes it.`)
+  } else {
+    log(`Clone-me template rows (#entrantTemplate), by position: ${nameTemplates.join(", ")}`)
+    log(`  A browser never submits these — manager.js removes them on load. champctl runs`)
+    log(`  no JavaScript, so it has to drop them itself or every entrant after one shifts.`)
+  }
+
+  // --------------------------------------------------------- the identity keys
+  // Decides whether a save preserves who these entrants are. BuildEntryList
+  // starts from NewEntrant(), which mints a UUID, and only overwrites it when
+  // uuid.Parse succeeds — so an empty value here means a save gives every
+  // entrant a brand-new identity, while a nil one preserves the nil.
+  const formUuids = uuidCensus(getAll(form.fields, "EntryList.InternalUUID"))
+  log("")
+  log(
+    `EntryList.InternalUUID as rendered: ${formUuids.real} real, ${formUuids.nil} nil, ` +
+      `${formUuids.empty} empty.`,
+  )
+  if (formUuids.real === 0) {
+    log(`  !! None are real, which agrees with the export and rules out "premium just`)
+    log(`     omits the field from JSON". These entrants genuinely have no identity, so`)
+    log(`     CombineEntryLists's \`!= uuid.Nil\` guard can never match and the event entry`)
+    log(`     lists are inert: the class list is what races.`)
+  } else if (join.matchedEverywhere === 0) {
+    log(`  !! The form has real UUIDs but the export's class entrants did not. The export`)
+    log(`     is hiding the field rather than the entrants lacking it, and the join`)
+    log(`     question above is unanswered — do not build on it.`)
+  }
+  if (formUuids.empty > 0) {
+    log(`  ${formUuids.empty} rendered empty. uuid.Parse fails on those, so BuildEntryList`)
+    log(`  keeps the fresh UUID from NewEntrant() and a save re-identifies them.`)
   }
 
   // ------------------------------------------------------------------ skins
@@ -293,6 +348,8 @@ async function main(): Promise<void> {
     entrantCount,
     roundCount,
     internalUuidJoin: join,
+    internalUuids: { classEntrants: classUuids, perRound: eventUuids, asRendered: formUuids },
+    templateRows,
     form: {
       path: stableUrl(editPath),
       action: stableUrl(form.action),

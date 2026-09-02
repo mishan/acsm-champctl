@@ -137,11 +137,20 @@ export interface ControlSite {
    */
   ancestors: string[]
   /**
+   * `id` of every ancestor up to the form, nearest first. Not depth-bounded.
+   *
+   * Because `#entrantTemplate` is the answer, and it sits above the four
+   * Bootstrap wrappers `ancestors` stops at. Ids are few, so walking all the way
+   * costs nothing.
+   */
+  ancestorIds: string[]
+  /**
    * Hidden by an ancestor — the shape of a clone-me template row.
    *
-   * A hidden occurrence is not one a browser omits: `display: none` has no
-   * effect on form submission, only `disabled` does. So this is a hint about
-   * *why* the count is what it is, never a reason to leave a value out.
+   * A hint about *why* the count is what it is, never a reason to leave a value
+   * out: `display: none` has no effect on form submission, only `disabled` does.
+   * Prefer `ancestorIds` for identifying a template row — this one is a
+   * heuristic and that one is ACSM's own marker.
    */
   hidden: boolean
 }
@@ -196,14 +205,17 @@ export function describeControls(
       const $el = $(el) as unknown as cheerio.Cheerio<never>
       const tag = (el as { tagName?: string }).tagName?.toLowerCase() ?? "?"
       const ancestors: string[] = []
+      const ancestorIds: string[] = []
       let hidden = looksHidden($el)
 
       let $node = $el.parent() as unknown as cheerio.Cheerio<never>
-      for (let i = 0; i < depth && $node.length > 0; i++) {
+      for (let i = 0; $node.length > 0; i++) {
         if ($node.is("form")) break
         const classes = classesOf($node)
-        if (classes.length > 0) ancestors.push(stableSource(classes.join(" ")))
-        if (looksHidden($node)) hidden = true
+        if (i < depth && classes.length > 0) ancestors.push(stableSource(classes.join(" ")))
+        if (i < depth && looksHidden($node)) hidden = true
+        const id = $node.attr("id")
+        if (id) ancestorIds.push(stableSource(id))
         $node = $node.parent() as unknown as cheerio.Cheerio<never>
       }
 
@@ -211,6 +223,7 @@ export function describeControls(
         tag,
         type: tag === "input" ? ($el.attr("type") ?? "text").toLowerCase() : tag,
         ancestors,
+        ancestorIds,
         hidden,
       })
     }
@@ -231,6 +244,68 @@ export function summariseControls(sites: readonly ControlSite[]): Record<string,
   for (const s of sites) {
     const key = `${s.type}${s.hidden ? " (hidden)" : ""} in [${s.ancestors.join(" < ")}]`
     out[key] = (out[key] ?? 0) + 1
+  }
+  return out
+}
+
+/**
+ * ACSM's marker for the entrant row its "add entrant" button clones.
+ *
+ * `manager.js` takes a copy on load and then `$tmpl.remove()`s it, so a browser
+ * never submits that row. champctl runs no JS and parses it, which is the whole
+ * of the extra-occurrence puzzle: the same class of departure as `TrackLayout`
+ * (docs/acsm-write-path.md §15) and the checkbox rewrite (§4).
+ */
+export const ENTRANT_TEMPLATE_ID = "entrantTemplate"
+
+/**
+ * Which rows of a repeated key sit inside a clone-me template.
+ *
+ * Indices are into the key's own occurrences in document order, which is the
+ * index ACSM's `BuildEntryList` walks — so these are exactly the positions a
+ * payload has to drop before the remaining ones line up with the entrants.
+ *
+ * Exact rather than heuristic. `hidden` guesses from styling; this reads the id
+ * ACSM's own JavaScript keys off.
+ */
+export function templateRowIndices(sites: readonly ControlSite[]): number[] {
+  return sites
+    .map((s, i) => (s.ancestorIds.includes(ENTRANT_TEMPLATE_ID) ? i : -1))
+    .filter((i) => i >= 0)
+}
+
+export interface UuidCensus {
+  /** No value at all — `BuildEntryList` mints a fresh UUID for these. */
+  empty: number
+  /** The all-zero UUID, which `CombineEntryLists` explicitly refuses to match. */
+  nil: number
+  /** A real UUID. */
+  real: number
+}
+
+/**
+ * Sorts UUID values into the three cases that behave differently, without
+ * emitting any of them.
+ *
+ * The distinction is load-bearing twice over. `BuildEntryList` does
+ * `e := NewEntrant()` — a fresh UUID — and only overwrites it when
+ * `uuid.Parse` succeeds, so an empty value means *a save mints a new identity*
+ * while a nil value means the nil is preserved. And `CombineEntryLists` guards
+ * on `entrant.InternalUUID != uuid.Nil`, so nil class entrants can never take
+ * an override from an event entry list.
+ */
+export function uuidCensus(values: readonly (string | undefined)[]): UuidCensus {
+  const NIL = "00000000-0000-0000-0000-000000000000"
+  const out: UuidCensus = { empty: 0, nil: 0, real: 0 }
+  for (const v of values) {
+    const s = (v ?? "").trim()
+    // No case folding, deliberately: the nil UUID is zeros and dashes, so there
+    // is no case for it to arrive in. A `toLowerCase()` here reads like it
+    // handles something and handles nothing — and the test written to cover it
+    // passed with the call removed, which is how it was noticed.
+    if (s === "") out.empty++
+    else if (s === NIL) out.nil++
+    else out.real++
   }
   return out
 }
