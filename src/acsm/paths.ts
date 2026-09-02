@@ -57,6 +57,60 @@ export function eventSubmitPath(championshipId: string): string {
 }
 
 /**
+ * The championship's own edit form — classes, points, sign-up form, and the
+ * class entrant lists.
+ *
+ * A different list from the one on the event form, and the distinction is
+ * load-bearing. `ChampionshipEvent.CombineEntryLists` starts from the class
+ * entrants and then lets the event's own entrant overwrite `Skin`, `PitBox`,
+ * `Ballast`, `Restrictor`, `FixedSetup` and `SpectatorMode` on top — so a skin
+ * set here is invisible to any round that has its own entry list, which is
+ * every round champctl has ever written.
+ *
+ * `EntryList.OverwriteAllEvents` is what closes that gap: on save, ACSM walks
+ * every class entrant with the box ticked and copies those properties down onto
+ * each event. Its own comment calls it "useful for globally changing skins".
+ *
+ * champctl does not drive this form yet. `npm run recon:champ-form` is the
+ * reading it needs first — see docs/acsm-champ-form.md.
+ */
+export function championshipEditPath(championshipId: string): string {
+  return `/championship/${encodeURIComponent(championshipId)}/edit`
+}
+
+/**
+ * Where the championship form posts, for both create and edit.
+ *
+ * The `new` in the path is ACSM's, not a mistake: one handler serves both, and
+ * an edit is a create carrying an existing ID. Which means a POST here replaces
+ * the whole championship, not the part you changed.
+ */
+export const CHAMPIONSHIP_SUBMIT_PATH = "/championships/new/submit"
+
+/**
+ * Uploads one or more skins for a car. Multipart, one part per file.
+ *
+ * ACSM walks every file part regardless of its field name and writes each to
+ * `content/cars/{car}/skins/<dir(filename)>/<base(filename)>` — so the skin
+ * folder is a path prefix on the part's filename, not a separate field.
+ */
+export function carSkinUploadPath(car: string): string {
+  return `/car/${encodeURIComponent(car)}/skin`
+}
+
+/**
+ * Starts a looping practice session for one round.
+ *
+ * `StartPracticeEvent` rebuilds `entry_list.ini` from the *stored* championship
+ * and sets `LoopMode = 1`, which is what makes this the restart that picks up a
+ * changed entry list. `/process/restart` does not: `AssettoServerProcess.Restart`
+ * replays the `raceEvent` it captured when the session started.
+ */
+export function eventPracticePath(championshipId: string, eventId: string): string {
+  return `/championship/${encodeURIComponent(championshipId)}/event/${encodeURIComponent(eventId)}/practice`
+}
+
+/**
  * The schedule form's action. POST-only — a GET is a 405 on 2.4.x, and the
  * form itself is on `championshipPath`.
  */

@@ -52,6 +52,7 @@
     "harness:steam-check": "docker compose --project-directory docker run --rm --entrypoint steamcmd acsm +quit",
     "test:live": "vitest run --config vitest.live.config.ts",
     "recon:forms": "tsx scripts/recon/forms.ts",
+    "recon:champ-form": "tsx scripts/recon/champ-form.ts",
     "recon:roundtrip": "tsx scripts/recon/roundtrip.ts",
     "recon:layouts": "tsx scripts/recon/layouts.ts",
     "recon:entry-list-type": "tsx scripts/recon/entry-list-type.ts",
