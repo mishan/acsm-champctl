@@ -13,10 +13,14 @@ import { findFormByAction } from "./form.js"
 import { walkChampionshipIds } from "./listing.js"
 import {
   CHAMPIONSHIPS_PATH,
+  CHAMPIONSHIP_SUBMIT_PATH,
   IMPORT_PATH,
+  carSkinUploadPath,
+  championshipEditPath,
   championshipPath,
   entrantStatusPath,
   eventEditPath,
+  eventPracticePath,
   eventSchedulePath,
   eventSubmitPath,
   exportPath,
@@ -443,10 +447,14 @@ export { isZeroTime }
 // themselves live in paths.js, which imports nothing — see the note there.
 export {
   CHAMPIONSHIPS_PATH,
+  CHAMPIONSHIP_SUBMIT_PATH,
   IMPORT_PATH,
+  carSkinUploadPath,
+  championshipEditPath,
   championshipPath,
   entrantStatusPath,
   eventEditPath,
+  eventPracticePath,
   eventSchedulePath,
   eventSubmitPath,
   exportPath,

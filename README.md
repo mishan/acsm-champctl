@@ -5,7 +5,7 @@
 Championship creation, validation and stats for Assetto Corsa Server Manager.
 Built for BATL, usable by any league.
 
-Five commands:
+Six commands:
 
 | | |
 |---|---|
@@ -13,6 +13,7 @@ Five commands:
 | `champctl-archive` | keep a copy of every export the league has ever run |
 | `champctl-finalize` | set a race's format and push it |
 | `champctl-championship` | create a championship from a template |
+| `champctl-liveries` | upload drivers' custom liveries and assign them |
 | `champctl-serve` | the finalize and create-a-championship flows as a web UI, for people without a terminal |
 
 Working on champctl itself? See [AGENTS.md](AGENTS.md) and
@@ -28,9 +29,10 @@ npm install
 npm run gridmom -- check --file fixtures/synthetic/suzuka-duplicate-pitboxes.json
 ```
 
-Installed, the five commands are on your `PATH` as `gridmom`,
-`champctl-archive`, `champctl-finalize`, `champctl-championship` and `champctl-serve`.
-From a checkout, `npm run gridmom -- <args>` is the same thing.
+Installed, the six commands are on your `PATH` as `gridmom`,
+`champctl-archive`, `champctl-finalize`, `champctl-championship`,
+`champctl-liveries` and `champctl-serve`. From a checkout,
+`npm run gridmom -- <args>` is the same thing.
 
 Every command takes `--profile` and `--base-url`; `--help` on any of them is
 authoritative.
@@ -265,6 +267,92 @@ unless a round overrides it; without `startDate`, rounds fall on the league's
 race weekday starting from the next one. `className`, `description` and
 `signUpsEnabled` are also accepted.
 
+## champctl-liveries
+
+Drivers submit custom liveries; this uploads them and assigns each one to the
+driver who sent it.
+
+```
+champctl-liveries <championship-id> --zip <pack.zip> [options]
+
+  --zip <path>          the livery pack (required)
+  --restart <round>     restart that round's looping practice server afterwards
+  --profile <id|path>   league profile (default: batl)
+  --base-url <url>      override the profile's ACSM base URL
+  --push                actually write. Without it this only previews.
+  --yes                 skip the confirmation prompt
+  --json                machine-readable plan
+```
+
+The pack is a zip of zips, one folder per car model:
+
+```
+rss_formula_hybrid_2021/Misha.zip
+rss_formula_hybrid_2021/postaL.zip
+ford_transit/Stream.zip
+```
+
+The car folder is what ACSM's upload endpoint needs. Each inner zip is one
+driver's skin folder — a `.dds` livery, its preview, a `ui_skin.json`. **The
+inner zip's name is matched against the entrant's name exactly**, and becomes
+the skin folder on the server, so a re-upload lands on the same folder rather
+than accumulating one per week.
+
+Exactly means case and spacing, not encoding: names in any script are fine, and
+`Häkkinen` matches whether the zip carries the precomposed `ä` or the decomposed
+one a Mac writes. A near-miss on case or a stray space is named in the refusal
+rather than guessed at — auto-correcting there puts one driver in another's
+livery.
+
+```
+$ champctl-liveries 1111... --zip september.zip --restart 1
+
+September 2026 — liveries
+
+  Misha              misha_old → Misha   3 files, rss_formula_hybrid_2021
+  postaL             (no skin) → postaL   3 files, rss_formula_hybrid_2021
+
+  Then: restart round 1's looping practice server.
+
+Preview only. Re-run with --push to apply.
+```
+
+**The assignment is made on the championship, never on an event.** ACSM builds
+each round's entry list from the class entrants and lets the round's own list
+override the skin on top, so the class list is the one write that reaches every
+round at once. If a round *would* override the change, the preview says so
+rather than reporting a success that only happened in the database — see
+[`docs/acsm-champ-form.md`](docs/acsm-champ-form.md) §4.1.
+
+`--restart` uses `/championship/{id}/event/{eventID}/practice`, which rebuilds
+the entry list from the stored championship with looping on. That is the restart
+that picks up a changed livery; `/process/restart` replays the config the
+session started with and would not.
+
+**The pack is untrusted, and is treated that way.** The whole thing is refused —
+not the offending skin — if any of it is not a livery: a path that climbs out
+with `..`, a file that isn't a `.dds`/`.png`/`.jpg`/`.json`/`.ini`/`.txt`, a
+leftover `.psd`, subfolders, an oversized file, a zip that unpacks far larger
+than it looks, or a driver zip with no `.dds` in it at all. A driver whose name
+isn't in the entry list, or whose livery is filed under a car they don't drive,
+refuses the run too. Half a livery drop is worse to unpick than none, and the
+cost of the other answer is re-zipping a file.
+
+The size caps are 48 MB a file, 128 MB a skin and 1 GB a pack, which are there
+to stop one submission filling the game server's disk rather than to enforce
+tidiness — real submissions carry working files nobody trimmed. `DEFAULT_LIMITS`
+in [`src/liveries/pack.ts`](src/liveries/pack.ts) is the place to raise them;
+they were doubled once already for exactly that reason. Uploads get a timeout
+scaled to their size rather than the session's usual 30 seconds, which is sized
+for a page of HTML and would abort a large livery.
+
+Credentials come from `CHAMPCTL_USERNAME` / `CHAMPCTL_PASSWORD` and are needed
+only for `--push`; a preview reads the export, which is public.
+
+Exit codes: `0` previewed or pushed, `1` every livery was already assigned, `2`
+the pack or the entry list wouldn't allow it, `3` a usage mistake or champctl
+failed.
+
 ## champctl-serve
 
 The weekly flow with a face on it: open an event, set what the racers voted
@@ -418,6 +506,9 @@ have a web UI. What's left:
   the command line reaches it — unlike every other engine here, which has a CLI
   as its first front end.
 - **No Discord bot**, so no polls, no announcements, no nightly gridmom report.
+  It is also where livery uploads are meant to end up: `champctl-liveries` takes
+  a pack somebody assembled by hand, and the bot would collect each driver's zip
+  behind a role check and hand the same engine the same pack.
 - **Content checks have no source.** Three `content.*` checks need an index of
   what's installed on the server, and nothing populates one yet, so they can't
   fire. The pit-count check reads the pit table instead and works today.
