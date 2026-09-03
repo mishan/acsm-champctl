@@ -128,12 +128,33 @@ describe("rendering a livery plan", () => {
     const plan = planLiveries(
       champ(
         [person({ Name: "Misha" })],
-        [raceEvent({ EntryList: {}, StartedTime: "2026-09-02T20:00:00Z" })],
+        [
+          raceEvent({
+            EntryList: {},
+            StartedTime: "2026-09-02T20:00:00Z",
+            CompletedTime: "2026-09-02T21:00:00Z",
+            Sessions: { RACE: { Name: "Race", Results: { Type: "RACE" } } },
+          }),
+        ],
       ),
       "champ-1",
       packOf("Misha"),
     )
     expect(renderPlan(plan)).toContain("Rounds 1 have already been raced")
+  })
+
+  it("says nothing about racing when only the practice server has run", () => {
+    // The output Misha saw: round 1 untouched, its looping practice live, and
+    // champctl announcing it had been raced.
+    const plan = planLiveries(
+      champ(
+        [person({ Name: "Misha" })],
+        [raceEvent({ EntryList: {}, StartedTime: "2026-09-02T19:00:00Z" })],
+      ),
+      "champ-1",
+      packOf("Misha"),
+    )
+    expect(renderPlan(plan)).not.toContain("already been raced")
   })
 
   it("names the practice restart when one was asked for", () => {
