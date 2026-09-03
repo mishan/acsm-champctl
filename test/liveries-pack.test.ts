@@ -81,6 +81,60 @@ describe("readLiveryPack", () => {
   })
 })
 
+describe("names from an actual entry list", () => {
+  // "Ricky Häkkinen" is a real BATL driver, and the first version of this rule
+  // refused him because it was an ASCII allowlist. The property worth checking
+  // was never the alphabet.
+  const namesThatAreJustNames = [
+    "Ricky Häkkinen",
+    "Kimi Räikkönen",
+    "Sébastien Loeb",
+    "Ayrton Senna",
+    "Даниил Квят",
+    "山本 尚貴",
+    "Πέτρος",
+    "postaL",
+    "R1cky [BATL]",
+    "Bob & Sons",
+    "O'Neill",
+    "some.one",
+    "driver_42",
+    "no1!",
+    "at@sign",
+    "a+b",
+    "Mr (Fast)",
+    "#7 Racing",
+  ]
+
+  it.each(namesThatAreJustNames)("accepts %s", (name) => {
+    const result = readLiveryPack(pack({ [`${CAR}/${name}.zip`]: skin() }))
+    expect(result.liveries[0]?.driverName).toBe(name)
+  })
+
+  it("treats a decomposed name as the same name", () => {
+    // macOS writes zip entries decomposed, so an ä from a Mac is "a" + U+0308
+    // where a Windows entry list holds U+00E4. Same text, different bytes, and
+    // an exact match on the raw strings misses.
+    // Written as escapes on purpose: typed as literals these are the same
+    // source text, and the test would pass with the normalising removed.
+    const decomposed = "Ricky Ha\u0308kkinen"
+    const precomposed = "Ricky H\u00e4kkinen"
+    expect(decomposed).not.toBe(precomposed)
+    expect([...decomposed]).toHaveLength([...precomposed].length + 1)
+
+    const result = readLiveryPack(pack({ [`${CAR}/${decomposed}.zip`]: skin() }))
+    expect(result.liveries[0]?.driverName).toBe(precomposed)
+    expect(result.liveries[0]?.skinFolder).toBe(precomposed)
+  })
+
+  it("normalises file names inside the skin too", () => {
+    const result = readLiveryPack(
+      pack({ [`${CAR}/Misha.zip`]: zipSync({ "he\u0301llo.dds": bytes("x") }) }),
+    )
+    expect(result.liveries[0]?.files.map((f) => f.name)).toEqual(["h\u00e9llo.dds"])
+  })
+})
+
 describe("readLiveryPack refusals", () => {
   const refuses = (build: () => Uint8Array, match: RegExp) => {
     expect(() => readLiveryPack(build())).toThrowError(LiveryPackError)
@@ -175,6 +229,42 @@ describe("readLiveryPack refusals", () => {
 
   it("refuses a car model that is not a plain name", () => {
     refuses(() => pack({ [`rss;rm -rf/Misha.zip`]: skin() }), /not a usable car model/)
+  })
+
+  /**
+   * Widening the rule to letters in any script must not widen it to everything.
+   * Each of these is a name that means something to code downstream rather than
+   * a name.
+   */
+  it.each([
+    ["a leading dash, which globs as an option", "-rf"],
+    ["a leading space, which is invisible", " Misha"],
+    ["a NUL byte", "Mis\u0000ha"],
+    ["a newline, which would split the multipart header", "Mis\nha"],
+    ["a carriage return", "Mis\rha"],
+    ["a terminal escape sequence", "Mis\u001b[31mha"],
+    // U+202E flips rendering, so "Miha‮sdd.yrevil" displays as a .dds.
+    // The allowlist excludes every \p{C} character, which covers it — worth a
+    // test because it is the one that looks harmless in a diff.
+    ["a right-to-left override", "Mis\u202Eha"],
+    ["a zero-width space", "Mis\u200Bha"],
+    ["a double quote, which delimits the multipart filename", 'Mis"ha'],
+    ["a colon and semicolon", "Mis:h;a"],
+    ["a name longer than 64 characters", "M".repeat(65)],
+  ])("refuses %s", (_why, name) => {
+    // Slashes are handled earlier, by the path split, so they are not here.
+    expect(() => readLiveryPack(pack({ [`${CAR}/${name}.zip`]: skin() }))).toThrowError(
+      /not a usable driver name/,
+    )
+  })
+
+  it("accepts a name of exactly 64 characters", () => {
+    // The boundary in the direction that matters: one too many is refused
+    // above, and the limit itself must not be off by one against a long tag.
+    const name = "M".repeat(64)
+    expect(readLiveryPack(pack({ [`${CAR}/${name}.zip`]: skin() })).liveries[0]?.driverName).toBe(
+      name,
+    )
   })
 
   it("refuses the same driver twice for one car", () => {

@@ -298,6 +298,12 @@ inner zip's name is matched against the entrant's name exactly**, and becomes
 the skin folder on the server, so a re-upload lands on the same folder rather
 than accumulating one per week.
 
+Exactly means case and spacing, not encoding: names in any script are fine, and
+`Häkkinen` matches whether the zip carries the precomposed `ä` or the decomposed
+one a Mac writes. A near-miss on case or a stray space is named in the refusal
+rather than guessed at — auto-correcting there puts one driver in another's
+livery.
+
 ```
 $ champctl-liveries 1111... --zip september.zip --restart 1
 

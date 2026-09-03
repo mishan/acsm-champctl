@@ -147,11 +147,57 @@ export interface LiveryPack {
  * A path component ACSM can be handed without it meaning something else.
  *
  * `..` and `/` are the ones that matter — those reach `filepath.Dir` and write
- * outside the skins directory. The rest is a narrower rule than the filesystem
- * would enforce, on purpose: these names are chosen by whoever zipped the file,
- * and a driver name is going to be a driver name.
+ * outside the skins directory.
+ *
+ * **This was `[A-Za-z0-9 ._'()#+-]` and refused a real driver.** "Ricky
+ * Häkkinen" is a driver name, not an attack; so are Cyrillic, Greek and CJK
+ * ones, and a league that runs anywhere but the anglosphere would have hit this
+ * on its first pack. ASCII was never the property worth checking for.
+ *
+ * What is worth checking for is that the name cannot *mean* something to the
+ * code it passes through, and an allowlist of Unicode categories gives that
+ * without an alphabet in it:
+ *
+ * - `\p{L}\p{M}\p{N}` — letters, combining marks and digits in any script. The
+ *   marks matter on their own: macOS stores filenames decomposed, so the ä in a
+ *   zip made there is `a` followed by U+0308 rather than one code point.
+ * - The punctuation below, which is what turns up in gamer tags.
+ *
+ * And the exclusions fall out of it rather than needing to be listed. `/` and
+ * `\` are not in the set, so no component can be a path. Neither is `"`, which
+ * delimits the filename in the multipart header this ends up in. Nor is
+ * anything in `\p{C}`: NUL, newlines, terminal escape sequences, and the
+ * right-to-left overrides that make a filename render as something other than
+ * what it is.
+ *
+ * Deliberately not blocked: shell metacharacters. Nothing here reaches a shell
+ * — Go's `os.MkdirAll` and `os.Create` do not interpret them — and pretending
+ * otherwise would refuse a name for a danger that isn't on this path.
+ *
+ * The first character is restricted only where it changes the name's meaning: a
+ * leading `.` is a hidden file and the first step towards `.` and `..`, a
+ * leading `-` reads as an option to anything that later globs the directory,
+ * and a leading space is invisible. Requiring a *letter or digit* there was the
+ * lazy version of that and refused `#7 Racing`, which is a team name.
  */
-const SAFE_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9 ._'()#+-]{0,63}$/
+const SAFE_COMPONENT = /^(?![.\-\s])[\p{L}\p{M}\p{N} ._'()\[\]#+&,!@-]{1,64}$/u
+
+/**
+ * The same text always compares equal to itself.
+ *
+ * "Häkkinen" has two valid encodings — precomposed (U+00E4) and decomposed (`a`
+ * + U+0308) — and they are different strings. macOS writes zip entries
+ * decomposed while ACSM will almost certainly hold the precomposed form, so an
+ * exact match between a zip made on a Mac and a Windows entry list fails on a
+ * name both sides would print identically.
+ *
+ * NFC everywhere fixes that, and it is not a loosening of the exact-name rule:
+ * case and stray whitespace still miss, deliberately. This only stops two
+ * spellings of one character being treated as two characters.
+ */
+function normalise(value: string): string {
+  return value.normalize("NFC")
+}
 
 function assertSafeName(kind: string, value: string, where: string): void {
   if (value === "." || value === "..") {
@@ -159,9 +205,10 @@ function assertSafeName(kind: string, value: string, where: string): void {
   }
   if (!SAFE_COMPONENT.test(value)) {
     throw new LiveryPackError(
-      `${where}: "${value}" is not a usable ${kind}. It has to start with a letter or digit and ` +
-        `hold only letters, digits, spaces and . _ ' ( ) # + - — champctl builds a file path out ` +
-        `of it and hands that to the game server.`,
+      `${where}: "${value}" is not a usable ${kind}. Letters in any script, digits, spaces and ` +
+        `. _ ' ( ) [ ] # + - & , ! @ are fine, up to 64 characters, but it can't start with a ` +
+        `dot, a dash or a space. champctl builds a file path out of it and hands that to the ` +
+        `game server, so a name that could be read as a path or as terminal control is refused.`,
     )
   }
 }
@@ -236,7 +283,12 @@ export function readLiveryPack(
       )
     }
 
-    const [carModel, fileName] = parts as [string, string]
+    const [rawCarModel, rawFileName] = parts as [string, string]
+    // Normalised before anything looks at them, so the name that is validated,
+    // matched against the entry list and sent to ACSM as a folder is one form
+    // rather than whichever the zipping machine happened to write.
+    const carModel = normalise(rawCarModel)
+    const fileName = normalise(rawFileName)
     if (extensionOf(fileName) !== ".zip") {
       throw new LiveryPackError(
         `Refusing "${path}": every entry inside a car folder has to be a driver's zip. ` +
@@ -313,7 +365,7 @@ function readOneLivery(
           `skin is a flat folder of files.`,
       )
     }
-    const name = parts[0]!
+    const name = normalise(parts[0]!)
     assertSafeName("file name", name, `in ${carModel}/${driverName}`)
 
     const ext = extensionOf(name)

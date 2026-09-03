@@ -44,6 +44,11 @@ export class LiveryPlanError extends Error {
 
 const NIL_UUID = "00000000-0000-0000-0000-000000000000"
 
+/** See `normalise` in `pack.ts` — both sides of the name match use NFC. */
+function normalise(value: string): string {
+  return value.normalize("NFC")
+}
+
 function hasRealUuid(entrant: Entrant): boolean {
   const id = (entrant.InternalUUID ?? "").trim()
   return id !== "" && id !== NIL_UUID
@@ -99,35 +104,41 @@ export function planLiveries(
 
   const assignments: LiveryAssignment[] = []
   for (const livery of pack.liveries) {
-    const matches = roster.filter((r) => r.name === livery.driverName)
+    // Normalised here as well as in `pack.ts`, because this is the function
+    // doing the comparing. Depending on the caller to have normalised means the
+    // day something else builds a `Livery` — the Discord bot, a test — the
+    // match silently stops working for exactly the drivers it was fixed for.
+    const driverName = normalise(livery.driverName)
+    const carModel = normalise(livery.carModel)
+    const matches = roster.filter((r) => r.name === driverName)
 
     if (matches.length === 0) {
       throw new LiveryPlanError(
-        `No entrant called "${livery.driverName}" in this championship. Names are matched exactly, ` +
+        `No entrant called "${driverName}" in this championship. Names are matched exactly, ` +
           `so a trailing space or different capitalisation in the zip is enough to miss. ` +
-          `${nearbyNames(roster, livery.driverName)}`,
+          `${nearbyNames(roster, driverName)}`,
       )
     }
     if (matches.length > 1) {
       throw new LiveryPlanError(
-        `"${livery.driverName}" appears ${matches.length} times in the entry list, so champctl ` +
+        `"${driverName}" appears ${matches.length} times in the entry list, so champctl ` +
           `can't tell which one the livery is for. Fix the duplicate in ACSM first.`,
       )
     }
 
     const match = matches[0]!
-    if (match.model !== livery.carModel) {
+    if (match.model !== carModel) {
       throw new LiveryPlanError(
-        `${livery.driverName} is entered in ${match.model || "no car"}, but the livery is filed ` +
-          `under ${livery.carModel}. Uploading it would put the skin on a car they don't drive. ` +
+        `${driverName} is entered in ${match.model || "no car"}, but the livery is filed ` +
+          `under ${carModel}. Uploading it would put the skin on a car they don't drive. ` +
           `Move it to the right folder in the pack, or fix their car in ACSM.`,
       )
     }
 
     assignments.push({
-      driverName: livery.driverName,
-      carModel: livery.carModel,
-      skinFolder: livery.skinFolder,
+      driverName,
+      carModel,
+      skinFolder: normalise(livery.skinFolder),
       classIndex: match.classIndex,
       entrantIndex: match.entrantIndex,
       fromSkin: match.skin,
@@ -174,9 +185,15 @@ function rosterOf(championship: Championship): RosterEntry[] {
   classes(championship).forEach((cls, classIndex) => {
     slots(cls.Entrants).forEach((slot, entrantIndex) => {
       out.push({
-        name: (slot.entrant.Name ?? "").trim(),
-        model: (slot.entrant.Model ?? "").trim(),
-        skin: (slot.entrant.Skin ?? "").trim(),
+        // NFC on both sides of the comparison, matching what `pack.ts` does to
+        // the zip. "Häkkinen" has a precomposed and a decomposed encoding, and
+        // a macOS-made zip carries the second where ACSM will hold the first —
+        // two byte sequences for text that prints identically. Normalising is
+        // not a loosening of the exact-name rule: case and stray whitespace
+        // still miss.
+        name: normalise((slot.entrant.Name ?? "").trim()),
+        model: normalise((slot.entrant.Model ?? "").trim()),
+        skin: normalise((slot.entrant.Skin ?? "").trim()),
         classIndex,
         entrantIndex,
         entrant: slot.entrant,
@@ -228,7 +245,7 @@ function eventHasResults(ev: { StartedTime?: string } | undefined): boolean {
  * one is a driver racing under another driver's name.
  */
 function nearbyNames(roster: readonly RosterEntry[], wanted: string): string {
-  const fold = (s: string) => s.toLowerCase().replace(/\s+/g, "")
+  const fold = (s: string) => normalise(s).toLowerCase().replace(/\s+/g, "")
   const close = roster.filter((r) => r.name && fold(r.name) === fold(wanted)).map((r) => r.name)
   if (close.length === 0) return "No entrant name is close to it either."
   return `The entry list has ${close.map((n) => `"${n}"`).join(", ")}, which differs only in case or spacing.`

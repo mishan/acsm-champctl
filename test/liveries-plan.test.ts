@@ -119,6 +119,31 @@ describe("planLiveries refusals", () => {
     )
   })
 
+  it("matches a name whose accents are encoded differently on each side", () => {
+    // The case that actually strands a driver: a zip made on a Mac carries the
+    // decomposed form, ACSM holds the precomposed one, and both print
+    // "Ricky Häkkinen". Escapes rather than literals, or the two sides of this
+    // test would be the same source text and it would prove nothing.
+    const decomposed = "Ricky Ha\u0308kkinen"
+    const precomposed = "Ricky H\u00e4kkinen"
+    expect(decomposed).not.toBe(precomposed)
+
+    const c = champWith([person({ Name: precomposed, Skin: "old" })])
+    const plan = planLiveries(c, "champ-1", packOf(livery(decomposed)))
+    expect(plan.assignments).toHaveLength(1)
+    expect(plan.assignments[0]?.fromSkin).toBe("old")
+  })
+
+  it("still misses on case, which is the rule working as chosen", () => {
+    // Normalising encodings is not the same as folding case. A driver called
+    // "postaL" is not "POSTAL", and guessing there puts one driver in another's
+    // livery.
+    const c = champWith([person({ Name: "postaL" })])
+    expect(() => planLiveries(c, "champ-1", packOf(livery("POSTAL")))).toThrowError(
+      /No entrant called/,
+    )
+  })
+
   it("points at a name that differs only in case or spacing", () => {
     // The near-miss that actually happens. Named, not auto-corrected: accepting
     // a suggestion here puts a driver in another driver's livery.
