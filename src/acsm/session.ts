@@ -616,7 +616,7 @@ export class AcsmSession {
   async postFiles(
     path: string,
     parts: readonly MultipartFilePart[],
-    options: { referer?: string } = {},
+    options: { referer?: string; timeoutMs?: number } = {},
   ): Promise<Response> {
     const form = new FormData()
     for (const part of parts) {
@@ -629,12 +629,16 @@ export class AcsmSession {
       )
     }
 
-    const res = await this.#request(path, {
-      method: "POST",
-      body: form,
-      redirect: "manual",
-      ...(options.referer ? { headers: { Referer: this.url(options.referer) } } : {}),
-    })
+    const res = await this.#request(
+      path,
+      {
+        method: "POST",
+        body: form,
+        redirect: "manual",
+        ...(options.referer ? { headers: { Referer: this.url(options.referer) } } : {}),
+      },
+      options.timeoutMs,
+    )
     if (res.status >= 400) {
       throw new AcsmWriteError(`${res.status} ${res.statusText} from ${path}`, res.status, path)
     }
@@ -666,10 +670,14 @@ export class AcsmSession {
    *
    * Callers that pass `redirect: "manual"` want the 3xx itself — the login
    * POST and the form POSTs read the `Location` header.
+   *
+   * `timeoutMs` overrides the session default for this request only. The
+   * default is sized for a page of HTML, and a livery upload is tens of
+   * megabytes — see `postFiles`.
    */
-  async #request(path: string, init: RequestInit): Promise<Response> {
+  async #request(path: string, init: RequestInit, timeoutMs?: number): Promise<Response> {
     const wantsRawRedirect = init.redirect === "manual"
-    let res = await this.#fetchOnce(path, init)
+    let res = await this.#fetchOnce(path, init, timeoutMs)
 
     for (let hop = 0; !wantsRawRedirect && isRedirect(res) && hop < MAX_REDIRECTS; hop++) {
       const location = res.headers.get("location")
@@ -691,18 +699,22 @@ export class AcsmSession {
       // nothing — is the kind you don't notice until race night.
       const keepsMethod = res.status === 307 || res.status === 308
       if (keepsMethod) {
-        res = await this.#fetchOnce(next, init)
+        res = await this.#fetchOnce(next, init, timeoutMs)
       } else {
         const headers = new Headers(init.headers)
         headers.delete("Content-Type")
-        res = await this.#fetchOnce(next, { ...init, method: "GET", body: null, headers })
+        res = await this.#fetchOnce(
+          next,
+          { ...init, method: "GET", body: null, headers },
+          timeoutMs,
+        )
       }
     }
 
     return res
   }
 
-  async #fetchOnce(path: string, init: RequestInit): Promise<Response> {
+  async #fetchOnce(path: string, init: RequestInit, timeoutMs?: number): Promise<Response> {
     // Resolve before opening the timer, so an off-origin URL fails loudly
     // rather than being reported as a request failure.
     const url = this.url(path)
@@ -712,7 +724,7 @@ export class AcsmSession {
     await this.#limiter?.acquire()
 
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), this.#timeoutMs)
+    const timer = setTimeout(() => controller.abort(), timeoutMs ?? this.#timeoutMs)
     try {
       const headers = new Headers(init.headers)
       headers.set("User-Agent", this.#userAgent)

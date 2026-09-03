@@ -79,22 +79,44 @@ const EXPLAINED_EXTENSIONS: Record<string, string> = {
 }
 
 export interface PackLimits {
-  /** One file inside a skin. Default 24 MB — a 4K DDS with mipmaps fits. */
+  /** One file inside a skin. */
   maxFileBytes: number
-  /** One driver's whole skin folder. Default 64 MB. */
+  /** One driver's whole skin folder. */
   maxSkinBytes: number
-  /** Everything, uncompressed. The zip-bomb ceiling. Default 512 MB. */
+  /** Everything, uncompressed. The zip-bomb ceiling. */
   maxTotalBytes: number
-  /** Files in one skin folder. Default 40. */
+  /** Files in one skin folder. */
   maxFilesPerSkin: number
-  /** Skins in one pack. Default 100. */
+  /** Skins in one pack. */
   maxSkins: number
 }
 
+/**
+ * Sized from what BATL's drivers actually submit, not from what a livery needs.
+ *
+ * The first numbers here were the second: 24 MB a file and 64 MB a skin, which
+ * is generous for a 4K DDS with mipmaps and a preview. A real pack refused two
+ * of its liveries on the first run — one skin over 64 MB, and a 32 MB
+ * `Alpha for carbon.png` inside another.
+ *
+ * That file is the tell. It is a working layer somebody left in, and it is
+ * `.png`, so the extension allowlist passes it; Assetto Corsa will never read
+ * it. The honest reading is that these limits are catching *tidiness*, which is
+ * not what they are for — the checks that matter are the traversal, the
+ * extension allowlist and the zip bomb, and those are unchanged. A size cap
+ * only has to stop somebody filling the game server's disk.
+ *
+ * So they are doubled rather than tuned. If a real pack trips one again, double
+ * it again; the number that would actually be worth defending is a disk-usage
+ * budget for the server's skins directories, and nobody has one.
+ *
+ * The per-file limit is not free above about 48 MB: see `uploadTimeoutMs` in
+ * `apply.ts`, which is what stops a big upload dying on the request timeout.
+ */
 export const DEFAULT_LIMITS: PackLimits = {
-  maxFileBytes: 24 * 1024 * 1024,
-  maxSkinBytes: 64 * 1024 * 1024,
-  maxTotalBytes: 512 * 1024 * 1024,
+  maxFileBytes: 48 * 1024 * 1024,
+  maxSkinBytes: 128 * 1024 * 1024,
+  maxTotalBytes: 1024 * 1024 * 1024,
   maxFilesPerSkin: 40,
   maxSkins: 100,
 }

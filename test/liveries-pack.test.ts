@@ -274,4 +274,42 @@ describe("readLiveryPack limits", () => {
     })
     expect(readLiveryPack(p).liveries[0]?.files).toHaveLength(4)
   })
+
+  it("accepts the two liveries the first shipped limits refused", () => {
+    // Both are real: a 32 MB "Alpha for carbon.png" left in one submission, and
+    // another skin totalling more than 64 MB. Written at the sizes that failed,
+    // so halving DEFAULT_LIMITS back again fails here rather than on race night.
+    const p = pack({
+      [`${CAR}/Laplal.zip`]: zipSync({
+        "livery.dds": big(20 * 1024 * 1024),
+        "Alpha for carbon.png": big(33 * 1024 * 1024),
+      }),
+      [`${CAR}/ily.zip`]: zipSync({
+        "livery.dds": big(40 * 1024 * 1024),
+        "livery_map.dds": big(30 * 1024 * 1024),
+        "livery_details.dds": big(20 * 1024 * 1024),
+      }),
+    })
+    expect(readLiveryPack(p).liveries.map((l) => l.driverName)).toEqual(["Laplal", "ily"])
+  })
+
+  it("still refuses a file past the doubled per-file limit", () => {
+    // Doubling is not removing. The cap still has a job: stopping one
+    // submission filling the game server's disk.
+    const p = pack({
+      [`${CAR}/Misha.zip`]: zipSync({ "livery.dds": big(49 * 1024 * 1024) }),
+    })
+    expect(() => readLiveryPack(p)).toThrowError(/over the 48.0 MB limit for one file/)
+  })
+
+  it("still refuses a skin past the doubled folder limit", () => {
+    const p = pack({
+      [`${CAR}/Misha.zip`]: zipSync({
+        "a.dds": big(45 * 1024 * 1024),
+        "b.dds": big(45 * 1024 * 1024),
+        "c.dds": big(45 * 1024 * 1024),
+      }),
+    })
+    expect(() => readLiveryPack(p)).toThrowError(/unpacks to more than 128.0 MB/)
+  })
 })

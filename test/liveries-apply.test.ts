@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import { CHAMPIONSHIP_SUBMIT_PATH } from "../src/acsm/paths.js"
 import { AcsmSession } from "../src/acsm/session.js"
 import type { Entrant } from "../src/acsm/types.js"
-import { RosterChangedError, applyLiveries } from "../src/liveries/apply.js"
+import { RosterChangedError, applyLiveries, uploadTimeoutMs } from "../src/liveries/apply.js"
 import type { Livery, LiveryPack } from "../src/liveries/pack.js"
 import { planLiveries } from "../src/liveries/plan.js"
 import { championship, championshipClass, entryList, raceEvent } from "./support/build.js"
@@ -69,12 +69,35 @@ interface Recorded {
   referer?: string
 }
 
+/**
+ * Resolves after `ms`, unless the request is aborted first.
+ *
+ * Node's fetch is replaced here, so nothing else honours the AbortSignal the
+ * session attaches — and a test about timeouts against a fetch that ignores
+ * them proves nothing.
+ */
+function delayed(ms: number, signal: AbortSignal | null | undefined, res: () => Response) {
+  return new Promise<Response>((resolve, reject) => {
+    const timer = setTimeout(() => resolve(res()), ms)
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer)
+      const e = new Error("This operation was aborted")
+      e.name = "AbortError"
+      reject(e)
+    })
+  })
+}
+
 async function fakeSession(
   options: {
     formNames?: string[]
     uploadStatus?: number
     submitStatus?: number
     practiceStatus?: number
+    /** The session-wide default, to show the upload does not use it. */
+    sessionTimeoutMs?: number
+    /** How long the skin upload takes to answer. */
+    skinDelayMs?: number
   } = {},
 ) {
   const requests: Recorded[] = []
@@ -105,10 +128,9 @@ async function fakeSession(
       })
     }
     if (url.includes("/skin")) {
-      return new Response("", {
-        status: options.uploadStatus ?? 302,
-        headers: { location: "/car/x" },
-      })
+      const respond = () =>
+        new Response("", { status: options.uploadStatus ?? 302, headers: { location: "/car/x" } })
+      return options.skinDelayMs ? delayed(options.skinDelayMs, init?.signal, respond) : respond()
     }
     if (url.includes(CHAMPIONSHIP_SUBMIT_PATH)) {
       return new Response("", {
@@ -130,6 +152,7 @@ async function fakeSession(
     baseUrl: "https://acsm.example",
     fetch: fetchImpl,
     rateLimit: false,
+    ...(options.sessionTimeoutMs !== undefined ? { timeoutMs: options.sessionTimeoutMs } : {}),
   })
   await session.login({ username: "admin", password: "x" })
   return { session, requests }
@@ -242,6 +265,48 @@ describe("applyLiveries", () => {
   })
 })
 
+describe("how long an upload is given", () => {
+  const MB = 1024 * 1024
+
+  it("allows far more than the session default for a large livery", () => {
+    // AcsmSession's default is 30s, which is right for a page of HTML and
+    // aborts a legitimate 48 MB upload — reachable since the pack limits were
+    // doubled. This is the number that stops that.
+    expect(uploadTimeoutMs(48 * MB)).toBeGreaterThan(180_000)
+  })
+
+  it("keeps a floor for a small one", () => {
+    // A tiny upload still gets the ordinary allowance; the size term is added
+    // to it rather than replacing it, so a 3 KB skin isn't given 30ms.
+    expect(uploadTimeoutMs(3 * 1024)).toBeGreaterThanOrEqual(30_000)
+    expect(uploadTimeoutMs(0)).toBe(30_000)
+  })
+
+  it("actually uses it, instead of the session's default", async () => {
+    // The arithmetic above is worthless if nobody passes it. Here the session
+    // would abort after 5ms and the upload takes 60ms, so this only passes if
+    // the per-request timeout reaches AbortController — which is both halves of
+    // the wiring: uploadSkin passing it, and the session honouring it.
+    const { session, requests } = await fakeSession({ sessionTimeoutMs: 5, skinDelayMs: 60 })
+    const result = await applyLiveries(session, plan())
+    expect(result.uploaded).toHaveLength(1)
+    expect(requests.filter((r) => r.url.includes("/skin"))).toHaveLength(1)
+  })
+
+  it("grows with the payload rather than being one fixed number", () => {
+    // A flat ten minutes would work and would also wait ten minutes on a
+    // request that died in the first second.
+    expect(uploadTimeoutMs(64 * MB)).toBeGreaterThan(uploadTimeoutMs(8 * MB))
+  })
+
+  it("assumes an uplink slow enough to be nobody's bottleneck", () => {
+    // 256 KB/s is about 2 Mbit. Wrong high aborts a good upload; wrong low
+    // costs a wait on one that was never going to finish.
+    const seconds = (uploadTimeoutMs(10 * MB) - 30_000) / 1000
+    expect(seconds).toBe(40)
+  })
+})
+
 describe("applyLiveries refusals", () => {
   it("refuses the save when the entrant at that row is somebody else", async () => {
     // The positional-array failure has no symptom until race night: a sign-up
@@ -262,6 +327,29 @@ describe("applyLiveries refusals", () => {
     const { session, requests } = await fakeSession({ uploadStatus: 200 })
     await expect(applyLiveries(session, plan())).rejects.toThrow(/didn't accept Misha's livery/)
     expect(requests.filter((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))).toEqual([])
+  })
+
+  it("explains a timed-out upload as the uplink rather than as ACSM", async () => {
+    // Otherwise it reads as "the request failed", which sends whoever is
+    // holding the zip looking at Server Manager.
+    // An AbortError from fetch is exactly what the session's own
+    // AbortController produces on a timeout, and it is what #fetchOnce turns
+    // into "timed out". Simulating it beats waiting for a real one.
+    const slow = new AcsmSession({
+      baseUrl: "https://acsm.example",
+      rateLimit: false,
+      fetch: async (input) => {
+        if (String(input).includes("/skin")) {
+          const abort = new Error("This operation was aborted")
+          abort.name = "AbortError"
+          throw abort
+        }
+        return new Response("", { status: 302, headers: { location: "/" } })
+      },
+    })
+    await expect(applyLiveries(slow, plan())).rejects.toThrow(
+      /Uploading Misha's livery for .* timed out/,
+    )
   })
 
   it("treats a 200 from the championship save as a failure", async () => {
