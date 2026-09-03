@@ -96,27 +96,77 @@ export const CHAMPIONSHIP_REQUIRED_ENTRY_LIST_FIELDS = REQUIRED_ENTRY_LIST_FIELD
 )
 
 /**
- * Removes the clone-me template rows, exactly as `manager.js` does on load.
+ * ACSM's marker for the whole hidden class block its "Add another class" button
+ * clones.
  *
- * By id rather than by looking hidden: on 2.4.15 the class template row is not
- * hidden at all, so a styling heuristic finds nothing and every entrant shifts
- * by one. Duplicate ids are not valid HTML and ACSM renders one per class block
- * plus one for the spectator, so this deliberately matches all of them.
+ * A second, larger template than `#entrantTemplate` and easy to miss, because
+ * it *contains* one. `new.html` renders it before the real classes:
+ *
+ *     <div id="class-template" style="display: none;">
+ *         {{ template "championship-class" ... "Class" $.DefaultClass ... }}
+ *     </div>
+ *     {{ range $classIndex, $class := $f.Classes }} ... {{ end }}
+ *
+ * so it carries its own `ClassName`, its own `EntryList.NumEntrants` — zero,
+ * since the default class has no entrants — and its own `#entrantTemplate` row.
  */
-export function stripEntrantTemplates(html: string): { html: string; removed: number } {
+export const CLASS_TEMPLATE_ID = "class-template"
+
+export interface StrippedTemplates {
+  html: string
+  /** `#class-template` blocks removed. */
+  classTemplates: number
+  /** `#entrantTemplate` rows removed, after the class templates went. */
+  entrantTemplates: number
+}
+
+/**
+ * Removes both clone-me templates, in the order and by the markers `manager.js`
+ * uses.
+ *
+ * `initClassSetup` removes the class one:
+ *
+ *     let $tmpl = $document.find("#class-template");
+ *     championships.$classTemplate = $tmpl.clone();
+ *     $tmpl.remove();
+ *
+ * and `RaceSetup` removes an `#entrantTemplate` per class block. A browser
+ * therefore submits neither, and champctl — which runs no JavaScript — has to
+ * do both by hand.
+ *
+ * **Missing the class one is not a cosmetic error.** Measured against a real
+ * BATL championship: the form rendered 32 entrant rows, `ClassName` twice and
+ * `EntryList.NumEntrants` as `0, 29`. Posting that has ACSM read row 0 as the
+ * spectator car, build an empty first class, and then take the *next* 29 rows
+ * as the real class — which begins one row early, so every driver inherits the
+ * previous one's car and skin and the last is dropped off the end. It would
+ * also have created a phantom empty class on every save.
+ *
+ * Class first, deliberately: removing the outer block takes the entrant
+ * template inside it along too, and the count then says how many *real* class
+ * blocks there were rather than how many templates existed.
+ */
+export function stripClonedTemplates(html: string): StrippedTemplates {
   const $ = cheerio.load(html)
-  const templates = $(`#${ENTRANT_TEMPLATE_ID}`)
-  const removed = templates.length
-  templates.remove()
-  return { html: $.html(), removed }
+
+  const classTemplates = $(`#${CLASS_TEMPLATE_ID}`)
+  const classCount = classTemplates.length
+  classTemplates.remove()
+
+  const entrantTemplates = $(`#${ENTRANT_TEMPLATE_ID}`)
+  const entrantCount = entrantTemplates.length
+  entrantTemplates.remove()
+
+  return { html: $.html(), classTemplates: classCount, entrantTemplates: entrantCount }
 }
 
 export interface ChampionshipForm {
   /** Fields as a browser would submit them: templates gone, unread keys gone. */
   fields: FormField[]
   action: string
-  /** How many `#entrantTemplate` rows were dropped. Expect one per class, plus
-   *  one for the spectator block on premium. */
+  /** `#class-template` blocks dropped. One on every build seen so far. */
+  droppedClassTemplates: number
+  /** `#entrantTemplate` rows dropped, once the class templates had gone. */
   droppedTemplateRows: number
   /** `EntryList.NumEntrants`, one per class, in document order. */
   entrantsPerClass: number[]
@@ -135,7 +185,7 @@ export interface ChampionshipForm {
  * count that doesn't add up rather than as a driver getting someone else's car.
  */
 export function findChampionshipForm(html: string, pageUrl: string): ChampionshipForm {
-  const stripped = stripEntrantTemplates(html)
+  const stripped = stripClonedTemplates(html)
   const form = findFormByAction(stripped.html, CHAMPIONSHIP_SUBMIT_PATH, { pageUrl })
   if (!form) {
     throw new ChampionshipFormError(
@@ -172,18 +222,22 @@ export function findChampionshipForm(html: string, pageUrl: string): Championshi
     throw new ChampionshipFormError(
       `Refusing to write the championship form: it has ${rows} entrant rows, and the classes ` +
         `account for ${classTotal} (${entrantsPerClass.join(" + ")}) — with or without a leading ` +
-        `spectator-car row, that doesn't add up. ${stripped.removed} #entrantTemplate ${
-          stripped.removed === 1 ? "row was" : "rows were"
-        } already dropped. ACSM reads these as parallel positional arrays, so writing a payload ` +
-        `champctl can't account for would give entrants each other's cars. Run ` +
-        `\`npm run recon:champ-form\` against this manager and compare with docs/acsm-champ-form.md.`,
+        `spectator-car row, that doesn't add up. champctl dropped ` +
+        `${stripped.classTemplates} #${CLASS_TEMPLATE_ID} and ` +
+        `${stripped.entrantTemplates} #${ENTRANT_TEMPLATE_ID} already, and found ` +
+        `${count(fields, "ClassName")} ClassName ${count(fields, "ClassName") === 1 ? "field" : "fields"}. ` +
+        `ACSM reads these as parallel positional arrays, so writing a payload champctl can't ` +
+        `account for would give entrants each other's cars. Run \`npm run recon:champ-form -- ` +
+        `<championship-id>\` against this manager — it only reads — and compare with ` +
+        `docs/acsm-champ-form.md §4.2.`,
     )
   }
 
   return {
     fields,
     action: form.action,
-    droppedTemplateRows: stripped.removed,
+    droppedClassTemplates: stripped.classTemplates,
+    droppedTemplateRows: stripped.entrantTemplates,
     entrantsPerClass,
     hasSpectatorRow,
     rows,
@@ -216,6 +270,40 @@ export function entrantRowIndex(
   }
   const before = form.entrantsPerClass.slice(0, classIndex).reduce((a, b) => a + b, 0)
   return (form.hasSpectatorRow ? 1 : 0) + before + entrantIndex
+}
+
+/**
+ * The row holding this driver, found by their name.
+ *
+ * Preferred over `entrantRowIndex` for deciding where to write, and the
+ * difference is which fact is doing the work. The arithmetic index is *derived*:
+ * it assumes a leading spectator row, that class blocks are in export order, and
+ * that nothing else on the page renders an entrant row. Every one of those had
+ * to be learned by being wrong about it. The name is not derived — it is
+ * rendered in the row champctl wants to edit, right next to the skin.
+ *
+ * `undefined` when the name is not there, and a refusal when it is there twice,
+ * because the whole point is to not guess. NFC on both sides, matching
+ * `src/liveries/pack.ts`: a decomposed "ä" from a macOS zip is the same name as
+ * the precomposed one the manager holds.
+ */
+export function findEntrantRow(form: ChampionshipForm, driverName: string): number | undefined {
+  const wanted = driverName.normalize("NFC").trim()
+  if (!wanted) return undefined
+
+  const names = currentNames(form)
+  const found: number[] = []
+  names.forEach((name, i) => {
+    if (name.normalize("NFC").trim() === wanted) found.push(i)
+  })
+
+  if (found.length > 1) {
+    throw new ChampionshipFormError(
+      `The championship form has "${wanted}" in ${found.length} rows (${found.join(", ")}), so ` +
+        `champctl can't tell which one to put the livery on. Fix the duplicate entrant in ACSM.`,
+    )
+  }
+  return found[0]
 }
 
 /**

@@ -308,19 +308,28 @@ describe("how long an upload is given", () => {
 })
 
 describe("applyLiveries refusals", () => {
-  it("refuses the save when the entrant at that row is somebody else", async () => {
-    // The positional-array failure has no symptom until race night: a sign-up
-    // approved while the preview was open moves every row after it.
+  it("still writes the right driver when a sign-up shifted every row", async () => {
+    // The old code computed the row from the export and refused when the name
+    // there had moved. Looking the row up by name makes an approved sign-up a
+    // non-event instead of a refusal — which is what the operator wants at nine
+    // on a race night.
     const { session, requests } = await fakeSession({ formNames: ["Newcomer", "Misha", "postaL"] })
-    await expect(applyLiveries(session, plan())).rejects.toThrow(RosterChangedError)
-    expect(requests.filter((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))).toEqual([])
+    await applyLiveries(session, plan())
+    const body = new URLSearchParams(
+      requests.find((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))?.body ?? "",
+    )
+    expect(body.getAll("EntryList.Name")).toEqual(["Stream Van", "Newcomer", "Misha", "postaL"])
+    // Misha is at row 2 now, not row 1. Newcomer keeps their own empty skin.
+    expect(body.getAll("EntryList.Skin")).toEqual(["", "", "Misha", ""])
   })
 
-  it("says which name it found instead", async () => {
-    const { session } = await fakeSession({ formNames: ["Newcomer", "Misha", "postaL"] })
+  it("refuses when the driver has left the entry list entirely", async () => {
+    const { session, requests } = await fakeSession({ formNames: ["postaL"] })
+    await expect(applyLiveries(session, plan())).rejects.toThrow(RosterChangedError)
     await expect(applyLiveries(session, plan())).rejects.toThrow(
-      /expected Misha at position 1 and the form has "Newcomer" there/,
+      /the entry list on the form does not have them/,
     )
+    expect(requests.filter((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))).toEqual([])
   })
 
   it("stops before the championship save when an upload fails", async () => {
