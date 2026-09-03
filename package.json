@@ -13,6 +13,7 @@
     "champctl-archive": "./bin/champctl-archive.js",
     "champctl-finalize": "./bin/champctl-finalize.js",
     "champctl-championship": "./bin/champctl-championship.js",
+    "champctl-liveries": "./bin/champctl-liveries.js",
     "champctl-serve": "./bin/champctl-serve.js"
   },
   "//files": "dist/ is in .gitignore, and without an explicit list npm packs by gitignore rules — so the tarball shipped bin/ scripts importing a directory that wasn't in it. README and LICENSE come along whatever this says.",
@@ -26,6 +27,7 @@
     "gridmom": "tsx src/cli/gridmom.ts",
     "archive": "tsx src/cli/archive.ts",
     "finalize": "tsx src/cli/finalize.ts",
+    "liveries": "tsx src/cli/liveries.ts",
     "serve": "tsx src/cli/serve.ts",
     "dev": "vite",
     "//build": "Two outputs from one command: tsc emits dist/ for the CLIs and the server, vite emits dist/client for the browser. The gates run `npm run build`, so a client that doesn't compile fails CI the same way the server would.",
@@ -64,6 +66,7 @@
     "@fastify/static": "^10.1.3",
     "cheerio": "^1.2.0",
     "fastify": "^5.12.1",
+    "fflate": "0.8.3",
     "ipaddr.js": "^2.5.0",
     "luxon": "^3.5.0",
     "undici": "^7.19.0"

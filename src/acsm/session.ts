@@ -283,6 +283,34 @@ export interface LoginCredentials {
   password: string
 }
 
+export interface MultipartFilePart {
+  /** Ignored by ACSM, which walks `r.MultipartForm.File` rather than keying it. */
+  field: string
+  /**
+   * The part's filename — and for a skin upload, its *path*.
+   *
+   * ACSM writes to `skins/<filepath.Dir(name)>/<filepath.Base(name)>` without
+   * sanitising it, so anything built into this has to be checked first. That is
+   * `src/liveries/pack.ts`'s job for a livery.
+   */
+  fileName: string
+  bytes: string | Uint8Array
+  contentType?: string
+}
+
+export interface PostFormOptions {
+  /**
+   * Override which `EntryList.*` keys the payload must carry.
+   *
+   * Only one form needs this: the championship edit form renders no
+   * `EntryList.EntrantID`, so the event form's list would refuse every write to
+   * it. See `CHAMPIONSHIP_REQUIRED_ENTRY_LIST_FIELDS` in `championship-form.ts`
+   * for why that is correct there and nowhere else. Leave it unset otherwise —
+   * the default is the one that fails closed.
+   */
+  requiredEntryListFields?: readonly string[]
+}
+
 export class AcsmSession {
   readonly #baseUrl: string
   readonly #fetch: typeof globalThis.fetch
@@ -496,7 +524,11 @@ export class AcsmSession {
    * silently reassigns entrant data (docs/acsm-write-path.md §1). This is the
    * guard that stops champctl destroying an entry list while appearing to work.
    */
-  async postForm(path: string, fields: readonly FormField[]): Promise<Response> {
+  async postForm(
+    path: string,
+    fields: readonly FormField[],
+    options: PostFormOptions = {},
+  ): Promise<Response> {
     // Stripped before the check, so the arity check runs on what goes out.
     //
     // ACSM reads these two positionally but renders them unpaired, so a
@@ -508,7 +540,9 @@ export class AcsmSession {
     // setting to another.
     const sent = stripUnpairedCheckboxes(fields)
 
-    const problems = checkEntryListShape(sent)
+    const problems = checkEntryListShape(sent, {
+      ...(options.requiredEntryListFields ? { required: options.requiredEntryListFields } : {}),
+    })
     if (problems.length > 0) {
       const detail = problems
         .map((p) => (p.count === 0 ? `${p.key} is missing` : `${p.key} has ${p.count}`))
@@ -561,15 +595,66 @@ export class AcsmSession {
     contents: string | Uint8Array,
     contentType = "application/json",
   ): Promise<Response> {
-    const form = new FormData()
-    const bytes = typeof contents === "string" ? new TextEncoder().encode(contents) : contents
-    form.append(fieldName, new Blob([bytes], { type: contentType }), fileName)
+    return this.postFiles(path, [{ field: fieldName, fileName, bytes: contents, contentType }])
+  }
 
-    const res = await this.#request(path, { method: "POST", body: form, redirect: "manual" })
+  /**
+   * A multipart POST carrying several file parts.
+   *
+   * The skin upload needs this shape: `CarManager.UploadSkin` walks *every*
+   * file part in the request and writes each to a path built from that part's
+   * filename, so one upload of a skin folder is one request with one part per
+   * file. The field names are ignored by ACSM — it iterates
+   * `r.MultipartForm.File` — which is why they are per-part here rather than a
+   * single argument.
+   *
+   * `referer` exists because several ACSM handlers finish with
+   * `http.Redirect(w, r, r.Referer(), 302)`. Without one that is a redirect to
+   * the empty string: still a 302, so the write succeeded, but nothing in the
+   * response or the server log says where it came from.
+   */
+  async postFiles(
+    path: string,
+    parts: readonly MultipartFilePart[],
+    options: { referer?: string } = {},
+  ): Promise<Response> {
+    const form = new FormData()
+    for (const part of parts) {
+      const bytes =
+        typeof part.bytes === "string" ? new TextEncoder().encode(part.bytes) : part.bytes
+      form.append(
+        part.field,
+        new Blob([bytes], { type: part.contentType ?? "application/octet-stream" }),
+        part.fileName,
+      )
+    }
+
+    const res = await this.#request(path, {
+      method: "POST",
+      body: form,
+      redirect: "manual",
+      ...(options.referer ? { headers: { Referer: this.url(options.referer) } } : {}),
+    })
     if (res.status >= 400) {
       throw new AcsmWriteError(`${res.status} ${res.statusText} from ${path}`, res.status, path)
     }
     return res
+  }
+
+  /**
+   * A GET whose *response* is the answer, rather than its body.
+   *
+   * Several ACSM actions are GETs that redirect — starting a practice session,
+   * approving a sign-up. `getText` is the wrong tool for those: it follows the
+   * redirect, then throws away the status the caller needed and hands back the
+   * HTML of wherever it landed.
+   */
+  async getRaw(path: string, options: { referer?: string } = {}): Promise<Response> {
+    return this.#request(path, {
+      method: "GET",
+      redirect: "manual",
+      ...(options.referer ? { headers: { Referer: this.url(options.referer) } } : {}),
+    })
   }
 
   /**
