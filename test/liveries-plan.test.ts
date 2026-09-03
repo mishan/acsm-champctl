@@ -102,8 +102,60 @@ describe("planLiveries", () => {
   it("reports rounds that already have results", () => {
     const c = champWith([person({ Name: "Misha" })], {
       Events: [
-        raceEvent({ EntryList: {}, StartedTime: "2026-09-02T20:00:00Z" }),
+        raceEvent({
+          EntryList: {},
+          StartedTime: "2026-09-02T20:00:00Z",
+          CompletedTime: "2026-09-02T21:00:00Z",
+          Sessions: { RACE: { Name: "Race", Results: { Type: "RACE" } } },
+        }),
         raceEvent({ EntryList: {} }),
+      ],
+    })
+    expect(planLiveries(c, "champ-1", packOf(livery("Misha"))).racedRounds).toEqual([1])
+  })
+
+  it("does not call a round raced because its practice server is running", () => {
+    // This is what a live looping practice looks like in the export, and it is
+    // what the check used to report as "already been raced". ACSM stamps
+    // StartedTime from the UDP new-session callback, and a practice is a
+    // session — so an untouched round somebody opened practice on looked raced.
+    const c = champWith([person({ Name: "Misha" })], {
+      Events: [
+        raceEvent({
+          EntryList: {},
+          StartedTime: "2026-09-02T19:00:00Z",
+          CompletedTime: "0001-01-01T00:00:00Z",
+          Sessions: {
+            PRACTICE: {
+              Name: "Practice",
+              StartedTime: "2026-09-02T19:00:00Z",
+              CompletedTime: "0001-01-01T00:00:00Z",
+              Results: null,
+            },
+          },
+        }),
+      ],
+    })
+    expect(planLiveries(c, "champ-1", packOf(livery("Misha"))).racedRounds).toEqual([])
+  })
+
+  it("counts a finished session with results even when the event is not complete", () => {
+    // A two-race night part way through: qualifying is in the book, the event
+    // is not over, and those cars did run in their old liveries.
+    const c = champWith([person({ Name: "Misha" })], {
+      Events: [
+        raceEvent({
+          EntryList: {},
+          StartedTime: "2026-09-02T19:00:00Z",
+          CompletedTime: "0001-01-01T00:00:00Z",
+          Sessions: {
+            QUALIFY: {
+              Name: "Qualifying",
+              CompletedTime: "2026-09-02T20:20:00Z",
+              Results: { Type: "QUALIFY" },
+            },
+          },
+        }),
       ],
     })
     expect(planLiveries(c, "champ-1", packOf(livery("Misha"))).racedRounds).toEqual([1])

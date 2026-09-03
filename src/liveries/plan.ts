@@ -31,8 +31,8 @@
  * happened in the database.
  */
 
-import type { Championship, Entrant } from "../acsm/types.js"
-import { classes, events, slots } from "../acsm/view.js"
+import type { Championship, ChampionshipEvent, Entrant } from "../acsm/types.js"
+import { classes, events, isZeroTime, slots } from "../acsm/view.js"
 import type { Livery, LiveryPack } from "./pack.js"
 
 export class LiveryPlanError extends Error {
@@ -232,9 +232,35 @@ function overridingRounds(championship: Championship, classEntrant: Entrant): nu
     .filter((n) => n > 0)
 }
 
-function eventHasResults(ev: { StartedTime?: string } | undefined): boolean {
-  const t = ev?.StartedTime
-  return !!t && !t.startsWith("0001-01-01T")
+/**
+ * Has this round actually been raced?
+ *
+ * Not `eventHasStarted`, which is what this used to call and which reported a
+ * round as raced while its *practice server* was running. ACSM stamps
+ * `StartedTime` from the UDP new-session callback:
+ *
+ *     case udp.SessionInfo:
+ *         if a.Event() == udp.EventNewSession {
+ *             if championship.Events[i].StartedTime.IsZero() {
+ *                 championship.Events[i].StartedTime = time.Now()
+ *
+ * and a looping practice is a session on the active championship like any
+ * other, so an untouched round that somebody opened practice on looks started.
+ * `eventHasStarted` is right where it is used — refusing an import over an
+ * event that has begun is the safe side of that question — and wrong here,
+ * where the answer only decides whether to print a sentence about replays.
+ *
+ * Results are the thing being asked about, so results are what this reads:
+ * ACSM's own `ChampionshipSession.Completed()` is `!CompletedTime.IsZero() &&
+ * Results != nil`.
+ */
+function eventHasResults(ev: ChampionshipEvent | undefined): boolean {
+  if (!isZeroTime(ev?.CompletedTime)) return true
+  for (const session of Object.values(ev?.Sessions ?? {})) {
+    if (session?.Results) return true
+    if (session && !isZeroTime(session.CompletedTime)) return true
+  }
+  return false
 }
 
 /**
