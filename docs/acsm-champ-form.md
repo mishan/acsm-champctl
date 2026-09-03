@@ -1,8 +1,11 @@
 # The championship form, and custom liveries
 
-champctl drives the *event* form and nothing else. This is about the other one —
-`/championship/{id}/edit`, posting to `/championships/new/submit` — because it
-is where a livery change belongs, and because nobody has read it yet.
+`/championship/{id}/edit`, posting to `/championships/new/submit`. The other
+form champctl writes, and the one a livery change belongs on, because it is the
+only write that reaches every round.
+
+`champctl-liveries` drives it. `src/acsm/championship-form.ts` is the parser and
+`src/liveries/apply.ts` the writer; this document is why they do what they do.
 
 Everything below marked **source** is read off `JustaPenguin/assetto-server-manager`
 at `master` and needs confirming against the build BATL runs. Everything marked
@@ -163,6 +166,33 @@ building on this.**
 A third possibility, if the values are rendered *empty* rather than nil: a save
 would then give every entrant a fresh identity, because `BuildEntryList` starts
 from `NewEntrant()` and only overwrites the UUID when `uuid.Parse` succeeds.
+
+**What champctl does about it.** Not "assume the measurement holds". `planLiveries`
+recomputes the join from the export on every run and reports, per driver, the
+rounds whose own entry list would win. A preview with an unreachable round says
+so in the loudest line it prints. So the tool is correct in both worlds: where
+the UUIDs don't join it writes the class list and that is what races, and where
+they do it says the write would not reach the race rather than reporting a
+success that only happened in the database.
+
+**And `OverwriteAllEvents` is not used.** It looks like the answer — its own
+comment in ACSM says "useful for globally changing skins" — and on this data it
+is a trap. `FindEntrantByInternalUUID` has no nil guard, unlike
+`CombineEntryLists`:
+
+```go
+func (e EntryList) FindEntrantByInternalUUID(internalUUID uuid.UUID) *Entrant {
+    for _, entrant := range e {
+        if entrant.InternalUUID == internalUUID { return entrant }
+    }
+    return &Entrant{}
+}
+```
+
+With nil UUIDs on both sides that returns a *real* event entrant — the first one
+Go's randomised map iteration reaches. Ticking the box for 29 drivers would copy
+29 sets of properties onto arbitrary event entrants: inert at race time, corrupt
+in the stored export, and gridmom reads the stored export.
 
 ### 4.2 The extra rows — answered
 

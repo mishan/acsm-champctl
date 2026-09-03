@@ -13,6 +13,7 @@ Six commands:
 | `champctl-archive` | keep a copy of every export the league has ever run |
 | `champctl-finalize` | set a race's format and push it |
 | `champctl-championship` | create a championship from a template |
+| `champctl-liveries` | upload drivers' custom liveries and assign them |
 | `champctl-serve` | the finalize and create-a-championship flows as a web UI, for people without a terminal |
 | `champctl-bot` | say what gridmom found in Discord |
 
@@ -29,9 +30,9 @@ npm install
 npm run gridmom -- check --file fixtures/synthetic/suzuka-duplicate-pitboxes.json
 ```
 
-Installed, the six commands are on your `PATH` as `gridmom`,
+Installed, the seven commands are on your `PATH` as `gridmom`,
 `champctl-archive`, `champctl-finalize`, `champctl-championship`,
-`champctl-serve` and `champctl-bot`.
+`champctl-liveries`, `champctl-serve` and `champctl-bot`.
 From a checkout, `npm run gridmom -- <args>` is the same thing.
 
 Every command takes `--profile` and `--base-url`; `--help` on any of them is
@@ -266,6 +267,78 @@ Only `name`, `cars` and `rounds` are required. `format` applies to every round
 unless a round overrides it; without `startDate`, rounds fall on the league's
 race weekday starting from the next one. `className`, `description` and
 `signUpsEnabled` are also accepted.
+
+## champctl-liveries
+
+Drivers submit custom liveries; this uploads them and assigns each one to the
+driver who sent it.
+
+```
+champctl-liveries <championship-id> --zip <pack.zip> [options]
+
+  --zip <path>          the livery pack (required)
+  --restart <round>     restart that round's looping practice server afterwards
+  --profile <id|path>   league profile (default: batl)
+  --base-url <url>      override the profile's ACSM base URL
+  --push                actually write. Without it this only previews.
+  --yes                 skip the confirmation prompt
+  --json                machine-readable plan
+```
+
+The pack is a zip of zips, one folder per car model:
+
+```
+rss_formula_hybrid_2021/Misha.zip
+rss_formula_hybrid_2021/postaL.zip
+ford_transit/Stream.zip
+```
+
+The car folder is what ACSM's upload endpoint needs. Each inner zip is one
+driver's skin folder — a `.dds` livery, its preview, a `ui_skin.json`. **The
+inner zip's name is matched against the entrant's name exactly**, and becomes
+the skin folder on the server, so a re-upload lands on the same folder rather
+than accumulating one per week.
+
+```
+$ champctl-liveries 1111... --zip september.zip --restart 1
+
+September 2026 — liveries
+
+  Misha              misha_old → Misha   3 files, rss_formula_hybrid_2021
+  postaL             (no skin) → postaL   3 files, rss_formula_hybrid_2021
+
+  Then: restart round 1's looping practice server.
+
+Preview only. Re-run with --push to apply.
+```
+
+**The assignment is made on the championship, never on an event.** ACSM builds
+each round's entry list from the class entrants and lets the round's own list
+override the skin on top, so the class list is the one write that reaches every
+round at once. If a round *would* override the change, the preview says so
+rather than reporting a success that only happened in the database — see
+[`docs/acsm-champ-form.md`](docs/acsm-champ-form.md) §4.1.
+
+`--restart` uses `/championship/{id}/event/{eventID}/practice`, which rebuilds
+the entry list from the stored championship with looping on. That is the restart
+that picks up a changed livery; `/process/restart` replays the config the
+session started with and would not.
+
+**The pack is untrusted, and is treated that way.** The whole thing is refused —
+not the offending skin — if any of it is not a livery: a path that climbs out
+with `..`, a file that isn't a `.dds`/`.png`/`.jpg`/`.json`/`.ini`/`.txt`, a
+leftover `.psd`, subfolders, an oversized file, a zip that unpacks far larger
+than it looks, or a driver zip with no `.dds` in it at all. A driver whose name
+isn't in the entry list, or whose livery is filed under a car they don't drive,
+refuses the run too. Half a livery drop is worse to unpick than none, and the
+cost of the other answer is re-zipping a file.
+
+Credentials come from `CHAMPCTL_USERNAME` / `CHAMPCTL_PASSWORD` and are needed
+only for `--push`; a preview reads the export, which is public.
+
+Exit codes: `0` previewed or pushed, `1` every livery was already assigned, `2`
+the pack or the entry list wouldn't allow it, `3` a usage mistake or champctl
+failed.
 
 ## champctl-serve
 
@@ -518,7 +591,9 @@ have a web UI. What's left:
 - **The bot only reports.** The nightly gridmom report is there; announcements,
   standings, the format poll and the poll-to-proposal loop are not, and neither
   are the `/stats` lookups, which want the archive projections that don't exist
-  yet.
+  yet. Livery uploads belong there too: `champctl-liveries` takes a pack
+  somebody assembled by hand, and the bot would collect each driver's zip behind
+  a role check and hand the same engine the same pack.
 - **The nightly report has no memory.** It says the same thing every night until
   someone fixes it, which is gridmom's voice by design but also means there is
   nothing to lean on if a league wants "tell me once". A digest per championship
