@@ -8,7 +8,8 @@ import {
   entrantRowIndex,
   findChampionshipForm,
   setEntrantSkin,
-  stripEntrantTemplates,
+  findEntrantRow,
+  stripClonedTemplates,
 } from "../src/acsm/championship-form.js"
 import { checkEntryListShape, getAll } from "../src/acsm/form.js"
 import { CHAMPIONSHIP_SUBMIT_PATH } from "../src/acsm/paths.js"
@@ -38,41 +39,69 @@ function entrantRow(opts: { name?: string; skin?: string; spectator?: boolean } 
     </div>`
 }
 
+/** One `championship-class` block: a ClassName, an #entrantTemplate, entrants. */
+function classBlock(
+  entrants: { name: string; skin: string }[],
+  options: { templates?: boolean } = {},
+): string {
+  const { templates = true } = options
+  return `
+    <div class="card race-setup">
+      <input type="hidden" name="ClassID" value="class-1">
+      <input type="text" name="ClassName" value="RSS Formula Hybrid">
+      ${templates ? `<div id="entrantTemplate" class="entrant">${entrantRow()}</div>` : ""}
+      ${entrants.map((e) => entrantRow(e)).join("")}
+      <input type="hidden" name="EntryList.NumEntrants" value="${entrants.length}">
+    </div>`
+}
+
 /**
- * The page, in the order 2.4.15 renders it: a spectator block with its own
- * template, then each class with its own template ahead of the real entrants.
+ * The page, in the order 2.4.15 renders it.
+ *
+ * The `#class-template` block is the one that bit: `new.html` renders a whole
+ * hidden `championship-class` for the "Add another class" button, carrying its
+ * own ClassName, its own EntryList.NumEntrants of 0, and its own
+ * #entrantTemplate — and `manager.js` removes the lot on load. The old fixture
+ * had no such block, which is why the suite was green against a form champctl
+ * could not actually write.
  */
 function championshipPage(
   classes: { entrants: { name: string; skin: string }[] }[],
-  options: { spectator?: boolean; templates?: boolean } = {},
+  options: { spectator?: boolean; templates?: boolean; classTemplate?: boolean } = {},
 ): string {
-  const { spectator = true, templates = true } = options
-  const tmpl = (spec = false) =>
-    templates ? `<div id="entrantTemplate">${entrantRow({ spectator: spec })}</div>` : ""
+  const { spectator = true, templates = true, classTemplate = true } = options
 
   const spectatorBlock = spectator
-    ? `${tmpl(true)}${entrantRow({ name: "Stream Van", skin: "van", spectator: true })}`
+    ? `<div class="visible-spectator-enabled" style="display: none">
+         ${entrantRow({ name: "Stream Van", skin: "van", spectator: true })}
+       </div>`
     : ""
 
-  const classBlocks = classes
-    .map(
-      (c) => `
-      <div class="card">
-        <input type="hidden" name="ClassID" value="class-1">
-        <input type="text" name="ClassName" value="RSS Formula Hybrid">
-        ${tmpl()}
-        ${c.entrants.map((e) => entrantRow(e)).join("")}
-        <input type="hidden" name="EntryList.NumEntrants" value="${c.entrants.length}">
-      </div>`,
-    )
-    .join("")
+  // Reconstructed from what BATL's 2.4.15 actually rendered, rather than from
+  // reading the template: 32 entrant rows for 29 entrants, `ClassName` twice,
+  // `EntryList.NumEntrants` as "0, 29", and exactly *one* #entrantTemplate. The
+  // only arrangement that gives those four numbers is a class-template block
+  // holding a plain entrant row and no entrant template of its own — which is
+  // class.html's `{{ else }}` branch. Guessing it held an #entrantTemplate
+  // instead made the fixture add up by luck at three entrants and fail at 29.
+  const classTemplateBlock = classTemplate
+    ? `<div id="class-template" style="display: none;">
+         <div class="card race-setup">
+           <input type="hidden" name="ClassID" value="">
+           <input type="text" name="ClassName" value="">
+           ${entrantRow()}
+           <input type="hidden" name="EntryList.NumEntrants" value="0">
+         </div>
+       </div>`
+    : ""
 
   return `<html><body>
     <form action="/search"><input name="q"></form>
     <form action="${CHAMPIONSHIP_SUBMIT_PATH}" method="post">
       <input type="text" name="ChampionshipName" value="September 2026">
       ${spectatorBlock}
-      ${classBlocks}
+      ${classTemplateBlock}
+      ${classes.map((c) => classBlock(c.entrants, { templates })).join("")}
     </form>
   </body></html>`
 }
@@ -83,27 +112,78 @@ const roster = [
   { name: "", skin: "" },
 ]
 
-describe("stripEntrantTemplates", () => {
-  it("removes every #entrantTemplate, not just the first", () => {
-    // Duplicate ids are not valid HTML, and ACSM renders one per class block
-    // plus one for the spectator. A selector that stopped at the first would
-    // leave a row behind and shift every entrant after it.
-    const { html, removed } = stripEntrantTemplates(championshipPage([{ entrants: roster }]))
-    expect(removed).toBe(2)
+describe("stripClonedTemplates", () => {
+  it("removes both templates the browser removes", () => {
+    const { html, classTemplates, entrantTemplates } = stripClonedTemplates(
+      championshipPage([{ entrants: roster }]),
+    )
+    // One #class-template, and one #entrantTemplate left over in the real class
+    // — the class template's own entrant template went with the block.
+    expect({ classTemplates, entrantTemplates }).toEqual({
+      classTemplates: 1,
+      entrantTemplates: 1,
+    })
     expect(html).not.toContain("entrantTemplate")
+    expect(html).not.toContain("class-template")
   })
 
-  it("removes the row's fields, not merely the id", () => {
+  it("takes the class template's ClassName and NumEntrants with it", () => {
+    // The heart of the bug. Left in, the form carries ClassName twice and
+    // NumEntrants as "0, 29", and ACSM builds an empty first class and then
+    // reads the real one starting a row early.
     const before = championshipPage([{ entrants: roster }])
-    const after = stripEntrantTemplates(before).html
+    const after = stripClonedTemplates(before).html
+    const count = (h: string, needle: string) => h.split(needle).length - 1
+    expect(count(before, 'name="ClassName"')).toBe(2)
+    expect(count(after, 'name="ClassName"')).toBe(1)
+    expect(count(before, 'name="EntryList.NumEntrants"')).toBe(2)
+    expect(count(after, 'name="EntryList.NumEntrants"')).toBe(1)
+  })
+
+  it("removes the rows' fields, not merely the ids", () => {
+    const before = championshipPage([{ entrants: roster }])
+    const after = stripClonedTemplates(before).html
     const countNames = (h: string) => h.split('name="EntryList.Name"').length - 1
-    expect(countNames(before)).toBe(6) // 2 templates + spectator + 3 entrants
+    // spectator + the class template's row + the real #entrantTemplate + 3
+    expect(countNames(before)).toBe(6)
     expect(countNames(after)).toBe(4)
   })
 
+  it("removes an #entrantTemplate in every real class", () => {
+    const { entrantTemplates } = stripClonedTemplates(
+      championshipPage([{ entrants: roster.slice(0, 2) }, { entrants: roster.slice(0, 1) }]),
+    )
+    expect(entrantTemplates).toBe(2)
+  })
+
+  it("removes a class template that does carry its own entrant template", () => {
+    // master's class.html renders #entrantTemplate unconditionally, so a build
+    // where the hidden block holds one has to work too. Removing the outer
+    // block takes it along, which is why the class template goes first.
+    const page = championshipPage([{ entrants: roster }]).replace(
+      '<div id="class-template" style="display: none;">',
+      '<div id="class-template" style="display: none;"><div id="entrantTemplate" class="entrant">' +
+        '<input type="text" name="EntryList.Name" value=""></div>',
+    )
+    const { html, classTemplates, entrantTemplates } = stripClonedTemplates(page)
+    expect(classTemplates).toBe(1)
+    // One, not two: the class template's own entrant template went with the
+    // block, so this count means "real class blocks" rather than "templates
+    // that existed". Removing the entrant templates first would report 2 and
+    // make the number useless for diagnosing a form.
+    expect(entrantTemplates).toBe(1)
+    expect(html).not.toContain("entrantTemplate")
+  })
+
   it("leaves a page with no templates alone", () => {
-    const page = championshipPage([{ entrants: roster }], { templates: false })
-    expect(stripEntrantTemplates(page)).toMatchObject({ removed: 0 })
+    const page = championshipPage([{ entrants: roster }], {
+      templates: false,
+      classTemplate: false,
+    })
+    expect(stripClonedTemplates(page)).toMatchObject({
+      classTemplates: 0,
+      entrantTemplates: 0,
+    })
   })
 })
 
@@ -111,11 +191,38 @@ describe("findChampionshipForm", () => {
   it("accounts for every row: spectator, then the class", () => {
     const form = findChampionshipForm(championshipPage([{ entrants: roster }]), PAGE_URL)
     expect(form).toMatchObject({
-      droppedTemplateRows: 2,
+      droppedClassTemplates: 1,
+      droppedTemplateRows: 1,
       entrantsPerClass: [3],
       hasSpectatorRow: true,
       rows: 4,
     })
+  })
+
+  it("reads the same form whether or not the class template is there", () => {
+    // The regression, stated as the property that matters: a page carrying the
+    // hidden class block has to parse to the same payload as one without it,
+    // because the browser makes them identical before submitting.
+    const withTemplate = findChampionshipForm(championshipPage([{ entrants: roster }]), PAGE_URL)
+    const without = findChampionshipForm(
+      championshipPage([{ entrants: roster }], { classTemplate: false }),
+      PAGE_URL,
+    )
+    expect(withTemplate.rows).toBe(without.rows)
+    expect(withTemplate.entrantsPerClass).toEqual(without.entrantsPerClass)
+    expect(currentNames(withTemplate)).toEqual(currentNames(without))
+    expect(currentSkins(withTemplate)).toEqual(currentSkins(without))
+  })
+
+  it("refuses the real form shape when the class template is left in", () => {
+    // What BATL's manager produced: 31 rows against classes claiming 0 + 29.
+    // Reconstructed here at the sizes that failed, so a change that stops
+    // removing #class-template fails in the suite rather than on race night.
+    const page = championshipPage([{ entrants: roster }])
+    const keptTemplate = page.replace(/id="class-template"/, 'id="kept-template"')
+    expect(() => findChampionshipForm(keptTemplate, PAGE_URL)).toThrowError(
+      /entrant rows, and the classes account for 3 \(0 \+ 3\)/,
+    )
   })
 
   it("takes the championship form, not the navbar search form", () => {
@@ -144,7 +251,8 @@ describe("findChampionshipForm", () => {
       entrantsPerClass: [2, 1],
       hasSpectatorRow: true,
       rows: 4,
-      droppedTemplateRows: 3,
+      droppedClassTemplates: 1,
+      droppedTemplateRows: 2,
     })
   })
 
@@ -243,6 +351,62 @@ describe("placing an entrant on the form", () => {
 
   it("refuses a class the form does not have", () => {
     expect(() => entrantRowIndex(form(), 1, 0)).toThrowError(/there is no class 1/)
+  })
+
+  it("finds a driver's row by their name", () => {
+    // Preferred over the arithmetic for deciding where to write: the index is
+    // derived from assumptions that each had to be learned by being wrong,
+    // where the name is rendered in the very row being edited.
+    const f = form()
+    expect(findEntrantRow(f, "Misha")).toBe(1)
+    expect(findEntrantRow(f, "postaL")).toBe(2)
+  })
+
+  it("agrees with the arithmetic when the form is understood", () => {
+    const f = form()
+    expect(findEntrantRow(f, "Misha")).toBe(entrantRowIndex(f, 0, 0))
+    expect(findEntrantRow(f, "postaL")).toBe(entrantRowIndex(f, 0, 1))
+  })
+
+  it("finds the spectator row, which is why an empty name never matches", () => {
+    const f = form()
+    expect(findEntrantRow(f, "Stream Van")).toBe(0)
+    // The blank third roster slot. Matching it would put a livery on an
+    // unclaimed seat.
+    expect(findEntrantRow(f, "")).toBeUndefined()
+    expect(findEntrantRow(f, "   ")).toBeUndefined()
+  })
+
+  it("returns undefined for somebody who is not on the form", () => {
+    expect(findEntrantRow(form(), "Nobody")).toBeUndefined()
+  })
+
+  it("matches when the form carries the decomposed spelling", () => {
+    // The direction the first version of this test missed: it normalised only
+    // the name being looked up, so with an already-NFC form the assertion held
+    // with the code removed.
+    const page = championshipPage([{ entrants: [{ name: "Ricky Ha\u0308kkinen", skin: "old" }] }])
+    const f = findChampionshipForm(page, PAGE_URL)
+    expect(findEntrantRow(f, "Ricky H\u00e4kkinen")).toBe(1)
+  })
+
+  it("matches a name whose accents are encoded differently", () => {
+    const page = championshipPage([{ entrants: [{ name: "Ricky H\u00e4kkinen", skin: "old" }] }])
+    const f = findChampionshipForm(page, PAGE_URL)
+    expect(findEntrantRow(f, "Ricky Ha\u0308kkinen")).toBe(1)
+  })
+
+  it("refuses rather than guessing when a name is in two rows", () => {
+    const page = championshipPage([
+      {
+        entrants: [
+          { name: "Misha", skin: "a" },
+          { name: "Misha", skin: "b" },
+        ],
+      },
+    ])
+    const f = findChampionshipForm(page, PAGE_URL)
+    expect(() => findEntrantRow(f, "Misha")).toThrowError(/in 2 rows \(1, 2\)/)
   })
 
   it("changes one skin and leaves every other row alone", () => {

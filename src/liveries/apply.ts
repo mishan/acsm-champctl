@@ -22,8 +22,8 @@ import {
   CHAMPIONSHIP_REQUIRED_ENTRY_LIST_FIELDS,
   type ChampionshipForm,
   currentNames,
-  entrantRowIndex,
   findChampionshipForm,
+  findEntrantRow,
   setEntrantSkin,
 } from "../acsm/championship-form.js"
 import { getAll, setOne } from "../acsm/form.js"
@@ -257,8 +257,13 @@ async function saveChampionshipSkins(session: AcsmSession, plan: LiveryPlan): Pr
 
   const fields = [...form.fields]
   for (const assignment of plan.assignments) {
-    const row = entrantRowIndex(form, assignment.classIndex, assignment.entrantIndex)
-    assertRowIsWhoWeThink(form, row, assignment.driverName)
+    const row = findEntrantRow(form, assignment.driverName)
+    if (row === undefined) {
+      throw new RosterChangedError(
+        `champctl matched ${assignment.driverName} against the championship export, and the ` +
+          `entry list on the form does not have them.`,
+      )
+    }
     setEntrantSkin(fields, row, assignment.skinFolder)
   }
 
@@ -281,29 +286,6 @@ async function saveChampionshipSkins(session: AcsmSession, plan: LiveryPlan): Pr
         `uploaded either way.`,
       res.status,
       CHAMPIONSHIP_SUBMIT_PATH,
-    )
-  }
-}
-
-/**
- * The row about to be written is still the driver the plan matched.
- *
- * The positional-array failure mode has no error and no symptom until race
- * night: every `EntryList.*` key is read by index, so a row that moved gives one
- * driver another's livery. Comparing the name at the index costs nothing and
- * turns that into a refusal.
- */
-function assertRowIsWhoWeThink(form: ChampionshipForm, row: number, expected: string): void {
-  const names = currentNames(form)
-  const actual = names[row]
-  if (actual === undefined) {
-    throw new RosterChangedError(
-      `champctl expected ${expected} at position ${row}, and the form now has ${names.length} rows.`,
-    )
-  }
-  if (actual.trim() !== expected) {
-    throw new RosterChangedError(
-      `champctl expected ${expected} at position ${row} and the form has "${actual.trim()}" there.`,
     )
   }
 }
@@ -336,13 +318,9 @@ export function skinFieldChanges(
 ): { row: number; name: string; from: string; to: string }[] {
   const skins = getAll(form.fields, "EntryList.Skin")
   const names = currentNames(form)
-  return plan.assignments.map((a) => {
-    const row = entrantRowIndex(form, a.classIndex, a.entrantIndex)
-    return {
-      row,
-      name: names[row] ?? "",
-      from: skins[row] ?? "",
-      to: a.skinFolder,
-    }
+  return plan.assignments.flatMap((a) => {
+    const row = findEntrantRow(form, a.driverName)
+    if (row === undefined) return []
+    return [{ row, name: names[row] ?? "", from: skins[row] ?? "", to: a.skinFolder }]
   })
 }

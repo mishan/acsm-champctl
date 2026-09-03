@@ -219,7 +219,10 @@ Which is exactly this, in document order:
 `Spectator` is 2 because only they do.
 
 **Source, and this is the fourth departure of the kind in §15 of
-acsm-write-path.md.** `manager.js`:
+acsm-write-path.md.** There are **two** clone-me templates, and the second one
+is easy to miss because it contains the first.
+
+`RaceSetup` removes an entrant template per class block:
 
 ```js
 let $tmpl = this.$parent.find("#entrantTemplate");
@@ -229,13 +232,54 @@ if (!$entrantTemplate && $tmpl.length > 0) {
 $tmpl.remove();
 ```
 
-The template is copied for the "Add Entrant(s)" button and then **removed from
-the DOM on load**. A browser therefore submits 30 rows where the server rendered
-32. champctl runs no JavaScript, so it parses all 32 — and since ACSM reads
-these as parallel positional arrays, keeping them shifts every entrant by two
-and drops the last two off the end of `start+length`. `templateRowIndices`
-reports them off ACSM's own id rather than off styling, because on this form the
-template row is not hidden at all.
+and `initClassSetup` removes a whole hidden **class** block, which `new.html`
+renders ahead of the real classes for the "Add another class" button:
+
+```js
+let $tmpl = $document.find("#class-template");
+championships.$classTemplate = $tmpl.clone();
+$tmpl.remove();
+```
+
+That block carries its own `ClassName`, its own `EntryList.NumEntrants` — zero,
+since the default class has no entrants — and an entrant row. A browser submits
+neither template; champctl runs no JavaScript and has to remove both by hand.
+
+**Missing the class one is what a livery drop looks like when it fails.**
+Measured on a real BATL championship of 29 entrants: 32 rows rendered,
+`ClassName` twice, `EntryList.NumEntrants` as `0, 29`, and one
+`#entrantTemplate`. Posting that has `HandleCreateChampionship` read row 0 as
+the spectator car, build an empty first class from `NumEntrants[0] = 0`, and
+then take the next 29 rows as the real class — beginning one row early, so every
+driver inherits the previous one's car and skin and the last is dropped off the
+end of `start+length`. It would also have left a phantom empty class behind on
+every save.
+
+`stripClonedTemplates` removes the class block first and the entrant templates
+second. The order is not cosmetic: removing the outer block takes the entrant
+template inside it along, so the reported entrant-template count means "real
+class blocks" rather than "templates that happened to exist", which is what
+makes it useful in the refusal message.
+
+Both are found by ACSM's own ids rather than by looking hidden — on this form
+the entrant template is not hidden at all.
+
+### 4.2b Place by name, not by arithmetic
+
+The row arithmetic above is a good *check* and was a bad *address*. It assumes a
+leading spectator row, class blocks in export order, and that nothing else on
+the page renders an entrant row — and every one of those had to be learned by
+being wrong about it, in production, on race week.
+
+`findEntrantRow` looks the row up by the `EntryList.Name` rendered in it, which
+is the fact champctl actually has and which sits in the very row being edited.
+It refuses a name that appears twice and never matches an empty one, so an
+unclaimed seat and the spectator car are safe. The arithmetic stays as the "do I
+understand this form at all" gate, because it is what caught this.
+
+A side benefit worth keeping: a sign-up approved between the preview and the
+save used to shift the computed index and force a refusal. By name it is a
+non-event — the fresh form is posted back with the right driver edited.
 
 Then, **source**, from `HandleCreateChampionship`:
 
@@ -349,7 +393,7 @@ replays the config it already had. The skins would be on disk and unused.
 |---|---|
 | Are the rendered `EntryList.InternalUUID` values real, nil or empty? | **unanswered, and it decides everything** — §4.1 |
 | Do class and event `InternalUUID`s join? | no — zero of 29, in all 5 rounds (§4.1) |
-| What are the extra rows? | two `#entrantTemplate`s the JS removes, plus the spectator car (§4.2) |
+| What are the extra rows? | a `#class-template` block and an `#entrantTemplate`, both removed by the JS, plus the spectator car (§4.2) |
 | Is `EntryList.EntrantID` rendered on the class list? | no, as predicted (§4.4) |
 | Is `EntryList.Skin` a select here, and does it carry the installed skins? | a select, carrying only the current skin (§4.2a) |
 | Would `checkEntryListShape` pass this form as parsed? | no — `Spectator=2`, `EntrantID=0`, both explained (§4.2) |
