@@ -170,6 +170,7 @@ export async function applyLiveries(
  */
 async function uploadSkin(session: AcsmSession, carModel: string, livery: Livery): Promise<void> {
   const path = carSkinUploadPath(carModel)
+  const bytes = livery.files.reduce((total, f) => total + f.bytes.length, 0)
   const parts = livery.files.map((f) => ({
     // The field name is arbitrary — ACSM iterates r.MultipartForm.File and
     // ignores the keys. `files` is what the page's own uploader calls it.
@@ -178,13 +179,31 @@ async function uploadSkin(session: AcsmSession, carModel: string, livery: Livery
     bytes: f.bytes,
   }))
 
-  const res = await session.postFiles(path, parts, {
-    // The handler ends with `http.Redirect(w, r, r.Referer(), 302)`. With no
-    // Referer that is a redirect to the empty string, which is a 302 carrying
-    // nothing — survivable, but it makes a successful upload indistinguishable
-    // from a confused one in the logs.
-    referer: session.url(`/car/${encodeURIComponent(carModel)}`),
-  })
+  let res: Response
+  try {
+    res = await session.postFiles(path, parts, {
+      // The handler ends with `http.Redirect(w, r, r.Referer(), 302)`. With no
+      // Referer that is a redirect to the empty string, which is a 302 carrying
+      // nothing — survivable, but it makes a successful upload
+      // indistinguishable from a confused one in the logs.
+      referer: session.url(`/car/${encodeURIComponent(carModel)}`),
+      timeoutMs: uploadTimeoutMs(bytes),
+    })
+  } catch (e) {
+    // A timeout here reads as "the request failed", which sends whoever is
+    // holding the zip looking at ACSM. It is far more often the uplink.
+    const why = e instanceof Error ? e.message : String(e)
+    if (/timed out/i.test(why)) {
+      throw new LiveryApplyError(
+        `Uploading ${livery.driverName}'s livery for ${carModel} timed out. It is ` +
+          `${mb(bytes)} across ${livery.files.length} files, and champctl allowed ` +
+          `${Math.round(uploadTimeoutMs(bytes) / 1000)}s for it — so either the connection to the ` +
+          `server is slower than ${mb(SLOWEST_ASSUMED_UPLOAD_BYTES_PER_SECOND)}/s or the server ` +
+          `stopped answering. Nothing was assigned; re-running re-uploads only what is missing.`,
+      )
+    }
+    throw e
+  }
 
   if (!isRedirectStatus(res.status)) {
     throw new LiveryApplyError(
@@ -193,6 +212,33 @@ async function uploadSkin(session: AcsmSession, carModel: string, livery: Livery
         `anything else is something other than Server Manager answering. Nothing was assigned.`,
     )
   }
+}
+
+/**
+ * A pessimistic upload rate, in bytes per second.
+ *
+ * 256 KB/s is about 2 Mbit — slow for a home connection, and the point is to be
+ * slower than anyone's rather than accurate. Being wrong high aborts a
+ * perfectly good upload; being wrong low costs a wait on an upload that was
+ * never going to finish.
+ */
+const SLOWEST_ASSUMED_UPLOAD_BYTES_PER_SECOND = 256 * 1024
+
+/**
+ * How long to allow one skin upload.
+ *
+ * `AcsmSession`'s default is 30 seconds, which is right for a page of HTML and
+ * wrong for this: the per-file limit alone is 48 MB, so the default aborts a
+ * legitimate upload of a large livery and reports it as a request failure. That
+ * became reachable when the pack limits were doubled to fit real submissions —
+ * see `DEFAULT_LIMITS` in `pack.ts`.
+ */
+export function uploadTimeoutMs(bytes: number): number {
+  return 30_000 + Math.ceil(bytes / SLOWEST_ASSUMED_UPLOAD_BYTES_PER_SECOND) * 1000
+}
+
+function mb(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 /**
