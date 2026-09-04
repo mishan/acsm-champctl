@@ -5,9 +5,10 @@
  * and the only one that has to be. `standings.json` is premium-only — absent
  * from the public `router.go` (docs/acsm-write-path.md §6) — so the Docker
  * harness cannot serve it, and live BATL is the only place its shape can be
- * read. Deliberately not built on `recon/env.ts`: that module logs in and its
- * disposable-host guard exists because every other script here *writes*. This
- * one holds no credentials and calls nothing but a GET.
+ * read. It takes nothing from `recon/env.ts` but `runRecon`, the wrapper that
+ * turns a failure into one line and an exit code: the rest of that module logs
+ * in, and its disposable-host guard exists because every other script here
+ * *writes*. This one holds no credentials and calls nothing but a GET.
  *
  * **It prints a shape, not the standings.** Key paths and value types, with
  * strings reduced to their length. The response is full of driver names, and
