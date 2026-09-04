@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest"
 
 import type { Championship, ChampionshipEvent } from "../src/acsm/types.js"
 import { standingsMessage } from "../src/bot/message.js"
+import { MESSAGE_LIMIT } from "../src/bot/transport.js"
 import {
   compareStandings,
   computeStandings,
@@ -278,6 +279,55 @@ describe("the standings message", () => {
       classes: [cls],
     }).join("\n")
     for (const row of cls.rows) expect(joined).toContain(row.driver)
+  })
+
+  it("does not call a second class's first table a continuation", () => {
+    // The count was global across classes, so the first table of the second
+    // class was headed "(continued)" — GT4's points reading as more of GT3's,
+    // which is what the repeated heading exists to prevent.
+    const one = (name: string): StandingsClass => ({
+      name,
+      rows: [{ position: 1, driver: "ada", points: 25 }],
+    })
+    const messages = standingsMessage("August 2026", {
+      source: "endpoint",
+      classes: [one("GT3"), one("GT4")],
+    })
+
+    expect(messages).toHaveLength(2)
+    expect(messages[1]).toContain("**August 2026 — GT4**")
+    expect(messages[1]).not.toContain("(continued)")
+  })
+
+  it("measures the message it will send rather than estimating it", () => {
+    // The estimate allowed twenty characters for the fences and the heading
+    // where a continuation needs twenty-one, so a table landing exactly on the
+    // boundary posted 2001 characters — refused outright, losing the table.
+    //
+    // Swept rather than pinned to one row count: the arithmetic only lands on
+    // the boundary for particular widths, and a single magic fixture would stop
+    // testing this the moment a line's width changed.
+    const over: string[] = []
+    for (let subject = 1; subject <= 40; subject++) {
+      for (let n = 130; n <= 145; n++) {
+        const cls: StandingsClass = {
+          name: "C",
+          rows: Array.from({ length: n }, () => ({
+            position: 1,
+            driver: "d".repeat(12),
+            points: 100,
+          })),
+        }
+        const messages = standingsMessage("s".repeat(subject), {
+          source: "endpoint",
+          classes: [cls],
+        })
+        for (const m of messages) {
+          if (m.length > MESSAGE_LIMIT) over.push(`subject ${subject}, ${n} rows: ${m.length}`)
+        }
+      }
+    }
+    expect(over).toEqual([])
   })
 
   it("posts nothing for a class nobody has scored in", () => {
