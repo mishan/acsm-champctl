@@ -291,9 +291,10 @@ Both dials, both optional, both in the profile:
 "discord": {
   "adminChannelId": "...",
   "livery": {
-    "channelIds": ["..."],   // where /livery upload is accepted
-    "roleIds": ["..."],      // who may run it
-    "autoApply": false       // §5
+    "channelIds": ["..."],     // where /livery upload is accepted
+    "roleIds": ["..."],        // who may run it
+    "autoApply": false,        // §5
+    "uploadBaseUrl": "https://..."  // optional, enables the link path below
   }
 }
 ```
@@ -341,6 +342,71 @@ with mipmaps compresses, and the working `.psd`-in-a-`.png` layers that
 Worth saying in the driver-facing help: **the bot cannot see an upload Discord
 rejected.** A silent failure at that layer looks exactly like a bot that is
 down.
+
+### The way round it: a one-time upload link
+
+For a driver whose zip is over their tier's ceiling, the bot can hand out a URL
+champctl hosts itself and take the file over HTTP instead. `/livery upload-url`,
+or offered automatically when an attachment is refused for size.
+
+This is worth having for a second reason beyond size. It is the only path that
+works when a driver's client refuses the upload outright — Discord's rejection
+happens before the bot exists, so today that driver has no way to tell champctl
+anything at all.
+
+**Where it is hosted matters more than it looks.** Not `champctl-serve`: that
+process holds ACSM credentials, and this endpoint is unauthenticated, internet-
+facing and accepts tens of megabytes from a stranger. Put it in its own process
+— `champctl-upload` — with no Discord token and no ACSM credentials, writing to
+the same queue database as everything else. That is §1's argument applied a
+third time, and the shape is now a rule rather than a one-off: **every process
+that faces something untrusted has nothing worth stealing.**
+
+The token:
+
+- **256 bits of `crypto.randomBytes`, base64url.** It is the whole
+  authentication, so it has to be unguessable rather than merely unique.
+- **Stored as a SHA-256 hash**, compared in constant time. The queue database
+  holds driver names and Discord ids already; it should not also be a drawer of
+  live credentials.
+- **Scoped at mint time** to the discord user id, championship, driver name and
+  car model resolved in §2 and §7. The URL cannot be used to upload as someone
+  else, because it does not carry a "who" for the uploader to change.
+- **Short TTL** — thirty minutes is generous for "go and find the file".
+- **One live token per driver.** Minting a second invalidates the first, so a
+  driver who asks twice does not leave a spare lying in their message history.
+
+**GET must not consume it.** Discord unfurls links, so the URL is fetched by
+Discord's crawler within a second of being sent. If the token burned on GET,
+every link would be dead before the driver clicked it — and it would look like
+a bot bug rather than a design one. GET renders the upload form; POST consumes.
+Send it with `<>` around it to suppress the unfurl too, but do not rely on that.
+
+**HTTPS or refuse to mint.** The token is in the URL, so plain HTTP puts it in
+the clear and in every proxy log on the way. `validateProfile` should reject a
+`uploadBaseUrl` that is not `https://`, with a localhost exemption for
+development, and the bot should refuse to mint rather than silently falling
+back to asking for an attachment.
+
+### Ephemeral reply, not a DM
+
+The request said DM. An ephemeral interaction reply is better, and it is less
+code.
+
+A DM needs the bot to open a channel with the user, which fails if they have
+DMs from server members turned off — a common and entirely reasonable setting,
+and one that produces a confusing failure for a driver who did nothing wrong.
+An ephemeral reply is visible only to the person who ran the command, arrives on
+the interaction that is already in hand, and leaves nothing in the driver's
+message history for someone looking over their shoulder later.
+
+It also composes with §3's clamp rather than escaping it. A DM has no member and
+no roles, so a flow that ends in a DM has already left the place where the role
+check is meaningful; an ephemeral reply stays in the channel the command was
+allowed in.
+
+Keep DM as an explicit fallback only if the ephemeral path turns out to be
+awkward on mobile, which is worth checking before assuming.
 
 ---
 
@@ -614,8 +680,10 @@ Each step is a commit that leaves the tree working.
 4. `driver_discord` and the claim/unclaim commands, with the admin-channel
    announcement.
 5. `/livery upload` — clamp, download, validate, queue, reply.
-6. `autoApply` and the timer.
-7. Extend `test/bot.test.ts`'s import guard to the new modules under
+6. `champctl-upload` and the one-time link, for the drivers Discord's own
+   ceiling shuts out. Its own process, no credentials of any kind.
+7. `autoApply` and the timer.
+8. Extend `test/bot.test.ts`'s import guard to the new modules under
    `src/bot/`, and add the mirror of it: nothing under `src/liveries/` or the
    drain path imports `src/bot/`. The invariant is a wall, and a wall tested
    from one side is a fence.
