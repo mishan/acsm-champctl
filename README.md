@@ -367,7 +367,7 @@ champctl-bot announce <champ-id> [round]  post the next round's details
   --pits <path>         track pit table (default: data/track-pits.json)
   --base-url <url>      override the profile's ACSM base URL
   --no-cache            bypass the on-disk response cache
-  --now <iso>           pretend it is this time (for the schedule checks)
+  --now <iso>           pretend it is this time, for the checks     [report]
   -h, --help            this
 ```
 
