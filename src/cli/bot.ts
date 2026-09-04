@@ -45,7 +45,7 @@ Options:
   --dry-run             print what would be posted; talk to nobody
   --base-url <url>      override the profile's ACSM base URL
   --no-cache            bypass the on-disk response cache
-  --now <iso>           pretend it is this time (for the schedule maths)
+  --now <iso>           pretend it is this time, for the checks     [report]
   -h, --help            this
 
 Exit codes:
@@ -416,7 +416,6 @@ async function runAnnounce(
       profile,
       baseUrl: args.baseUrl ?? profile.acsmBaseUrl ?? "",
       ...(args.round === undefined ? {} : { round: args.round }),
-      ...(args.now ? { now: args.now } : {}),
     })
   } catch (e) {
     // Not an error. A season that has finished is the ordinary end state, and a
