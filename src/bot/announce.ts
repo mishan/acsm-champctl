@@ -30,8 +30,6 @@ export interface AnnounceOptions {
   baseUrl?: string
   /** 1-based, as a league counts rounds. Without it, the next unraced round. */
   round?: number
-  /** Injected so "the next round" is deterministic under test. */
-  now?: Date
 }
 
 export interface Announcement {
