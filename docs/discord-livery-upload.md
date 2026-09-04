@@ -98,7 +98,8 @@ line apart. Default is off.
 
 `Entrant` has `Name`, `GUID`, `Team`, `Model`, `Skin`, `PitBox`, `Ballast`,
 `Restrictor`, `SpectatorMode`, `InternalUUID`, `GuidsList`. There is nowhere to
-put a Discord handle. ACSM has no field for one and will not grow one.
+put a Discord handle, and nothing else in ACSM holds one either — see below,
+where that claim is checked against the source rather than assumed.
 
 `planLiveries` matches on `Entrant.Name`, exactly, NFC-normalised. So the
 question is how to get from a Discord user to an entrant name.
@@ -118,31 +119,102 @@ The **user ID** is the stable key: a snowflake, permanent, and already in every
 interaction payload. Match on that. The typed username is only ever a
 first-time claim key — see below.
 
+### What ACSM actually holds — measured, not guessed
+
+Checked against the OSS source (`JustaPenguin/assetto-server-manager`, v1.7.10
+tree), which premium 2.x descends from.
+
+**There is no Discord identity anywhere in ACSM.** `Account` in `accounts.go`
+is `ID, Created, Updated, Deleted, Name, Groups, DriverName, GUID, Team,
+PasswordHash, PasswordSalt, DefaultPassword, LastSeenVersion,
+HasSeenIntroPopup, Theme` — no Discord field. `Entrant` has none.
+`discord.go` is outbound notifications plus one inbound command, `!notify`,
+which toggles a configured role on the message author. That command reads
+`m.Author.ID` and never stores it: it maps a Discord user to a *role*, never to
+a driver. So ACSM knows nothing about who a Discord user is, by construction.
+
+**The custom sign-up questions are real, and they are in the export.**
+`ChampionshipSignUpForm.ExtraFields` is `[]string` — the question labels, and
+nothing more; that answers recon item §9.3, which assumed something more
+complicated. Each `ChampionshipSignUpResponse` carries
+`Questions map[string]string`, filled in `HandleChampionshipSignUp` by reading
+`Question.{index}` off the form and keying it by the label. So a "Discord
+username" question is a supported thing to add and its answers do land in the
+championship JSON.
+
+**But the export gates them on admin.** `ChampionshipsHandler.export`:
+
+```go
+if !account.HasGroupPrivilege(GroupAdmin) {
+    // sign up responses are hidden for data protection reasons
+    championship.SignUpForm.Responses = nil
+}
+```
+
+That is deliberate and it is dated: the v1.7.0 changelog entry is "Admins can
+now export full Championship information, including Sign Up Form responses."
+
+This is worth being careful about because it contradicts two things already
+written down here. Plan §5.3 says the responses are in the export and the export
+is public; `src/acsm/types.ts` annotates `SignUpForm.Responses` **PUBLIC DATA**.
+The likely explanation is that both were written from an export downloaded
+through the UI while logged in as an admin, which is how anyone gets one. It
+should be settled by one unauthenticated `curl` against BATL's premium instance
+before either sentence is trusted further — see §9.
+
+If the gate holds on premium, the consequence for *this* feature is exact:
+
+> The bot cannot read the sign-up answers. The drainer can.
+
+The credential split in §1 puts the Discord-facing process on the side of the
+wall with no ACSM login, and admin-gated data is on the other side. That is not
+an obstacle to routing around; it is the wall working.
+
 ### Where the mapping lives
 
-Two candidates, and champctl should own it rather than ACSM.
+**Not in the sign-up question, as the source of truth.** Two reasons, and the
+second is the one that decides it.
 
-**In ACSM, as a sign-up question.** `SignUpForm.ExtraFields` and
-`SignUpResponse.Questions` exist for this. It keeps the mapping next to the
-sign-up, which is where a driver naturally supplies it.
+It is a self-typed *username*, not a snowflake, so §2's first argument applies
+in full: it goes stale on a rename and fails silently.
 
-Two problems. `SignUpForm.Responses` is annotated in `src/acsm/types.ts` as
-**PUBLIC DATA** (plan §5.3) — the championship export needs no auth, so a
-Discord handle collected this way is published to anyone who fetches it. That
-is a call the league gets to make, not one to make for them by default. And
-`ExtraFields` is `unknown[]` here; nobody has captured its shape. It would need
-recon before anything could read it.
+And **it is publicly writable by anyone who knows a driver's Steam GUID.**
+`HandleChampionshipSignUp` upserts by GUID —
+
+```go
+for index, response := range championship.SignUpForm.Responses {
+    if response.GUID == signUpResponse.GUID {
+        championship.SignUpForm.Responses[index] = signUpResponse
+```
+
+— and the GUID it compares is `r.FormValue("GUID")`, validated only against
+`^[0-9]{17}(;[0-9]{17})*$`. There is no Steam verification on the POST.
+`LockSteamGUID` disables the input in the rendered HTML and has no effect on the
+handler. Meanwhile entrant GUIDs *are* in the public export — the strip above
+touches `Responses` and `ReplacementPassword`, not `Classes[].Entrants[].GUID`.
+
+So while sign-ups are open, anyone can POST the sign-up form with another
+driver's public GUID and replace that driver's entire response, Discord handle
+included. Sourcing authentication from a field the attacker can overwrite is not
+a mapping; it is an invitation.
 
 **In champctl, in the queue database.** A `driver_discord` table: Discord user
-id, entrant name, when it was claimed, by whom. This is the same shape §8.2
-already calls for — a canonical driver with a mapping table beside it, names as
-display data rather than join keys — so it is a table champctl was going to
-need anyway, arriving early.
+id, entrant name, when it was claimed, by whom. Same shape §8.2 already calls
+for — a canonical driver with a mapping table beside it, names as display data
+rather than join keys — so it is a table champctl needed anyway, arriving early.
 
-Take the champctl table. It does not publish anything, it does not need
-`ExtraFields` reconned, and it is the only one of the two that can hold *more
-than one* Discord account for a driver, which is the same reason `GuidsList`
-exists.
+**And use the sign-up answer as a hint, on the credentialed side.** This is the
+part that changes given the above. The drainer holds admin credentials, so it
+*can* read `Questions`. Have it sync a `suggested_discord_handle` column into
+`driver_discord` on each run. That handle then does one job: when a driver runs
+`/livery claim`, the bot checks whether their current Discord username matches
+the suggestion and, if it does, says so in the admin announcement —
+
+> Misha claimed "Misha" (matches the Discord handle on their sign-up).
+
+An operator scanning the channel gets to skim the ones that agree and look at
+the ones that don't. It is corroboration, never authentication, and it costs
+nothing when the league never added the question.
 
 ### Claiming
 
@@ -502,8 +574,26 @@ written against it. Outstanding here:
    what happens to a file present in the old skin and absent from the new one —
    a stale `livery.dds` left behind under a new `preview.jpg` is a car that
    renders the old livery for reasons nothing in champctl would explain.
-3. **`SignUpForm.ExtraFields`.** Only if §2's ACSM option gets revisited.
-   Currently `unknown[]`.
+3. **Does BATL's premium instance return `SignUpForm.Responses` to an
+   unauthenticated export?** One `curl` with no cookie jar against
+   `/championship/{id}/export`, and look for `Responses`. OSS gates it on
+   `GroupAdmin`; §5.3 of the plan and the **PUBLIC DATA** annotation on
+   `src/acsm/types.ts` both say otherwise, and one of the two is wrong.
+
+   Whichever way it lands, something gets corrected. If the gate holds, that
+   annotation and §5.3's privacy note are describing a leak that isn't there,
+   and the drainer becomes the only process that can read a sign-up answer. If
+   it does not, premium has widened the OSS behaviour and the leak is real and
+   worse than §5.3 says — because a Discord handle would then be published
+   alongside the Steam GUID, which is the pair that lets someone find a driver
+   off the server.
+
+   Do this before anything in §2 is built; it decides whether the hint sync
+   exists at all.
+
+   `ExtraFields` itself needs no recon: it is `[]string` in the OSS source, the
+   question labels and nothing more. `src/acsm/types.ts` should be narrowed from
+   `unknown[]` to `string[]` either way.
 4. **A slash command with an attachment option, end to end**, on a scratch
    guild — the payload shape, `interaction.member.roles` in a guild, and the
    deferral needed for a 20 MB download to finish inside Discord's 3-second
