@@ -8,8 +8,9 @@
  * the worst thing this half of the bot can do.
  */
 
-import { describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import { StaticAcsmReader, type AcsmReader } from "../src/acsm/client.js"
 import type { Championship, ChampionshipEvent } from "../src/acsm/types.js"
 import { standingsMessage } from "../src/bot/message.js"
 import { MESSAGE_LIMIT } from "../src/bot/transport.js"
@@ -21,6 +22,7 @@ import {
   ranked,
   type StandingsClass,
 } from "../src/bot/standings.js"
+import { parseArgs, resolveStandings } from "../src/cli/bot.js"
 import { championship, championshipClass, raceEvent } from "./support/build.js"
 
 /** A raced round whose Race session carries a finishing order. */
@@ -243,6 +245,79 @@ describe("the cross-check between the two sources", () => {
     expect(compareStandings(acsm, [{ name: "RSS", rows: [] }])).toEqual([
       "ada is in ACSM's standings and not in champctl's",
     ])
+  })
+})
+
+describe("where standings come from", () => {
+  let captured = ""
+
+  beforeEach(() => {
+    captured = ""
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      captured += String(chunk)
+      return true
+    })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  /** A reader whose `standings` does whatever the test wants and nothing else. */
+  const readerWhose = (standings: () => Promise<unknown>): AcsmReader => {
+    const inner = new StaticAcsmReader([])
+    return {
+      listChampionships: () => inner.listChampionships(),
+      exportChampionship: (id: string) => inner.exportChampionship(id),
+      exportChampionshipRaw: (id: string) => inner.exportChampionshipRaw(id),
+      standings,
+      healthcheck: () => inner.healthcheck(),
+      listContent: () => inner.listContent(),
+    }
+  }
+
+  const gone = async (): Promise<unknown> => {
+    throw new Error("404 Not Found")
+  }
+
+  const url = "https://acsm.example"
+
+  it("does not offer the export when --source endpoint rules it out", async () => {
+    // It said "using the export" and then didn't, because the flag forbids it —
+    // the log described the opposite of what the command did.
+    const args = parseArgs(["standings", "abc", "--source", "endpoint"])
+    const out = await resolveStandings(readerWhose(gone), scorable(), "abc", args, url)
+
+    expect(out).toBeUndefined()
+    expect(captured).toContain("rules out the export")
+    expect(captured).not.toContain("using the export")
+  })
+
+  it("does fall back to the export under auto, and says so", async () => {
+    const args = parseArgs(["standings", "abc"])
+    const out = await resolveStandings(readerWhose(gone), scorable(), "abc", args, url)
+
+    expect(out?.source).toBe("export")
+    expect(captured).toContain("using the export")
+  })
+
+  it("says the cross-check couldn't run rather than staying quiet", async () => {
+    // BATL's own 2x20 is this on every run: the endpoint answers, the export
+    // can't be scored, and silence reads as the two sources agreeing.
+    const answered = async (): Promise<unknown> => ({
+      Classes: [{ Name: "RSS", Standings: [{ DriverName: "ada", Points: 43 }] }],
+    })
+    const args = parseArgs(["standings", "abc"])
+    const out = await resolveStandings(
+      readerWhose(answered),
+      scorable({ IgnoreXWorstEvents: 1 }),
+      "abc",
+      args,
+      url,
+    )
+
+    expect(out?.source).toBe("endpoint")
+    expect(captured).toContain("not comparable")
   })
 })
 
