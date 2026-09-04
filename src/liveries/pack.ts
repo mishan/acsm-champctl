@@ -532,12 +532,108 @@ export function readLiveryPack(
     )
   }
 
+  return liveryPack(liveries, limits)
+}
+
+/**
+ * One driver's skin zip, when champctl already knows whose it is.
+ *
+ * The Discord path. A driver sends `my_livery.zip` with the files loose inside
+ * it: no car folder, and a filename that is whatever they called it. Neither
+ * absence matters, because both are known *better* elsewhere — the driver name
+ * comes from the identity mapping and the car model from that entrant's
+ * `Model` in the entry list, so nothing here is taken from a name the
+ * submitter chose. The attachment's filename is used for nothing at all.
+ *
+ * Every check `readLiveryPack` runs, runs here: same traversal guard, same
+ * extension allowlist, same flat-folder rule, same caps, same
+ * there-must-be-a-.dds test. That is the reason this is four lines in `pack.ts`
+ * rather than a reader of its own in the bot. This module's header says
+ * everything in it is untrusted *because* a Discord bot was coming; the bot
+ * arriving should not be the moment a second code path appears.
+ */
+export function readSingleLivery(
+  zipBytes: Uint8Array,
+  identity: { carModel: string; driverName: string },
+  limits: PackLimits = DEFAULT_LIMITS,
+): Livery {
+  const carModel = normalise(identity.carModel)
+  const driverName = normalise(identity.driverName)
+
+  assertUsableAsFolder("car model", carModel, identity.carModel)
+  assertUsableAsFolder("driver name", driverName, identity.driverName)
+
+  const livery = readOneLivery(carModel, driverName, zipBytes, limits, `${carModel}/${driverName}`)
+  if (livery.totalBytes > limits.maxTotalBytes) {
+    throw new LiveryPackError(
+      `Refusing ${carModel}/${driverName}: it unpacks to more than ` +
+        `${mb(limits.maxTotalBytes)}, which is what a zip bomb looks like.`,
+    )
+  }
+  return livery
+}
+
+/**
+ * Several liveries as one pack, with the whole-pack checks applied.
+ *
+ * Both callers need these and neither should be trusted to remember them: the
+ * `--zip` path builds a pack out of a zip, and the drain builds one out of a
+ * queue. The duplicate check is the one that matters for the second — two
+ * queued submissions for the same driver would upload the dead one first and
+ * then overwrite it, which works by luck and reads as a bug the week it
+ * doesn't.
+ */
+export function liveryPack(
+  liveries: readonly Livery[],
+  limits: PackLimits = DEFAULT_LIMITS,
+): LiveryPack {
+  if (liveries.length === 0) {
+    throw new LiveryPackError(
+      `No liveries in the pack. It should hold car_model/driverName.zip entries, for example ` +
+        `rss_formula_hybrid_2021/Misha.zip.`,
+    )
+  }
+  if (liveries.length > limits.maxSkins) {
+    throw new LiveryPackError(
+      `Refusing the pack: more than ${limits.maxSkins} liveries in one file.`,
+    )
+  }
+
   const duplicate = firstDuplicate(liveries.map((l) => `${l.carModel}/${l.driverName}`))
   if (duplicate) {
     throw new LiveryPackError(`Refusing the pack: ${duplicate} appears more than once.`)
   }
 
-  return { liveries, totalBytes }
+  const totalBytes = liveries.reduce((total, l) => total + l.totalBytes, 0)
+  if (totalBytes > limits.maxTotalBytes) {
+    throw new LiveryPackError(
+      `Refusing the pack: it unpacks to more than ${mb(limits.maxTotalBytes)}, which is a lot ` +
+        `more than a set of liveries and is what a zip bomb looks like.`,
+    )
+  }
+
+  return { liveries: [...liveries], totalBytes }
+}
+
+/**
+ * `assertSafeName` for a name that came from ACSM rather than from a zip.
+ *
+ * Same rule, different reader. `SAFE_COMPONENT` is narrower than what ACSM will
+ * store in `Entrant.Name` — a name leading with a dot, or carrying a slash,
+ * saves fine there and is refused here — so on this path the refusal is not
+ * "your zip is wrong", it is "this driver cannot upload at all, ever, and only
+ * an admin can fix it". Saying that to a driver in the CLI's words would send
+ * them re-zipping a file that was never the problem.
+ */
+function assertUsableAsFolder(kind: string, normalised: string, asGiven: string): void {
+  if (normalised === "." || normalised === ".." || !SAFE_COMPONENT.test(normalised)) {
+    throw new LiveryPackError(
+      `Can't upload for ${kind} ${JSON.stringify(asGiven)}: champctl turns it into a folder on ` +
+        `the game server and that name can't be one. This is an entry list problem rather than ` +
+        `anything wrong with the zip — an admin has to change the name in ACSM before this ` +
+        `driver can submit a livery.`,
+    )
+  }
 }
 
 function readOneLivery(
