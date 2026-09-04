@@ -330,6 +330,24 @@ describe("the standings message", () => {
     expect(over).toEqual([])
   })
 
+  it("lines the points up under each other whatever the names are", () => {
+    // The name column was a hardcoded pad of 20 sitting next to a points width
+    // measured off the rows, so a single name past the pad pushed that row's
+    // points out of line with every other row in the table.
+    const cls: StandingsClass = {
+      name: "RSS",
+      rows: [
+        { position: 1, driver: "ada", points: 43 },
+        { position: 2, driver: "a-driver-with-a-longer-name", points: 30 },
+      ],
+    }
+    const [msg] = standingsMessage("August 2026", { source: "endpoint", classes: [cls] })
+    const rows = msg!.split("\n").filter((l) => /^\s*\d+\. /.test(l))
+
+    expect(rows).toHaveLength(2)
+    expect(new Set(rows.map((l) => l.length)).size).toBe(1)
+  })
+
   it("posts nothing for a class nobody has scored in", () => {
     expect(standingsMessage("August 2026", { source: "endpoint", classes: [] })).toEqual([])
     expect(

@@ -148,6 +148,12 @@ export function standingsMessage(
   for (const cls of scored) {
     const heading = cls.name ? `**${subject} — ${cls.name}**` : `**${subject}**`
     const width = String(Math.max(...cls.rows.map((r) => r.points))).length
+    // Both columns are measured off the rows. The name column was a hardcoded
+    // 20, which holds for a Steam persona (capped at 32) about as often as not
+    // and not at all for an entry list, where ACSM validates the name's length
+    // no further than "it is a string" — and one name past the pad pushed that
+    // row's points out of line with every other row in the table.
+    const names = Math.max(...cls.rows.map((r) => r.driver.length))
 
     // Chunked by rows so a 30-driver class still posts. The heading repeats for
     // the same reason it does in a split gridmom report: Discord hides the
@@ -173,7 +179,7 @@ export function standingsMessage(
     }
 
     for (const row of cls.rows) {
-      const line = `${String(row.position).padStart(2)}. ${row.driver.padEnd(20)} ${String(row.points).padStart(width)}`
+      const line = `${String(row.position).padStart(2)}. ${row.driver.padEnd(names)} ${String(row.points).padStart(width)}`
       // Measured, not estimated, for the same reason `reportMessages` measures:
       // the fences, the newlines and the twelve characters " (continued)" adds
       // are all length. The estimate here allowed twenty for all of it where a
