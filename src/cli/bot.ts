@@ -492,20 +492,22 @@ async function runStandings(
  * request champctl already has cached. The disagreement goes to stderr, never
  * to the channel.
  */
-async function resolveStandings(
+export async function resolveStandings(
   reader: AcsmReader,
   championship: Championship,
   id: string,
   args: Args,
   baseUrl: string,
 ): Promise<Standings | undefined> {
+  // Undefined means the export is not on the table at all, which only
+  // `--source endpoint` asks for. Every other path either answers from it or
+  // checks the endpoint against it, so there is no "the export was missing"
+  // case below — the export is the one thing here that cannot fail to exist.
   const computed = args.source === "endpoint" ? undefined : computeStandings(championship)
 
-  if (args.source === "export") {
-    if (!computed || isUnscorable(computed)) {
-      process.stderr.write(
-        `champctl can't work these standings out: ${computed ? computed.reason : "no export"}\n`,
-      )
+  if (computed && args.source === "export") {
+    if (isUnscorable(computed)) {
+      process.stderr.write(`champctl can't work these standings out: ${computed.reason}\n`)
       return undefined
     }
     return { source: "export", classes: computed }
@@ -524,23 +526,34 @@ async function resolveStandings(
       )
     }
   } catch (e) {
-    // Premium-only, so a 404 here is an OSS build rather than a fault.
-    process.stderr.write(`standings.json didn't answer (${asMessage(e)}); using the export.\n`)
+    // Premium-only, so a 404 here is an OSS build rather than a fault. What
+    // happens next depends on what this run is allowed to fall back to, and
+    // this said "using the export" even under `--source endpoint`, which
+    // forbids exactly that — describing the opposite of what it then did.
+    const next =
+      args.source === "endpoint" ? "and --source endpoint rules out the export" : "using the export"
+    process.stderr.write(`standings.json didn't answer (${asMessage(e)}); ${next}.\n`)
   }
 
-  if (fromEndpoint && computed && !isUnscorable(computed)) {
-    for (const line of compareStandings(fromEndpoint, computed)) {
-      process.stderr.write(`disagreement: ${line}\n`)
+  if (fromEndpoint && computed) {
+    if (isUnscorable(computed)) {
+      // Said out loud rather than passed over. The cross-check is the thing
+      // keeping the fallback honest, so a run where it could not happen has to
+      // say so — silence here reads as the two sources agreeing. BATL's own
+      // 2x20 is this case on every run.
+      process.stderr.write(`not comparable: ${computed.reason}\n`)
+    } else {
+      for (const line of compareStandings(fromEndpoint, computed)) {
+        process.stderr.write(`disagreement: ${line}\n`)
+      }
     }
   }
 
   if (fromEndpoint) return { source: "endpoint", classes: fromEndpoint }
+  if (!computed) return undefined
 
-  if (args.source === "endpoint") return undefined
-  if (!computed || isUnscorable(computed)) {
-    process.stderr.write(
-      `champctl can't work these standings out either: ${computed ? computed.reason : "no export"}\n`,
-    )
+  if (isUnscorable(computed)) {
+    process.stderr.write(`champctl can't work these standings out either: ${computed.reason}\n`)
     return undefined
   }
   return { source: "export", classes: computed }
