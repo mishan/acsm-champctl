@@ -18,6 +18,7 @@ import { pathToFileURL } from "node:url"
 
 import { SqliteCache } from "../acsm/cache.js"
 import { HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
+import { announce, NothingToAnnounce, type Announcement } from "../bot/announce.js"
 import { GatewayTransport } from "../bot/discord.js"
 import { nightlyMessages } from "../bot/message.js"
 import { findingsAtOrAbove, nightly, type NightlyEntry } from "../bot/nightly.js"
@@ -25,31 +26,39 @@ import { BotError, RecordingTransport, type DiscordTransport } from "../bot/tran
 import type { Severity } from "../gridmom/finding.js"
 import { DEFAULT_MIN_SEVERITY } from "../gridmom/report.js"
 import { loadProfile } from "../profile/load.js"
+import type { LeagueProfile } from "../profile/types.js"
 import { loadPits, reportUsageError, runCli, UsageError } from "./args.js"
 
 const USAGE = `champctl-bot — champctl's voice in Discord
 
 Usage:
-  champctl-bot report                 check every championship and post what's wrong
+  champctl-bot report                       check every championship, post what's wrong
+  champctl-bot announce <champ-id> [round]  post the next round's details
 
 Options:
   --profile <id|path>   league profile (default: batl)
-  --channel <id>        override the profile's discord.adminChannelId
+  --channel <id>        override the channel this command posts to
   --pits <path>         track pit table JSON (default: data/track-pits.json)
-  --min <severity>      ERROR | WARN | INFO     (default: WARN)
-  --suppress <codes>    comma-separated finding codes or prefixes to hide
-  --all                 include championships whose every round has been raced
+  --min <severity>      ERROR | WARN | INFO     (default: WARN)   [report]
+  --suppress <codes>    comma-separated finding codes or prefixes  [report]
+  --all                 include championships already fully raced   [report]
   --dry-run             print what would be posted; talk to nobody
   --base-url <url>      override the profile's ACSM base URL
   --no-cache            bypass the on-disk response cache
-  --now <iso>           pretend it is this time (for the schedule checks)
+  --now <iso>           pretend it is this time, for the checks     [report]
   -h, --help            this
 
 Exit codes:
-  0  nothing worth reporting
-  1  warnings only
-  2  at least one error, or a championship that couldn't be read
+  0  nothing worth reporting / posted fine
+  1  warnings only                                                  [report]
+  2  at least one error, or something couldn't be read
   3  the run itself failed
+
+report posts to discord.adminChannelId; announce posts to
+discord.announceChannelId, which is the channel drivers read.
+
+announce is one-shot: it posts once and exits, so cron decides when a round
+gets announced and champctl keeps no record of having done it.
 
 The bot token comes from CHAMPCTL_DISCORD_TOKEN and is never a flag — a flag
 lands in shell history and in every ps listing on the box. There is deliberately
@@ -64,6 +73,8 @@ export const TOKEN_ENV = "CHAMPCTL_DISCORD_TOKEN"
 
 interface Args {
   command: string
+  championshipId?: string
+  round?: number
   profile: string
   channel?: string
   pits?: string
@@ -75,6 +86,12 @@ interface Args {
   cache: boolean
   now?: Date
   help: boolean
+}
+
+/** Commands taking a championship id, and how many extra positionals each allows. */
+const COMMANDS: Record<string, { positionals: number }> = {
+  report: { positionals: 0 },
+  announce: { positionals: 2 },
 }
 
 export function parseArgs(argv: readonly string[]): Args {
@@ -155,13 +172,22 @@ export function parseArgs(argv: readonly string[]): Args {
   }
 
   args.command = rest[0] ?? ""
-  if (rest.length > 1) {
-    const extra = rest.slice(1).map((x) => JSON.stringify(x))
+
+  const shape = COMMANDS[args.command]
+  if (args.command && shape === undefined) throw new UsageError(`Unknown command ${args.command}`)
+
+  const positionals = rest.slice(1)
+  if (shape && positionals.length > shape.positionals) {
+    const extra = positionals.slice(shape.positionals).map((x) => JSON.stringify(x))
     throw new UsageError(
-      `${args.command} takes no arguments, but got ${extra.join(", ")}. ` +
-        `Did that belong to an option, such as --channel?`,
+      `${args.command} takes ${shape.positionals === 0 ? "no arguments" : `at most ${shape.positionals}`}, ` +
+        `but got ${extra.join(", ")}. Did that belong to an option, such as --channel?`,
     )
   }
+
+  if (positionals[0] !== undefined) args.championshipId = positionals[0]
+  if (positionals[1] !== undefined) args.round = parseRound(positionals[1])
+
   return args
 }
 
@@ -169,6 +195,21 @@ function parseSeverity(v: string): Severity {
   const up = v.toUpperCase()
   if (up === "ERROR" || up === "WARN" || up === "INFO") return up
   throw new UsageError(`--min must be ERROR, WARN or INFO`)
+}
+
+/**
+ * A round number, 1-based, as a league counts them.
+ *
+ * Rejected rather than coerced: `Number("2nd")` is NaN and `parseInt("2nd")` is
+ * 2, and a command that quietly announced round 2 because someone typed the
+ * round they meant in words is worse than one that says what it wanted.
+ */
+function parseRound(v: string): number {
+  const n = Number(v)
+  if (!Number.isInteger(n) || n < 1) {
+    throw new UsageError(`Round must be a whole number from 1, not ${JSON.stringify(v)}`)
+  }
+  return n
 }
 
 /**
@@ -181,6 +222,26 @@ function parseSeverity(v: string): Severity {
 export function exitCodeFor(counts: Record<Severity, number>, failed: number): number {
   if (counts.ERROR > 0 || failed > 0) return 2
   return counts.WARN > 0 ? 1 : 0
+}
+
+/**
+ * Which channel a command posts to, and the profile key that configures it.
+ *
+ * gridmom goes to the admins; announcements go to the league.
+ * Resolved per command with **no fallback between them**, and that is the
+ * safety property rather than a tidiness one: gridmom quotes the entry list, so
+ * a report falling back to the announce channel would tell everyone which three
+ * drivers are about to be dropped from the grid. Refusing with "set
+ * discord.adminChannelId" is the correct outcome for a half-configured profile.
+ */
+export function channelFor(
+  command: string,
+  profile: LeagueProfile,
+): { id: string | undefined; key: string } {
+  if (command === "report") {
+    return { id: profile.discord?.adminChannelId, key: "adminChannelId" }
+  }
+  return { id: profile.discord?.announceChannelId, key: "announceChannelId" }
 }
 
 export function describe(entry: NightlyEntry): string {
@@ -221,7 +282,6 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     process.stdout.write(USAGE)
     return args.help ? 0 : 3
   }
-  if (args.command !== "report") throw new UsageError(`Unknown command ${args.command}`)
 
   const profile = await loadProfile(args.profile)
   const baseUrl = args.baseUrl ?? profile.acsmBaseUrl
@@ -231,13 +291,14 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     )
   }
 
-  const channelId = args.channel ?? profile.discord?.adminChannelId
-  // Refused before a single request goes out. A nightly job that walks a whole
-  // server and then discovers it has nowhere to say so has spent the league's
-  // rate limit to produce nothing.
+  const configured = channelFor(args.command, profile)
+  const channelId = args.channel ?? configured.id
+  // Refused before a single request goes out. A job that walks a whole server
+  // and then finds it has nowhere to say so has spent the league's rate limit
+  // to produce nothing.
   if (!channelId && !args.dryRun) {
     throw new UsageError(
-      `No Discord channel. Set discord.adminChannelId in the ${args.profile} profile, pass ` +
+      `No Discord channel. Set discord.${configured.key} in the ${args.profile} profile, pass ` +
         `--channel, or use --dry-run to see what would be posted.`,
     )
   }
@@ -257,38 +318,23 @@ async function runCommand(argv: readonly string[]): Promise<number> {
         ...(cache ? { cache } : {}),
       })
 
-      const report = await nightly(reader, {
-        profile,
-        pits: await loadPits(args.pits),
-        includeFinished: args.all,
-        suppress: args.suppress,
-        ...(args.now ? { now: args.now } : {}),
-        onProgress: (entry) => process.stderr.write(`${describe(entry)}\n`),
-      })
-
-      // Resolved once, used twice. These two decide different things — what goes
-      // in the channel, and what cron is told the night was like — and they have
-      // to be the same number. Reading the default separately at each call site
-      // is how they drift, silently and in both directions: a bot that posts
-      // warnings and exits 0, or one that exits 1 having said nothing.
-      const minSeverity = args.min ?? DEFAULT_MIN_SEVERITY
-      const messages = nightlyMessages(report, { minSeverity })
-
-      for (const content of messages) {
-        // `channelId` is non-empty here for a real post; a dry run records
-        // whatever it was given and prints it below.
-        await transport.post({ channelId: channelId ?? "(dry run)", content })
+      const post = async (messages: readonly string[]): Promise<void> => {
+        for (const content of messages) {
+          // `channelId` is non-empty here for a real post; a dry run records
+          // whatever it was given and prints it afterwards.
+          await transport.post({ channelId: channelId ?? "(dry run)", content })
+        }
+        if (args.dryRun) for (const m of messages) process.stdout.write(`${m}\n\n`)
       }
 
-      if (args.dryRun) {
-        for (const m of messages) process.stdout.write(`${m}\n\n`)
+      switch (args.command) {
+        case "report":
+          return await runReport(reader, profile, args, post)
+        case "announce":
+          return await runAnnounce(reader, profile, args, post)
+        default:
+          throw new UsageError(`Unknown command ${args.command}`)
       }
-
-      const counts = findingsAtOrAbove(report, minSeverity)
-      process.stdout.write(
-        `${summarise(report.checked, report.finished, report.failed, messages.length)}\n`,
-      )
-      return exitCodeFor(counts, report.failed)
     },
   )
 }
@@ -320,12 +366,76 @@ export async function withResources<C extends { close: () => void }, T>(
   }
 }
 
-function summarise(checked: number, finished: number, failed: number, posted: number): string {
-  const parts = [`${checked} checked`]
-  if (finished) parts.push(`${finished} already run`)
-  if (failed) parts.push(`${failed} failed`)
-  parts.push(`${posted} ${posted === 1 ? "message" : "messages"}`)
-  return parts.join(", ")
+type Post = (messages: readonly string[]) => Promise<void>
+
+async function runReport(
+  reader: AcsmReader,
+  profile: LeagueProfile,
+  args: Args,
+  post: Post,
+): Promise<number> {
+  const report = await nightly(reader, {
+    profile,
+    pits: await loadPits(args.pits),
+    includeFinished: args.all,
+    suppress: args.suppress,
+    ...(args.now ? { now: args.now } : {}),
+    onProgress: (entry) => process.stderr.write(`${describe(entry)}\n`),
+  })
+
+  // Resolved once, used twice. These two decide different things — what goes in
+  // the channel, and what cron is told the night was like — and they have to be
+  // the same number. Reading the default separately at each call site is how
+  // they drift, silently and in both directions: a bot that posts warnings and
+  // exits 0, or one that exits 1 having said nothing.
+  const minSeverity = args.min ?? DEFAULT_MIN_SEVERITY
+  const messages = nightlyMessages(report, { minSeverity })
+  await post(messages)
+
+  const parts = [`${report.checked} checked`]
+  if (report.finished) parts.push(`${report.finished} already run`)
+  if (report.failed) parts.push(`${report.failed} failed`)
+  parts.push(`${messages.length} ${messages.length === 1 ? "message" : "messages"}`)
+  process.stdout.write(`${parts.join(", ")}\n`)
+
+  return exitCodeFor(findingsAtOrAbove(report, minSeverity), report.failed)
+}
+
+async function runAnnounce(
+  reader: AcsmReader,
+  profile: LeagueProfile,
+  args: Args,
+  post: Post,
+): Promise<number> {
+  const id = requireChampionshipId(args, "announce")
+  const championship = await reader.exportChampionship(id)
+
+  let announcement: Announcement
+  try {
+    announcement = announce(championship, {
+      profile,
+      baseUrl: args.baseUrl ?? profile.acsmBaseUrl ?? "",
+      ...(args.round === undefined ? {} : { round: args.round }),
+    })
+  } catch (e) {
+    // Not an error. A season that has finished is the ordinary end state, and a
+    // cron entry that exits 3 every week after the last race is one people
+    // silence rather than fix.
+    if (e instanceof NothingToAnnounce) {
+      process.stdout.write(`${e.message}\n`)
+      return 0
+    }
+    throw e
+  }
+
+  await post([announcement.content])
+  process.stdout.write(`Announced round ${announcement.round}.\n`)
+  return 0
+}
+
+function requireChampionshipId(args: Args, command: string): string {
+  if (!args.championshipId) throw new UsageError(`${command} needs a championship id`)
+  return args.championshipId
 }
 
 async function connect(): Promise<DiscordTransport> {
