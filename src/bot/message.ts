@@ -152,19 +152,36 @@ export function standingsMessage(
     // Chunked by rows so a 30-driver class still posts. The heading repeats for
     // the same reason it does in a split gridmom report: Discord hides the
     // author on consecutive messages.
+    //
+    // `sent` counts *this class's* messages, not every message so far. Counting
+    // all of them headed the second class's first table "(continued)", which
+    // reads as more of the class above it — the exact confusion the repeated
+    // heading exists to prevent.
+    let sent = 0
     let rows: string[] = []
+
+    const renderTable = (lines: readonly string[]): string => {
+      const head = sent === 0 ? heading : `${heading} (continued)`
+      return `${head}\n\`\`\`\n${lines.join("\n")}\n\`\`\`${footer}`
+    }
+
     const flush = (): void => {
       if (rows.length === 0) return
-      const head = messages.length === 0 ? heading : `${heading} (continued)`
-      messages.push(`${head}\n\`\`\`\n${rows.join("\n")}\n\`\`\`${footer}`)
+      messages.push(renderTable(rows))
+      sent++
       rows = []
     }
+
     for (const row of cls.rows) {
       const line = `${String(row.position).padStart(2)}. ${row.driver.padEnd(20)} ${String(row.points).padStart(width)}`
-      const candidate = [...rows, line]
-      const size = heading.length + candidate.join("\n").length + footer.length + 20
-      if (size > limit && rows.length > 0) flush()
-      rows = rows.length === 0 ? [line] : candidate
+      // Measured, not estimated, for the same reason `reportMessages` measures:
+      // the fences, the newlines and the twelve characters " (continued)" adds
+      // are all length. The estimate here allowed twenty for all of it where a
+      // continuation needs twenty-one, so a table landing exactly on the
+      // boundary posted 2001 characters — which Discord refuses outright rather
+      // than trimming, losing the whole table.
+      if (rows.length > 0 && renderTable([...rows, line]).length > limit) flush()
+      rows = [...rows, line]
     }
     flush()
   }
