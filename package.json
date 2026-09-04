@@ -57,6 +57,8 @@
     "recon:roundtrip": "tsx scripts/recon/roundtrip.ts",
     "recon:layouts": "tsx scripts/recon/layouts.ts",
     "recon:entry-list-type": "tsx scripts/recon/entry-list-type.ts",
+    "//recon:standings": "The one recon script safe to point at a production manager: it reads standings.json, which only a premium build serves, and prints a shape rather than any driver's name.",
+    "recon:standings": "tsx scripts/recon/standings.ts",
     "championship": "tsx src/cli/championship.ts",
     "test:e2e": "playwright test"
   },

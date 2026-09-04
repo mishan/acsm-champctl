@@ -17,11 +17,20 @@ import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { SqliteCache } from "../acsm/cache.js"
-import { HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
+import { asMessage, HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
+import type { Championship } from "../acsm/types.js"
 import { announce, NothingToAnnounce, type Announcement } from "../bot/announce.js"
 import { GatewayTransport } from "../bot/discord.js"
-import { nightlyMessages } from "../bot/message.js"
+import { nightlyMessages, standingsMessage } from "../bot/message.js"
 import { findingsAtOrAbove, nightly, type NightlyEntry } from "../bot/nightly.js"
+import {
+  compareStandings,
+  computeStandings,
+  isUnscorable,
+  parseStandings,
+  type Standings,
+  type StandingsClass,
+} from "../bot/standings.js"
 import { BotError, RecordingTransport, type DiscordTransport } from "../bot/transport.js"
 import type { Severity } from "../gridmom/finding.js"
 import { DEFAULT_MIN_SEVERITY } from "../gridmom/report.js"
@@ -34,6 +43,7 @@ const USAGE = `champctl-bot — champctl's voice in Discord
 Usage:
   champctl-bot report                       check every championship, post what's wrong
   champctl-bot announce <champ-id> [round]  post the next round's details
+  champctl-bot standings <champ-id>         post the championship standings
 
 Options:
   --profile <id|path>   league profile (default: batl)
@@ -42,6 +52,7 @@ Options:
   --min <severity>      ERROR | WARN | INFO     (default: WARN)   [report]
   --suppress <codes>    comma-separated finding codes or prefixes  [report]
   --all                 include championships already fully raced   [report]
+  --source <where>      endpoint | export | auto  (default: auto) [standings]
   --dry-run             print what would be posted; talk to nobody
   --base-url <url>      override the profile's ACSM base URL
   --no-cache            bypass the on-disk response cache
@@ -54,11 +65,11 @@ Exit codes:
   2  at least one error, or something couldn't be read
   3  the run itself failed
 
-report posts to discord.adminChannelId; announce posts to
+report posts to discord.adminChannelId; announce and standings post to
 discord.announceChannelId, which is the channel drivers read.
 
-announce is one-shot: it posts once and exits, so cron decides when a round
-gets announced and champctl keeps no record of having done it.
+announce and standings are one-shot: they post once and exit, so cron decides
+when a round gets announced and champctl keeps no record of having done it.
 
 The bot token comes from CHAMPCTL_DISCORD_TOKEN and is never a flag — a flag
 lands in shell history and in every ps listing on the box. There is deliberately
@@ -71,6 +82,9 @@ export const BOT_USER_AGENT = "acsm-champctl/0.1 (bot)"
 /** The token's only home. Read here so nothing else has to know the name. */
 export const TOKEN_ENV = "CHAMPCTL_DISCORD_TOKEN"
 
+/** Where standings are allowed to come from. See `src/bot/standings.ts`. */
+export type StandingsSourceOption = "endpoint" | "export" | "auto"
+
 interface Args {
   command: string
   championshipId?: string
@@ -81,6 +95,7 @@ interface Args {
   min?: Severity
   suppress: string[]
   all: boolean
+  source: StandingsSourceOption
   dryRun: boolean
   baseUrl?: string
   cache: boolean
@@ -92,6 +107,7 @@ interface Args {
 const COMMANDS: Record<string, { positionals: number }> = {
   report: { positionals: 0 },
   announce: { positionals: 2 },
+  standings: { positionals: 1 },
 }
 
 export function parseArgs(argv: readonly string[]): Args {
@@ -100,6 +116,7 @@ export function parseArgs(argv: readonly string[]): Args {
     profile: "batl",
     suppress: [],
     all: false,
+    source: "auto",
     dryRun: false,
     cache: true,
     help: false,
@@ -140,6 +157,9 @@ export function parseArgs(argv: readonly string[]): Args {
         break
       case "--all":
         args.all = true
+        break
+      case "--source":
+        args.source = parseSource(next())
         break
       case "--dry-run":
         args.dryRun = true
@@ -191,6 +211,11 @@ export function parseArgs(argv: readonly string[]): Args {
   return args
 }
 
+function parseSource(v: string): StandingsSourceOption {
+  if (v === "endpoint" || v === "export" || v === "auto") return v
+  throw new UsageError(`--source must be endpoint, export or auto`)
+}
+
 function parseSeverity(v: string): Severity {
   const up = v.toUpperCase()
   if (up === "ERROR" || up === "WARN" || up === "INFO") return up
@@ -227,7 +252,7 @@ export function exitCodeFor(counts: Record<Severity, number>, failed: number): n
 /**
  * Which channel a command posts to, and the profile key that configures it.
  *
- * gridmom goes to the admins; announcements go to the league.
+ * gridmom goes to the admins; announcements and standings go to the league.
  * Resolved per command with **no fallback between them**, and that is the
  * safety property rather than a tidiness one: gridmom quotes the entry list, so
  * a report falling back to the announce channel would tell everyone which three
@@ -332,6 +357,8 @@ async function runCommand(argv: readonly string[]): Promise<number> {
           return await runReport(reader, profile, args, post)
         case "announce":
           return await runAnnounce(reader, profile, args, post)
+        case "standings":
+          return await runStandings(reader, args, baseUrl, post)
         default:
           throw new UsageError(`Unknown command ${args.command}`)
       }
@@ -431,6 +458,105 @@ async function runAnnounce(
   await post([announcement.content])
   process.stdout.write(`Announced round ${announcement.round}.\n`)
   return 0
+}
+
+async function runStandings(
+  reader: AcsmReader,
+  args: Args,
+  baseUrl: string,
+  post: Post,
+): Promise<number> {
+  const id = requireChampionshipId(args, "standings")
+  const championship = await reader.exportChampionship(id)
+  const subject = championship.Name?.trim() || id
+
+  const resolved = await resolveStandings(reader, championship, id, args, baseUrl)
+  if (!resolved) {
+    process.stderr.write(`No standings for ${subject}.\n`)
+    return 2
+  }
+
+  const messages = standingsMessage(subject, resolved)
+  await post(messages)
+  process.stdout.write(
+    `Posted ${messages.length} ${messages.length === 1 ? "message" : "messages"} from the ${resolved.source}.\n`,
+  )
+  return 0
+}
+
+/**
+ * Standings from wherever `--source` allows, and the cross-check between them.
+ *
+ * Under `auto` the endpoint wins and the export is computed anyway, purely so
+ * the two can be compared — see `compareStandings` for why that is worth a
+ * request champctl already has cached. The disagreement goes to stderr, never
+ * to the channel.
+ */
+export async function resolveStandings(
+  reader: AcsmReader,
+  championship: Championship,
+  id: string,
+  args: Args,
+  baseUrl: string,
+): Promise<Standings | undefined> {
+  // Undefined means the export is not on the table at all, which only
+  // `--source endpoint` asks for. Every other path either answers from it or
+  // checks the endpoint against it, so there is no "the export was missing"
+  // case below — the export is the one thing here that cannot fail to exist.
+  const computed = args.source === "endpoint" ? undefined : computeStandings(championship)
+
+  if (computed && args.source === "export") {
+    if (isUnscorable(computed)) {
+      process.stderr.write(`champctl can't work these standings out: ${computed.reason}\n`)
+      return undefined
+    }
+    return { source: "export", classes: computed }
+  }
+
+  let fromEndpoint: StandingsClass[] | undefined
+  try {
+    fromEndpoint = parseStandings(await reader.standings(id))
+    if (!fromEndpoint) {
+      // The endpoint answered with something champctl doesn't recognise. Worth
+      // saying loudly: its shape has never been measured, and this is the only
+      // moment anyone would find out it changed.
+      process.stderr.write(
+        `${baseUrl} answered standings.json in a shape champctl doesn't recognise. ` +
+          `Run npm run recon:standings against it and send the output.\n`,
+      )
+    }
+  } catch (e) {
+    // Premium-only, so a 404 here is an OSS build rather than a fault. What
+    // happens next depends on what this run is allowed to fall back to, and
+    // this said "using the export" even under `--source endpoint`, which
+    // forbids exactly that — describing the opposite of what it then did.
+    const next =
+      args.source === "endpoint" ? "and --source endpoint rules out the export" : "using the export"
+    process.stderr.write(`standings.json didn't answer (${asMessage(e)}); ${next}.\n`)
+  }
+
+  if (fromEndpoint && computed) {
+    if (isUnscorable(computed)) {
+      // Said out loud rather than passed over. The cross-check is the thing
+      // keeping the fallback honest, so a run where it could not happen has to
+      // say so — silence here reads as the two sources agreeing. BATL's own
+      // 2x20 is this case on every run.
+      process.stderr.write(`not comparable: ${computed.reason}\n`)
+    } else {
+      for (const line of compareStandings(fromEndpoint, computed)) {
+        process.stderr.write(`disagreement: ${line}\n`)
+      }
+    }
+  }
+
+  if (fromEndpoint) return { source: "endpoint", classes: fromEndpoint }
+  if (!computed) return undefined
+
+  if (isUnscorable(computed)) {
+    process.stderr.write(`champctl can't work these standings out either: ${computed.reason}\n`)
+    return undefined
+  }
+  return { source: "export", classes: computed }
 }
 
 function requireChampionshipId(args: Args, command: string): string {
