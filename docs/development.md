@@ -78,9 +78,9 @@ fixture of it exists, and `parseStandings` is therefore written to *fail to
 recognise* rather than to dig hopefully through an object nobody has measured.
 The export works everywhere, at the cost of champctl doing the sums.
 
-`computeStandings` refuses where ACSM's scoring is unmeasured — `IgnoreXWorstEvents`,
-the three penalty-points fields, and the second race of a reversed-grid round —
-and names which one stopped it. That is the fail-closed rule applied to a read:
+`computeStandings` refuses where ACSM's scoring is unmeasured — more than one
+class, `IgnoreXWorstEvents`, the three penalty-points fields, and the second
+race of a reversed-grid round — and names which one stopped it. That is the fail-closed rule applied to a read:
 a standings table posted to a league is believed, so being quietly wrong costs
 more than being unavailable. The refusal doubles as the to-do list, and
 `npm run recon:standings` is the script that would close it.

@@ -487,18 +487,19 @@ answers, so without this the computation would sit unexercised until the day it
 was needed. A disagreement is a real finding either way round — either
 champctl's sums are wrong, or ACSM changed how it scores.
 
-**The export fallback refuses more than it computes, on purpose.** Three parts
-of ACSM's scoring have never been measured against a real manager, and each
+**The export fallback refuses more than it computes, on purpose.** Four things
+about ACSM's scoring have never been measured against a real manager, and each
 would change every number in the table:
 
 | | |
 |---|---|
+| more than one class | which position a class scores — the one in the class or the one on the road — is written down nowhere, and matching a class's entrants to results is unmeasured in its own right |
 | `IgnoreXWorstEvents` | something is dropped; which rounds, and whether per driver or per championship, is written down nowhere |
 | `CollisionWithDriver`, `CollisionWithEnv`, `CutTrack` | on the points table, and the incidents are in the export, but whether ACSM applies them automatically is unknown |
 | the second race of a reversed-grid round | `SecondRaceMultiplier` says there is one; nothing knows what session key its results arrive under |
 
 So it declines and names the reason rather than posting a table that is quietly
-wrong. **BATL's own 2x20 is the third case**, which means at BATL the endpoint
+wrong. **BATL's own 2x20 is the last case**, which means at BATL the endpoint
 is the only source today and the cross-check reports "not comparable" rather
 than agreeing. `npm run recon:standings -- <base-url> <champ-id>` is what closes
 these: it reads standings.json without credentials and prints its *shape* —
