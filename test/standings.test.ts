@@ -1,7 +1,7 @@
 /**
  * Standings, from ACSM if it will say and from the export if not.
  *
- * The tests that matter most here are the *refusals*. Three parts of ACSM's
+ * The tests that matter most here are the *refusals*. Four things about ACSM's
  * scoring have never been measured against a real manager, and each would
  * change every number in the table — so the fallback has to decline rather than
  * produce something plausible. A wrong standings table posted to a league is
@@ -115,6 +115,21 @@ describe("what the export cannot be scored for", () => {
     if (!isUnscorable(out)) throw new Error("expected a refusal")
     return out.reason
   }
+
+  it("refuses a championship running more than one class", () => {
+    // Every class was scored off the *overall* finishing order, so both classes
+    // came back holding the same rows and the GT4 driver who finished third on
+    // the road took third-place points in the GT3 table too. Filtering the
+    // class's entrants fixes half of that and guesses at the other half.
+    const c = scorable({
+      Classes: [
+        championshipClass({ Name: "GT3", Points: { Places: [25, 18, 15] } }),
+        championshipClass({ Name: "GT4", Points: { Places: [25, 18, 15] } }),
+      ],
+      Events: [racedRound(["gt3-ada", "gt3-bo", "gt4-cy"])],
+    })
+    expect(reasonFor(c)).toMatch(/runs 2 classes/)
+  })
 
   it("refuses a championship that drops its worst rounds", () => {
     // Something is dropped; which rounds, and whether per driver or per

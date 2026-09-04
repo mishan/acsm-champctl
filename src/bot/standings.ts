@@ -18,9 +18,13 @@
  *
  * ## What the fallback refuses to do, and why that matters
  *
- * Three parts of ACSM's scoring have never been measured against a real
+ * Four things about ACSM's scoring have never been measured against a real
  * manager, and each of them would change every number in the table:
  *
+ * - **More than one class.** Which finishing position a class scores — the one
+ *   in the class or the one on the road — is not written down anywhere, and
+ *   `ChampionshipClass.Entrants` would have to be matched to results by name or
+ *   by GUID, which is unmeasured in its own right.
  * - **`IgnoreXWorstEvents`.** Something is dropped; which events, and whether
  *   the drop is per driver or per championship, is not written down anywhere.
  * - **`CollisionWithDriver` / `CollisionWithEnv` / `CutTrack`.** These are on
@@ -215,6 +219,17 @@ function finishers(results: SessionResults | null | undefined): string[] {
 
 /** The first reason this championship can't be scored here, if there is one. */
 function whyNotScorable(c: Championship): string | undefined {
+  // This scored every class off the *overall* finishing order, so a two-class
+  // championship came back with both classes holding the same rows, and a GT4
+  // driver who finished third on the road took third-place points in the GT3
+  // table as well. Filtering `cls.Entrants` would fix the first half and guess
+  // at the second: whether ACSM awards a class its in-class position or its
+  // overall one has never been measured, so refusing is the honest answer.
+  const all = classes(c)
+  if (all.length > 1) {
+    return `it runs ${all.length} classes, and champctl has never measured whether ACSM scores a class by finishing position within the class or overall`
+  }
+
   const ignore = c.IgnoreXWorstEvents
   if (typeof ignore === "number" && ignore > 0) {
     return `it drops its ${ignore} worst ${ignore === 1 ? "round" : "rounds"}, and champctl has never measured which rounds ACSM drops`
