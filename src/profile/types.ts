@@ -89,6 +89,29 @@ export interface FormatPreset extends RaceFormat {
   name: string
 }
 
+/**
+ * Where the bot posts.
+ *
+ * Here rather than in the environment because a channel id is league
+ * configuration, not a secret — reviewable in git, and the same for everyone
+ * running this league's bot. The token is the secret and stays in
+ * `CHAMPCTL_DISCORD_TOKEN`; nothing in a profile should ever be worth hiding.
+ */
+export interface DiscordSettings {
+  /**
+   * Channel the nightly gridmom report posts into.
+   *
+   * An *admin* channel, and that is a requirement rather than a naming
+   * convention. Findings quote the entry list, so they carry driver names —
+   * `entry.duplicate-pit-box` names whose boxes collide, and the sign-up checks
+   * name applicants who can't join. None of it is secret, since the export is
+   * public (plan §5.3), but "these three people are about to be dropped from
+   * the grid" is not a thing to say in front of the league before anyone has
+   * looked at it.
+   */
+  adminChannelId?: string
+}
+
 export interface LeagueProfile {
   id: string
   name: string
@@ -99,6 +122,8 @@ export interface LeagueProfile {
   baseline: Baseline
   /** Named format shorthands, offered as one-tap starting points in the UI. */
   formats?: FormatPreset[]
+  /** Where `champctl-bot` posts. Absent means the league has no bot. */
+  discord?: DiscordSettings
   /**
    * League furniture: cars that are always there and never worth a finding.
    *

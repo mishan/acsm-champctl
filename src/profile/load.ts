@@ -125,6 +125,23 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
     })
   }
 
+  // A snowflake: 17 to 20 decimal digits, which is what Discord's "Copy ID"
+  // puts on the clipboard. Checked here because the two things people paste
+  // instead — a channel *name* and a channel *link* — both reach Discord as an
+  // id it cannot find, and the post fails. On a nightly cron that is a report
+  // nobody reads for a week, reported as a channel nobody typed wrong.
+  const discord = p["discord"]
+  if (discord !== undefined) {
+    if (typeof discord !== "object" || discord === null) bad("`discord` must be an object")
+    const channel = (discord as Record<string, unknown>)["adminChannelId"]
+    if (channel !== undefined && (typeof channel !== "string" || !/^\d{17,20}$/.test(channel))) {
+      bad(
+        "`discord.adminChannelId` must be a Discord channel id — 17 to 20 digits, the way " +
+          '"Copy Channel ID" gives it, not a channel name and not a link',
+      )
+    }
+  }
+
   const profile = v as LeagueProfile
   // Narrow the weekday now that it is range-checked.
   profile.schedule.weekday = profile.schedule.weekday as Weekday

@@ -1,0 +1,128 @@
+/**
+ * A night's findings as messages Discord will accept.
+ *
+ * One message per championship, headed with its name, because the nightly
+ * report covers a whole server and a finding's own location is a round — so
+ * nothing in the sentence says which championship's Suzuka has the duplicate
+ * pit boxes.
+ *
+ * Failures get their own message rather than being folded in with the findings.
+ * "champctl could not read this championship" is a different kind of statement
+ * from "this championship has a problem", and a night where half the server
+ * timed out should not read as a quiet night.
+ */
+
+import {
+  blocksPush,
+  countBySeverity,
+  Severity,
+  type CheckReport,
+  type Finding,
+} from "../gridmom/finding.js"
+import { DEFAULT_MIN_SEVERITY, filterBySeverity, formatDiscord } from "../gridmom/report.js"
+import type { NightlyEntry, NightlyReport } from "./nightly.js"
+import { MESSAGE_LIMIT } from "./transport.js"
+
+export interface MessageOptions {
+  minSeverity?: Severity
+  /** Overridden only by the tests, which would otherwise need 2000 characters. */
+  limit?: number
+}
+
+/** What a championship is called in a report, falling back to its id. */
+export function subjectOf(entry: NightlyEntry): string {
+  return entry.name ?? entry.championshipId
+}
+
+/**
+ * Everything worth posting about a night, in the order it should be said.
+ *
+ * A championship with nothing to say produces no message. That is the whole
+ * difference between a nightly report and a nightly notification: gridmom
+ * speaks up when something is wrong, so a silent channel means a clean server
+ * rather than a broken cron. Whether the job *ran* is the exit code's job, and
+ * `champctl-bot report` prints its summary either way.
+ */
+export function nightlyMessages(report: NightlyReport, opts: MessageOptions = {}): string[] {
+  const out: string[] = []
+  for (const entry of report.entries) {
+    if (entry.kind === "checked") {
+      out.push(...reportMessages(subjectOf(entry), entry.report, opts))
+    } else if (entry.kind === "failed") {
+      out.push(`**gridmom — ${subjectOf(entry)}**\nI couldn't read this one: ${entry.error}`)
+    }
+  }
+  return out
+}
+
+/**
+ * One championship's findings, split into messages that fit.
+ *
+ * Splitting happens on finding boundaries and by *measuring the rendered
+ * message* rather than by estimating from the findings — the heading, the
+ * bullets and the "Also" joins are all characters, and the formatter is
+ * entitled to change how many without this having to hear about it.
+ *
+ * The continuation heading is not decoration either. Discord shows consecutive
+ * messages from the same author without repeating the name, so an unheaded
+ * second message looks like a new report about a championship it never names.
+ */
+export function reportMessages(
+  subject: string,
+  report: CheckReport,
+  opts: MessageOptions = {},
+): string[] {
+  const limit = opts.limit ?? MESSAGE_LIMIT
+  const findings = filterBySeverity(report.findings, opts.minSeverity ?? DEFAULT_MIN_SEVERITY)
+  if (findings.length === 0) return []
+
+  const messages: string[] = []
+  let chunk: Finding[] = []
+  let rendered = ""
+
+  const flush = (): void => {
+    if (rendered) messages.push(rendered)
+    chunk = []
+    rendered = ""
+  }
+
+  for (const finding of findings) {
+    const heading = messages.length === 0 ? subject : `${subject} (continued)`
+
+    const grown = render(heading, [...chunk, finding], opts)
+    if (grown.length <= limit) {
+      chunk = [...chunk, finding]
+      rendered = grown
+      continue
+    }
+
+    flush()
+    const alone = render(
+      messages.length === 0 ? subject : `${subject} (continued)`,
+      [finding],
+      opts,
+    )
+    if (alone.length <= limit) {
+      chunk = [finding]
+      rendered = alone
+      continue
+    }
+
+    // One finding too long to post on its own. Truncated rather than dropped or
+    // thrown: gridmom's messages name the thing first and explain after, so the
+    // front of the sentence is the part worth having, and a report that refuses
+    // to post because one finding is verbose is a report that goes missing on
+    // the night with the most wrong with it.
+    messages.push(`${alone.slice(0, limit - 1)}…`)
+  }
+
+  flush()
+  return messages
+}
+
+function render(subject: string, findings: readonly Finding[], opts: MessageOptions): string {
+  return formatDiscord(
+    { findings: [...findings], counts: countBySeverity(findings), ok: !blocksPush(findings) },
+    { subject, minSeverity: opts.minSeverity ?? DEFAULT_MIN_SEVERITY },
+  )
+}
