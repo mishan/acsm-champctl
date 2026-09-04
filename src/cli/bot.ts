@@ -242,53 +242,80 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     )
   }
 
-  const transport = args.dryRun ? new RecordingTransport() : await connect()
+  return await withResources(
+    {
+      transport: async () => (args.dryRun ? new RecordingTransport() : connect()),
+      cache: async () =>
+        args.cache
+          ? SqliteCache.open({ path: resolve(process.cwd(), ".cache/acsm/cache.db") })
+          : undefined,
+    },
+    async (transport, cache) => {
+      const reader: AcsmReader = new HttpAcsmReader({
+        baseUrl,
+        userAgent: BOT_USER_AGENT,
+        ...(cache ? { cache } : {}),
+      })
 
-  const cache = args.cache
-    ? await SqliteCache.open({ path: resolve(process.cwd(), ".cache/acsm/cache.db") })
-    : undefined
+      const report = await nightly(reader, {
+        profile,
+        pits: await loadPits(args.pits),
+        includeFinished: args.all,
+        suppress: args.suppress,
+        ...(args.now ? { now: args.now } : {}),
+        onProgress: (entry) => process.stderr.write(`${describe(entry)}\n`),
+      })
 
+      // Resolved once, used twice. These two decide different things — what goes
+      // in the channel, and what cron is told the night was like — and they have
+      // to be the same number. Reading the default separately at each call site
+      // is how they drift, silently and in both directions: a bot that posts
+      // warnings and exits 0, or one that exits 1 having said nothing.
+      const minSeverity = args.min ?? DEFAULT_MIN_SEVERITY
+      const messages = nightlyMessages(report, { minSeverity })
+
+      for (const content of messages) {
+        // `channelId` is non-empty here for a real post; a dry run records
+        // whatever it was given and prints it below.
+        await transport.post({ channelId: channelId ?? "(dry run)", content })
+      }
+
+      if (args.dryRun) {
+        for (const m of messages) process.stdout.write(`${m}\n\n`)
+      }
+
+      const counts = findingsAtOrAbove(report, minSeverity)
+      process.stdout.write(
+        `${summarise(report.checked, report.finished, report.failed, messages.length)}\n`,
+      )
+      return exitCodeFor(counts, report.failed)
+    },
+  )
+}
+
+/**
+ * Opens both, runs the job, and closes whatever managed to open.
+ *
+ * Both acquisitions are inside the guard, not just the second. The cache used
+ * to be opened after the gateway and outside it, so a cache that wouldn't open
+ * — a full disk, a `.cache` nobody can write — left a signed-in client that
+ * nothing destroyed. A half-open client keeps the process alive on its
+ * reconnect timer, so the CLI hung rather than exiting non-zero, which from
+ * cron reads as a nightly job that is merely slow. `GatewayTransport.login`
+ * destroys the client on a failed login for the same reason.
+ */
+export async function withResources<C extends { close: () => void }, T>(
+  open: { transport: () => Promise<DiscordTransport>; cache: () => Promise<C | undefined> },
+  use: (transport: DiscordTransport, cache: C | undefined) => Promise<T>,
+): Promise<T> {
+  let transport: DiscordTransport | undefined
+  let cache: C | undefined
   try {
-    const reader: AcsmReader = new HttpAcsmReader({
-      baseUrl,
-      userAgent: BOT_USER_AGENT,
-      ...(cache ? { cache } : {}),
-    })
-
-    const report = await nightly(reader, {
-      profile,
-      pits: await loadPits(args.pits),
-      includeFinished: args.all,
-      suppress: args.suppress,
-      ...(args.now ? { now: args.now } : {}),
-      onProgress: (entry) => process.stderr.write(`${describe(entry)}\n`),
-    })
-
-    // Resolved once, used twice. These two decide different things — what goes
-    // in the channel, and what cron is told the night was like — and they have
-    // to be the same number. Reading the default separately at each call site
-    // is how they drift, silently and in both directions: a bot that posts
-    // warnings and exits 0, or one that exits 1 having said nothing.
-    const minSeverity = args.min ?? DEFAULT_MIN_SEVERITY
-    const messages = nightlyMessages(report, { minSeverity })
-
-    for (const content of messages) {
-      // `channelId` is non-empty here for a real post; a dry run records
-      // whatever it was given and prints it below.
-      await transport.post({ channelId: channelId ?? "(dry run)", content })
-    }
-
-    if (args.dryRun) {
-      for (const m of messages) process.stdout.write(`${m}\n\n`)
-    }
-
-    const counts = findingsAtOrAbove(report, minSeverity)
-    process.stdout.write(
-      `${summarise(report.checked, report.finished, report.failed, messages.length)}\n`,
-    )
-    return exitCodeFor(counts, report.failed)
+    transport = await open.transport()
+    cache = await open.cache()
+    return await use(transport, cache)
   } finally {
-    await transport.close()
+    await transport?.close()
     cache?.close()
   }
 }

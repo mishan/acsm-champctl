@@ -16,8 +16,8 @@ import { StaticAcsmReader, type AcsmReader } from "../src/acsm/client.js"
 import type { Championship, ChampionshipSummary } from "../src/acsm/types.js"
 import { nightlyMessages, reportMessages } from "../src/bot/message.js"
 import { findingsAtOrAbove, isFinished, nightly } from "../src/bot/nightly.js"
-import { MESSAGE_LIMIT, RecordingTransport } from "../src/bot/transport.js"
-import { exitCodeFor, parseArgs } from "../src/cli/bot.js"
+import { MESSAGE_LIMIT, RecordingTransport, type DiscordTransport } from "../src/bot/transport.js"
+import { exitCodeFor, parseArgs, withResources } from "../src/cli/bot.js"
 import { Severity, type Finding } from "../src/gridmom/finding.js"
 import { formatDiscord } from "../src/gridmom/report.js"
 import { validateProfile } from "../src/profile/load.js"
@@ -343,6 +343,93 @@ describe("the transport boundary", () => {
     await transport.close()
 
     expect(transport.posted).toEqual([{ channelId: "123", content: "hello" }])
+  })
+})
+
+describe("what the bot opens, it closes", () => {
+  /** A transport that records nothing but whether it was closed. */
+  const spy = (): { transport: DiscordTransport; wasClosed: () => boolean } => {
+    let closed = false
+    return {
+      transport: {
+        post: async () => {},
+        close: async () => {
+          closed = true
+        },
+      },
+      wasClosed: () => closed,
+    }
+  }
+
+  const openCache = (onClose: () => void) => async () => ({ close: onClose })
+
+  it("closes the Discord client when the cache won't open", async () => {
+    // The cache used to open *after* the gateway and outside the guard, so a
+    // cache that wouldn't open left a signed-in client nothing destroyed — and
+    // a half-open client keeps the process alive on its reconnect timer, so the
+    // CLI hung instead of exiting. From cron that reads as a job being slow.
+    const { transport, wasClosed } = spy()
+
+    await expect(
+      withResources(
+        {
+          transport: async () => transport,
+          cache: async () => {
+            throw new Error("no space left on device")
+          },
+        },
+        async () => 0,
+      ),
+    ).rejects.toThrow("no space left on device")
+
+    expect(wasClosed()).toBe(true)
+  })
+
+  it("closes both when the run itself fails", async () => {
+    let cacheClosed = false
+    const { transport, wasClosed } = spy()
+
+    await expect(
+      withResources(
+        {
+          transport: async () => transport,
+          cache: openCache(() => {
+            cacheClosed = true
+          }),
+        },
+        async () => {
+          throw new Error("ACSM went away")
+        },
+      ),
+    ).rejects.toThrow("ACSM went away")
+
+    expect({ transport: wasClosed(), cache: cacheClosed }).toEqual({
+      transport: true,
+      cache: true,
+    })
+  })
+
+  it("closes nothing it never opened", async () => {
+    // A gateway that refuses the token has nothing to destroy, and the cache
+    // was never reached — closing either would be a TypeError on the way out,
+    // which would replace the real error with a confusing one.
+    let cacheClosed = false
+
+    await expect(
+      withResources(
+        {
+          transport: async () => {
+            throw new Error("token was rejected")
+          },
+          cache: openCache(() => {
+            cacheClosed = true
+          }),
+        },
+        async () => 0,
+      ),
+    ).rejects.toThrow("token was rejected")
+
+    expect(cacheClosed).toBe(false)
   })
 })
 
