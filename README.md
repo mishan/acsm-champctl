@@ -276,11 +276,14 @@ driver who sent it.
 ```
 champctl-liveries <championship-id> --zip <pack.zip> [options]
 champctl-liveries <championship-id> --carset <out.zip> [options]
+champctl-liveries <championship-id> --claims [--release <discord-user-id>]
 
   --zip <path>          the livery pack
   --carset <path>       write the archive drivers install, from what has been
                         applied. Reads the local store; touches no server.
-  --store <path>        where applied liveries are kept
+  --claims              list which Discord account is claimed as which driver
+  --release <id>        drop that Discord account's claim, freeing the name
+  --store <path>        where applied liveries and claims are kept
                         (default: data/liveries/liveries.db)
   --no-store            apply without recording
   --restart <round>     restart that round's looping practice server afterwards
@@ -397,7 +400,17 @@ hash per file — Content Manager is not guaranteed to overwrite a skin that is
 already installed, and that failure looks like nothing at all.
 
 Recording is the only copy champctl has: a livery uploaded through ACSM's own
-web UI is invisible to it and won't be in the carset. Full design, including the
+web UI is invisible to it and won't be in the carset.
+
+**Who is who** is champctl's problem, because ACSM has nowhere to put it — no
+Discord field on an account or an entrant, and the sign-up answers that could
+hold a handle are hidden from anything below `GroupAdmin` and overwritable by
+anyone who knows a driver's public Steam id. So `--claims` lists the mapping
+from Discord account to entrant name and `--release` frees one. Drivers claim
+themselves; first claim wins and every claim is announced, which is the whole
+verification story — an impersonation attempt gets named in the admin channel
+rather than passing silently. Releasing is operator-only, because a driver who
+could release their own claim could be talked into it. Full design, including the
 Discord upload flow this is built for, in
 [`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
 

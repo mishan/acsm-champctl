@@ -625,8 +625,12 @@ export function liveryPack(
  * an admin can fix it". Saying that to a driver in the CLI's words would send
  * them re-zipping a file that was never the problem.
  */
+export function usableAsFolder(normalised: string): boolean {
+  return normalised !== "." && normalised !== ".." && SAFE_COMPONENT.test(normalised)
+}
+
 function assertUsableAsFolder(kind: string, normalised: string, asGiven: string): void {
-  if (normalised === "." || normalised === ".." || !SAFE_COMPONENT.test(normalised)) {
+  if (!usableAsFolder(normalised)) {
     throw new LiveryPackError(
       `Can't upload for ${kind} ${JSON.stringify(asGiven)}: champctl turns it into a folder on ` +
         `the game server and that name can't be one. This is an entry list problem rather than ` +

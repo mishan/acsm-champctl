@@ -9,6 +9,7 @@ import { unzipSync } from "fflate"
 
 import { AcsmError } from "../src/acsm/client.js"
 import { USAGE, UsageError, exitFor, main, parseArgs, renderPlan } from "../src/cli/liveries.js"
+import { SqliteClaimStore } from "../src/liveries/claims.js"
 import { SqliteLiveryStore } from "../src/liveries/store.js"
 import type { Entrant } from "../src/acsm/types.js"
 import {
@@ -335,5 +336,84 @@ describe("champctl-liveries --carset", () => {
     await main([CHAMP, "--carset", out, "--store", db])
     captured.restore()
     expect(captured.written.join("")).toMatch(/No preview.jpg for Bob/)
+  })
+})
+
+describe("champctl-liveries --claims", () => {
+  const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+  const MISHA = "111111111111111111"
+
+  const scratch = async () => {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-"))
+    return { db: join(dir, "liveries.db") }
+  }
+
+  const captureStdout = () => {
+    const written: string[] = []
+    const original = process.stdout.write.bind(process.stdout)
+    process.stdout.write = ((chunk: string) => {
+      written.push(String(chunk))
+      return true
+    }) as typeof process.stdout.write
+    return { written, restore: () => (process.stdout.write = original) }
+  }
+
+  const roster = () =>
+    championship({
+      Name: "September 2026",
+      Classes: [championshipClass({ Entrants: entryList([person({ Name: "Misha" })]) })],
+    })
+
+  it("parses the flags", () => {
+    expect(parseArgs(["abc", "--claims"]).claims).toBe(true)
+    expect(parseArgs(["abc", "--release", MISHA]).release).toBe(MISHA)
+  })
+
+  it("won't list claims and upload in the same run", async () => {
+    expect(await main(["abc", "--claims", "--zip", "p.zip"])).toBe(3)
+  })
+
+  it("lists who is claimed as whom, with the sign-up beside it", async () => {
+    const { db } = await scratch()
+    const store = await SqliteClaimStore.open(db)
+    await store.claim(roster(), "Misha", MISHA, { discordHandle: "misha" })
+    await store.rememberHandleHint("Misha", "someone_else", new Date())
+    store.close()
+
+    const out = captureStdout()
+    const code = await main([CHAMP, "--claims", "--store", db])
+    out.restore()
+
+    expect(code).toBe(0)
+    expect(out.written.join("")).toContain("Misha")
+    expect(out.written.join("")).toMatch(/sign-up says "someone_else"/)
+  })
+
+  it("exits 1 and says why when nobody has claimed anything", async () => {
+    const { db } = await scratch()
+    const out = captureStdout()
+    const code = await main([CHAMP, "--claims", "--store", db])
+    out.restore()
+    expect(code).toBe(1)
+    expect(out.written.join("")).toMatch(/nobody can upload a livery through Discord/)
+  })
+
+  it("releases a claim and says the name is free", async () => {
+    const { db } = await scratch()
+    const store = await SqliteClaimStore.open(db)
+    await store.claim(roster(), "Misha", MISHA)
+    store.close()
+
+    const out = captureStdout()
+    const code = await main([CHAMP, "--release", MISHA, "--store", db])
+    out.restore()
+
+    expect(code).toBe(0)
+    expect(out.written.join("")).toMatch(/free for someone else to claim/)
+  })
+
+  it("exits 1 releasing an account that holds nothing", async () => {
+    const { db } = await scratch()
+    expect(await main([CHAMP, "--release", MISHA, "--store", db])).toBe(1)
   })
 })
