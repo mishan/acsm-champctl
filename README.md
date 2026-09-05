@@ -275,8 +275,14 @@ driver who sent it.
 
 ```
 champctl-liveries <championship-id> --zip <pack.zip> [options]
+champctl-liveries <championship-id> --carset <out.zip> [options]
 
-  --zip <path>          the livery pack (required)
+  --zip <path>          the livery pack
+  --carset <path>       write the archive drivers install, from what has been
+                        applied. Reads the local store; touches no server.
+  --store <path>        where applied liveries are kept
+                        (default: data/liveries/liveries.db)
+  --no-store            apply without recording
   --restart <round>     restart that round's looping practice server afterwards
   --profile <id|path>   league profile (default: batl)
   --base-url <url>      override the profile's ACSM base URL
@@ -369,11 +375,39 @@ they were doubled once already for exactly that reason. Uploads get a timeout
 scaled to their size rather than the session's usual 30 seconds, which is sized
 for a page of HTML and would abort a large livery.
 
-Credentials come from `CHAMPCTL_USERNAME` / `CHAMPCTL_PASSWORD` and are needed
-only for `--push`; a preview reads the export, which is public.
+**Everything pushed is kept, so the grid can install it.** A livery on the
+server is half the job — everyone else needs the files too, or they see the
+default skin where a car should be. `--push` records what it applied, and
+`--carset` hands it back as one archive drivers drop on Content Manager:
 
-Exit codes: `0` previewed or pushed, `2` the pack or the championship wouldn't
-allow it, `3` a usage mistake or champctl failed.
+```
+content/cars/rss_formula_hybrid_2021/skins/Misha/livery.dds
+content/cars/ks_mazda_mx5_cup/skins/postaL/livery.dds
+```
+
+Top-level `content/`, so CM drops the tree onto the Assetto Corsa root and
+anyone whose install misbehaves can extract it by hand instead. The skin folder
+is the same string ACSM created and `EntryList.Skin` points at; if it weren't,
+every driver would install cleanly and still see the default livery.
+
+The carset is identified by a digest over its contents rather than over the
+archive, because zip bytes carry timestamps and would make a rebuild look like
+a new carset to everyone holding the old one. It ships a `carset.txt` listing a
+hash per file — Content Manager is not guaranteed to overwrite a skin that is
+already installed, and that failure looks like nothing at all.
+
+Recording is the only copy champctl has: a livery uploaded through ACSM's own
+web UI is invisible to it and won't be in the carset. Full design, including the
+Discord upload flow this is built for, in
+[`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
+
+Credentials come from `CHAMPCTL_USERNAME` / `CHAMPCTL_PASSWORD` and are needed
+only for `--push`; a preview reads the export, which is public. `--carset` needs
+none at all.
+
+Exit codes: `0` previewed, pushed, or wrote a carset, `1` every livery was
+already assigned or the carset is empty, `2` the pack or the championship
+wouldn't allow it, `3` a usage mistake or champctl failed.
 
 ## champctl-serve
 
@@ -626,9 +660,11 @@ have a web UI. What's left:
 - **The bot only reports.** The nightly gridmom report is there; announcements,
   standings, the format poll and the poll-to-proposal loop are not, and neither
   are the `/stats` lookups, which want the archive projections that don't exist
-  yet. Livery uploads belong there too: `champctl-liveries` takes a pack
-  somebody assembled by hand, and the bot would collect each driver's zip behind
-  a role check and hand the same engine the same pack.
+  yet.
+- **Livery uploads have no slash commands yet.** The handlers, the queue, the
+  drain and the carset are built and tested; what is missing is registering
+  `/livery` in `discord.ts` and downloading the attachment. Design in
+  [`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
 - **The nightly report has no memory.** It says the same thing every night until
   someone fixes it, which is gridmom's voice by design but also means there is
   nothing to lean on if a league wants "tell me once". A digest per championship

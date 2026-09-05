@@ -21,7 +21,8 @@
  * an argument list rather than a form.
  */
 
-import { readFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { dirname, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { AcsmError, HttpAcsmReader } from "../acsm/client.js"
@@ -34,7 +35,9 @@ import {
   RosterChangedError,
   applyLiveries,
 } from "../liveries/apply.js"
+import { buildCarset, carsetFilename, carsetZip, type Carset } from "../liveries/carset.js"
 import { DEFAULT_LIMITS, LiveryPackError, readLiveryPack } from "../liveries/pack.js"
+import { SqliteLiveryStore } from "../liveries/store.js"
 import { loadProfile } from "../profile/load.js"
 import {
   LiveryPlanError,
@@ -50,6 +53,7 @@ export const USAGE = `champctl-liveries — upload custom liveries and assign th
 
 Usage:
   champctl-liveries <championship-id> --zip <pack.zip> [options]
+  champctl-liveries <championship-id> --carset <out.zip> [options]
 
 The pack is a zip of zips, one folder per car model:
 
@@ -62,7 +66,15 @@ ui_skin.json. The inner zip's name is matched against the entrant's name
 exactly, and becomes the skin folder on the server.
 
 Options:
-  --zip <path>          the livery pack (required)
+  --zip <path>          the livery pack
+  --carset <path>       instead of uploading, write the carset every driver
+                        installs — every livery champctl has applied to this
+                        championship, as one archive you can drop on Content
+                        Manager. Reads the local store; touches no server.
+  --store <path>        where applied liveries are kept
+                        (default: data/liveries/liveries.db)
+  --no-store            apply without recording. The carset will be missing
+                        these, and nothing will say so later.
   --restart <round>     restart that round's looping practice server afterwards
   --base-url <url>      override the profile's ACSM base URL
   --profile <id|path>   league profile (default: batl)
@@ -83,8 +95,13 @@ ACSM what is already in a skin folder, so a corrected livery has to be re-sent
 rather than guessed at; the championship itself is only written when a skin
 assignment actually changes.
 
+Everything pushed is also recorded locally, so --carset can hand drivers the
+whole set later. That is the only copy champctl has: a livery uploaded through
+ACSM's own web UI is invisible to it and will not be in the carset.
+
 Exit codes:
-  0  previewed cleanly, or pushed
+  0  previewed cleanly, pushed, or wrote a carset
+  1  nothing to do — every livery is already assigned, or the carset is empty
   2  the pack or the entry list wouldn't allow it
   3  a usage mistake, or champctl itself failed
 `
@@ -92,6 +109,9 @@ Exit codes:
 interface Args {
   championshipId?: string
   zip?: string
+  carset?: string
+  store?: string
+  noStore: boolean
   restart?: number
   profile: string
   baseUrl?: string
@@ -102,7 +122,14 @@ interface Args {
 }
 
 export function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { profile: "batl", push: false, yes: false, json: false, help: false }
+  const args: Args = {
+    profile: "batl",
+    noStore: false,
+    push: false,
+    yes: false,
+    json: false,
+    help: false,
+  }
   const rest: string[] = []
 
   for (let i = 0; i < argv.length; i++) {
@@ -126,6 +153,15 @@ export function parseArgs(argv: readonly string[]): Args {
         break
       case "--zip":
         args.zip = next()
+        break
+      case "--carset":
+        args.carset = next()
+        break
+      case "--store":
+        args.store = next()
+        break
+      case "--no-store":
+        args.noStore = true
         break
       case "--restart": {
         const raw = next()
@@ -279,6 +315,17 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     return 0
   }
   if (!args.championshipId) throw new UsageError("Needs a championship id.")
+
+  if (args.carset !== undefined) {
+    if (args.zip) {
+      throw new UsageError(
+        "--carset writes the pack drivers install and --zip uploads one, so they can't both " +
+          "run. Do the upload first, then build the carset from what it recorded.",
+      )
+    }
+    return await writeCarset(args, args.championshipId)
+  }
+
   if (!args.zip) throw new UsageError("Needs a livery pack: --zip <pack.zip>.")
 
   const profile = await loadProfile(args.profile)
@@ -330,15 +377,96 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     return 0
   }
 
-  const result = await applyLiveries(session, plan, {
-    ...(args.restart !== undefined ? { restartPracticeRound: args.restart } : {}),
-    eventIds,
-  })
-  say(
-    `Uploaded ${result.uploaded.length} ${result.uploaded.length === 1 ? "livery" : "liveries"}` +
-      `${result.championshipSaved ? ", championship saved" : ", championship unchanged"}` +
-      `${result.practiceRestarted ? ", practice restarted" : ""}.\n`,
+  const store = args.noStore ? undefined : await SqliteLiveryStore.open(storePath(args))
+  try {
+    const result = await applyLiveries(session, plan, {
+      ...(args.restart !== undefined ? { restartPracticeRound: args.restart } : {}),
+      eventIds,
+      ...(store ? { record: store, source: "zip" as const } : {}),
+    })
+    say(
+      `Uploaded ${result.uploaded.length} ${result.uploaded.length === 1 ? "livery" : "liveries"}` +
+        `${result.championshipSaved ? ", championship saved" : ", championship unchanged"}` +
+        `${result.practiceRestarted ? ", practice restarted" : ""}.\n`,
+    )
+    if (store) {
+      // Named rather than silent: the carset is only as complete as this, and
+      // "recorded" is the word that makes --carset make sense later.
+      say(`Recorded ${plan.assignments.length} for the carset in ${storePath(args)}.\n`)
+    }
+  } finally {
+    store?.close()
+  }
+  return 0
+}
+
+function storePath(args: Args): string {
+  return args.store ?? resolve(process.cwd(), "data/liveries/liveries.db")
+}
+
+/**
+ * Writes the carset. Reads the local store and talks to no server at all.
+ *
+ * Kept a separate path from the apply rather than a flag on it, because the two
+ * have nothing in common: this needs no credentials, no championship export and
+ * no network, and the thing it produces is for drivers rather than for the
+ * server.
+ */
+async function writeCarset(args: Args, championshipId: string): Promise<number> {
+  const store = await SqliteLiveryStore.open(storePath(args))
+  let carset: Carset
+  try {
+    carset = buildCarset(championshipId, await store.read(championshipId))
+  } finally {
+    store.close()
+  }
+
+  if (carset.skins.length === 0) {
+    // Exit 1, matching the no-op plan: there is nothing wrong, and there is
+    // also no file, so a script should not carry on as though there were.
+    process.stderr.write(
+      `No liveries recorded for ${championshipId} in ${storePath(args)}. Anything applied ` +
+        `before champctl started keeping them, or uploaded through ACSM's own web UI, isn't ` +
+        `here — push a pack with --zip and it will be.\n`,
+    )
+    return 1
+  }
+
+  const path = resolve(args.carset as string)
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, carsetZip(carset))
+
+  if (args.json) {
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          path,
+          digest: carset.digest,
+          suggestedFilename: carsetFilename(carset),
+          skins: carset.skins.map((s) => ({ driver: s.driverName, car: s.carModel, path: s.path })),
+          missingPreviews: carset.missingPreviews,
+          bytes: carset.bytes,
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    return 0
+  }
+
+  process.stdout.write(
+    `${carset.skins.length} ${carset.skins.length === 1 ? "livery" : "liveries"} across ` +
+      `${carset.cars.length} ${carset.cars.length === 1 ? "car" : "cars"} → ${path}\n` +
+      `Drivers can drop it on Content Manager, or extract it over their Assetto Corsa folder.\n`,
   )
+  if (carset.missingPreviews.length > 0) {
+    // Not a failure. It races fine and looks broken, which is the kind of thing
+    // that generates a message on race night if nobody mentions it now.
+    process.stdout.write(
+      `\nNo preview.jpg for ${carset.missingPreviews.join(", ")} — those will show as blank ` +
+        `tiles in Content Manager.\n`,
+    )
+  }
   return 0
 }
 

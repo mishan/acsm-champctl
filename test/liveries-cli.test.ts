@@ -1,8 +1,15 @@
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 
-import { USAGE, UsageError, exitFor, parseArgs, renderPlan } from "../src/cli/liveries.js"
+import { mkdtemp, readFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+
+import { unzipSync } from "fflate"
+
 import { AcsmError } from "../src/acsm/client.js"
+import { USAGE, UsageError, exitFor, main, parseArgs, renderPlan } from "../src/cli/liveries.js"
+import { SqliteLiveryStore } from "../src/liveries/store.js"
 import type { Entrant } from "../src/acsm/types.js"
 import {
   LiveryApplyError,
@@ -231,5 +238,102 @@ describe("what an error means for the exit code", () => {
     expect(USAGE).not.toContain("nothing to do")
     expect(USAGE).toContain("  0  previewed cleanly, or pushed")
     expect(USAGE).not.toMatch(/^ {2}1 {2}/m)
+  })
+})
+
+describe("champctl-liveries --carset", () => {
+  const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+  const scratch = async () => {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-carset-"))
+    return { dir, db: join(dir, "liveries.db"), out: join(dir, "carset.zip") }
+  }
+
+  const captureStdout = () => {
+    const written: string[] = []
+    const original = process.stdout.write.bind(process.stdout)
+    process.stdout.write = ((chunk: string) => {
+      written.push(String(chunk))
+      return true
+    }) as typeof process.stdout.write
+    return { written, restore: () => (process.stdout.write = original) }
+  }
+
+  it("parses the flags", () => {
+    expect(parseArgs(["abc", "--carset", "out.zip", "--store", "s.db"])).toMatchObject({
+      championshipId: "abc",
+      carset: "out.zip",
+      store: "s.db",
+      noStore: false,
+    })
+    expect(parseArgs(["abc", "--zip", "p.zip", "--no-store"]).noStore).toBe(true)
+  })
+
+  it("refuses to upload and build a carset in one run", async () => {
+    // They are opposite directions: one writes to the server, the other writes
+    // a file for drivers out of what the server already has.
+    expect(await main(["abc", "--zip", "p.zip", "--carset", "out.zip"])).toBe(3)
+  })
+
+  it("writes an archive Content Manager can install, from what was recorded", async () => {
+    const { db, out } = await scratch()
+    const store = await SqliteLiveryStore.open(db)
+    await store.record(
+      CHAMP,
+      [
+        {
+          carModel: CAR,
+          driverName: "Misha",
+          skinFolder: "Misha",
+          files: [
+            { name: "livery.dds", bytes: bytes("pixels") },
+            { name: "preview.jpg", bytes: bytes("jpeg") },
+          ],
+          totalBytes: 10,
+        },
+      ],
+      new Date(),
+      "zip",
+    )
+    store.close()
+
+    const out1 = captureStdout()
+    const code = await main([CHAMP, "--carset", out, "--store", db])
+    out1.restore()
+
+    expect(code).toBe(0)
+    const entries = unzipSync(new Uint8Array(await readFile(out)))
+    expect(Object.keys(entries)).toContain(`content/cars/${CAR}/skins/Misha/livery.dds`)
+    expect(out1.written.join("")).toContain("Content Manager")
+  })
+
+  it("exits 1 with an explanation when nothing has been recorded", async () => {
+    const { db, out } = await scratch()
+    expect(await main([CHAMP, "--carset", out, "--store", db])).toBe(1)
+  })
+
+  it("says which drivers will show as blank tiles", async () => {
+    const { db, out } = await scratch()
+    const store = await SqliteLiveryStore.open(db)
+    await store.record(
+      CHAMP,
+      [
+        {
+          carModel: CAR,
+          driverName: "Bob",
+          skinFolder: "Bob",
+          files: [{ name: "livery.dds", bytes: bytes("x") }],
+          totalBytes: 1,
+        },
+      ],
+      new Date(),
+      "zip",
+    )
+    store.close()
+
+    const captured = captureStdout()
+    await main([CHAMP, "--carset", out, "--store", db])
+    captured.restore()
+    expect(captured.written.join("")).toMatch(/No preview.jpg for Bob/)
   })
 })
