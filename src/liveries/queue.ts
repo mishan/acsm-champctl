@@ -98,6 +98,19 @@ CREATE INDEX IF NOT EXISTS livery_submission_pending
   ON livery_submission (championship_id, state, id);
 CREATE INDEX IF NOT EXISTS livery_submission_by_user
   ON livery_submission (discord_user_id, submitted_at);
+
+-- When a drain last ran, per championship.
+--
+-- This exists so the bot can stop making a promise nobody kept. autoApply in
+-- the profile is a claim about a *different* process: the timer lives in
+-- champctl-liveries, which holds the credentials, and the bot only changes its
+-- wording to match. An operator who sets the flag and never starts the watcher
+-- would otherwise have every driver told "it'll go on shortly" for ever, with
+-- nothing anywhere reporting that nothing is applying anything.
+CREATE TABLE IF NOT EXISTS drain_run (
+  championship_id  TEXT PRIMARY KEY,
+  ran_at           TEXT NOT NULL
+) STRICT;
 `
 
 interface Row {
@@ -308,6 +321,28 @@ export class SqliteSubmissionQueue {
       .prepare("SELECT coalesce(sum(bytes), 0) AS n FROM livery_submission WHERE state = 'queued'")
       .get() as unknown as { n: number }
     return row.n
+  }
+
+  /**
+   * Notes that a drain ran, whether or not it had anything to do.
+   *
+   * A drain that found an empty queue still proves the watcher is alive, which
+   * is the question this answers.
+   */
+  async recordDrainRun(championshipId: string, at: Date): Promise<void> {
+    this.#db
+      .prepare(
+        `INSERT INTO drain_run (championship_id, ran_at) VALUES (?, ?)
+         ON CONFLICT(championship_id) DO UPDATE SET ran_at = excluded.ran_at`,
+      )
+      .run(championshipId, at.toISOString())
+  }
+
+  async lastDrainRun(championshipId: string): Promise<Date | undefined> {
+    const row = this.#db
+      .prepare("SELECT ran_at FROM drain_run WHERE championship_id = ?")
+      .get(championshipId) as unknown as { ran_at: string } | undefined
+    return row ? new Date(row.ran_at) : undefined
   }
 
   /** The audit trail, newest first. */

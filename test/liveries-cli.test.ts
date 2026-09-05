@@ -417,3 +417,35 @@ describe("champctl-liveries --claims", () => {
     expect(await main([CHAMP, "--release", MISHA, "--store", db])).toBe(1)
   })
 })
+
+describe("champctl-liveries --watch", () => {
+  it("parses the flags", () => {
+    expect(parseArgs(["abc", "--drain", "--push", "--watch"]).watch).toBe(true)
+    expect(parseArgs(["abc", "--drain", "--push", "--watch", "--interval", "30"])).toMatchObject({
+      intervalSeconds: 30,
+    })
+  })
+
+  it("defaults to two minutes", () => {
+    expect(parseArgs(["abc", "--drain"]).intervalSeconds).toBe(120)
+  })
+
+  it("refuses a interval tight enough to hammer the server", () => {
+    // A login and an export every couple of seconds, against a box that is also
+    // running races.
+    expect(() => parseArgs(["abc", "--drain", "--interval", "1"])).toThrow(/at least 5 seconds/)
+    expect(() => parseArgs(["abc", "--drain", "--interval", "soon"])).toThrow(/at least 5 seconds/)
+  })
+
+  /**
+   * A watcher that only previews looks exactly like one that works — in the
+   * logs, in the process list, and in the profile — while applying nothing.
+   */
+  it("refuses to watch without --push", async () => {
+    expect(await main(["abc", "--drain", "--watch"])).toBe(3)
+  })
+
+  it("refuses --watch on its own", async () => {
+    expect(await main(["abc", "--watch"])).toBe(3)
+  })
+})

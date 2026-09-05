@@ -278,12 +278,14 @@ driver who sent it.
 champctl-liveries <championship-id> --zip <pack.zip> [options]
 champctl-liveries <championship-id> --carset <out.zip> [options]
 champctl-liveries <championship-id> --claims [--release <discord-user-id>]
-champctl-liveries <championship-id> --drain [--push]
+champctl-liveries <championship-id> --drain [--push] [--watch]
 
   --zip <path>          the livery pack
   --carset <path>       write the archive drivers install, from what has been
                         applied. Reads the local store; touches no server.
   --drain               apply everything drivers sent through the bot
+  --watch               keep draining on a timer (needs --push)
+  --interval <s>        seconds between drains under --watch (default: 120)
   --claims              list which Discord account is claimed as which driver
   --release <id>        drop that Discord account's claim, freeing the name
   --store <path>        where applied liveries and claims are kept
@@ -419,6 +421,20 @@ restarts practice: a driver uploading at 8pm must not be able to disconnect
 everyone racing over a cosmetic change, so the reply says the livery appears at
 the *next* practice start. Unlike `--zip`, one driver leaving the entry list
 refuses only their own submission rather than the whole batch.
+
+**`--watch` is what makes uploads self-serve**, and it runs here rather than in
+the bot, because the timer needs the credentials the bot must never have. An
+idle pass reads only local SQLite — a watcher over an empty queue never logs in
+and never appears in ACSM's logs. Transient failures back off; bad credentials
+stop it, since retrying a login every two minutes for ever is worse for the
+server than stopping. Ctrl-C finishes the pass in flight rather than
+interrupting between the skin upload and the championship save.
+
+Each pass writes a heartbeat, which is what keeps `discord.livery.autoApply`
+honest: that flag is a claim about *this* process, so if nobody is running the
+watcher the bot notices the stale heartbeat and goes back to telling drivers an
+admin has to apply it — rather than promising "shortly" for ever while nothing
+applies anything.
 
 **Drivers whose zip is too big for Discord** get a one-time link instead.
 `champctl-upload` hosts it — its own process, holding no ACSM credentials and no

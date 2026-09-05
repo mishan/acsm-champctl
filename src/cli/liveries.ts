@@ -26,7 +26,7 @@ import { dirname, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { AcsmError, HttpAcsmReader } from "../acsm/client.js"
-import { AcsmSession } from "../acsm/session.js"
+import { AcsmAuthError, AcsmSession } from "../acsm/session.js"
 import { events } from "../acsm/view.js"
 import {
   LiveryApplyError,
@@ -64,6 +64,7 @@ Usage:
   champctl-liveries <championship-id> --carset <out.zip> [options]
   champctl-liveries <championship-id> --claims [--release <discord-user-id>]
   champctl-liveries <championship-id> --drain [--push]
+  champctl-liveries <championship-id> --drain --push --watch [--interval <s>]
 
 The pack is a zip of zips, one folder per car model:
 
@@ -83,6 +84,10 @@ Options:
                         Manager. Reads the local store; touches no server.
   --drain               apply everything drivers have sent through the bot.
                         One championship save for the lot, not one per driver.
+  --watch               keep draining on a timer. This is what makes uploads
+                        self-serve, and it is this process — the one with the
+                        credentials — that does it, never the bot.
+  --interval <s>        seconds between drains under --watch (default: 120)
   --claims              list which Discord account is claimed as which driver
   --release <id>        drop that Discord account's claim, freeing the name
   --store <path>        where applied liveries and claims are kept
@@ -125,6 +130,8 @@ interface Args {
   zip?: string
   carset?: string
   drain: boolean
+  watch: boolean
+  intervalSeconds: number
   claims: boolean
   release?: string
   store?: string
@@ -142,6 +149,8 @@ export function parseArgs(argv: readonly string[]): Args {
   const args: Args = {
     profile: "batl",
     drain: false,
+    watch: false,
+    intervalSeconds: 120,
     claims: false,
     noStore: false,
     push: false,
@@ -179,6 +188,21 @@ export function parseArgs(argv: readonly string[]): Args {
       case "--drain":
         args.drain = true
         break
+      case "--watch":
+        args.watch = true
+        break
+      case "--interval": {
+        const seconds = Number(next())
+        if (!Number.isFinite(seconds) || seconds < 5) {
+          // A tighter loop is a login and an export every few seconds against a
+          // server that is also running races. Five is already generous.
+          throw new UsageError(
+            `--interval must be at least 5 seconds, not ${JSON.stringify(argv[i])}.`,
+          )
+        }
+        args.intervalSeconds = seconds
+        break
+      }
       case "--claims":
         args.claims = true
         break
@@ -365,7 +389,13 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     if (args.zip) {
       throw new UsageError("--drain applies what drivers sent; --zip applies a pack you assembled.")
     }
-    return await drain(args, args.championshipId)
+    return args.watch
+      ? await watchDrain(args, args.championshipId)
+      : await drain(args, args.championshipId)
+  }
+
+  if (args.watch) {
+    throw new UsageError("--watch only means anything with --drain.")
   }
 
   if (!args.zip) throw new UsageError("Needs a livery pack: --zip <pack.zip>.")
@@ -459,7 +489,16 @@ async function runCommand(argv: readonly string[]): Promise<number> {
  * league blocks everyone else's liveries, so a submission that no longer
  * matches is refused with a reason and the rest go through.
  */
-async function drain(args: Args, championshipId: string): Promise<number> {
+interface DrainOptions {
+  /** Under --watch: say nothing when there was nothing to do. */
+  quiet?: boolean
+}
+
+async function drain(
+  args: Args,
+  championshipId: string,
+  options: DrainOptions = {},
+): Promise<number> {
   const baseUrl = args.baseUrl ?? (await loadProfile(args.profile)).acsmBaseUrl
   if (!baseUrl) {
     throw new UsageError(
@@ -471,7 +510,13 @@ async function drain(args: Args, championshipId: string): Promise<number> {
   try {
     const waiting = await queue.queued(championshipId)
     if (waiting.length === 0) {
-      process.stdout.write(`Nothing waiting for ${championshipId}.\n`)
+      // The heartbeat goes down even on an empty pass: an idle watcher is
+      // exactly what proves to the bot that uploads really do apply themselves.
+      if (args.push) await queue.recordDrainRun(championshipId, new Date())
+      if (!options.quiet) process.stdout.write(`Nothing waiting for ${championshipId}.\n`)
+      // Checked before the network on purpose. A watcher over an empty queue
+      // never logs in, never fetches an export, and never shows up in ACSM's
+      // logs at all.
       return 1
     }
 
@@ -538,7 +583,7 @@ async function drain(args: Args, championshipId: string): Promise<number> {
       championshipId,
       liveryPack(applying.map((a) => a.livery)),
     )
-    process.stdout.write(`${renderPlan(plan)}\n`)
+    if (!options.quiet) process.stdout.write(`${renderPlan(plan)}\n`)
 
     if (!args.push) {
       process.stdout.write("\nPreview only. Re-run with --push to apply.\n")
@@ -568,10 +613,15 @@ async function drain(args: Args, championshipId: string): Promise<number> {
         now,
       )
       for (const r of refused) await queue.markRefused(r.id, r.reason, now)
+      await queue.recordDrainRun(championshipId, now)
 
+      // Timestamped under --watch, because this is the only line a daemon's log
+      // will have and "when" is the first thing anyone reading it wants.
+      const when = options.quiet ? `${now.toISOString()} ` : ""
       process.stdout.write(
-        `Applied ${result.uploaded.length} of ${waiting.length}, championship saved. ` +
-          `Practice was not restarted — these appear at the next practice start.\n`,
+        `${when}Applied ${result.uploaded.length} of ${waiting.length} for ${championshipId}, ` +
+          `championship saved. Practice was not restarted — these appear at the next practice ` +
+          `start.\n`,
       )
     } finally {
       store?.close()
@@ -579,6 +629,96 @@ async function drain(args: Args, championshipId: string): Promise<number> {
     return 0
   } finally {
     queue.close()
+  }
+}
+
+/**
+ * Drains on a timer, until something stops it
+ * (docs/discord-livery-upload.md §5).
+ *
+ * **This process, not the bot.** The dial in the profile is called `autoApply`
+ * and it is a claim about what is running here — the timer needs ACSM
+ * credentials, and the whole design turns on the Discord-facing process not
+ * having any. So `autoApply: true` in a profile with nothing running this is a
+ * promise to drivers that nobody keeps, which is why each pass writes a
+ * heartbeat and the bot degrades its wording when the heartbeat goes stale.
+ *
+ * **The queue is checked before the network.** An idle league is the common
+ * case, and reading a local SQLite table costs nothing — so a watcher sitting
+ * over an empty queue never logs in, never fetches an export, and never appears
+ * in ACSM's logs at all.
+ *
+ * **Failures back off rather than exiting.** A watcher that dies on the first
+ * timeout is a watcher an operator finds out about on race night. Bad
+ * credentials are the exception: they will not fix themselves, and retrying a
+ * login every two minutes for ever is a worse thing to do to a server than
+ * stopping.
+ */
+async function watchDrain(args: Args, championshipId: string): Promise<number> {
+  if (!args.push) {
+    // A watcher that only previews looks exactly like a watcher that works,
+    // in the logs and in the process list, while applying nothing at all.
+    throw new UsageError(
+      "--watch needs --push. Without it this would preview the same submissions every couple " +
+        "of minutes for ever and apply none of them.",
+    )
+  }
+
+  const intervalMs = args.intervalSeconds * 1000
+  const maxBackoffMs = 15 * 60_000
+  let consecutiveFailures = 0
+  let stopping = false
+
+  const stop = () => {
+    // Sets a flag rather than exiting. A drain interrupted between the skin
+    // upload and the championship save leaves a skin on the server that nothing
+    // points at, so the loop finishes what it is doing first.
+    if (stopping) return
+    stopping = true
+    process.stderr.write("\nStopping after this pass.\n")
+  }
+  process.once("SIGINT", stop)
+  process.once("SIGTERM", stop)
+
+  process.stderr.write(
+    `Draining ${championshipId} every ${args.intervalSeconds}s. ` +
+      `Uploads apply by themselves while this is running.\n`,
+  )
+
+  while (!stopping) {
+    try {
+      // `--yes` for the duration: a timer cannot answer a prompt, and a watcher
+      // blocked on one would sit there looking healthy.
+      await drain({ ...args, yes: true }, championshipId, { quiet: true })
+      consecutiveFailures = 0
+    } catch (e) {
+      if (e instanceof AcsmAuthError) {
+        process.stderr.write(
+          `Stopping: ${e.message}\nBad credentials don't come right on their own, and retrying ` +
+            `a login every ${args.intervalSeconds}s is worse for the server than stopping.\n`,
+        )
+        return 3
+      }
+      consecutiveFailures += 1
+      process.stderr.write(
+        `Drain failed (${consecutiveFailures} in a row): ${e instanceof Error ? e.message : e}\n`,
+      )
+    }
+
+    if (stopping) break
+    const backoff = Math.min(intervalMs * 2 ** consecutiveFailures, maxBackoffMs)
+    await sleep(consecutiveFailures === 0 ? intervalMs : backoff, () => stopping)
+  }
+
+  return 0
+}
+
+/** Waits, but wakes early when asked to stop, so Ctrl-C isn't a two-minute wait. */
+async function sleep(ms: number, cancelled: () => boolean): Promise<void> {
+  const step = 250
+  for (let waited = 0; waited < ms; waited += step) {
+    if (cancelled()) return
+    await new Promise((r) => setTimeout(r, Math.min(step, ms - waited)))
   }
 }
 

@@ -14,6 +14,7 @@ import {
 } from "../src/bot/livery.js"
 import { SqliteClaimStore, type DriverClaim } from "../src/liveries/claims.js"
 import { DEFAULT_LIMITS } from "../src/liveries/pack.js"
+import { autoApplyPromised, DRAIN_STALE_AFTER_MS } from "../src/liveries/accept.js"
 import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
 import { SqliteTokenStore } from "../src/liveries/upload-token.js"
 import { championship, championshipClass, entryList } from "./support/build.js"
@@ -483,5 +484,52 @@ describe("handleUploadUrl", () => {
       handleUploadUrl(request({ uploadBaseUrl: "http://liveries.example.com" }), tokens, NOW),
     ).rejects.toThrow(/has to be https/)
     tokens.close()
+  })
+})
+
+describe("autoApplyPromised", () => {
+  const now = new Date("2026-09-02T20:00:00.000Z")
+  const ago = (ms: number) => new Date(now.getTime() - ms)
+
+  it("promises nothing when the league hasn't configured it", () => {
+    expect(autoApplyPromised(false, now, now)).toBe(false)
+  })
+
+  /**
+   * The failure this exists for: `autoApply: true` in the profile with nobody
+   * running `--drain --watch`. Without the heartbeat every driver is told
+   * "shortly" for ever while nothing applies anything, and the reply is the
+   * only place they'd have found out.
+   */
+  it("promises nothing when the watcher has never run", () => {
+    expect(autoApplyPromised(true, undefined, now)).toBe(false)
+  })
+
+  it("promises when the watcher ran recently", () => {
+    expect(autoApplyPromised(true, ago(60_000), now)).toBe(true)
+  })
+
+  it("stops promising when the heartbeat goes stale", () => {
+    expect(autoApplyPromised(true, ago(DRAIN_STALE_AFTER_MS + 1000), now)).toBe(false)
+  })
+
+  it("tolerates a watcher that is merely slow", () => {
+    // Flapping between two wordings would confuse a driver more than either.
+    expect(autoApplyPromised(true, ago(DRAIN_STALE_AFTER_MS - 1000), now)).toBe(true)
+  })
+
+  it("changes what the driver is told, end to end", async () => {
+    const queue = await SqliteSubmissionQueue.open(":memory:")
+    const stale = await upload({ queue, autoApply: autoApplyPromised(true, undefined, NOW) })
+    expect(stale.reply).toMatch(/queued for an admin/)
+
+    await queue.recordDrainRun(CHAMP, NOW)
+    const live = await upload({
+      queue,
+      now: new Date(NOW.getTime() + DEFAULT_UPLOAD_LIMITS.cooldownMs + 1),
+      autoApply: autoApplyPromised(true, await queue.lastDrainRun(CHAMP), NOW),
+    })
+    expect(live.reply).toMatch(/go on the server shortly/)
+    queue.close()
   })
 })

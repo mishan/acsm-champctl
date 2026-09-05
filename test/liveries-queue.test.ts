@@ -193,3 +193,41 @@ describe("SqliteSubmissionQueue", () => {
     queue.close()
   })
 })
+
+/**
+ * The heartbeat that keeps `autoApply` honest.
+ *
+ * The timer lives in champctl-liveries, which holds the ACSM credentials the
+ * bot must never have — so the profile flag is a claim about a different
+ * process, and without something to check it an operator who sets the flag and
+ * forgets the watcher has every driver told "shortly" for ever.
+ */
+describe("the drain heartbeat", () => {
+  it("has nothing to report before a drain has ever run", async () => {
+    const queue = await open()
+    expect(await queue.lastDrainRun(CHAMP)).toBeUndefined()
+    queue.close()
+  })
+
+  it("records when a drain ran", async () => {
+    const queue = await open()
+    await queue.recordDrainRun(CHAMP, MON)
+    expect(await queue.lastDrainRun(CHAMP)).toEqual(MON)
+    queue.close()
+  })
+
+  it("moves forward rather than accumulating", async () => {
+    const queue = await open()
+    await queue.recordDrainRun(CHAMP, MON)
+    await queue.recordDrainRun(CHAMP, TUE)
+    expect(await queue.lastDrainRun(CHAMP)).toEqual(TUE)
+    queue.close()
+  })
+
+  it("keeps championships apart, since a watcher runs per championship", async () => {
+    const queue = await open()
+    await queue.recordDrainRun(CHAMP, MON)
+    expect(await queue.lastDrainRun(OTHER)).toBeUndefined()
+    queue.close()
+  })
+})

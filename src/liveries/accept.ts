@@ -100,6 +100,40 @@ export async function acceptLivery(input: AcceptInput): Promise<AcceptOutcome> {
   }
 }
 
+/**
+ * How long a drain heartbeat stays worth believing.
+ *
+ * Generous against the interval an operator is likely to pick, because a
+ * watcher that is merely slow should not make the bot start telling drivers
+ * something different — the flap between two wordings would be more confusing
+ * than either.
+ */
+export const DRAIN_STALE_AFTER_MS = 30 * 60_000
+
+/**
+ * Whether the bot may promise a driver their livery goes on by itself.
+ *
+ * `autoApply` in the profile is a claim about a *different* process. The timer
+ * lives in `champctl-liveries --drain --watch`, which holds the ACSM
+ * credentials the bot must never have — so an operator can set the flag and
+ * never start the watcher, and every driver would be told "shortly" for ever
+ * while nothing applied anything.
+ *
+ * Checking the heartbeat makes the promise falsifiable. When the watcher is not
+ * running, the reply degrades to the true one — that an admin has to apply it —
+ * which is exactly what a driver needs to know in order to go and ask.
+ */
+export function autoApplyPromised(
+  configured: boolean,
+  lastDrainAt: Date | undefined,
+  now: Date,
+  staleAfterMs = DRAIN_STALE_AFTER_MS,
+): boolean {
+  if (!configured) return false
+  if (!lastDrainAt) return false
+  return now.getTime() - lastDrainAt.getTime() <= staleAfterMs
+}
+
 export interface ReplyFacts {
   driverName: string
   carModel: string
