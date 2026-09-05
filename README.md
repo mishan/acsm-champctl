@@ -277,10 +277,12 @@ driver who sent it.
 champctl-liveries <championship-id> --zip <pack.zip> [options]
 champctl-liveries <championship-id> --carset <out.zip> [options]
 champctl-liveries <championship-id> --claims [--release <discord-user-id>]
+champctl-liveries <championship-id> --drain [--push]
 
   --zip <path>          the livery pack
   --carset <path>       write the archive drivers install, from what has been
                         applied. Reads the local store; touches no server.
+  --drain               apply everything drivers sent through the bot
   --claims              list which Discord account is claimed as which driver
   --release <id>        drop that Discord account's claim, freeing the name
   --store <path>        where applied liveries and claims are kept
@@ -401,6 +403,21 @@ already installed, and that failure looks like nothing at all.
 
 Recording is the only copy champctl has: a livery uploaded through ACSM's own
 web UI is invisible to it and won't be in the carset.
+
+**Drivers can send their own.** `src/bot/livery.ts` validates a driver's zip
+behind a channel and role check, resolves who they are, and queues it;
+`--drain` applies the lot in **one** championship save. One save rather than one
+per driver is the point — `saveChampionshipSkins` is a full-form replace, so
+three separate applies are three overlapping read-modify-writes, and
+`RosterChangedError` doesn't catch it because a concurrent skin write doesn't
+change any names.
+
+The bot half holds no ACSM credentials, ever, and `test/bot.test.ts` checks that
+through the whole module graph rather than one import deep. A drain never
+restarts practice: a driver uploading at 8pm must not be able to disconnect
+everyone racing over a cosmetic change, so the reply says the livery appears at
+the *next* practice start. Unlike `--zip`, one driver leaving the entry list
+refuses only their own submission rather than the whole batch.
 
 **Who is who** is champctl's problem, because ACSM has nowhere to put it — no
 Discord field on an account or an entrant, and the sign-up answers that could

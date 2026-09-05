@@ -37,7 +37,14 @@ import {
 } from "../liveries/apply.js"
 import { buildCarset, carsetFilename, carsetZip, type Carset } from "../liveries/carset.js"
 import { SqliteClaimStore } from "../liveries/claims.js"
-import { DEFAULT_LIMITS, LiveryPackError, readLiveryPack } from "../liveries/pack.js"
+import {
+  DEFAULT_LIMITS,
+  LiveryPackError,
+  liveryPack,
+  readLiveryPack,
+  readSingleLivery,
+} from "../liveries/pack.js"
+import { SqliteSubmissionQueue } from "../liveries/queue.js"
 import { SqliteLiveryStore } from "../liveries/store.js"
 import { loadProfile } from "../profile/load.js"
 import {
@@ -56,6 +63,7 @@ Usage:
   champctl-liveries <championship-id> --zip <pack.zip> [options]
   champctl-liveries <championship-id> --carset <out.zip> [options]
   champctl-liveries <championship-id> --claims [--release <discord-user-id>]
+  champctl-liveries <championship-id> --drain [--push]
 
 The pack is a zip of zips, one folder per car model:
 
@@ -73,6 +81,8 @@ Options:
                         installs — every livery champctl has applied to this
                         championship, as one archive you can drop on Content
                         Manager. Reads the local store; touches no server.
+  --drain               apply everything drivers have sent through the bot.
+                        One championship save for the lot, not one per driver.
   --claims              list which Discord account is claimed as which driver
   --release <id>        drop that Discord account's claim, freeing the name
   --store <path>        where applied liveries and claims are kept
@@ -114,6 +124,7 @@ interface Args {
   championshipId?: string
   zip?: string
   carset?: string
+  drain: boolean
   claims: boolean
   release?: string
   store?: string
@@ -130,6 +141,7 @@ interface Args {
 export function parseArgs(argv: readonly string[]): Args {
   const args: Args = {
     profile: "batl",
+    drain: false,
     claims: false,
     noStore: false,
     push: false,
@@ -163,6 +175,9 @@ export function parseArgs(argv: readonly string[]): Args {
         break
       case "--carset":
         args.carset = next()
+        break
+      case "--drain":
+        args.drain = true
         break
       case "--claims":
         args.claims = true
@@ -346,6 +361,13 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     return await writeCarset(args, args.championshipId)
   }
 
+  if (args.drain) {
+    if (args.zip) {
+      throw new UsageError("--drain applies what drivers sent; --zip applies a pack you assembled.")
+    }
+    return await drain(args, args.championshipId)
+  }
+
   if (!args.zip) throw new UsageError("Needs a livery pack: --zip <pack.zip>.")
 
   const profile = await loadProfile(args.profile)
@@ -418,6 +440,146 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     store?.close()
   }
   return 0
+}
+
+/**
+ * Applies everything drivers have sent through the bot
+ * (docs/discord-livery-upload.md §5).
+ *
+ * **One pack, one championship save, for the lot.** `saveChampionshipSkins`
+ * does GET the form → mutate → POST the whole form, so draining three
+ * submissions as three applies is three overlapping read-modify-write cycles
+ * against a full-form replace — a lost update waiting for the week three people
+ * upload at once. `RosterChangedError` does not catch it: that guard compares
+ * the *names* on the form, and a concurrent skin write does not change them.
+ *
+ * **Per-submission planning, not all-or-nothing.** The `--zip` path refuses a
+ * whole pack when one driver is missing from the entry list, which is right for
+ * a pack somebody assembled by hand. Here it would mean one driver leaving the
+ * league blocks everyone else's liveries, so a submission that no longer
+ * matches is refused with a reason and the rest go through.
+ */
+async function drain(args: Args, championshipId: string): Promise<number> {
+  const baseUrl = args.baseUrl ?? (await loadProfile(args.profile)).acsmBaseUrl
+  if (!baseUrl) {
+    throw new UsageError(
+      `No ACSM base URL. Set acsmBaseUrl in the ${args.profile} profile, or pass --base-url.`,
+    )
+  }
+
+  const queue = await SqliteSubmissionQueue.open(storePath(args))
+  try {
+    const waiting = await queue.queued(championshipId)
+    if (waiting.length === 0) {
+      process.stdout.write(`Nothing waiting for ${championshipId}.\n`)
+      return 1
+    }
+
+    const reader = new HttpAcsmReader({ baseUrl })
+    const championship = await reader.exportChampionship(championshipId)
+
+    // Re-read here rather than trusting the bot's unpacking. Same bytes, same
+    // checks, second time — and the entry list has had time to change since the
+    // driver pressed send.
+    const usable: { id: number; livery: ReturnType<typeof readSingleLivery> }[] = []
+    const refused: { id: number; driverName: string; reason: string }[] = []
+    for (const submission of waiting) {
+      try {
+        usable.push({
+          id: submission.id,
+          livery: readSingleLivery(
+            submission.body,
+            { carModel: submission.carModel, driverName: submission.driverName },
+            DEFAULT_LIMITS,
+          ),
+        })
+      } catch (e) {
+        refused.push({
+          id: submission.id,
+          driverName: submission.driverName,
+          reason: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
+
+    // Planned one at a time so a driver who has left the entry list takes only
+    // their own submission down. `planLiveries` refuses a whole pack, which is
+    // the wrong answer here and the right one for --zip.
+    const applying: typeof usable = []
+    for (const candidate of usable) {
+      try {
+        planLiveries(championship, championshipId, liveryPack([candidate.livery]))
+        applying.push(candidate)
+      } catch (e) {
+        if (!(e instanceof LiveryPlanError)) throw e
+        refused.push({
+          id: candidate.id,
+          driverName: candidate.livery.driverName,
+          reason: e.message,
+        })
+      }
+    }
+
+    for (const r of refused) {
+      process.stdout.write(`  refused  ${r.driverName.padEnd(18)} ${r.reason}\n`)
+    }
+
+    if (applying.length === 0) {
+      process.stdout.write(`\nNothing left to apply.\n`)
+      if (args.push) {
+        const now = new Date()
+        for (const r of refused) await queue.markRefused(r.id, r.reason, now)
+      }
+      return 1
+    }
+
+    const plan = planLiveries(
+      championship,
+      championshipId,
+      liveryPack(applying.map((a) => a.livery)),
+    )
+    process.stdout.write(`${renderPlan(plan)}\n`)
+
+    if (!args.push) {
+      process.stdout.write("\nPreview only. Re-run with --push to apply.\n")
+      return plan.noop ? 1 : 0
+    }
+
+    const session = new AcsmSession({ baseUrl })
+    await login(session)
+
+    if (!args.yes && !(await confirm("\nApply these?"))) {
+      process.stdout.write("Nothing sent.\n")
+      return 0
+    }
+
+    const store = args.noStore ? undefined : await SqliteLiveryStore.open(storePath(args))
+    try {
+      // No `restartPracticeRound`, ever, on this path. A driver uploading at
+      // 8pm must not be able to disconnect everyone in practice over a cosmetic
+      // change; the livery appears at the next practice start, which is what
+      // the bot's reply told them.
+      const result = await applyLiveries(session, plan, {
+        ...(store ? { record: store, source: "discord" as const } : {}),
+      })
+      const now = new Date()
+      await queue.markApplied(
+        applying.map((a) => a.id),
+        now,
+      )
+      for (const r of refused) await queue.markRefused(r.id, r.reason, now)
+
+      process.stdout.write(
+        `Applied ${result.uploaded.length} of ${waiting.length}, championship saved. ` +
+          `Practice was not restarted — these appear at the next practice start.\n`,
+      )
+    } finally {
+      store?.close()
+    }
+    return 0
+  } finally {
+    queue.close()
+  }
 }
 
 /**

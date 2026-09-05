@@ -7,8 +7,8 @@
  * gone wrong.
  */
 
-import { readFileSync, readdirSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { existsSync, readFileSync, readdirSync } from "node:fs"
+import { basename, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 
@@ -434,11 +434,12 @@ describe("what the bot opens, it closes", () => {
 })
 
 describe("the bot cannot write to ACSM", () => {
-  const botDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "bot")
+  const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src")
+  const botDir = join(srcDir, "bot")
 
   /**
    * The modules a write needs. `session.ts` is the cookie jar, `write.ts` the
-   * import safety rules, and the two `apply` modules the things that POST.
+   * import safety rules, and the `apply` modules the things that POST.
    *
    * Checked structurally because plan §7's "no ACSM credentials, ever" is
    * otherwise a promise kept by everyone remembering it — and the bot is the
@@ -450,26 +451,89 @@ describe("the bot cannot write to ACSM", () => {
     "acsm/write.js",
     "finalize/apply.js",
     "reorder/apply.js",
+    "liveries/apply.js",
     "web/",
   ]
 
+  const importsOf = (file: string): string[] =>
+    [...readFileSync(file, "utf8").matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1] as string)
+
+  const botModules = () =>
+    readdirSync(botDir)
+      .filter((f) => f.endsWith(".ts"))
+      .map((f) => join(botDir, f))
+
   it("imports nothing from the write path", () => {
     const offences: string[] = []
-    for (const file of readdirSync(botDir)) {
-      if (!file.endsWith(".ts")) continue
-      const source = readFileSync(join(botDir, file), "utf8")
-      for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
-        const specifier = match[1]!
-        if (writePath.some((w) => specifier.includes(w)))
-          offences.push(`${file} imports ${specifier}`)
+    for (const file of botModules()) {
+      for (const specifier of importsOf(file)) {
+        if (writePath.some((w) => specifier.includes(w))) {
+          offences.push(`${basename(file)} imports ${specifier}`)
+        }
       }
     }
     expect(offences).toEqual([])
   })
 
+  /**
+   * The same rule, followed through the module graph.
+   *
+   * The direct check above is one `from "…"` away from being satisfied by a
+   * module that imports the write path on the bot's behalf — and the bot now
+   * sits next to `liveries/`, where `pack.ts` and `claims.ts` are safe to reach
+   * for and `apply.ts` is one letter different and is not. A wall tested only
+   * at the doorway is a doorway.
+   */
+  it("reaches nothing in the write path, however many hops away", () => {
+    const resolveSpecifier = (fromFile: string, specifier: string): string | undefined => {
+      if (!specifier.startsWith(".")) return undefined
+      const path = resolve(dirname(fromFile), specifier.replace(/\.js$/, ".ts"))
+      return existsSync(path) ? path : undefined
+    }
+
+    const offences: string[] = []
+    const seen = new Set<string>()
+    const walk = (file: string, trail: string[]): void => {
+      if (seen.has(file)) return
+      seen.add(file)
+      for (const specifier of importsOf(file)) {
+        if (writePath.some((w) => specifier.includes(w))) {
+          offences.push([...trail, basename(file), specifier].join(" → "))
+          continue
+        }
+        const next = resolveSpecifier(file, specifier)
+        if (next) walk(next, [...trail, basename(file)])
+      }
+    }
+    for (const file of botModules()) walk(file, [])
+
+    expect(offences).toEqual([])
+  })
+
   it("checks a directory that actually has modules in it", () => {
-    // Otherwise the test above passes by finding nothing to look at.
-    expect(readdirSync(botDir).filter((f) => f.endsWith(".ts")).length).toBeGreaterThan(0)
+    // Otherwise the tests above pass by finding nothing to look at.
+    expect(botModules().length).toBeGreaterThan(0)
+  })
+
+  it("would notice a transitive import, so the walk is doing something", () => {
+    // The guard's own guard. A module graph walker that silently resolved
+    // nothing would pass every test above while checking one file deep.
+    const reachable = new Set<string>()
+    const walk = (file: string): void => {
+      if (reachable.has(file)) return
+      reachable.add(file)
+      for (const specifier of importsOf(file)) {
+        if (!specifier.startsWith(".")) continue
+        const path = resolve(dirname(file), specifier.replace(/\.js$/, ".ts"))
+        if (existsSync(path)) walk(path)
+      }
+    }
+    for (const file of botModules()) walk(file)
+
+    // src/bot/livery.ts reaches liveries/pack.ts through liveries/claims.ts,
+    // which is two hops and outside src/bot entirely.
+    expect([...reachable].some((f) => f.endsWith(join("liveries", "pack.ts")))).toBe(true)
+    expect(reachable.size).toBeGreaterThan(botModules().length)
   })
 })
 

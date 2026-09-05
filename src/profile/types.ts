@@ -110,6 +110,41 @@ export interface DiscordSettings {
    * looked at it.
    */
   adminChannelId?: string
+  /**
+   * Livery uploads. Absent means the league has no self-serve uploads and the
+   * commands are not registered at all — the same shape as `discord` being
+   * absent meaning no bot.
+   */
+  livery?: LiveryUploadSettings
+}
+
+/**
+ * Where `/livery upload` is accepted, and by whom.
+ *
+ * Both lists are optional and **ANDed**, and an empty one means unrestricted.
+ * Worth saying out loud rather than only in code: a league that sets `roleIds`
+ * and leaves `channelIds` empty has accepted uploads in every channel the bot
+ * can see, and would rather have known.
+ */
+export interface LiveryUploadSettings {
+  /** Channels the command is accepted in. Empty or absent means anywhere. */
+  channelIds?: string[]
+  /**
+   * Roles that may run it. Empty or absent means anyone who can see it.
+   *
+   * Setting this also confines uploads to the server: a DM has no member and no
+   * roles, so a role clamp cannot be satisfied in one.
+   */
+  roleIds?: string[]
+  /**
+   * Run the drain on a timer instead of waiting for an admin.
+   *
+   * Off by default, which is plan §7 verbatim — the bot queues and a human
+   * applies. Turning it on is what makes the feature self-serve, and it is one
+   * line rather than a fork because a league should be able to watch what
+   * arrives for a season before deciding.
+   */
+  autoApply?: boolean
 }
 
 export interface LeagueProfile {

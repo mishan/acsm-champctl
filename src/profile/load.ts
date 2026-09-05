@@ -140,6 +140,32 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
           '"Copy Channel ID" gives it, not a channel name and not a link',
       )
     }
+
+    // Same check, same reason: a channel *name* and a role *mention* both reach
+    // Discord as an id it cannot find. Here the failure is worse than a missing
+    // report — a clamp built from ids that match nothing refuses every driver,
+    // and reads as a bot that is down.
+    const livery = (discord as Record<string, unknown>)["livery"]
+    if (livery !== undefined) {
+      if (typeof livery !== "object" || livery === null) bad("`discord.livery` must be an object")
+      const l = livery as Record<string, unknown>
+      for (const key of ["channelIds", "roleIds"] as const) {
+        const value = l[key]
+        if (value === undefined) continue
+        if (
+          !Array.isArray(value) ||
+          value.some((v) => typeof v !== "string" || !/^\d{17,20}$/.test(v))
+        ) {
+          bad(
+            `\`discord.livery.${key}\` must be an array of Discord ids — 17 to 20 digits each, ` +
+              `the way "Copy ID" gives them, not names and not mentions`,
+          )
+        }
+      }
+      if (l["autoApply"] !== undefined && typeof l["autoApply"] !== "boolean") {
+        bad("`discord.livery.autoApply` must be true or false")
+      }
+    }
   }
 
   const profile = v as LeagueProfile
