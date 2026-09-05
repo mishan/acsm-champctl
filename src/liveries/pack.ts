@@ -121,6 +121,26 @@ export const DEFAULT_LIMITS: PackLimits = {
   maxSkins: 100,
 }
 
+/**
+ * How much bigger than the skin inside it a driver's zip may be.
+ *
+ * The outer entry is a container, so bounding it by `maxSkinBytes` alone bounds
+ * the wrong number: a zip of files totalling exactly the skin limit is larger
+ * than that limit by its own headers — a local header, a central-directory
+ * record and two copies of the filename per file, plus the end-of-central
+ * directory. This is that overhead, rounded up without apology. The outer check
+ * exists to catch an entry claiming gigabytes before anything inflates it, not
+ * to be tight; the honest per-skin number is `maxSkinBytes`, measured on the
+ * unpacked bytes one level down.
+ */
+const ZIP_CONTAINER_OVERHEAD_PER_FILE = 512
+const ZIP_CONTAINER_OVERHEAD = 4096
+
+/** The largest a zip holding `contentBytes` across `files` files can claim to be. */
+function containerCeiling(contentBytes: number, files: number): number {
+  return contentBytes + files * ZIP_CONTAINER_OVERHEAD_PER_FILE + ZIP_CONTAINER_OVERHEAD
+}
+
 export interface SkinFile {
   /** Base name only. No directory component, ever — see `assertSafeName`. */
   name: string
@@ -180,7 +200,7 @@ export interface LiveryPack {
  * and a leading space is invisible. Requiring a *letter or digit* there was the
  * lazy version of that and refused `#7 Racing`, which is a team name.
  */
-const SAFE_COMPONENT = /^(?![.\-\s])[\p{L}\p{M}\p{N} ._'()\[\]#+&,!@-]{1,64}$/u
+const SAFE_COMPONENT = /^(?![.\-\s])[\p{L}\p{M}\p{N} ._'()[\]#+&,!@-]{1,64}$/u
 
 /**
  * The same text always compares equal to itself.
@@ -240,15 +260,176 @@ function splitEntryPath(path: string): string[] {
   return parts
 }
 
-/** `unzipSync`, with its failures turned into something a person can act on. */
-function unzip(bytes: Uint8Array, what: string): Record<string, Uint8Array> {
+/**
+ * Zip entries the archiver added, which the person who zipped never saw.
+ *
+ * macOS's Archive Utility writes a parallel `__MACOSX/` tree of resource forks
+ * beside the real files, and Finder leaves a `.DS_Store` in any folder it has
+ * opened; Windows Explorer leaves `Thumbs.db`. None of the three are visible
+ * where the zip was made.
+ *
+ * They used to be refused, and the refusal was unanswerable: a driver who
+ * zipped a flat skin folder on a Mac was told `__MACOSX/._livery.dds` "is in a
+ * subfolder. An Assetto Corsa skin is a flat folder of files", and went looking
+ * for a subfolder Finder does not show them. Because a pack fails whole, one
+ * Mac submission blocked the entire league's drop. `.DS_Store` failed a step
+ * earlier, as a name that "is not a usable file name" for its leading dot.
+ *
+ * Dropped rather than refused because they carry nothing to refuse: `__MACOSX`
+ * holds resource forks for files that are already in the zip, and the other two
+ * are window state. Every unarchiver a driver would otherwise use drops them
+ * silently, which is why nobody knows they are in there.
+ *
+ * Three names and not a pattern, deliberately. Anything else unexpected is
+ * still refused by name and by extension — this is not a general "ignore what
+ * we don't recognise" rule, which is how an allowlist quietly turns into a
+ * blocklist.
+ */
+function isArchiverJunk(path: string): boolean {
+  const parts = path.split(/[/\\]/)
+  if (parts.includes("__MACOSX")) return true
+  const base = parts[parts.length - 1] ?? ""
+  return base === ".DS_Store" || base === "Thumbs.db"
+}
+
+/**
+ * An entry name, made safe to print.
+ *
+ * These come out of an untrusted zip and go into a message on somebody's
+ * terminal. `assertSafeName` refuses a name carrying `\p{C}` — the
+ * right-to-left overrides that make a refusal name a different file than the
+ * one refused, and the escape sequences that rewrite the line above it — but
+ * only once an entry has got that far, and the size refusals below happen
+ * first.
+ */
+function forMessage(name: string): string {
+  const clean = name.replace(/\p{C}/gu, "\uFFFD")
+  return clean.length > 120 ? `${clean.slice(0, 117)}...` : clean
+}
+
+/**
+ * What a zip is allowed to be, decided before any of it is inflated.
+ *
+ * The messages belong to the caller rather than to this type: a refusal naming
+ * the pack and one naming a driver's zip are read by different people.
+ */
+interface UnzipBudget {
+  maxEntries: number
+  maxEntryBytes: number
+  maxTotalBytes: number
+  tooManyEntries: () => string
+  entryTooBig: (name: string, claimedBytes: number) => string
+  tooBigInTotal: () => string
+  impossibleSize: (name: string, claimedBytes: number, compressedBytes: number) => string
+}
+
+/**
+ * A claimed size the compressed bytes could not have come from.
+ *
+ * Deflate does not expand. Its worst case is a run of stored blocks, which
+ * costs about five bytes per 64 KB — so an entry holding substantially *more*
+ * compressed bytes than the size it claims to inflate to is describing
+ * something that cannot happen.
+ *
+ * Worth catching, because fflate will not: it sizes its output buffer from the
+ * claim and stops there, verifying no CRC and reporting no error, so an entry
+ * claiming 100 bytes over 64 MB of deflate comes back as exactly 100 bytes.
+ * Comparing the result against the claim cannot find that — the truncation
+ * makes them agree. Without some check here, a hand-edited header puts a
+ * half-written `livery.dds` on the game server with every size limit below
+ * satisfied, because a truncated file is a small one.
+ *
+ * **What this does and does not bound.** It catches a claim that has fallen
+ * below roughly the compressed size, which is where a claim of 2 or 40 bytes
+ * for a real livery lands. It does *not* catch a claim above that: a 4 MB
+ * `.dds` deflating to 39 KB can be re-declared as 40 KB and still pass, and
+ * fflate will hand back those 40 KB. Closing that needs the central
+ * directory's CRC-32 verified against the inflated bytes, and fflate neither
+ * does that nor exposes the stored CRC through `filter`, so it would mean
+ * parsing the central directory here. That is a real gap and it is worth
+ * knowing it is one; what makes it survivable is that it takes a deliberately
+ * edited header rather than a damaged file, and what it costs is a car that
+ * renders wrong, not a server that does.
+ *
+ * The slack is loose on purpose — the ratio, plus a flat allowance for the
+ * per-entry overhead that dominates a small file — because the job is catching
+ * a header that is wrong by orders of magnitude, not auditing deflate.
+ */
+function impossibleClaim(compressedBytes: number, claimedBytes: number): boolean {
+  return compressedBytes > claimedBytes + Math.ceil(claimedBytes / 16) + 64
+}
+
+/**
+ * `unzipSync`, with the limits applied *before* anything is decompressed.
+ *
+ * This was a bare `unzipSync(bytes)` with every limit checked on the result,
+ * which is the wrong way round: by the time `maxFileBytes` was consulted, the
+ * file it was about had already been inflated into memory. A 2 MB pack holding
+ * one entry that expands to 8 GiB took the process out with a V8 OOM that never
+ * reaches the CLI's error handling — so the ceiling documented here as the
+ * zip-bomb defence was doing none of that work, and doubling the limits only
+ * widened the window.
+ *
+ * fflate calls `filter` with each entry's central-directory record before its
+ * stream is touched, so refusing there is refusing before the allocation.
+ *
+ * `originalSize` is the zip's *claim* about an entry rather than a measurement,
+ * so on its own it would be a check whose answer the zip gets to write. Two
+ * things close that, in opposite directions. Claiming more than the budget is
+ * refused on the claim. Claiming less buys nothing, because fflate sizes its
+ * output buffer from that same number and stops there: an entry claiming 100
+ * bytes over 64 MB of deflate arrives as 100 bytes — truncated, not expanded.
+ * That truncation is silently wrong on its own terms — it would upload half a
+ * livery — so `impossibleClaim` refuses the headers that produce it.
+ *
+ * Between the two — refusing an over-claim outright, and refusing an under-claim
+ * the compressed bytes could not have produced (`impossibleClaim`) — the claim
+ * is held close enough to the truth to decide on before inflating. The checks
+ * on the inflated bytes further down stay where they are regardless.
+ *
+ * A breach is recorded and thrown afterwards rather than thrown from inside the
+ * callback, so it arrives as a `LiveryPackError` naming the limit instead of as
+ * a zip parse failure.
+ */
+function unzip(bytes: Uint8Array, what: string, budget: UnzipBudget): Record<string, Uint8Array> {
+  let entries = 0
+  let claimedTotal = 0
+  let refusal: string | undefined
+
+  const refuse = (message: string): boolean => {
+    refusal ??= message
+    return false
+  }
+
+  let unzipped: Record<string, Uint8Array>
   try {
-    return unzipSync(bytes)
+    unzipped = unzipSync(bytes, {
+      filter: (file) => {
+        if (refusal !== undefined) return false
+        if (file.name.endsWith("/")) return false
+        if (isArchiverJunk(file.name)) return false
+
+        entries += 1
+        if (entries > budget.maxEntries) return refuse(budget.tooManyEntries())
+        if (file.originalSize > budget.maxEntryBytes) {
+          return refuse(budget.entryTooBig(forMessage(file.name), file.originalSize))
+        }
+        if (impossibleClaim(file.size, file.originalSize)) {
+          return refuse(budget.impossibleSize(forMessage(file.name), file.originalSize, file.size))
+        }
+        claimedTotal += file.originalSize
+        if (claimedTotal > budget.maxTotalBytes) return refuse(budget.tooBigInTotal())
+        return true
+      },
+    })
   } catch (e) {
     throw new LiveryPackError(
       `${what} could not be read as a zip: ${e instanceof Error ? e.message : String(e)}`,
     )
   }
+
+  if (refusal !== undefined) throw new LiveryPackError(refusal)
+  return unzipped
 }
 
 /**
@@ -262,7 +443,35 @@ export function readLiveryPack(
   packBytes: Uint8Array,
   limits: PackLimits = DEFAULT_LIMITS,
 ): LiveryPack {
-  const outer = unzip(packBytes, "The pack")
+  const outer = unzip(packBytes, "The pack", {
+    maxEntries: limits.maxSkins,
+    // A driver's zip is a container for their skin folder, so the unpacked-skin
+    // ceiling is the honest bound on it: a zip larger than what it unpacks to is
+    // not a skin somebody assembled.
+    maxEntryBytes: containerCeiling(limits.maxSkinBytes, limits.maxFilesPerSkin),
+    // Both numbers here are about *zips*, where `maxTotalBytes` is about the
+    // files inside them, so the ceiling carries the same container allowance.
+    // This is an early, loose bound and is meant to be: what actually enforces
+    // `maxTotalBytes` is the running total in the loop below, on the bytes as
+    // they come out.
+    maxTotalBytes: containerCeiling(limits.maxTotalBytes, limits.maxSkins * limits.maxFilesPerSkin),
+    // Every entry, not every *livery*: this is counted before anything looks at
+    // an entry's shape, so a pack padded with a thousand stray files is refused
+    // here rather than one refusal at a time. Worded to match.
+    tooManyEntries: () =>
+      `Refusing the pack: more than ${limits.maxSkins} entries in it. A pack holds one zip per ` +
+      `driver, and nothing else.`,
+    entryTooBig: (name, claimed) =>
+      `Refusing the pack: "${name}" is ${mb(claimed)}, which is more than a zip of a ` +
+      `${mb(limits.maxSkinBytes)} skin folder can be.`,
+    tooBigInTotal: () =>
+      `Refusing the pack: it unpacks to more than ${mb(limits.maxTotalBytes)}, which is a lot ` +
+      `more than a set of liveries and is what a zip bomb looks like.`,
+    impossibleSize: (name, claimed, compressed) =>
+      `Refusing the pack: its directory says "${name}" is ${claimed} bytes, but it holds ` +
+      `${compressed} compressed bytes, which cannot unpack to that. The zip has been damaged or ` +
+      `edited by hand, and what champctl would get back from it is a truncated file.`,
+  })
   const liveries: Livery[] = []
   let totalBytes = 0
 
@@ -300,13 +509,12 @@ export function readLiveryPack(
     assertSafeName("car model", carModel, `in "${path}"`)
     assertSafeName("driver name", driverName, `in "${path}"`)
 
-    if (liveries.length >= limits.maxSkins) {
-      throw new LiveryPackError(
-        `Refusing the pack: more than ${limits.maxSkins} liveries in one file.`,
-      )
-    }
-
     const livery = readOneLivery(carModel, driverName, bytes, limits, path)
+    // The inner zip is now unpacked into `livery.files`, and keeping the
+    // compressed copy as well doubles what a pack costs in memory for the rest
+    // of the loop — while `maxTotalBytes` is written as though it were the whole
+    // budget.
+    delete outer[path]
     totalBytes += livery.totalBytes
     if (totalBytes > limits.maxTotalBytes) {
       throw new LiveryPackError(
@@ -339,7 +547,23 @@ function readOneLivery(
   limits: PackLimits,
   where: string,
 ): Livery {
-  const inner = unzip(innerBytes, `"${where}"`)
+  const inner = unzip(innerBytes, `"${where}"`, {
+    maxEntries: limits.maxFilesPerSkin,
+    maxEntryBytes: limits.maxFileBytes,
+    maxTotalBytes: limits.maxSkinBytes,
+    tooManyEntries: () =>
+      `Refusing ${carModel}/${driverName}: more than ${limits.maxFilesPerSkin} files. A skin is ` +
+      `a livery, a preview and a couple of small text files.`,
+    entryTooBig: (name, claimed) =>
+      `Refusing ${carModel}/${driverName}: "${name}" is ${mb(claimed)}, over the ` +
+      `${mb(limits.maxFileBytes)} limit for one file.`,
+    tooBigInTotal: () =>
+      `Refusing ${carModel}/${driverName}: it unpacks to more than ${mb(limits.maxSkinBytes)}.`,
+    impossibleSize: (name, claimed, compressed) =>
+      `Refusing ${carModel}/${driverName}: its directory says "${name}" is ${claimed} bytes, but ` +
+      `it holds ${compressed} compressed bytes, which cannot unpack to that. The zip has been ` +
+      `damaged or edited by hand, and what champctl would get back from it is a truncated file.`,
+  })
   const files: SkinFile[] = []
   let totalBytes = 0
 
@@ -388,12 +612,6 @@ function readOneLivery(
     files.push({ name, bytes: entry.bytes })
     totalBytes += entry.bytes.length
 
-    if (files.length > limits.maxFilesPerSkin) {
-      throw new LiveryPackError(
-        `Refusing ${carModel}/${driverName}: more than ${limits.maxFilesPerSkin} files. A skin is ` +
-          `a livery, a preview and a couple of small text files.`,
-      )
-    }
     if (totalBytes > limits.maxSkinBytes) {
       throw new LiveryPackError(
         `Refusing ${carModel}/${driverName}: it unpacks to more than ${mb(limits.maxSkinBytes)}.`,

@@ -293,6 +293,156 @@ describe("readLiveryPack refusals", () => {
   })
 })
 
+describe("readLiveryPack and the archiver's own files", () => {
+  // Everything here is what a driver on a Mac actually hands over. Finder shows
+  // them a flat folder of two files; the zip carries five.
+  const MAC = {
+    "__MACOSX/._livery.dds": bytes("resource fork"),
+    "__MACOSX/._ui_skin.json": bytes("resource fork"),
+    ".DS_Store": bytes("Finder window position"),
+  }
+
+  it("accepts a skin zipped by macOS Archive Utility", () => {
+    // This used to be refused with "__MACOSX/._livery.dds is in a subfolder. An
+    // Assetto Corsa skin is a flat folder of files" — about a folder Finder
+    // does not show them, in a pack that then failed whole.
+    const result = readLiveryPack(pack({ [`${CAR}/Misha.zip`]: skin(MAC) }))
+    expect(result.liveries[0]?.files.map((f) => f.name).sort()).toEqual([
+      "livery.dds",
+      "ui_skin.json",
+    ])
+  })
+
+  it("accepts a pack whose outer zip was made on a Mac too", () => {
+    const p = pack({
+      [`${CAR}/Misha.zip`]: skin(),
+      [`__MACOSX/${CAR}/._Misha.zip`]: bytes("resource fork"),
+      ".DS_Store": bytes("Finder window position"),
+    })
+    expect(readLiveryPack(p).liveries.map((l) => l.driverName)).toEqual(["Misha"])
+  })
+
+  it("ignores Thumbs.db, which is the same thing on Windows", () => {
+    const p = pack({ [`${CAR}/Misha.zip`]: skin({ "Thumbs.db": bytes("thumbnails") }) })
+    expect(
+      readLiveryPack(p)
+        .liveries[0]?.files.map((f) => f.name)
+        .sort(),
+    ).toEqual(["livery.dds", "ui_skin.json"])
+  })
+
+  it("still refuses a real subfolder, which is not archiver noise", () => {
+    // The narrowness is the point: dropping three known names is not the same
+    // as ignoring anything unrecognised.
+    const p = pack({
+      [`${CAR}/Misha.zip`]: zipSync({
+        "livery.dds": bytes("DDS"),
+        "extra/other.dds": bytes("DDS"),
+      }),
+    })
+    expect(() => readLiveryPack(p)).toThrowError(/is in a subfolder/)
+  })
+})
+
+describe("readLiveryPack and a zip that lies about its size", () => {
+  /**
+   * Rewrites every central-directory record's uncompressed-size field.
+   *
+   * The point of the limits moving ahead of `unzipSync` is that they are read
+   * off the central directory rather than off the inflated bytes, so the test
+   * for it has to be a zip whose central directory says something the bytes do
+   * not. `PK\x01\x02` starts each record; the uncompressed size is four
+   * little-endian bytes at offset 24.
+   *
+   * What this pins is *where the number is read from*. The old code took every
+   * size off the inflated bytes, so a directory saying 4 GB over a 1 MB file
+   * told it nothing and the pack sailed through; the filter reads the directory
+   * and refuses. It does not pin "nothing was inflated" — see the honest bomb
+   * below for that, which is the input the filter actually exists for.
+   */
+  const claimSize = (zip: Uint8Array, claimed: number): Uint8Array => {
+    const out = new Uint8Array(zip)
+    const view = new DataView(out.buffer)
+    for (let i = 0; i + 30 < out.length; i++) {
+      if (out[i] === 0x50 && out[i + 1] === 0x4b && out[i + 2] === 0x01 && out[i + 3] === 0x02) {
+        view.setUint32(i + 24, claimed, true)
+      }
+    }
+    return out
+  }
+
+  // Just under the uint32 ceiling, so it is a plain claim rather than the
+  // 0xFFFFFFFF that means "look in the ZIP64 record".
+  const FOUR_GB = 0xfffffff0
+
+  it("refuses a file claiming four gigabytes without unpacking it", () => {
+    const p = pack({ [`${CAR}/Misha.zip`]: claimSize(skin(), FOUR_GB) })
+    expect(() => readLiveryPack(p)).toThrowError(LiveryPackError)
+    expect(() => readLiveryPack(p)).toThrowError(/over the 48.0 MB limit for one file/)
+  })
+
+  it("refuses a driver's zip claiming four gigabytes", () => {
+    const p = claimSize(pack({ [`${CAR}/Misha.zip`]: skin() }), FOUR_GB)
+    expect(() => readLiveryPack(p)).toThrowError(
+      /which is more than a zip of a 128.0 MB skin folder can be/,
+    )
+  })
+
+  /** A livery-sized file, so a truncating claim is a lie by orders of magnitude. */
+  const realDds = (): Uint8Array => new Uint8Array(1024 * 1024)
+
+  /**
+   * Incompressible bytes, for the cases that need the *compressed* size to stay
+   * large — a zip of zeros shrinks to a few hundred bytes, which is inside the
+   * slack `impossibleClaim` deliberately leaves for small entries.
+   */
+  const noise = (n: number): Uint8Array => {
+    const out = new Uint8Array(n)
+    let x = 123456789
+    for (let i = 0; i < n; i++) {
+      x = (x * 1103515245 + 12345) & 0x7fffffff
+      out[i] = (x >> 16) & 0xff
+    }
+    return out
+  }
+
+  it("refuses a zip whose directory claims less than it holds", () => {
+    // Claiming *less* is the other way at the same check, and it does not get
+    // through either — but not for the reason you would guess. fflate sizes its
+    // output buffer from the claim and stops there, so the entry inflates to
+    // exactly the claimed length: no error, no overrun, and a truncated file
+    // that every size limit below is delighted with. Comparing the result
+    // against the claim cannot catch it, because the truncation makes the two
+    // agree. What catches it is that deflate does not expand: those compressed
+    // bytes could not have come from two.
+    const p = pack({
+      [`${CAR}/Misha.zip`]: claimSize(zipSync({ "livery.dds": realDds() }), 2),
+    })
+    expect(() => readLiveryPack(p)).toThrowError(LiveryPackError)
+    expect(() => readLiveryPack(p)).toThrowError(/is 2 bytes, but it holds \d+ compressed bytes/)
+  })
+
+  it("refuses a truncating claim on the driver's zip itself", () => {
+    // The same lie one level out: the pack's directory understating a driver's
+    // zip, which fflate would hand back as a couple of bytes that are then not
+    // a zip at all — and, at a friendlier number, as a zip missing its tail.
+    const p = claimSize(
+      pack({ [`${CAR}/Misha.zip`]: zipSync({ "livery.dds": noise(256 * 1024) }) }),
+      40,
+    )
+    expect(() => readLiveryPack(p)).toThrowError(/is 40 bytes, but it holds \d+ compressed bytes/)
+  })
+
+  it("leaves an honest zip alone, including one that compresses very well", () => {
+    // The guard rail on the guard: a 1 MB livery of zeros compresses to about a
+    // kilobyte, and a ratio check written carelessly would refuse it.
+    const p = pack({
+      [`${CAR}/Misha.zip`]: zipSync({ "livery.dds": realDds(), "ui_skin.json": bytes("{}") }),
+    })
+    expect(readLiveryPack(p).liveries[0]?.files.map((f) => f.name)).toContain("livery.dds")
+  })
+})
+
 describe("readLiveryPack limits", () => {
   const small: PackLimits = {
     ...DEFAULT_LIMITS,
@@ -334,7 +484,7 @@ describe("readLiveryPack limits", () => {
       [`${CAR}/B.zip`]: skin(),
       [`${CAR}/C.zip`]: skin(),
     })
-    expect(() => readLiveryPack(p, small)).toThrowError(/more than 2 liveries/)
+    expect(() => readLiveryPack(p, small)).toThrowError(/more than 2 entries/)
   })
 
   it("refuses a pack that unpacks to more than the ceiling", () => {
@@ -349,6 +499,44 @@ describe("readLiveryPack limits", () => {
     })
     expect(p.length).toBeLessThan(bomb.maxTotalBytes / 10)
     expect(() => readLiveryPack(p, bomb)).toThrowError(/zip bomb/)
+  })
+
+  it("refuses an honest zip bomb on its directory alone", () => {
+    // The input the pre-inflation filter exists for, with nothing hand-edited:
+    // a well-formed zip whose central directory truthfully says 64 MB, against
+    // a limit of one. Zeros deflate about a thousand to one, so the pack on
+    // disk is smaller than the limit it breaks — which is why a limit on the
+    // file on disk catches nothing.
+    //
+    // Honest about what this pins: the refusal, on an unedited zip, through the
+    // filter. Not "nothing was inflated" — the old code refused this too, after
+    // allocating the 64 MB first, and no assertion here can tell those apart.
+    // The size at which the difference stops being academic is one no test can
+    // allocate on the way to finding out.
+    const limits: PackLimits = { ...DEFAULT_LIMITS, maxFileBytes: 1024 * 1024 }
+    const p = pack({ [`${CAR}/Misha.zip`]: zipSync({ "livery.dds": big(64 * 1024 * 1024) }) })
+    expect(p.length).toBeLessThan(limits.maxFileBytes)
+    expect(() => readLiveryPack(p, limits)).toThrowError(/over the 1.0 MB limit for one file/)
+  })
+
+  it("keeps terminal control out of a refusal it has to print", () => {
+    // A size refusal names the entry, and it happens before assertSafeName has
+    // looked at that name — so this is the one place an unvalidated name from
+    // an untrusted zip reaches somebody's terminal. A right-to-left override
+    // would make the refusal name a different file than the one refused.
+    const limits: PackLimits = { ...DEFAULT_LIMITS, maxFileBytes: 1024 }
+    const p = pack({
+      [`${CAR}/Misha.zip`]: zipSync({ "liv\u202Eery.dds": big(4096), "livery.dds": bytes("x") }),
+    })
+    let message = ""
+    try {
+      readLiveryPack(p, limits)
+    } catch (e) {
+      message = (e as Error).message
+    }
+    expect(message).toContain("over the")
+    expect(message).not.toContain("\u202E")
+    expect(message).toContain("\uFFFD")
   })
 
   it("accepts a realistic livery under the shipped limits", () => {

@@ -334,7 +334,12 @@ session started with and would not.
 not the offending skin — if any of it is not a livery: a path that climbs out
 with `..`, a file that isn't a `.dds`/`.png`/`.jpg`/`.json`/`.ini`/`.txt`, a
 leftover `.psd`, subfolders, an oversized file, a zip that unpacks far larger
-than it looks, or a driver zip with no `.dds` in it at all. A driver whose name
+than it looks, a zip whose directory disagrees with what it holds, or a driver
+zip with no `.dds` in it at all. The size limits are read off the zip's
+directory *before* anything is decompressed, so a pack that claims gigabytes is
+refused rather than allocated. What a Mac or Windows adds on its own —
+`__MACOSX`, `.DS_Store`, `Thumbs.db` — is dropped rather than refused; the
+driver never saw those and could not have removed them. A driver whose name
 isn't in the entry list, or whose livery is filed under a car they don't drive,
 refuses the run too. Half a livery drop is worse to unpick than none, and the
 cost of the other answer is re-zipping a file.
