@@ -145,6 +145,20 @@ export interface LiveryUploadSettings {
    * arrives for a season before deciding.
    */
   autoApply?: boolean
+  /**
+   * Public base URL of `champctl-upload`, if the league runs one.
+   *
+   * Enables `/livery upload-url`, which is the only route open to a driver
+   * whose zip is over their Discord tier's ceiling — that rejection happens on
+   * their client, before the bot exists, so without this they cannot tell
+   * champctl anything at all.
+   *
+   * Must be `https`. The token travels in the URL, so plain HTTP puts a bearer
+   * credential in every proxy log between the driver and the server; champctl
+   * refuses to mint rather than downgrading quietly. `http://localhost` is
+   * allowed for development.
+   */
+  uploadBaseUrl?: string
 }
 
 export interface LeagueProfile {

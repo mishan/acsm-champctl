@@ -165,6 +165,28 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
       if (l["autoApply"] !== undefined && typeof l["autoApply"] !== "boolean") {
         bad("`discord.livery.autoApply` must be true or false")
       }
+
+      // Checked here as well as at mint time. Finding out from a failed profile
+      // load is a great deal better than finding out because a driver's upload
+      // link never worked, and better still than not finding out because it did.
+      const base = l["uploadBaseUrl"]
+      if (base !== undefined) {
+        if (typeof base !== "string") bad("`discord.livery.uploadBaseUrl` must be a URL")
+        let parsed: URL
+        try {
+          parsed = new URL(base as string)
+        } catch {
+          bad(`\`discord.livery.uploadBaseUrl\` isn't a URL: ${JSON.stringify(base)}`)
+          throw new Error("unreachable")
+        }
+        const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)
+        if (parsed.protocol !== "https:" && !loopback) {
+          bad(
+            "`discord.livery.uploadBaseUrl` must be https — the upload token travels in the URL, " +
+              "so http would put it in every proxy log on the way. http is allowed on localhost.",
+          )
+        }
+      }
     }
   }
 

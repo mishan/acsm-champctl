@@ -5,7 +5,7 @@
 Championship creation, validation and stats for Assetto Corsa Server Manager.
 Built for BATL, usable by any league.
 
-Six commands:
+Eight commands:
 
 | | |
 |---|---|
@@ -15,6 +15,7 @@ Six commands:
 | `champctl-championship` | create a championship from a template |
 | `champctl-liveries` | upload drivers' custom liveries and assign them |
 | `champctl-serve` | the finalize and create-a-championship flows as a web UI, for people without a terminal |
+| `champctl-upload` | take drivers' livery uploads from one-time links, holding no credentials |
 | `champctl-bot` | say what gridmom found in Discord |
 
 Working on champctl itself? See [AGENTS.md](AGENTS.md) and
@@ -30,9 +31,9 @@ npm install
 npm run gridmom -- check --file fixtures/synthetic/suzuka-duplicate-pitboxes.json
 ```
 
-Installed, the seven commands are on your `PATH` as `gridmom`,
+Installed, the eight commands are on your `PATH` as `gridmom`,
 `champctl-archive`, `champctl-finalize`, `champctl-championship`,
-`champctl-liveries`, `champctl-serve` and `champctl-bot`.
+`champctl-liveries`, `champctl-serve`, `champctl-upload` and `champctl-bot`.
 From a checkout, `npm run gridmom -- <args>` is the same thing.
 
 Every command takes `--profile` and `--base-url`; `--help` on any of them is
@@ -418,6 +419,18 @@ restarts practice: a driver uploading at 8pm must not be able to disconnect
 everyone racing over a cosmetic change, so the reply says the livery appears at
 the *next* practice start. Unlike `--zip`, one driver leaving the entry list
 refuses only their own submission rather than the whole batch.
+
+**Drivers whose zip is too big for Discord** get a one-time link instead.
+`champctl-upload` hosts it — its own process, holding no ACSM credentials and no
+Discord token, writing to the same queue. That is the same argument as the bot
+applied a third time, and by now it is a rule: every process that faces
+something untrusted has nothing worth stealing. The token is 256 random bits
+stored as a digest, scoped at mint time to one driver and one car, good for
+thirty minutes and one POST. `GET` never spends it, because Discord's unfurler
+fetches the link within a second of it being sent and a token that burned on
+`GET` would be dead before the driver clicked. `discord.livery.uploadBaseUrl`
+must be https: the token travels in the URL, and champctl refuses to mint rather
+than downgrade.
 
 **Who is who** is champctl's problem, because ACSM has nowhere to put it — no
 Discord field on an account or an entrant, and the sign-up answers that could

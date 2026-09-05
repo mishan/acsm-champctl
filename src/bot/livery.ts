@@ -31,13 +31,17 @@ import {
   resolveUploader,
   type HandleHint,
 } from "../liveries/claims.js"
-import {
-  DEFAULT_LIMITS,
-  LiveryPackError,
-  type PackLimits,
-  readSingleLivery,
-} from "../liveries/pack.js"
+import { acceptLivery, type AcceptQueue } from "../liveries/accept.js"
+import { DEFAULT_LIMITS, type PackLimits } from "../liveries/pack.js"
 import type { SubmitResult } from "../liveries/queue.js"
+import {
+  DEFAULT_TOKEN_TTL_MS,
+  type MintedToken,
+  type UploadGrant,
+  uploadUrl,
+} from "../liveries/upload-token.js"
+
+export { uploadReply, type ReplyFacts } from "../liveries/accept.js"
 
 /** What Discord tells us about who is asking, and from where. */
 export interface UploadContext {
@@ -112,17 +116,7 @@ export const DEFAULT_UPLOAD_LIMITS: UploadLimits = {
 }
 
 /** The bits of the queue this module needs, so tests need no database. */
-export interface UploadQueue {
-  submit(input: {
-    discordUserId: string
-    discordHandle?: string
-    championshipId: string
-    driverName: string
-    carModel: string
-    skinFolder: string
-    body: Uint8Array
-    at: Date
-  }): Promise<SubmitResult>
+export interface UploadQueue extends AcceptQueue {
   lastAcceptedAt(discordUserId: string): Promise<Date | undefined>
   queuedBytes(): Promise<number>
 }
@@ -187,89 +181,22 @@ export async function handleUpload(options: HandleUploadOptions): Promise<Upload
     }
   }
 
-  let livery: ReturnType<typeof readSingleLivery>
-  try {
-    // The identity supplies both names. The attachment's filename is the one
-    // piece of driver-controlled text in this flow and it is used for nothing —
-    // not the skin folder, not the queue key, not a path.
-    livery = readSingleLivery(options.body, { carModel, driverName }, limits.pack)
-  } catch (e) {
-    if (e instanceof LiveryPackError) return { ok: false, reply: e.message, reason: "pack" }
-    throw e
-  }
-
-  const submission = await options.queue.submit({
-    discordUserId: context.discordUserId,
-    ...(context.discordHandle ? { discordHandle: context.discordHandle } : {}),
-    championshipId: options.championshipId,
+  const accepted = await acceptLivery({
     driverName,
     carModel,
-    skinFolder: livery.skinFolder,
+    championshipId: options.championshipId,
+    discordUserId: context.discordUserId,
+    ...(context.discordHandle ? { discordHandle: context.discordHandle } : {}),
     body: options.body,
-    at: options.now,
+    queue: options.queue,
+    now: options.now,
+    limits: limits.pack,
+    autoApply: options.autoApply ?? false,
   })
 
-  return {
-    ok: true,
-    submission,
-    reply: uploadReply({
-      driverName,
-      carModel,
-      fileCount: livery.files.length,
-      hasPreview: livery.files.some((f) => f.name.toLowerCase() === "preview.jpg"),
-      replaced: submission.superseded !== undefined,
-      autoApply: options.autoApply ?? false,
-    }),
-  }
-}
-
-export interface ReplyFacts {
-  driverName: string
-  carModel: string
-  fileCount: number
-  hasPreview: boolean
-  replaced: boolean
-  autoApply: boolean
-}
-
-/**
- * What the driver is told.
- *
- * Two sentences here are load-bearing rather than polite.
- *
- * **It is not on the server yet.** A driver who reads "uploaded" and then joins
- * practice sees the old car and uploads again, and then a third time. Saying
- * where it actually is stops the retry loop.
- *
- * **Practice already running keeps the old entry list.** Bot uploads never
- * restart practice — a driver at 8pm must not be able to disconnect everyone
- * else over a cosmetic change — so the livery appears at the *next* practice
- * start, and that is a surprise unless it is said.
- */
-export function uploadReply(facts: ReplyFacts): string {
-  const lines: string[] = []
-
-  lines.push(
-    facts.replaced
-      ? `Got it — that replaces the one you sent earlier. ${facts.fileCount} file${facts.fileCount === 1 ? "" : "s"} for ${facts.driverName}'s ${facts.carModel}.`
-      : `Got it — ${facts.fileCount} file${facts.fileCount === 1 ? "" : "s"} for ${facts.driverName}'s ${facts.carModel}.`,
-  )
-
-  lines.push(
-    facts.autoApply
-      ? `It'll go on the server shortly, and show up the next time practice starts — practice ` +
-          `that's running now keeps the old entry list.`
-      : `It's queued for an admin to apply. Once they do, it shows up the next time practice ` +
-          `starts — practice that's running now keeps the old entry list.`,
-  )
-
-  if (!facts.hasPreview) {
-    // Races fine, looks broken. Worth one line now rather than a question on
-    // race night.
-    lines.push(`No preview.jpg in there, so it'll show as a blank tile in Content Manager.`)
-  }
-
-  return lines.join("\n")
+  return accepted.ok
+    ? { ok: true, reply: accepted.reply, submission: accepted.submission }
+    : { ok: false, reply: accepted.reply, reason: "pack" }
 }
 
 export interface ClaimRequest {
@@ -331,5 +258,83 @@ export async function handleClaim(
       ...(hint ? { hint } : {}),
       ...(result.replaced ? { replaced: result.replaced } : {}),
     }),
+  }
+}
+
+export interface UploadUrlRequest {
+  context: UploadContext
+  clamp: LiveryClamp
+  championship: Championship
+  championshipId: string
+  claim: DriverClaim | undefined
+  /** From `discord.livery.uploadBaseUrl`. Absent means the league has no link. */
+  uploadBaseUrl?: string
+}
+
+export interface TokenMinter {
+  mint(grant: UploadGrant, now: Date, ttlMs?: number): Promise<MintedToken>
+}
+
+export type UploadUrlOutcome = { ok: true; reply: string } | { ok: false; reply: string }
+
+/**
+ * `/livery upload-url` — a link for a driver whose zip Discord won't carry
+ * (docs/discord-livery-upload.md §3).
+ *
+ * The reply must be **ephemeral**. It contains a bearer credential, and an
+ * ephemeral reply is visible only to the person who ran the command, arrives on
+ * the interaction already in hand, and leaves nothing in their message history
+ * — where a DM would sit indefinitely and fail outright for anyone with DMs
+ * from server members turned off.
+ *
+ * The identity resolution is the same as an upload's, and that matters: the URL
+ * carries no "who", so the driver and car are fixed here and a leaked link
+ * uploads for the person it was minted for and nobody else.
+ */
+export async function handleUploadUrl(
+  request: UploadUrlRequest,
+  tokens: TokenMinter,
+  now: Date,
+  ttlMs: number = DEFAULT_TOKEN_TTL_MS,
+): Promise<UploadUrlOutcome> {
+  const clamped = clampProblem(request.clamp, request.context)
+  if (clamped) return { ok: false, reply: clamped }
+
+  if (!request.uploadBaseUrl) {
+    return {
+      ok: false,
+      reply:
+        `This league hasn't set up upload links, so Discord attachments are the only way in. ` +
+        `If your file is too big for Discord, an admin can either set one up or take it by hand.`,
+    }
+  }
+
+  const resolved = resolveUploader(request.championship, request.claim)
+  if (!resolved.ok) return { ok: false, reply: resolved.reason }
+
+  const minted = await tokens.mint(
+    {
+      discordUserId: request.context.discordUserId,
+      ...(request.context.discordHandle ? { discordHandle: request.context.discordHandle } : {}),
+      championshipId: request.championshipId,
+      driverName: resolved.uploader.driverName,
+      carModel: resolved.uploader.carModel,
+    },
+    now,
+    ttlMs,
+  )
+
+  // `uploadUrl` throws rather than downgrading when the base URL is not https,
+  // and that error belongs to the operator: it is a misconfiguration, not
+  // anything the driver did, and it must not reach them as a working link.
+  const url = uploadUrl(request.uploadBaseUrl, minted.token)
+  const minutes = Math.round(ttlMs / 60_000)
+
+  return {
+    ok: true,
+    reply:
+      `Here's your upload link — it works once, for the next ${minutes} minutes, and only for ` +
+      `${resolved.uploader.driverName}'s ${resolved.uploader.carModel}:\n<${url}>\n` +
+      `Don't share it: anyone with it can upload your livery.`,
   }
 }

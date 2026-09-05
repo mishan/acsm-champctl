@@ -7,6 +7,7 @@ import {
   clampProblem,
   handleClaim,
   handleUpload,
+  handleUploadUrl,
   uploadReply,
   type UploadContext,
   type UploadQueue,
@@ -14,6 +15,7 @@ import {
 import { SqliteClaimStore, type DriverClaim } from "../src/liveries/claims.js"
 import { DEFAULT_LIMITS } from "../src/liveries/pack.js"
 import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
+import { SqliteTokenStore } from "../src/liveries/upload-token.js"
 import { championship, championshipClass, entryList } from "./support/build.js"
 
 const CAR = "rss_formula_hybrid_2021"
@@ -388,5 +390,98 @@ describe("handleClaim", () => {
     expect(await queue.queued(CHAMP)).toHaveLength(1)
     store.close()
     queue.close()
+  })
+})
+
+describe("handleUploadUrl", () => {
+  type Req = Parameters<typeof handleUploadUrl>[0]
+  const request = (over: { [K in keyof Req]?: Req[K] | undefined } = {}): Req => {
+    const merged = {
+      context: context(),
+      clamp: {},
+      championship: champ(),
+      championshipId: CHAMP,
+      claim: claim(),
+      uploadBaseUrl: "https://liveries.example.com",
+      ...over,
+    }
+    if (merged.uploadBaseUrl === undefined)
+      delete (merged as { uploadBaseUrl?: string }).uploadBaseUrl
+    return merged as Req
+  }
+
+  it("hands back a link scoped to the driver and car", async () => {
+    const tokens = await SqliteTokenStore.open(":memory:")
+    const result = await handleUploadUrl(request(), tokens, NOW)
+
+    expect(result.ok).toBe(true)
+    expect(result.reply).toMatch(/https:\/\/liveries\.example\.com\/u\/[A-Za-z0-9_-]{43}/)
+    expect(result.reply).toMatch(/Misha's rss_formula_hybrid_2021/)
+    tokens.close()
+  })
+
+  it("says it works once and for how long", async () => {
+    const tokens = await SqliteTokenStore.open(":memory:")
+    const result = await handleUploadUrl(request(), tokens, NOW)
+    expect(result.reply).toMatch(/works once/)
+    expect(result.reply).toMatch(/next 30 minutes/)
+    tokens.close()
+  })
+
+  it("wraps the link so Discord doesn't unfurl it", async () => {
+    // Belt and braces — GET doesn't spend the token either, but a preview card
+    // for a credential is not a thing to put in a channel.
+    const tokens = await SqliteTokenStore.open(":memory:")
+    const result = await handleUploadUrl(request(), tokens, NOW)
+    expect(result.reply).toMatch(/<https:\/\//)
+    tokens.close()
+  })
+
+  it("tells the driver not to share it", async () => {
+    const tokens = await SqliteTokenStore.open(":memory:")
+    expect((await handleUploadUrl(request(), tokens, NOW)).reply).toMatch(/Don't share it/)
+    tokens.close()
+  })
+
+  it("says so plainly when the league has no upload server", async () => {
+    const tokens = await SqliteTokenStore.open(":memory:")
+    const result = await handleUploadUrl(request({ uploadBaseUrl: undefined }), tokens, NOW)
+    expect(result).toMatchObject({ ok: false })
+    expect(result.reply).toMatch(/hasn't set up upload links/)
+    tokens.close()
+  })
+
+  it("obeys the clamp", async () => {
+    const tokens = await SqliteTokenStore.open(":memory:")
+    const result = await handleUploadUrl(
+      request({
+        clamp: { channelIds: [LIVERY_CHANNEL] },
+        context: context({ channelId: OTHER_CHANNEL }),
+      }),
+      tokens,
+      NOW,
+    )
+    expect(result).toMatchObject({ ok: false })
+    tokens.close()
+  })
+
+  it("won't mint for someone who hasn't claimed a driver", async () => {
+    const tokens = await SqliteTokenStore.open(":memory:")
+    const result = await handleUploadUrl(request({ claim: undefined }), tokens, NOW)
+    expect(result.reply).toMatch(/\/livery claim/)
+    tokens.close()
+  })
+
+  /**
+   * Throws rather than handing the driver a working link over plain HTTP. The
+   * mistake belongs to the operator and the driver cannot act on it, so a
+   * failed command is the right place for it to surface.
+   */
+  it("refuses to put the token on plain http", async () => {
+    const tokens = await SqliteTokenStore.open(":memory:")
+    await expect(
+      handleUploadUrl(request({ uploadBaseUrl: "http://liveries.example.com" }), tokens, NOW),
+    ).rejects.toThrow(/has to be https/)
+    tokens.close()
   })
 })
