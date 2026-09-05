@@ -108,13 +108,20 @@ describe("planLiveries", () => {
   })
 
   it("reports rounds that already have results", () => {
+    // The event's own CompletedTime is left at zero deliberately: with it set,
+    // eventHasResults returns on the first line and the RACE session never
+    // decides anything, so the test would pass with "Race" dropped from
+    // RACED_SESSIONS entirely.
     const c = champWith([person({ Name: "Misha" })], {
       Events: [
         raceEvent({
           EntryList: {},
           StartedTime: "2026-09-02T20:00:00Z",
-          CompletedTime: "2026-09-02T21:00:00Z",
-          Sessions: { RACE: { Name: "Race", Results: { Type: "RACE" } } },
+          CompletedTime: "0001-01-01T00:00:00Z",
+          Sessions: {
+            BOOK: { Name: "Booking", CompletedTime: "2026-09-02T19:00:00Z" },
+            RACE: { Name: "Race", Results: { Type: "RACE" } },
+          },
         }),
         raceEvent({ EntryList: {} }),
       ],
@@ -138,6 +145,31 @@ describe("planLiveries", () => {
               Name: "Practice",
               StartedTime: "2026-09-02T19:00:00Z",
               CompletedTime: "0001-01-01T00:00:00Z",
+              Results: null,
+            },
+          },
+        }),
+      ],
+    })
+    expect(planLiveries(c, "champ-1", packOf(livery("Misha"))).racedRounds).toEqual([])
+  })
+
+  it("does not call a round raced when its practice loop has completed a session", () => {
+    // The half of the practice-server problem that reading every session in the
+    // map left behind. A looping practice writes its own CompletedTime each
+    // time a loop ends, so an untouched round went back to reporting itself as
+    // raced about an hour after somebody started practice on it.
+    const c = champWith([person({ Name: "Misha" })], {
+      Events: [
+        raceEvent({
+          EntryList: {},
+          StartedTime: "2026-09-02T19:00:00Z",
+          CompletedTime: "0001-01-01T00:00:00Z",
+          Sessions: {
+            PRACTICE: {
+              Name: "Practice",
+              StartedTime: "2026-09-02T19:00:00Z",
+              CompletedTime: "2026-09-02T20:00:00Z",
               Results: null,
             },
           },
