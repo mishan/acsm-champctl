@@ -135,7 +135,7 @@ a driver. So ACSM knows nothing about who a Discord user is, by construction.
 
 **The custom sign-up questions are real, and they are in the export.**
 `ChampionshipSignUpForm.ExtraFields` is `[]string` — the question labels, and
-nothing more; that answers recon item §9.3, which assumed something more
+nothing more; that answers recon item §10.3, which assumed something more
 complicated. Each `ChampionshipSignUpResponse` carries
 `Questions map[string]string`, filled in `HandleChampionshipSignUp` by reading
 `Question.{index}` off the form and keying it by the label. So a "Discord
@@ -160,7 +160,7 @@ is public; `src/acsm/types.ts` annotates `SignUpForm.Responses` **PUBLIC DATA**.
 The likely explanation is that both were written from an export downloaded
 through the UI while logged in as an admin, which is how anyone gets one. It
 should be settled by one unauthenticated `curl` against BATL's premium instance
-before either sentence is trusted further — see §9.
+before either sentence is trusted further — see §10.
 
 If the gate holds on premium, the consequence for *this* feature is exact:
 
@@ -370,7 +370,7 @@ The token:
   holds driver names and Discord ids already; it should not also be a drawer of
   live credentials.
 - **Scoped at mint time** to the discord user id, championship, driver name and
-  car model resolved in §2 and §7. The URL cannot be used to upload as someone
+  car model resolved in §2 and §8. The URL cannot be used to upload as someone
   else, because it does not carry a "who" for the uploader to change.
 - **Short TTL** — thirty minutes is generous for "go and find the file".
 - **One live token per driver.** Minting a second invalidates the first, so a
@@ -490,7 +490,7 @@ One row per submission plus the validated bytes:
 |---|---|
 | `id` | |
 | `discord_user_id`, `discord_message_id` | who and where, for the audit trail |
-| `championship_id` | resolved at submission, §7 |
+| `championship_id` | resolved at submission, §8 |
 | `driver_name`, `car_model`, `skin_folder` | resolved at submission |
 | `bytes` | the zip **as received**, not the unpacked files |
 | `state` | `queued` / `applied` / `refused` / `superseded` |
@@ -546,7 +546,111 @@ it on when the refusals have stopped being interesting.
 
 ---
 
-## 6. No practice restart, and telling the driver why
+## 6. Retention, and the pack drivers install
+
+A livery is not finished when it reaches the server. Everyone else on the grid
+needs it too, or they see the default skin where a car should be — and the way
+a league solves that today is somebody maintaining a "carset" archive by hand,
+which is the same job this feature exists to delete, one step further along.
+
+So the queue is not a queue. Bytes stay for the life of the championship, and
+`champctl` builds the carset out of them on demand.
+
+### The store is what champctl applied, not what Discord received
+
+If only bot submissions are retained, the pack is a lie the first week an
+operator uploads someone's livery by hand — the file is on the server, missing
+from the pack, and the driver who installed the pack still cannot see that car.
+A pack that is *almost* complete is worse than no pack, because nobody knows
+which car is the one they're missing.
+
+So the recording point is `applyLiveries`, not the bot. **Everything champctl
+puts on the server gets written to the store, whatever route it came in by** —
+`--zip` from an operator, the drain, anything later. The store then answers
+"what has champctl put on this championship's cars", which is a more useful
+question than "what did Discord send" and is the one the pack needs.
+
+It is still not "every skin on the server": a livery uploaded through ACSM's own
+web UI is invisible to champctl and always will be. The pack should say what it
+is — a count, and the date — rather than implying completeness it cannot have.
+
+### Layout
+
+Content Manager installs an archive by working out what it holds and dropping it
+onto the Assetto Corsa root, so the archive should simply *be* that root:
+
+```
+content/cars/rss_formula_hybrid_2021/skins/Misha/livery.dds
+content/cars/rss_formula_hybrid_2021/skins/Misha/preview.jpg
+content/cars/rss_formula_hybrid_2021/skins/Shoebacca/livery.dds
+content/cars/ks_mazda_mx5_cup/skins/postaL/livery.dds
+```
+
+Top-level `content/`, one tree, every car in the championship. This is the shape
+leagues already distribute carsets in, and it degrades well: a driver whose CM
+install misbehaves can extract the `content` folder over their AC directory by
+hand and get the identical result.
+
+**The skin folder name is load-bearing and has to match the server.** ACSM
+creates the skin folder from the driver's name, `Entrant.Skin` is set to that
+same string, and the pack has to use it a third time — if the pack's folder were
+`misha_2026` while the entry list says `Misha`, every driver would install the
+files successfully and still see the default livery, because AC would be looking
+in a folder that doesn't exist. All three come from `Livery.skinFolder` already,
+so this is true by construction; it needs a test precisely *because* it is the
+kind of thing a later refactor breaks silently.
+
+**Warn on a missing `preview.jpg`.** A skin without one shows blank in CM's
+list. `pack.ts` does not require one and should not start — a livery with no
+preview still works in a race — but the pack build is the right place to say
+"four of these will look empty in Content Manager", in gridmom's register.
+
+### Build it deterministically
+
+Same submissions in, same bytes out: entries sorted, timestamps fixed, no
+build-time metadata. Three things follow, and all three matter more than the
+tidiness does.
+
+The pack gets a content hash, so "has the carset changed since Tuesday" is a
+string compare rather than a judgement. It can be served with a strong `ETag`,
+so a driver re-checking the link before a race night downloads nothing when
+nothing changed — which is the common case, and the pack is the largest thing
+champctl will ever serve. And a rebuilt pack that differs only in a zip
+timestamp does not look like a new carset to everyone who already has it.
+
+### Size, and not reusing the upload limits
+
+Thirty drivers is plausibly a few hundred megabytes. `DEFAULT_LIMITS` caps a
+*submission* at 128 MB and has no business here — a carset is meant to be large.
+Stream it rather than assembling it in memory, and cache the built artifact
+keyed on the content hash rather than rebuilding per request.
+
+Retention has a cost that is worth stating rather than discovering: keeping only
+the newest applied submission per (championship, car, driver) is what bounds it.
+Superseded and refused bytes are not carset material and should not outlive the
+decision that rejected them.
+
+### Serving it
+
+`champctl-upload` — the process from §3 that already faces the internet with no
+credentials. Same argument, and it is now the obvious home rather than a new
+one.
+
+Two things to decide:
+
+- **Public URL, or unguessable one?** The folder names are driver names, which
+  are already in the public entry list, so there is little to protect. But a
+  stable public URL is also a stable public URL, and a league may not want its
+  carset indexed. An unguessable per-championship path costs nothing and can be
+  pinned in Discord exactly like a public one.
+- **How drivers hear about it.** Not through ACSM's Content Manager wrapper:
+  its `cars` map is one URL per *car model*, meant for the car mod itself, so
+  putting the carset there would replace the link to the car people need before
+  the livery matters. Distribute it out of band — pinned in Discord, and named
+  in the bot's reply when an upload lands, since the driver who just submitted
+  is the one person guaranteed to be reading.
+
+## 7. No practice restart, and telling the driver why
 
 `applyLiveries` takes `restartPracticeRound` as optional and skips the restart
 when it is absent. The bot path never sets it. That is the whole implementation.
@@ -580,7 +684,7 @@ The operator gets the restart. Leave `--restart` on the CLI exactly as it is.
 
 ---
 
-## 7. Which championship?
+## 8. Which championship?
 
 The CLI takes an id. A driver will not.
 
@@ -602,7 +706,7 @@ guessing at all.
 
 ---
 
-## 8. Abuse, which is now a thing
+## 9. Abuse, which is now a thing
 
 The CLI's threat model was "the operator might be handed a bad zip". This one is
 "anyone with the role can send arbitrary bytes on a schedule of their choosing".
@@ -627,7 +731,7 @@ now carry expiring signed parameters and a queued download will 403.
 
 ---
 
-## 9. What has to be measured before building
+## 10. What has to be measured before building
 
 The repo's rule (plan §3.4) is that a request gets captured before code is
 written against it. Outstanding here:
@@ -660,14 +764,31 @@ written against it. Outstanding here:
    `ExtraFields` itself needs no recon: it is `[]string` in the OSS source, the
    question labels and nothing more. `src/acsm/types.ts` should be narrowed from
    `unknown[]` to `string[]` either way.
-4. **A slash command with an attachment option, end to end**, on a scratch
+4. **Does Content Manager overwrite an existing skin folder when the carset is
+   re-installed?** The pack is downloaded repeatedly through a season and most
+   of what it contains is already on the driver's disk, so an install that
+   silently declines to replace changed files means a driver who has installed
+   once keeps the *old* version of every livery that has been updated since —
+   and sees a stale car with no indication anything went wrong.
+
+   There is at least one report of CM's auto-install not replacing an existing
+   `data.acd` in a league's skin archive, with a manual extract over the AC root
+   working fine. Whatever is going on there, it is close enough to this to be
+   worth ten minutes: install a pack, change one `livery.dds`, rebuild, install
+   again, look at the file.
+
+   If it does not overwrite, the workaround belongs in the driver-facing note
+   rather than in the pack — "if a livery looks wrong, delete the skin folder
+   and re-install" — and the pack should ship a plain-text manifest listing each
+   skin and its hash so the answer to "did mine update" is checkable.
+5. **A slash command with an attachment option, end to end**, on a scratch
    guild — the payload shape, `interaction.member.roles` in a guild, and the
    deferral needed for a 20 MB download to finish inside Discord's 3-second
    initial-response window.
 
 ---
 
-## 10. Build order
+## 11. Build order
 
 Each step is a commit that leaves the tree working.
 
@@ -675,22 +796,26 @@ Each step is a commit that leaves the tree working.
 2. `readSingleLivery` in `pack.ts`, with tests. No bot involved; the CLI can
    grow a `--skin <zip> --for <driver>` mode as its first caller and that is
    independently useful.
-3. The queue: schema, `src/liveries/queue.ts`, `champctl-liveries drain`
-   behind `--push`. Still no bot. Testable with rows inserted by hand.
-4. `driver_discord` and the claim/unclaim commands, with the admin-channel
+3. The store: schema, `src/liveries/store.ts`, recording from `applyLiveries`
+   whatever the route, and `champctl-liveries drain` behind `--push`. Still no
+   bot. Testable with rows inserted by hand.
+4. The carset pack — build from the store, serve nothing yet. A CLI subcommand
+   that writes the zip to a path is enough to install by hand and prove the
+   layout, and it is the only part of §6 that can be tested without a browser.
+5. `driver_discord` and the claim/unclaim commands, with the admin-channel
    announcement.
-5. `/livery upload` — clamp, download, validate, queue, reply.
-6. `champctl-upload` and the one-time link, for the drivers Discord's own
+6. `/livery upload` — clamp, download, validate, queue, reply.
+7. `champctl-upload` and the one-time link, for the drivers Discord's own
    ceiling shuts out. Its own process, no credentials of any kind.
-7. `autoApply` and the timer.
-8. Extend `test/bot.test.ts`'s import guard to the new modules under
+8. `autoApply` and the timer.
+9. Extend `test/bot.test.ts`'s import guard to the new modules under
    `src/bot/`, and add the mirror of it: nothing under `src/liveries/` or the
    drain path imports `src/bot/`. The invariant is a wall, and a wall tested
    from one side is a fence.
 
 ---
 
-## 11. Open questions
+## 12. Open questions
 
 - **Does a claim need to survive a championship?** Entrant names are per
   championship. A driver who races as "Misha" in September and "Misha [BATL]"
