@@ -35,6 +35,7 @@ import {
   eventPracticePath,
 } from "../acsm/paths.js"
 import { AcsmWriteError, isRedirectStatus, type AcsmSession } from "../acsm/session.js"
+import { championshipIdFromRedirect } from "../acsm/write.js"
 import type { Livery } from "./pack.js"
 import type { LiveryPlan } from "./plan.js"
 
@@ -86,6 +87,40 @@ export class PracticeRestartError extends LiveryApplyError {
   }
 }
 
+/**
+ * The championship has more than one class, and champctl will not write it.
+ *
+ * `docs/acsm-champ-form.md` §4.4: the championship form renders no
+ * `EntryList.EntrantID`, so ACSM's `BuildEntryList` falls back to `PitBox = i`
+ * — and it runs that loop once per class, with `i` restarting at 0 each time.
+ * Two classes therefore produce two entrants both claiming `CAR_0`, and
+ * `AddInPitBox` overwrites on collision, so one of them is silently gone from
+ * the entry list the next time a session starts.
+ *
+ * Nobody has measured a multi-class save against a real manager, and the way to
+ * measure it is not on a league's championship the evening before a race. BATL
+ * runs one class plus the spectator van, so this refusal costs BATL nothing —
+ * and champctl is deliberately public, so the league it does not cost nothing
+ * is somebody else's.
+ *
+ * A refusal rather than a warning because there is no safe half-measure: the
+ * form save is a whole-championship replace (§4.5), so the damage is done by
+ * the one POST this would otherwise make.
+ */
+export class MultiClassError extends LiveryApplyError {
+  constructor(readonly classCount: number) {
+    super(
+      `This championship has ${classCount} classes, and champctl only writes single-class ` +
+        `championships. The championship form carries no EntryList.EntrantID, so ACSM rebuilds ` +
+        `the pit boxes by position and restarts the numbering for each class — two classes means ` +
+        `two drivers assigned the same pit box, and one of them is dropped from the entry list ` +
+        `when the session starts. Nothing was written, and any skins already uploaded are ` +
+        `harmless. Assign the skins in ACSM by hand, or see docs/acsm-champ-form.md §4.4.`,
+    )
+    this.name = "MultiClassError"
+  }
+}
+
 export interface ApplyLiveriesOptions {
   /**
    * Round whose looping practice server to restart, 1-based. Omit to skip it.
@@ -119,8 +154,6 @@ export async function applyLiveries(
     practiceRestarted: false,
   }
 
-  if (plan.noop) return result
-
   for (const assignment of plan.assignments) {
     await uploadSkin(session, assignment.carModel, assignment.livery)
     result.uploaded.push({
@@ -131,8 +164,14 @@ export async function applyLiveries(
     })
   }
 
-  await saveChampionshipSkins(session, plan)
-  result.championshipSaved = true
+  // Only when a `Skin` field actually differs. The uploads above have already
+  // replaced the files the entry list points at, so a re-upload onto skins that
+  // are already assigned needs no write — and this write is a
+  // whole-championship replace, which is not a thing to do for nothing.
+  if (plan.skinChanges.length > 0) {
+    await saveChampionshipSkins(session, plan)
+    result.championshipSaved = true
+  }
 
   const round = options.restartPracticeRound
   if (round !== undefined) {
@@ -215,6 +254,21 @@ async function uploadSkin(session: AcsmSession, carModel: string, livery: Livery
 }
 
 /**
+ * Two championship ids, compared the way ACSM's router compares them.
+ *
+ * Case-insensitively, because the two sides come from different places: one is
+ * whatever the operator typed on the command line, the other is whatever Go's
+ * `uuid.String()` wrote into `Location`, which is always lowercase. ACSM parses
+ * the id case-insensitively, so a championship pasted as `1E9F4A2B-...` reads
+ * and saves perfectly — and a `!==` here would then call that successful save a
+ * duplicate-creating failure, which is a worse answer than the one this check
+ * was added to replace.
+ */
+function sameChampionshipId(a: string | undefined, b: string): boolean {
+  return a !== undefined && a.toLowerCase() === b.toLowerCase()
+}
+
+/**
  * A pessimistic upload rate, in bytes per second.
  *
  * 256 KB/s is about 2 Mbit — slow for a home connection, and the point is to be
@@ -255,6 +309,8 @@ async function saveChampionshipSkins(session: AcsmSession, plan: LiveryPlan): Pr
   const path = championshipEditPath(plan.championshipId)
   const form = findChampionshipForm(await session.getText(path), session.url(path))
 
+  if (form.entrantsPerClass.length > 1) throw new MultiClassError(form.entrantsPerClass.length)
+
   const fields = [...form.fields]
   for (const assignment of plan.assignments) {
     const row = findEntrantRow(form, assignment.driverName)
@@ -284,6 +340,33 @@ async function saveChampionshipSkins(session: AcsmSession, plan: LiveryPlan): Pr
         `form errors by re-rendering the page rather than in the response, so check the entry ` +
         `list at ${championshipPath(plan.championshipId)} before retrying — the skins are ` +
         `uploaded either way.`,
+      res.status,
+      CHAMPIONSHIP_SUBMIT_PATH,
+    )
+  }
+
+  // Which championship it landed on, not just that it landed somewhere.
+  //
+  // `/championships/new/submit` serves create *and* edit — an edit is a create
+  // carrying an existing ID (`paths.ts`, docs §4.5) — so the 3xx alone does not
+  // say this was an edit of the intended championship, and two ordinary
+  // failures both arrive as a 302. A session that lapsed between the form GET
+  // and this POST redirects to the login page: nothing written, reported as
+  // saved. And a payload whose identity field didn't survive the round trip is
+  // treated as a *create*: the real championship is untouched and a duplicate
+  // now holds the entry list, again reported as saved.
+  //
+  // The `Location` header is the only place the answer is written down.
+  const landedOn = championshipIdFromRedirect(res)
+  if (!sameChampionshipId(landedOn, plan.championshipId)) {
+    throw new AcsmWriteError(
+      `The championship save redirected to ${landedOn ? `championship ${landedOn}` : `"${res.headers.get("location") ?? ""}"`}, ` +
+        `not to ${plan.championshipId}. ACSM serves create and edit from the same endpoint, so ` +
+        `this is either a session that expired mid-write — in which case nothing was saved — or ` +
+        `a save that ACSM took as a new championship, in which case ${plan.championshipId} is ` +
+        `untouched and there is a duplicate to delete. Check ` +
+        `${championshipPath(plan.championshipId)}; the skins are uploaded either way and are ` +
+        `harmless on their own.`,
       res.status,
       CHAMPIONSHIP_SUBMIT_PATH,
     )

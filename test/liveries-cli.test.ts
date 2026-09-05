@@ -1,10 +1,17 @@
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 
-import { UsageError, parseArgs, renderPlan } from "../src/cli/liveries.js"
+import { USAGE, UsageError, exitFor, parseArgs, renderPlan } from "../src/cli/liveries.js"
+import { AcsmError } from "../src/acsm/client.js"
 import type { Entrant } from "../src/acsm/types.js"
-import { readLiveryPack } from "../src/liveries/pack.js"
-import { planLiveries } from "../src/liveries/plan.js"
+import {
+  LiveryApplyError,
+  MultiClassError,
+  PracticeRestartError,
+  RosterChangedError,
+} from "../src/liveries/apply.js"
+import { LiveryPackError, readLiveryPack } from "../src/liveries/pack.js"
+import { LiveryPlanError, planLiveries } from "../src/liveries/plan.js"
 import { championship, championshipClass, entryList, raceEvent } from "./support/build.js"
 
 const CAR = "rss_formula_hybrid_2021"
@@ -89,15 +96,22 @@ describe("rendering a livery plan", () => {
     expect(renderPlan(plan)).toContain("(no skin) → Misha")
   })
 
-  it("lists the drivers who are already assigned separately", () => {
+  it("marks an already-assigned driver as a file replacement, not as nothing", () => {
+    // Both drivers are in the run. The difference the preview has to show is
+    // what each one does: postaL's row changes the entry list, Misha's replaces
+    // the files the entry list already points at. Reading "nothing to do" next
+    // to a driver whose livery is in the pack is how a corrected livery got
+    // left on the cutting-room floor.
     const plan = planLiveries(
       champ([person({ Name: "Misha", Skin: "Misha" }), person({ Name: "postaL" })]),
       "champ-1",
       packOf("Misha", "postaL"),
     )
     const out = renderPlan(plan)
-    expect(out).toContain("Already assigned, nothing to do: Misha")
+    expect(out).toMatch(/Misha\s+Misha \(already assigned, files replaced\)/)
+    expect(out).toContain("1 of 2 changes the entry list")
     expect(out).toContain("(no skin) → postaL")
+    expect(out).toContain("1 of 2")
   })
 
   it("warns loudly about a round the change would not reach", () => {
@@ -163,12 +177,59 @@ describe("rendering a livery plan", () => {
     expect(renderPlan(plan)).not.toContain("looping practice server")
   })
 
-  it("says so when there is nothing to change", () => {
+  it("says the championship goes unwritten when no assignment changes", () => {
+    // Not "nothing to do" — the files still go up. What is skipped is the
+    // championship POST, which is a whole-championship replace and not
+    // something to do for no reason.
     const plan = planLiveries(
       champ([person({ Name: "Misha", Skin: "Misha" })]),
       "champ-1",
       packOf("Misha"),
     )
-    expect(renderPlan(plan)).toContain("every livery in the pack is already assigned")
+    const out = renderPlan(plan)
+    expect(out).toContain("Every skin is already assigned")
+    expect(out).toContain("the championship is not written")
+  })
+})
+
+describe("what an error means for the exit code", () => {
+  it("calls a refusal a 2 and a failure a 3", () => {
+    expect(exitFor(new LiveryPackError("x"))?.code).toBe(2)
+    expect(exitFor(new LiveryPlanError("x"))?.code).toBe(2)
+    expect(exitFor(new RosterChangedError("x"))?.code).toBe(2)
+    expect(exitFor(new MultiClassError(2))?.code).toBe(2)
+    expect(exitFor(new PracticeRestartError(1, new Error("x")))?.code).toBe(3)
+    expect(exitFor(new LiveryApplyError("x"))?.code).toBe(3)
+    expect(exitFor(new AcsmError("x"))?.code).toBe(3)
+  })
+
+  it("matches the LiveryApplyError subclasses before LiveryApplyError itself", () => {
+    // The part of the mapping that is invisible in the source and breaks
+    // silently: all three of these *are* LiveryApplyErrors, so a branch order
+    // that reaches the general case first turns every refusal into a 3 telling
+    // somebody to report a bug about a championship champctl simply won't write.
+    expect(new MultiClassError(2)).toBeInstanceOf(LiveryApplyError)
+    expect(new RosterChangedError("x")).toBeInstanceOf(LiveryApplyError)
+    expect(new PracticeRestartError(1, new Error("x"))).toBeInstanceOf(LiveryApplyError)
+    expect(exitFor(new MultiClassError(2))?.code).toBe(2)
+    expect(exitFor(new RosterChangedError("x"))?.code).toBe(2)
+  })
+
+  it("leaves a usage mistake to the usage block", () => {
+    expect(exitFor(new UsageError("x"))).toBeUndefined()
+  })
+
+  it("says where an ACSM error came from", () => {
+    expect(exitFor(new AcsmError("500 from /championships"))?.message).toBe(
+      "ACSM: 500 from /championships",
+    )
+  })
+
+  it("no longer has an exit code for having nothing to do", () => {
+    // The pack is always uploaded now, so there is no run that does nothing —
+    // and the help text should not offer a code that can never happen.
+    expect(USAGE).not.toContain("nothing to do")
+    expect(USAGE).toContain("  0  previewed cleanly, or pushed")
+    expect(USAGE).not.toMatch(/^ {2}1 {2}/m)
   })
 })

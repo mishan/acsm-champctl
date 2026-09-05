@@ -51,7 +51,7 @@ describe("planLiveries", () => {
       fromSkin: "misha_old",
       overriddenInRounds: [],
     })
-    expect(plan.noop).toBe(false)
+    expect(plan.skinChanges).toHaveLength(1)
   })
 
   it("places an entrant at its CAR_n position, not its position in the pack", () => {
@@ -66,7 +66,12 @@ describe("planLiveries", () => {
     ])
   })
 
-  it("finds a driver in the second class", () => {
+  it("refuses a championship with more than one class, before uploading anything", () => {
+    // The preview is where this has to be caught: the export is public, so it
+    // costs no credentials and no upload to find out. docs/acsm-champ-form.md
+    // 4.4 — the form carries no EntryList.EntrantID, so ACSM rebuilds pit boxes
+    // by position and restarts the numbering per class, and the two drivers
+    // holding CAR_0 become one.
     const c = championship({
       Classes: [
         championshipClass({ ID: "c1", Entrants: entryList([person({ Name: "Ann" })]) }),
@@ -74,29 +79,32 @@ describe("planLiveries", () => {
       ],
       Events: [raceEvent({ EntryList: {} })],
     })
-    expect(planLiveries(c, "champ-1", packOf(livery("Bob"))).assignments[0]).toMatchObject({
-      classIndex: 1,
-      entrantIndex: 0,
-    })
+    expect(() => planLiveries(c, "champ-1", packOf(livery("Bob")))).toThrowError(LiveryPlanError)
+    expect(() => planLiveries(c, "champ-1", packOf(livery("Bob")))).toThrowError(
+      /has 2 classes, and champctl only assigns liveries in single-class/,
+    )
   })
 
-  it("separates a livery that changes nothing from one that does", () => {
+  it("separates a livery that changes the entry list from one that only replaces files", () => {
     const c = champWith([
       person({ Name: "Misha", Skin: "Misha" }),
       person({ Name: "postaL", Skin: "old" }),
     ])
     const plan = planLiveries(c, "champ-1", packOf(livery("Misha"), livery("postaL")))
-    expect(plan.assignments.map((a) => a.driverName)).toEqual(["postaL"])
-    expect(plan.unchanged.map((a) => a.driverName)).toEqual(["Misha"])
-    expect(plan.noop).toBe(false)
+    expect(plan.assignments.map((a) => a.driverName)).toEqual(["Misha", "postaL"])
+    expect(plan.skinChanges.map((a) => a.driverName)).toEqual(["postaL"])
   })
 
-  it("is a no-op when every livery is already assigned", () => {
-    // Re-running after a successful drop must not post the championship form
-    // again. That POST replaces the whole championship, so a pointless one is
-    // not free.
+  it("still plans an upload for a driver whose skin is already assigned", () => {
+    // The re-submission case, and the one this used to get wrong. The skin
+    // folder is always the driver's own name, so "already assigned" only means
+    // this ran for them before — it says nothing about the bytes. A driver who
+    // fixed a wrong sponsor and sent the zip again was told there was nothing
+    // to do, and the old livery stayed on the server.
     const c = champWith([person({ Name: "Misha", Skin: "Misha" })])
-    expect(planLiveries(c, "champ-1", packOf(livery("Misha"))).noop).toBe(true)
+    const plan = planLiveries(c, "champ-1", packOf(livery("Misha")))
+    expect(plan.assignments.map((a) => a.driverName)).toEqual(["Misha"])
+    expect(plan.skinChanges).toEqual([])
   })
 
   it("reports rounds that already have results", () => {

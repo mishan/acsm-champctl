@@ -299,6 +299,21 @@ inner zip's name is matched against the entrant's name exactly**, and becomes
 the skin folder on the server, so a re-upload lands on the same folder rather
 than accumulating one per week.
 
+That is also why re-running with the same pack uploads everything again. There
+is no way to ask ACSM what is already sitting in a skin folder, so a driver who
+fixed a wrong sponsor and sent the zip back is indistinguishable from one who
+changed nothing — and guessing "nothing changed" leaves the old livery on the
+car. The *championship* is only written when a skin assignment actually
+differs, because that POST replaces the whole championship.
+
+**Single-class championships only.** The championship form carries no
+`EntryList.EntrantID`, so ACSM rebuilds every pit box by position and restarts
+the numbering for each class: two classes means two drivers holding `CAR_0`, and
+one of them is dropped from the entry list when the next session starts. The
+preview refuses a multi-class championship before uploading anything, and the
+write refuses it again on what the form renders. See
+[`docs/acsm-champ-form.md`](docs/acsm-champ-form.md) §4.4.
+
 Exactly means case and spacing, not encoding: names in any script are fine, and
 `Häkkinen` matches whether the zip carries the precomposed `ä` or the decomposed
 one a Mac writes. A near-miss on case or a stray space is named in the refusal
@@ -312,6 +327,8 @@ September 2026 — liveries
 
   Misha              misha_old → Misha   3 files, rss_formula_hybrid_2021
   postaL             (no skin) → postaL   3 files, rss_formula_hybrid_2021
+
+  2 of 2 change the entry list, so the championship is saved once.
 
   Then: restart round 1's looping practice server.
 
@@ -355,9 +372,8 @@ for a page of HTML and would abort a large livery.
 Credentials come from `CHAMPCTL_USERNAME` / `CHAMPCTL_PASSWORD` and are needed
 only for `--push`; a preview reads the export, which is public.
 
-Exit codes: `0` previewed or pushed, `1` every livery was already assigned, `2`
-the pack or the entry list wouldn't allow it, `3` a usage mistake or champctl
-failed.
+Exit codes: `0` previewed or pushed, `2` the pack or the championship wouldn't
+allow it, `3` a usage mistake or champctl failed.
 
 ## champctl-serve
 

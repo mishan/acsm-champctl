@@ -29,6 +29,7 @@ import { AcsmSession } from "../acsm/session.js"
 import { events } from "../acsm/view.js"
 import {
   LiveryApplyError,
+  MultiClassError,
   PracticeRestartError,
   RosterChangedError,
   applyLiveries,
@@ -45,7 +46,7 @@ import { confirm, reportUsageError, runCli, UsageError } from "./args.js"
 
 export { UsageError }
 
-const USAGE = `champctl-liveries — upload custom liveries and assign them
+export const USAGE = `champctl-liveries — upload custom liveries and assign them
 
 Usage:
   champctl-liveries <championship-id> --zip <pack.zip> [options]
@@ -74,11 +75,16 @@ Credentials come from CHAMPCTL_USERNAME and CHAMPCTL_PASSWORD. A preview needs
 none — it reads the championship export, which is public.
 
 The liveries are assigned on the championship's own entry list, so they apply to
-every round. Per-event entry lists are never written.
+every round. Per-event entry lists are never written. Single-class championships
+only — see docs/acsm-champ-form.md 4.4.
+
+Re-running with the same pack uploads every livery again. There is no way to ask
+ACSM what is already in a skin folder, so a corrected livery has to be re-sent
+rather than guessed at; the championship itself is only written when a skin
+assignment actually changes.
 
 Exit codes:
   0  previewed cleanly, or pushed
-  1  nothing to do — every livery is already assigned
   2  the pack or the entry list wouldn't allow it
   3  a usage mistake, or champctl itself failed
 `
@@ -168,23 +174,28 @@ export function renderPlan(plan: LiveryPlan, restartRound?: number): string {
   lines.push(`${plan.championshipName} — liveries`)
   lines.push("")
 
-  if (plan.assignments.length === 0) {
-    lines.push("  Nothing to change; every livery in the pack is already assigned.")
-  } else {
-    for (const a of plan.assignments) {
-      lines.push(
-        `  ${a.driverName.padEnd(18)} ${a.fromSkin || "(no skin)"} → ${a.skinFolder}` +
-          `   ${a.livery.files.length} files, ${a.carModel}`,
-      )
-    }
-  }
-
-  if (plan.unchanged.length > 0) {
-    lines.push("")
+  for (const a of plan.assignments) {
+    // Two different things happen per driver and the difference is worth
+    // seeing: a new assignment edits the entry list, a re-upload only replaces
+    // the files the entry list already points at.
+    const change =
+      a.fromSkin === a.skinFolder
+        ? `${a.skinFolder} (already assigned, files replaced)`
+        : `${a.fromSkin || "(no skin)"} → ${a.skinFolder}`
     lines.push(
-      `  Already assigned, nothing to do: ${plan.unchanged.map((a) => a.driverName).join(", ")}`,
+      `  ${a.driverName.padEnd(18)} ${change}   ${a.livery.files.length} files, ${a.carModel}`,
     )
   }
+
+  lines.push("")
+  lines.push(
+    plan.skinChanges.length === 0
+      ? `  Every skin is already assigned, so the files are uploaded and the championship is ` +
+          `not written.`
+      : `  ${plan.skinChanges.length} of ${plan.assignments.length} ` +
+          `${plan.skinChanges.length === 1 ? "changes" : "change"} the entry list, so the ` +
+          `championship is saved once.`,
+  )
 
   const unreachable = unreachableRounds(plan)
   if (unreachable.length > 0) {
@@ -213,36 +224,50 @@ export function renderPlan(plan: LiveryPlan, restartRound?: number): string {
   return lines.join("\n")
 }
 
+/**
+ * What an error means for the exit code, and what to print with it.
+ *
+ * Its own function so the mapping can be tested without a server in front of
+ * it, because the part worth testing is invisible: `MultiClassError`,
+ * `RosterChangedError` and `PracticeRestartError` all extend
+ * `LiveryApplyError`, so each has to be matched *before* the general case. Move
+ * one below it and every refusal starts reporting itself as champctl failing,
+ * which is a 3 telling somebody to file a bug about a championship that is
+ * simply not one champctl will write.
+ *
+ * `undefined` means "not ours" — the caller decides, which for a usage mistake
+ * means printing the option list.
+ */
+export function exitFor(e: unknown): { code: number; message: string } | undefined {
+  // A bad pack is something the person can fix by re-zipping, so the message
+  // goes out without the usage block — it already says what is wrong with which
+  // file, which is more use than the option list.
+  if (e instanceof LiveryPackError || e instanceof LiveryPlanError) {
+    return { code: 2, message: e.message }
+  }
+  if (e instanceof RosterChangedError) return { code: 2, message: e.message }
+  // A 2 rather than a 3: champctl works exactly as intended here, and the
+  // championship is the thing that won't allow it — the same class of answer as
+  // a pack that isn't a pack.
+  if (e instanceof MultiClassError) return { code: 2, message: e.message }
+  // A half-finished job rather than a refusal, and the message says which half
+  // landed. Still a 3, because something did go wrong.
+  if (e instanceof PracticeRestartError) return { code: 3, message: e.message }
+  if (e instanceof LiveryApplyError) return { code: 3, message: e.message }
+  if (e instanceof AcsmError) return { code: 3, message: `ACSM: ${e.message}` }
+  return undefined
+}
+
 export async function main(argv: readonly string[]): Promise<number> {
   try {
     return await runCommand(argv)
   } catch (e) {
-    // A bad pack is something the person can fix by re-zipping, so it prints
-    // the message and not the usage block — the message already says what is
-    // wrong with which file, which is more use than the option list.
-    if (e instanceof LiveryPackError || e instanceof LiveryPlanError) {
-      process.stderr.write(`${e.message}\n`)
-      return 2
-    }
-    if (e instanceof RosterChangedError) {
-      process.stderr.write(`${e.message}\n`)
-      return 2
-    }
-    // Before the generic branch: this is a half-finished job, not a refusal,
-    // and the message says which half landed.
-    if (e instanceof PracticeRestartError) {
-      process.stderr.write(`${e.message}\n`)
-      return 3
-    }
-    if (e instanceof LiveryApplyError) {
-      process.stderr.write(`${e.message}\n`)
-      return 3
+    const exit = exitFor(e)
+    if (exit) {
+      process.stderr.write(`${exit.message}\n`)
+      return exit.code
     }
     if (e instanceof UsageError) return reportUsageError(e, USAGE)
-    if (e instanceof AcsmError) {
-      process.stderr.write(`ACSM: ${e.message}\n`)
-      return 3
-    }
     throw e
   }
 }
@@ -287,8 +312,6 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     process.stdout.write(`${renderPlan(plan, args.restart)}\n`)
   }
 
-  if (plan.noop) return 1
-
   if (!args.push) {
     if (!args.json) process.stdout.write("\nPreview only. Re-run with --push to apply.\n")
     return 0
@@ -312,8 +335,9 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     eventIds,
   })
   say(
-    `Uploaded ${result.uploaded.length} ${result.uploaded.length === 1 ? "livery" : "liveries"}, ` +
-      `championship saved${result.practiceRestarted ? ", practice restarted" : ""}.\n`,
+    `Uploaded ${result.uploaded.length} ${result.uploaded.length === 1 ? "livery" : "liveries"}` +
+      `${result.championshipSaved ? ", championship saved" : ", championship unchanged"}` +
+      `${result.practiceRestarted ? ", practice restarted" : ""}.\n`,
   )
   return 0
 }

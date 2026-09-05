@@ -78,11 +78,28 @@ export interface LiveryAssignment {
 export interface LiveryPlan {
   championshipId: string
   championshipName: string
+  /**
+   * Every livery in the pack, matched to its entrant. All of these upload.
+   *
+   * This used to hold only the ones whose `Skin` field would change, with the
+   * rest in an `unchanged` list that was never uploaded and a `noop` flag that
+   * skipped the run entirely. That conflated two different questions. The skin
+   * *folder* is always the driver's own name, so `fromSkin === skinFolder` only
+   * says "this ran for them before" — it says nothing about the bytes. A driver
+   * who fixed a wrong sponsor and resubmitted got "Already assigned, nothing to
+   * do", zero requests, and the old livery still on the server.
+   *
+   * Nothing here can answer whether the bytes changed: ACSM offers no way to
+   * ask what is in a skin folder. So the upload is unconditional, which is what
+   * the upload being additive and overwriting-by-filename is for. What stays
+   * conditional is the *write* — see `skinChanges`.
+   */
   assignments: LiveryAssignment[]
-  /** Assignments whose skin is already what the pack sets. Nothing to write. */
-  unchanged: LiveryAssignment[]
-  /** True when no assignment would change anything. */
-  noop: boolean
+  /**
+   * The assignments whose `EntryList.Skin` on the championship form has to
+   * change. Empty means the uploads happen and the championship is not posted.
+   */
+  skinChanges: LiveryAssignment[]
   /** Rounds that already have results, 1-based. Not blocking; a skin is cosmetic. */
   racedRounds: number[]
 }
@@ -100,6 +117,24 @@ export function planLiveries(
   championshipId: string,
   pack: LiveryPack,
 ): LiveryPlan {
+  // Refused here as well as at the write, and this is the one that saves
+  // anybody anything: the export is public, so the preview learns it before a
+  // single byte is uploaded or a password is needed. The write-path refusal in
+  // `apply.ts` is what makes it a guarantee rather than a courtesy — it reads
+  // the form, which is what actually gets posted. See `MultiClassError` and
+  // docs/acsm-champ-form.md §4.4 for what ACSM does with the second class.
+  const classCount = classes(championship).length
+  if (classCount > 1) {
+    throw new LiveryPlanError(
+      `This championship has ${classCount} classes, and champctl only assigns liveries in ` +
+        `single-class championships. Saving the championship form rebuilds every pit box by ` +
+        `position, and ACSM restarts that numbering for each class — so two classes means two ` +
+        `drivers holding the same pit box, and one of them disappears from the entry list when ` +
+        `the next session starts. Nothing has been uploaded. Assign these skins in ACSM by hand, ` +
+        `or see docs/acsm-champ-form.md §4.4.`,
+    )
+  }
+
   const roster = rosterOf(championship)
 
   const assignments: LiveryAssignment[] = []
@@ -147,15 +182,11 @@ export function planLiveries(
     })
   }
 
-  const changed = assignments.filter((a) => a.fromSkin !== a.skinFolder)
-  const unchanged = assignments.filter((a) => a.fromSkin === a.skinFolder)
-
   return {
     championshipId,
     championshipName: (championship.Name ?? "").trim() || championshipId,
-    assignments: changed,
-    unchanged,
-    noop: changed.length === 0,
+    assignments,
+    skinChanges: assignments.filter((a) => a.fromSkin !== a.skinFolder),
     racedRounds: events(championship)
       .map((ev, i) => (eventHasResults(ev) ? i + 1 : 0))
       .filter((n) => n > 0),

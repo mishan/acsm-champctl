@@ -3,7 +3,13 @@ import { describe, expect, it } from "vitest"
 import { CHAMPIONSHIP_SUBMIT_PATH } from "../src/acsm/paths.js"
 import { AcsmSession } from "../src/acsm/session.js"
 import type { Entrant } from "../src/acsm/types.js"
-import { RosterChangedError, applyLiveries, uploadTimeoutMs } from "../src/liveries/apply.js"
+import {
+  MultiClassError,
+  RosterChangedError,
+  applyLiveries,
+  uploadTimeoutMs,
+} from "../src/liveries/apply.js"
+import { AcsmWriteError } from "../src/acsm/session.js"
 import type { Livery, LiveryPack } from "../src/liveries/pack.js"
 import { planLiveries } from "../src/liveries/plan.js"
 import { championship, championshipClass, entryList, raceEvent } from "./support/build.js"
@@ -34,8 +40,23 @@ const champ = (names: string[] = ["Misha", "postaL"]) =>
     Events: [raceEvent({ ID: EVENT_ID, EntryList: {} })],
   })
 
-/** The championship edit page, shaped like 2.4.15's. */
-function editPage(names: string[]): string {
+/**
+ * The championship edit page, shaped like 2.4.15's.
+ *
+ * `classTemplate` renders the `#class-template` block ACSM puts before the real
+ * classes — its own ClassName, its own NumEntrants of 0 and its own
+ * #entrantTemplate inside. `manager.js` removes it in a browser and champctl
+ * has to remove it by hand, and leaving it in is what makes every driver
+ * inherit the previous one's car. It belongs in a test of the *write*, not only
+ * of the parser, because the write is where the damage would land.
+ *
+ * `secondClass` renders a second real class, which is the shape champctl
+ * refuses outright.
+ */
+function editPage(
+  names: string[],
+  options: { classTemplate?: boolean; secondClass?: string[] } = {},
+): string {
   const row = (name: string, spectator = false) => `
     <div class="entrant">
       <input type="hidden" name="EntryList.InternalUUID" value="00000000-0000-0000-0000-000000000000">
@@ -50,14 +71,31 @@ function editPage(names: string[]): string {
       ${spectator ? '<input type="checkbox" name="EntryList.Spectator">' : ""}
     </div>`
 
+  const classTemplate = options.classTemplate
+    ? `<div id="class-template" style="display: none;">
+        <input type="text" name="ClassName" value="">
+        <div id="entrantTemplate">${row("")}</div>
+        <input type="hidden" name="EntryList.NumEntrants" value="0">
+      </div>`
+    : ""
+
+  const second = options.secondClass
+    ? `<input type="text" name="ClassName" value="GT3">
+       <div id="entrantTemplate">${row("")}</div>
+       ${options.secondClass.map((n) => row(n)).join("")}
+       <input type="hidden" name="EntryList.NumEntrants" value="${options.secondClass.length}">`
+    : ""
+
   return `<html><body><form action="${CHAMPIONSHIP_SUBMIT_PATH}" method="post">
     <input type="text" name="ChampionshipName" value="September 2026">
     <div id="entrantTemplate">${row("", true)}</div>
     ${row("Stream Van", true)}
+    ${classTemplate}
     <input type="text" name="ClassName" value="RSS">
     <div id="entrantTemplate">${row("")}</div>
     ${names.map((n) => row(n)).join("")}
     <input type="hidden" name="EntryList.NumEntrants" value="${names.length}">
+    ${second}
   </form></body></html>`
 }
 
@@ -93,6 +131,12 @@ async function fakeSession(
     formNames?: string[]
     uploadStatus?: number
     submitStatus?: number
+    /** Where the save's 302 points. The default is a correct edit. */
+    submitLocation?: string
+    /** Render the #class-template block the browser removes. */
+    classTemplate?: boolean
+    /** Render a second real class, which champctl refuses to write. */
+    secondClass?: string[]
     practiceStatus?: number
     /** The session-wide default, to show the upload does not use it. */
     sessionTimeoutMs?: number
@@ -135,7 +179,7 @@ async function fakeSession(
     if (url.includes(CHAMPIONSHIP_SUBMIT_PATH)) {
       return new Response("", {
         status: options.submitStatus ?? 302,
-        headers: { location: `/championship/${CHAMP_ID}` },
+        headers: { location: options.submitLocation ?? `/championship/${CHAMP_ID}` },
       })
     }
     if (url.includes("/practice")) {
@@ -144,7 +188,15 @@ async function fakeSession(
         headers: { location: `/championship/${CHAMP_ID}` },
       })
     }
-    if (url.includes("/edit")) return new Response(editPage(names), { status: 200 })
+    if (url.includes("/edit")) {
+      return new Response(
+        editPage(names, {
+          ...(options.classTemplate ? { classTemplate: true } : {}),
+          ...(options.secondClass ? { secondClass: options.secondClass } : {}),
+        }),
+        { status: 200 },
+      )
+    }
     return new Response("", { status: 404 })
   }
 
@@ -243,7 +295,13 @@ describe("applyLiveries", () => {
     expect(requests.filter((r) => r.url.includes("/event/submit"))).toEqual([])
   })
 
-  it("writes nothing at all for a plan that changes nothing", async () => {
+  it("uploads but does not write the championship when the skin is already assigned", async () => {
+    // The re-submission: Misha's entrant already says Skin = "Misha", and he
+    // has sent a corrected livery. The files have to go up — nothing here can
+    // ask ACSM what is in that folder — and the championship does not, because
+    // no field on the form would change.
+    //
+    // This used to do neither, and report success.
     const c = championship({
       ID: CHAMP_ID,
       Classes: [
@@ -253,8 +311,92 @@ describe("applyLiveries", () => {
     })
     const { session, requests } = await fakeSession()
     const result = await applyLiveries(session, planLiveries(c, CHAMP_ID, packOf(livery("Misha"))))
+
     expect(result).toMatchObject({ championshipSaved: false, practiceRestarted: false })
-    expect(requests.filter((r) => !r.url.includes("/login"))).toEqual([])
+    expect(result.uploaded).toMatchObject([{ driverName: "Misha", skinFolder: "Misha" }])
+    expect(requests.filter((r) => r.url.includes("/skin"))).toHaveLength(1)
+    expect(requests.filter((r) => r.url.includes("/championships/new/submit"))).toEqual([])
+  })
+
+  it("posts the right rows when the page carries the class template too", async () => {
+    // The end-to-end version of the parser's #class-template test, and the one
+    // that was missing: every applyLiveries test rendered a page without the
+    // block, so the write path this commit exists for was only ever exercised
+    // by unit tests. Left in, ACSM reads NumEntrants as `0, 2`, builds an empty
+    // first class, and starts the real one a row early — every driver inherits
+    // the previous one's car and the last is dropped.
+    const { session, requests } = await fakeSession({ classTemplate: true })
+    const result = await applyLiveries(session, plan())
+
+    expect(result.championshipSaved).toBe(true)
+    const submit = requests.find((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))
+    const body = new URLSearchParams(submit?.body ?? "")
+    // Three rows: the spectator van and the two drivers. Not five, and not one
+    // NumEntrants of 0 followed by one of 2.
+    expect(body.getAll("EntryList.Name")).toEqual(["Stream Van", "Misha", "postaL"])
+    expect(body.getAll("EntryList.NumEntrants")).toEqual(["2"])
+    expect(body.getAll("ClassName")).toEqual(["RSS"])
+    expect(body.getAll("EntryList.Skin")).toEqual(["", "Misha", ""])
+  })
+
+  it("refuses to write a championship whose form renders two classes", async () => {
+    // The guarantee, rather than the courtesy: plan.ts refuses this from the
+    // export, and this refuses it from the form — which is the thing actually
+    // being posted, and the only one that can be trusted to describe it. The
+    // export said one class here and the form says two.
+    //
+    // docs/acsm-champ-form.md 4.4: no EntryList.EntrantID on this form means
+    // ACSM rebuilds pit boxes by position, restarting at 0 for each class, and
+    // AddInPitBox overwrites on collision — so a driver disappears.
+    const { session, requests } = await fakeSession({ secondClass: ["Ann"] })
+
+    await expect(applyLiveries(session, plan())).rejects.toThrowError(MultiClassError)
+    expect(requests.filter((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))).toEqual([])
+    // The refusal promises the uploads are harmless, which is only true if they
+    // happened: this refuses at the write, after the skins are on the server.
+    expect(requests.filter((r) => r.url.includes("/skin"))).toHaveLength(1)
+  })
+
+  it("refuses a save that redirected to the login page", async () => {
+    // A session that lapsed between reading the form and posting it. ACSM
+    // answers with a 302 to /login, which is a perfectly good redirect and
+    // means nothing was written — reported, until this check, as saved.
+    const { session } = await fakeSession({ submitLocation: "/login" })
+
+    await expect(applyLiveries(session, plan())).rejects.toThrowError(AcsmWriteError)
+    await expect(applyLiveries(session, plan())).rejects.toThrowError(
+      /redirected to "\/login", not to/,
+    )
+  })
+
+  it("refuses a save ACSM answered as a brand-new championship", async () => {
+    // /championships/new/submit serves create and edit, and an edit is a create
+    // carrying an existing ID. If that ID doesn't survive the round trip, ACSM
+    // makes a *new* championship holding the entry list: the real one is
+    // untouched and there is now a duplicate. Also a 302, also reported as
+    // saved until the Location is read.
+    const other = "99999999-9999-9999-9999-999999999999"
+    const { session } = await fakeSession({ submitLocation: `/championship/${other}` })
+
+    await expect(applyLiveries(session, plan())).rejects.toThrowError(AcsmWriteError)
+    await expect(applyLiveries(session, plan())).rejects.toThrowError(
+      new RegExp(`redirected to championship ${other}, not to ${CHAMP_ID}`),
+    )
+  })
+
+  it("accepts the save when the id was typed in a different case", () => {
+    // ACSM parses the id case-insensitively, so a championship pasted in upper
+    // case reads and saves perfectly — and Go's uuid.String() writes Location
+    // in lower case regardless. Comparing the two exactly would call that
+    // successful save a duplicate-creating failure, which is a worse answer
+    // than the one the check replaced.
+    const shouted = CHAMP_ID.toUpperCase()
+    const upper = () => planLiveries(champ(), shouted, packOf(livery("Misha")))
+
+    return fakeSession().then(async ({ session }) => {
+      const result = await applyLiveries(session, upper())
+      expect(result.championshipSaved).toBe(true)
+    })
   })
 
   it("leaves practice alone when no round is named", async () => {

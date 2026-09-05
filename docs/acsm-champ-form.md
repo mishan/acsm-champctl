@@ -357,6 +357,13 @@ overwrites on collision, so one of them is deleted at practice-start.
 A writer should refuse a multi-class championship until somebody has measured
 this. BATL runs one class plus the spectator van.
 
+**champctl does.** `planLiveries` refuses on the class count from the export, so
+the preview says no before anything is uploaded and without needing a password;
+`saveChampionshipSkins` refuses again on the count the *form* renders, which is
+the payload actually being posted and the only description of it worth trusting.
+Lifting the refusal means measuring the pit-box behaviour on a manager nobody is
+racing on that week, not deleting the check.
+
 ### 4.5 A whole-championship replace
 
 The `new` in `/championships/new/submit` is ACSM's: one handler serves create
