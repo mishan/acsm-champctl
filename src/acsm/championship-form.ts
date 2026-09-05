@@ -208,6 +208,30 @@ export function findChampionshipForm(html: string, pageUrl: string): Championshi
     )
   }
 
+  // The pairing ACSM actually iterates, checked on its own.
+  //
+  // `HandleCreateChampionship` loops `for i := range r.Form["ClassName"]` and
+  // reads `r.Form["EntryList.NumEntrants"][i]` inside it, so `ClassName` decides
+  // how many classes get built and the shorter of the two arrays wins silently.
+  // The arithmetic below cannot see that, because it only ever sums
+  // `NumEntrants`: one `ClassName` against `NumEntrants` of 1 and 2, over a
+  // spectator row and three entrants, adds up exactly (4 = 3 + 1) and still
+  // builds a single class of one — dropping two drivers with no error anywhere.
+  const classNames = count(fields, "ClassName")
+  if (classNames !== entrantsPerClass.length) {
+    throw new ChampionshipFormError(
+      `Refusing to write the championship form: it renders ${classNames} ClassName ` +
+        `${classNames === 1 ? "field" : "fields"} but ${entrantsPerClass.length} ` +
+        `EntryList.NumEntrants (${entrantsPerClass.join(", ")}). ACSM builds one class per ` +
+        `ClassName and takes the entrant count from the same position, so a payload where those ` +
+        `two disagree drops whichever classes the shorter list doesn't reach — without an error, ` +
+        `and after the save. champctl dropped ${stripped.classTemplates} #${CLASS_TEMPLATE_ID} ` +
+        `and ${stripped.entrantTemplates} #${ENTRANT_TEMPLATE_ID} already. Run ` +
+        `\`npm run recon:champ-form -- <championship-id>\` against this manager — it only ` +
+        `reads — and compare with docs/acsm-champ-form.md §4.2.`,
+    )
+  }
+
   const rows = count(fields, "EntryList.Name")
   const classTotal = entrantsPerClass.reduce((a, b) => a + b, 0)
 

@@ -264,6 +264,29 @@ describe("findChampionshipForm", () => {
     expect(getAll(form.fields, "EntryList.Spectator")).toEqual([])
   })
 
+  it("refuses a form whose ClassName and NumEntrants counts disagree", () => {
+    // The shape the row arithmetic cannot see. ACSM loops
+    // `for i := range r.Form["ClassName"]` and reads NumEntrants at the same
+    // index, so ClassName is what decides how many classes get built — and one
+    // ClassName against NumEntrants of 1 and 2, over a spectator row and three
+    // entrants, adds up exactly (4 = 3 + 1). Posting it builds a single class
+    // of one and drops the other two drivers, silently and after the save.
+    const page = `<html><body><form action="${CHAMPIONSHIP_SUBMIT_PATH}" method="post">
+      ${entrantRow({ name: "Stream Van", spectator: true })}
+      <input type="text" name="ClassName" value="RSS">
+      ${entrantRow({ name: "Misha" })}
+      <input type="hidden" name="EntryList.NumEntrants" value="1">
+      ${entrantRow({ name: "postaL" })}
+      ${entrantRow({ name: "Ann" })}
+      <input type="hidden" name="EntryList.NumEntrants" value="2">
+    </form></body></html>`
+
+    expect(() => findChampionshipForm(page, PAGE_URL)).toThrowError(ChampionshipFormError)
+    expect(() => findChampionshipForm(page, PAGE_URL)).toThrowError(
+      /renders 1 ClassName field but 2 EntryList.NumEntrants/,
+    )
+  })
+
   it("refuses when the rows don't add up", () => {
     // The check that catches the unknown problem rather than a known one: a row
     // champctl can't account for shows up as arithmetic instead of as a driver
