@@ -7,8 +7,9 @@
  * gone wrong.
  */
 
-import { readFileSync, readdirSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { basename, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 
@@ -20,6 +21,7 @@ import { MESSAGE_LIMIT, RecordingTransport, type DiscordTransport } from "../src
 import { exitCodeFor, parseArgs, withResources } from "../src/cli/bot.js"
 import { Severity, type Finding } from "../src/gridmom/finding.js"
 import { formatDiscord } from "../src/gridmom/report.js"
+import { importsOf, reachesAny } from "./support/imports.js"
 import { validateProfile } from "../src/profile/load.js"
 import {
   NOW,
@@ -434,11 +436,12 @@ describe("what the bot opens, it closes", () => {
 })
 
 describe("the bot cannot write to ACSM", () => {
-  const botDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "bot")
+  const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src")
+  const botDir = join(srcDir, "bot")
 
   /**
    * The modules a write needs. `session.ts` is the cookie jar, `write.ts` the
-   * import safety rules, and the two `apply` modules the things that POST.
+   * import safety rules, and the `apply` modules the things that POST.
    *
    * Checked structurally because plan §7's "no ACSM credentials, ever" is
    * otherwise a promise kept by everyone remembering it — and the bot is the
@@ -450,26 +453,132 @@ describe("the bot cannot write to ACSM", () => {
     "acsm/write.js",
     "finalize/apply.js",
     "reorder/apply.js",
+    "liveries/apply.js",
     "web/",
+  ]
+
+  // `src/cli/bot.ts` is in here as well as `src/bot/`. It is the entry point
+  // that opens the databases and wires the router, so it is where a "just this
+  // once, the bot could apply that itself" would actually be written.
+  const botModules = () => [
+    ...readdirSync(botDir)
+      .filter((f) => f.endsWith(".ts"))
+      .map((f) => join(botDir, f)),
+    join(srcDir, "cli", "bot.ts"),
   ]
 
   it("imports nothing from the write path", () => {
     const offences: string[] = []
-    for (const file of readdirSync(botDir)) {
-      if (!file.endsWith(".ts")) continue
-      const source = readFileSync(join(botDir, file), "utf8")
-      for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
-        const specifier = match[1]!
-        if (writePath.some((w) => specifier.includes(w)))
-          offences.push(`${file} imports ${specifier}`)
+    for (const file of botModules()) {
+      for (const specifier of importsOf(file)) {
+        if (writePath.some((w) => specifier.includes(w))) {
+          offences.push(`${basename(file)} imports ${specifier}`)
+        }
       }
     }
     expect(offences).toEqual([])
   })
 
+  /**
+   * The same rule, followed through the module graph.
+   *
+   * The direct check above is one `from "…"` away from being satisfied by a
+   * module that imports the write path on the bot's behalf — and the bot now
+   * sits next to `liveries/`, where `pack.ts` and `claims.ts` are safe to reach
+   * for and `apply.ts` is one letter different and is not. A wall tested only
+   * at the doorway is a doorway.
+   */
+  it("reaches nothing in the write path, however many hops away", () => {
+    expect(reachesAny(botModules(), writePath)).toEqual([])
+  })
+
+  /**
+   * The mirror, which docs/discord-livery-upload.md §11 step 9 asks for and
+   * which did not exist: nothing on the credentialed side may import
+   * `src/bot/`.
+   *
+   * It matters more now than when it was written down. `src/bot/livery.ts`
+   * re-exports `uploadReply` from `liveries/accept.ts`, so the two directories
+   * are coupled at the source level and `accept.ts` is shared with the drain —
+   * and an import added there would be caught by neither guard above, because
+   * those ban only the *write* path. A wall tested from one side is a fence.
+   */
+  it("is not imported by anything holding ACSM credentials", () => {
+    const credentialed = [
+      ...readdirSync(join(srcDir, "liveries"))
+        .filter((f) => f.endsWith(".ts"))
+        .map((f) => join(srcDir, "liveries", f)),
+      ...readdirSync(join(srcDir, "upload"))
+        .filter((f) => f.endsWith(".ts"))
+        .map((f) => join(srcDir, "upload", f)),
+      join(srcDir, "cli", "liveries.ts"),
+      join(srcDir, "cli", "upload.ts"),
+    ]
+    expect(reachesAny(credentialed, ["bot/"])).toEqual([])
+    expect(credentialed.length).toBeGreaterThan(0)
+  })
+
+  /**
+   * One module knows about the library, the way `acsm/client.ts` is the only
+   * place that knows about HTTP. It is what lets the clamp, the router and
+   * every reply be tested by calling a function with a plain object.
+   */
+  it("keeps discord.js to a single module", () => {
+    const importers = botModules().filter((f) =>
+      importsOf(f).some((s) => s === "discord.js" || s.startsWith("discord.js/")),
+    )
+    expect(importers.map((f) => basename(f))).toEqual(["discord.ts"])
+  })
+
   it("checks a directory that actually has modules in it", () => {
-    // Otherwise the test above passes by finding nothing to look at.
-    expect(readdirSync(botDir).filter((f) => f.endsWith(".ts")).length).toBeGreaterThan(0)
+    // Otherwise the tests above pass by finding nothing to look at.
+    expect(botModules().length).toBeGreaterThan(0)
+  })
+
+  it("sees a dynamic import, not only a static one", () => {
+    // The guard's other guard. `importsOf` used to match `from "…"` and
+    // nothing else, so `await import("../liveries/apply.js")` — which is the
+    // exact shape a "just this once" convenience takes — passed every test in
+    // this file. Written to a scratch file rather than to src/, because a
+    // fixture that lived in src/ would fail the very tests it exists to check.
+    const scratch = join(tmpdir(), `champctl-guard-${process.pid}.ts`)
+    writeFileSync(
+      scratch,
+      [
+        'const a = await import("../liveries/apply.js")',
+        'import "../acsm/session.js"',
+        'const b = require("../acsm/write.js")',
+        "export { a, b }",
+      ].join("\n"),
+    )
+    try {
+      expect(importsOf(scratch)).toEqual(
+        expect.arrayContaining(["../liveries/apply.js", "../acsm/session.js", "../acsm/write.js"]),
+      )
+    } finally {
+      rmSync(scratch, { force: true })
+    }
+  })
+
+  it("would notice a transitive import, so the walk is doing something", () => {
+    // The guard's own guard. A module graph walker that silently resolved
+    // nothing would pass every test above while checking one file deep.
+    const reachable = new Set<string>()
+    const walk = (file: string): void => {
+      if (reachable.has(file)) return
+      reachable.add(file)
+      for (const specifier of importsOf(file)) {
+        if (!specifier.startsWith(".")) continue
+        const path = resolve(dirname(file), specifier.replace(/\.js$/, ".ts"))
+        if (existsSync(path)) walk(path)
+      }
+    }
+    for (const file of botModules()) walk(file)
+
+    // src/bot/livery.ts reaches liveries/pack.ts through liveries/claims.ts,
+    // which is two hops and outside src/bot entirely.
+    expect([...reachable].some((f) => f.endsWith(join("liveries", "pack.ts")))).toBe(true)
+    expect(reachable.size).toBeGreaterThan(botModules().length)
   })
 })
 
@@ -528,6 +637,36 @@ describe("the profile's Discord settings", () => {
 
   it("is optional, because not every league runs a bot", () => {
     expect(withDiscord(undefined).discord).toBeUndefined()
+  })
+
+  it("keeps the pinned championship, which the bot tells admins to set", () => {
+    const id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    expect(withDiscord({ livery: { championshipId: id } }).discord?.livery?.championshipId).toBe(id)
+  })
+
+  it("refuses an upload URL that isn't https", () => {
+    expect(() => withDiscord({ livery: { uploadBaseUrl: "http://liveries.example" } })).toThrow(
+      /must be https/,
+    )
+  })
+
+  it("allows http on loopback, and nothing else on loopback", () => {
+    // The exemption is "http on localhost", not "any scheme on localhost".
+    // Written the other way round it skipped the scheme check entirely, so
+    // ftp://localhost validated and handed a driver a link that could not work.
+    expect(
+      withDiscord({ livery: { uploadBaseUrl: "http://localhost:8080" } }).discord?.livery
+        ?.uploadBaseUrl,
+    ).toBe("http://localhost:8080")
+    expect(() => withDiscord({ livery: { uploadBaseUrl: "ftp://localhost/up" } })).toThrow(
+      /must be https/,
+    )
+  })
+
+  it("is not fooled by a hostname that merely starts with localhost", () => {
+    expect(() => withDiscord({ livery: { uploadBaseUrl: "http://localhost.evil.com" } })).toThrow(
+      /must be https/,
+    )
   })
 })
 
