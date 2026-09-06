@@ -203,7 +203,8 @@ describe("rendering a livery plan", () => {
 describe("what an error means for the exit code", () => {
   it("calls a refusal a 2 and a failure a 3", () => {
     expect(exitFor(new LiveryPackError("x"))?.code).toBe(2)
-    expect(exitFor(new LiveryPlanError("x"))?.code).toBe(2)
+    expect(exitFor(new LiveryPlanError("x", "entrant"))?.code).toBe(2)
+    expect(exitFor(new LiveryPlanError("x", "championship"))?.code).toBe(2)
     expect(exitFor(new RosterChangedError("x"))?.code).toBe(2)
     expect(exitFor(new MultiClassError(2))?.code).toBe(2)
     expect(exitFor(new PracticeRestartError(1, new Error("x")))?.code).toBe(3)
@@ -441,5 +442,37 @@ describe("champctl-liveries --claims", () => {
   it("exits 1 releasing an account that holds nothing", async () => {
     const { db } = await scratch()
     expect(await main([CHAMP, "--release", MISHA, "--store", db])).toBe(1)
+  })
+})
+
+describe("champctl-liveries --watch", () => {
+  it("parses the flags", () => {
+    expect(parseArgs(["abc", "--drain", "--push", "--watch"]).watch).toBe(true)
+    expect(parseArgs(["abc", "--drain", "--push", "--watch", "--interval", "30"])).toMatchObject({
+      intervalSeconds: 30,
+    })
+  })
+
+  it("defaults to two minutes", () => {
+    expect(parseArgs(["abc", "--drain"]).intervalSeconds).toBe(120)
+  })
+
+  it("refuses a interval tight enough to hammer the server", () => {
+    // A login and an export every couple of seconds, against a box that is also
+    // running races.
+    expect(() => parseArgs(["abc", "--drain", "--interval", "1"])).toThrow(/at least 5 seconds/)
+    expect(() => parseArgs(["abc", "--drain", "--interval", "soon"])).toThrow(/at least 5 seconds/)
+  })
+
+  /**
+   * A watcher that only previews looks exactly like one that works — in the
+   * logs, in the process list, and in the profile — while applying nothing.
+   */
+  it("refuses to watch without --push", async () => {
+    expect(await main(["abc", "--drain", "--watch"])).toBe(3)
+  })
+
+  it("refuses --watch on its own", async () => {
+    expect(await main(["abc", "--watch"])).toBe(3)
   })
 })
