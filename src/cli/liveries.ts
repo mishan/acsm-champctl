@@ -21,7 +21,9 @@
  * an argument list rather than a form.
  */
 
-import { readFile } from "node:fs/promises"
+import { createWriteStream } from "node:fs"
+import { mkdir, readFile } from "node:fs/promises"
+import { dirname, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { AcsmError, HttpAcsmReader } from "../acsm/client.js"
@@ -34,6 +36,7 @@ import {
   RosterChangedError,
   applyLiveries,
 } from "../liveries/apply.js"
+import { carsetFilename, carsetPlan, writeCarset } from "../liveries/carset.js"
 import { defaultStorePath } from "../sqlite.js"
 import { DEFAULT_LIMITS, LiveryPackError, readLiveryPack } from "../liveries/pack.js"
 import { SqliteLiveryStore } from "../liveries/store.js"
@@ -52,6 +55,7 @@ export const USAGE = `champctl-liveries — upload custom liveries and assign th
 
 Usage:
   champctl-liveries <championship-id> --zip <pack.zip> [options]
+  champctl-liveries <championship-id> --carset <out.zip> [options]
 
 The pack is a zip of zips, one folder per car model:
 
@@ -65,6 +69,10 @@ exactly, and becomes the skin folder on the server.
 
 Options:
   --zip <path>          the livery pack
+  --carset <path>       instead of uploading, write the carset every driver
+                        installs — every livery champctl has applied to this
+                        championship, as one archive you can drop on Content
+                        Manager. Reads the local store; touches no server.
   --store <path>        where applied liveries are kept
                         (default: $CHAMPCTL_STORE, else data/liveries/liveries.db)
   --no-store            apply without recording. The carset will be missing
@@ -89,12 +97,13 @@ ACSM what is already in a skin folder, so a corrected livery has to be re-sent
 rather than guessed at; the championship itself is only written when a skin
 assignment actually changes.
 
-Everything pushed is also recorded locally, so the set can be handed to drivers
-later. That is the only copy champctl has: a livery uploaded through ACSM's own
-web UI is invisible to it and will never be in it.
+Everything pushed is also recorded locally, so --carset can hand drivers the
+whole set later. That is the only copy champctl has: a livery uploaded through
+ACSM's own web UI is invisible to it and will not be in the carset.
 
 Exit codes:
-  0  previewed cleanly, or pushed
+  0  previewed cleanly, pushed, or wrote a carset
+  1  nothing there — no recorded liveries to build a carset from
   2  the pack or the entry list wouldn't allow it
   3  a usage mistake, or champctl itself failed
 `
@@ -102,6 +111,7 @@ Exit codes:
 interface Args {
   championshipId?: string
   zip?: string
+  carset?: string
   store?: string
   noStore: boolean
   restart?: number
@@ -145,6 +155,9 @@ export function parseArgs(argv: readonly string[]): Args {
         break
       case "--zip":
         args.zip = next()
+        break
+      case "--carset":
+        args.carset = next()
         break
       case "--store":
         args.store = next()
@@ -305,6 +318,16 @@ async function runCommand(argv: readonly string[]): Promise<number> {
   }
   if (!args.championshipId) throw new UsageError("Needs a championship id.")
 
+  if (args.carset !== undefined) {
+    if (args.zip) {
+      throw new UsageError(
+        "--carset writes the pack drivers install and --zip uploads one, so they can't both " +
+          "run. Do the upload first, then build the carset from what it recorded.",
+      )
+    }
+    return await buildCarsetFile(args, args.championshipId)
+  }
+
   if (!args.zip) throw new UsageError("Needs a livery pack: --zip <pack.zip>.")
 
   const profile = await loadProfile(args.profile)
@@ -383,6 +406,82 @@ async function runCommand(argv: readonly string[]): Promise<number> {
 
 function storePath(args: Args): string {
   return args.store ?? defaultStorePath()
+}
+
+/**
+ * Writes the carset. Reads the local store and talks to no server at all.
+ *
+ * Kept a separate path from the apply rather than a flag on it, because the two
+ * have nothing in common: this needs no credentials, no championship export and
+ * no network, and the thing it produces is for drivers rather than for the
+ * server.
+ */
+async function buildCarsetFile(args: Args, championshipId: string): Promise<number> {
+  const store = await SqliteLiveryStore.open(storePath(args))
+  try {
+    const plan = carsetPlan(championshipId, await store.list(championshipId))
+
+    if (plan.skins.length === 0) {
+      // Exit 1, matching the no-op plan: there is nothing wrong, and there is
+      // also no file, so a script should not carry on as though there were.
+      process.stderr.write(
+        `No liveries recorded for ${championshipId} in ${storePath(args)}. Anything applied ` +
+          `before champctl started keeping them, or uploaded through ACSM's own web UI, isn't ` +
+          `here — push a pack with --zip and it will be.\n`,
+      )
+      return 1
+    }
+
+    const path = resolve(args.carset as string)
+    await mkdir(dirname(path), { recursive: true })
+
+    // Streamed to the file a driver at a time, rather than assembled in the
+    // heap and written in one go. Thirty drivers is a few hundred megabytes and
+    // this used to hold all of it twice over.
+    const handle = createWriteStream(path)
+    const result = await writeCarset(handle, plan, (skin) =>
+      store.filesFor(championshipId, skin.carModel, skin.driverName),
+    )
+
+    if (args.json) {
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            path,
+            digest: plan.digest,
+            suggestedFilename: carsetFilename(plan),
+            skins: plan.skins.map((s) => ({
+              driver: s.driverName,
+              car: s.carModel,
+              path: s.path,
+            })),
+            missingPreviews: result.missingPreviews,
+            bytes: result.bytes,
+          },
+          null,
+          2,
+        )}\n`,
+      )
+      return 0
+    }
+
+    process.stdout.write(
+      `${plan.skins.length} ${plan.skins.length === 1 ? "livery" : "liveries"} across ` +
+        `${plan.cars.length} ${plan.cars.length === 1 ? "car" : "cars"} → ${path}\n` +
+        `Drivers can drop it on Content Manager, or extract it over their Assetto Corsa folder.\n`,
+    )
+    if (result.missingPreviews.length > 0) {
+      // Not a failure. It races fine and looks broken, which is the kind of thing
+      // that generates a message on race night if nobody mentions it now.
+      process.stdout.write(
+        `\nNo preview.jpg for ${result.missingPreviews.join(", ")} — those will show as blank ` +
+          `tiles in Content Manager.\n`,
+      )
+    }
+    return 0
+  } finally {
+    store.close()
+  }
 }
 
 async function readPack(path: string): Promise<Uint8Array> {
