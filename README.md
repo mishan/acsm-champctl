@@ -405,24 +405,52 @@ web UI is invisible to it and won't be in the carset.
 **The queue is the wall in the middle of the upload feature.** The process that
 will accept bytes from a stranger holds a Discord token and no ACSM
 credentials; this one holds ACSM credentials and no Discord token; they share
-one SQLite table and nothing else. Nothing fills it yet and nothing empties it —
-both ends land in later changes.
+one SQLite table and nothing else. Nothing fills it yet — that end lands in a
+later change, so a drain is driven by rows inserted directly, which is how it is
+tested.
 
-Bytes are stored as received rather than as a validated file list, so whatever
-eventually applies them runs the same checks a second time on the same input. A
-driver who uploads twice before it is emptied leaves one queued row: both were
+Bytes are stored as received rather than as a validated file list, so the drain
+runs the same checks a second time on the same input. A driver who uploads twice
+before a drain leaves one queued row: both were
 always going to land on the same skin folder, so keeping both would mean
 uploading the dead one first. Settled rows keep their audit line and lose their
 bytes — "who uploaded the thing that broke Suzuka" should keep having an answer,
 and two copies of a driver's zip is one too many.
 
+**`--drain` empties it.** One championship save for the lot, not one per
+driver: `saveChampionshipSkins` is a full-form replace, so three separate
+applies are three overlapping read-modify-writes, and `RosterChangedError`
+doesn't catch it because a concurrent skin write changes no names. Only one
+drain runs at a time whatever started it, by a lease in the same database — the
+watcher and an operator running `--drain` by hand are two processes, and two
+full-form replaces overlapping lose one of them silently.
+
+Unlike `--zip`, one driver leaving the entry list refuses only their own
+submission rather than the whole batch. A refusal that is *not* about the
+driver — a second class on the championship — stops the drain instead, because
+charging it to each of them in turn refuses everybody and drops the artwork of
+everyone who happened to upload that week. A drain never restarts practice: a
+driver uploading at 8pm must not be able to disconnect everyone racing over a
+cosmetic change, so the livery appears at the *next* practice start.
+
+**`--watch` is what will make uploads self-serve**, and it runs here rather
+than wherever the uploads come from, because the timer needs the credentials
+that end must never have. An idle pass reads only local SQLite — a watcher over
+an empty queue never logs in and never appears in ACSM's logs. Transient
+failures back off; bad credentials stop it, since retrying a login every two
+minutes for ever is worse for the server than stopping. Ctrl-C finishes the
+pass in flight rather than interrupting between the skin upload and the
+championship save. Each pass writes a heartbeat, so whatever tells drivers
+their upload applies itself can check that something is actually running.
+
 Credentials come from `CHAMPCTL_USERNAME` / `CHAMPCTL_PASSWORD` and are needed
 only for `--push`; a preview reads the export, which is public. `--carset` needs
 none at all.
 
-Exit codes: `0` previewed cleanly, pushed, or wrote a carset; `1` nothing there
-— no recorded liveries, no claims; `2` the pack or the entry list wouldn't allow
-it; `3` a usage mistake, or champctl itself failed.
+Exit codes: `0` previewed cleanly, pushed, drained, or wrote a carset; `1`
+nothing there — an empty queue, no recorded liveries, no claims; `2` the pack or
+the entry list wouldn't allow it; `3` a usage mistake, or champctl itself
+failed.
 
 ## champctl-serve
 
@@ -676,10 +704,9 @@ have a web UI. What's left:
   standings, the format poll and the poll-to-proposal loop are not, and neither
   are the `/stats` lookups, which want the archive projections that don't exist
   yet.
-- **Self-serve livery uploads are part-built.** What champctl applies is
-  recorded, the carset is built from it, and claims map a Discord account to an
-  entrant; the queue, the drain and the Discord side are still to come. Design
-  in [`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
+- **Self-serve livery uploads are part-built.** The recording, the carset, the
+  claims, the queue and the drain are all here; nothing fills the queue yet.
+  Design in [`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
 - **The nightly report has no memory.** It says the same thing every night until
   someone fixes it, which is gridmom's voice by design but also means there is
   nothing to lean on if a league wants "tell me once". A digest per championship
