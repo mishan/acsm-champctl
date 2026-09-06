@@ -193,7 +193,7 @@ export function planLiveries(
   }
 }
 
-interface RosterEntry {
+export interface RosterEntry {
   name: string
   model: string
   skin: string
@@ -211,7 +211,7 @@ interface RosterEntry {
  * lays the rows out in. Getting that order wrong puts a livery on the wrong
  * driver, so it is worth saying out loud that these two sorts are the same one.
  */
-function rosterOf(championship: Championship): RosterEntry[] {
+export function rosterOf(championship: Championship): RosterEntry[] {
   const out: RosterEntry[] = []
   classes(championship).forEach((cls, classIndex) => {
     slots(cls.Entrants).forEach((slot, entrantIndex) => {
@@ -317,7 +317,7 @@ function eventHasResults(ev: ChampionshipEvent | undefined): boolean {
  * someone to accept a suggestion, and the failure mode of accepting the wrong
  * one is a driver racing under another driver's name.
  */
-function nearbyNames(roster: readonly RosterEntry[], wanted: string): string {
+export function nearbyNames(roster: readonly RosterEntry[], wanted: string): string {
   const fold = (s: string) => normalise(s).toLowerCase().replace(/\s+/g, "")
   const close = roster.filter((r) => r.name && fold(r.name) === fold(wanted)).map((r) => r.name)
   if (close.length === 0) return "No entrant name is close to it either."

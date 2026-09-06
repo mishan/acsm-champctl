@@ -276,11 +276,14 @@ driver who sent it.
 ```
 champctl-liveries <championship-id> --zip <pack.zip> [options]
 champctl-liveries <championship-id> --carset <out.zip> [options]
+champctl-liveries <championship-id> --claims [--release <discord-user-id>]
 
   --zip <path>          the livery pack
   --carset <path>       write the archive drivers install, from what has been
                         applied. Reads the local store; touches no server.
-  --store <path>        where applied liveries are kept
+  --claims              list which Discord account is claimed as which driver
+  --release <id>        drop that Discord account's claim, freeing the name
+  --store <path>        where applied liveries and claims are kept
                         (default: data/liveries/liveries.db)
   --no-store            apply without recording
   --restart <round>     restart that round's looping practice server afterwards
@@ -397,17 +400,15 @@ hash per file — Content Manager is not guaranteed to overwrite a skin that is
 already installed, and that failure looks like nothing at all.
 
 Recording is the only copy champctl has: a livery uploaded through ACSM's own
-web UI is invisible to it and won't be in the carset. Full design, including the
-Discord upload flow this is built for, in
-[`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
+web UI is invisible to it and won't be in the carset.
 
 Credentials come from `CHAMPCTL_USERNAME` / `CHAMPCTL_PASSWORD` and are needed
 only for `--push`; a preview reads the export, which is public. `--carset` needs
 none at all.
 
 Exit codes: `0` previewed cleanly, pushed, or wrote a carset; `1` nothing there
-— no recorded liveries to build a carset from; `2` the pack or the entry list
-wouldn't allow it; `3` a usage mistake, or champctl itself failed.
+— no recorded liveries, no claims; `2` the pack or the entry list wouldn't allow
+it; `3` a usage mistake, or champctl itself failed.
 
 ## champctl-serve
 
@@ -661,10 +662,10 @@ have a web UI. What's left:
   standings, the format poll and the poll-to-proposal loop are not, and neither
   are the `/stats` lookups, which want the archive projections that don't exist
   yet.
-- **Livery uploads have no slash commands yet.** The handlers, the queue, the
-  drain and the carset are built and tested; what is missing is registering
-  `/livery` in `discord.ts` and downloading the attachment. Design in
-  [`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
+- **Self-serve livery uploads are part-built.** What champctl applies is
+  recorded, the carset is built from it, and claims map a Discord account to an
+  entrant; the queue, the drain and the Discord side are still to come. Design
+  in [`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
 - **The nightly report has no memory.** It says the same thing every night until
   someone fixes it, which is gridmom's voice by design but also means there is
   nothing to lean on if a league wants "tell me once". A digest per championship

@@ -37,6 +37,7 @@ import {
   applyLiveries,
 } from "../liveries/apply.js"
 import { carsetFilename, carsetPlan, writeCarset } from "../liveries/carset.js"
+import { SqliteClaimStore } from "../liveries/claims.js"
 import { defaultStorePath } from "../sqlite.js"
 import { DEFAULT_LIMITS, LiveryPackError, readLiveryPack } from "../liveries/pack.js"
 import { SqliteLiveryStore } from "../liveries/store.js"
@@ -56,6 +57,7 @@ export const USAGE = `champctl-liveries — upload custom liveries and assign th
 Usage:
   champctl-liveries <championship-id> --zip <pack.zip> [options]
   champctl-liveries <championship-id> --carset <out.zip> [options]
+  champctl-liveries <championship-id> --claims [--release <discord-user-id>]
 
 The pack is a zip of zips, one folder per car model:
 
@@ -73,7 +75,10 @@ Options:
                         installs — every livery champctl has applied to this
                         championship, as one archive you can drop on Content
                         Manager. Reads the local store; touches no server.
-  --store <path>        where applied liveries are kept
+  --claims              list which Discord account is claimed as which driver
+  --release <id>        drop that Discord account's claim, freeing the name.
+                        Needs --push, like every other write here.
+  --store <path>        where applied liveries and claims are kept
                         (default: $CHAMPCTL_STORE, else data/liveries/liveries.db)
   --no-store            apply without recording. The carset will be missing
                         these, and nothing will say so later.
@@ -103,7 +108,7 @@ ACSM's own web UI is invisible to it and will not be in the carset.
 
 Exit codes:
   0  previewed cleanly, pushed, or wrote a carset
-  1  nothing there — no recorded liveries to build a carset from
+  1  nothing there — no recorded liveries, no claims
   2  the pack or the entry list wouldn't allow it
   3  a usage mistake, or champctl itself failed
 `
@@ -112,6 +117,8 @@ interface Args {
   championshipId?: string
   zip?: string
   carset?: string
+  claims: boolean
+  release?: string
   store?: string
   noStore: boolean
   restart?: number
@@ -126,6 +133,7 @@ interface Args {
 export function parseArgs(argv: readonly string[]): Args {
   const args: Args = {
     profile: "batl",
+    claims: false,
     noStore: false,
     push: false,
     yes: false,
@@ -158,6 +166,12 @@ export function parseArgs(argv: readonly string[]): Args {
         break
       case "--carset":
         args.carset = next()
+        break
+      case "--claims":
+        args.claims = true
+        break
+      case "--release":
+        args.release = next()
         break
       case "--store":
         args.store = next()
@@ -318,6 +332,13 @@ async function runCommand(argv: readonly string[]): Promise<number> {
   }
   if (!args.championshipId) throw new UsageError("Needs a championship id.")
 
+  if (args.claims || args.release !== undefined) {
+    if (args.zip || args.carset !== undefined) {
+      throw new UsageError("--claims is a separate job from uploading or building a carset.")
+    }
+    return await manageClaims(args, args.championshipId)
+  }
+
   if (args.carset !== undefined) {
     if (args.zip) {
       throw new UsageError(
@@ -403,6 +424,85 @@ async function runCommand(argv: readonly string[]): Promise<number> {
 }
 
 /** Waits, but wakes early when asked to stop, so Ctrl-C isn't a two-minute wait. */
+
+/**
+ * The operator half of the identity mapping (docs/discord-livery-upload.md §2).
+ *
+ * Releasing is deliberately not something a driver can do for themselves: a
+ * driver who could release their own claim could release it the moment somebody
+ * asked them to, which is most of the way to letting anyone take a name off
+ * anyone.
+ */
+async function manageClaims(args: Args, championshipId: string): Promise<number> {
+  const store = await SqliteClaimStore.open(storePath(args))
+  try {
+    if (args.release !== undefined) {
+      // Behind --push and a confirmation like every other destructive path
+      // here. A release is irreversible, leaves no audit row, and frees a name
+      // for anyone to take — so a mistyped-but-valid Discord id is the one
+      // mistake in this CLI that hands somebody else a driver's identity.
+      const holder = await store.forDiscordUser(championshipId, args.release)
+      if (!holder) {
+        process.stderr.write(`No claim held by ${args.release}. Nothing released.\n`)
+        return 1
+      }
+      if (!args.push) {
+        process.stdout.write(
+          `${args.release} is claimed as "${holder.entrantName}". ` +
+            `Re-run with --push to release it.\n`,
+        )
+        return 0
+      }
+      if (!args.yes && !(await confirm(`Release "${holder.entrantName}" from ${args.release}?`))) {
+        process.stdout.write("Nothing released.\n")
+        return 0
+      }
+
+      const released = await store.release(championshipId, args.release)
+      if (!released) {
+        process.stderr.write(`No claim held by ${args.release}. Nothing released.\n`)
+        return 1
+      }
+      process.stdout.write(
+        `Released ${args.release}, who was claimed as "${released.entrantName}". ` +
+          `That name is free for someone else to claim.\n`,
+      )
+      return 0
+    }
+
+    const claims = await store.list(championshipId)
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(claims, null, 2)}\n`)
+      return claims.length === 0 ? 1 : 0
+    }
+    if (claims.length === 0) {
+      process.stdout.write(
+        `Nobody has claimed a driver yet, so nobody can upload a livery through Discord. ` +
+          `Drivers claim themselves with /livery claim.\n`,
+      )
+      return 1
+    }
+
+    for (const c of claims) {
+      const hint = await store.handleHint(c.entrantName)
+      // The sign-up handle beside the claim, because agreeing and disagreeing
+      // look different at a glance and that is the whole verification story.
+      const note = !hint
+        ? ""
+        : hint.handle.toLowerCase() === (c.discordHandle ?? "").toLowerCase()
+          ? "   (sign-up agrees)"
+          : `   (sign-up says "${hint.handle}")`
+      process.stdout.write(
+        `  ${c.entrantName.padEnd(20)} ${(c.discordHandle ?? "?").padEnd(20)} ` +
+          `${c.discordUserId}${note}\n`,
+      )
+    }
+    process.stdout.write(`\n${claims.length} claimed. Championship: ${championshipId}\n`)
+    return 0
+  } finally {
+    store.close()
+  }
+}
 
 function storePath(args: Args): string {
   return args.store ?? defaultStorePath()
