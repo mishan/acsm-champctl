@@ -458,10 +458,15 @@ describe("the bot cannot write to ACSM", () => {
   const importsOf = (file: string): string[] =>
     [...readFileSync(file, "utf8").matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1] as string)
 
-  const botModules = () =>
-    readdirSync(botDir)
+  // `src/cli/bot.ts` is in here as well as `src/bot/`. It is the entry point
+  // that opens the databases and wires the router, so it is where a "just this
+  // once, the bot could apply that itself" would actually be written.
+  const botModules = () => [
+    ...readdirSync(botDir)
       .filter((f) => f.endsWith(".ts"))
-      .map((f) => join(botDir, f))
+      .map((f) => join(botDir, f)),
+    join(srcDir, "cli", "bot.ts"),
+  ]
 
   it("imports nothing from the write path", () => {
     const offences: string[] = []
@@ -508,6 +513,18 @@ describe("the bot cannot write to ACSM", () => {
     for (const file of botModules()) walk(file, [])
 
     expect(offences).toEqual([])
+  })
+
+  /**
+   * One module knows about the library, the way `acsm/client.ts` is the only
+   * place that knows about HTTP. It is what lets the clamp, the router and
+   * every reply be tested by calling a function with a plain object.
+   */
+  it("keeps discord.js to a single module", () => {
+    const importers = botModules().filter((f) =>
+      importsOf(f).some((s) => s === "discord.js" || s.startsWith("discord.js/")),
+    )
+    expect(importers.map((f) => basename(f))).toEqual(["discord.ts"])
   })
 
   it("checks a directory that actually has modules in it", () => {

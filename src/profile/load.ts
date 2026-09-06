@@ -141,6 +141,14 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
       )
     }
 
+    const guildId = (discord as Record<string, unknown>)["guildId"]
+    if (guildId !== undefined && (typeof guildId !== "string" || !/^\d{17,20}$/.test(guildId))) {
+      bad(
+        "`discord.guildId` must be a Discord server id — 17 to 20 digits, from right-clicking " +
+          "the server with Developer Mode on",
+      )
+    }
+
     // Same check, same reason: a channel *name* and a role *mention* both reach
     // Discord as an id it cannot find. Here the failure is worse than a missing
     // report — a clamp built from ids that match nothing refuses every driver,

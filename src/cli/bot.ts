@@ -18,12 +18,17 @@ import { pathToFileURL } from "node:url"
 
 import { SqliteCache } from "../acsm/cache.js"
 import { HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
+import { LIVERY_COMMANDS } from "../bot/commands.js"
 import { GatewayTransport } from "../bot/discord.js"
+import { LiveryRouter } from "../bot/livery-router.js"
 import { nightlyMessages } from "../bot/message.js"
 import { findingsAtOrAbove, nightly, type NightlyEntry } from "../bot/nightly.js"
 import { BotError, RecordingTransport, type DiscordTransport } from "../bot/transport.js"
 import type { Severity } from "../gridmom/finding.js"
 import { DEFAULT_MIN_SEVERITY } from "../gridmom/report.js"
+import { SqliteClaimStore } from "../liveries/claims.js"
+import { SqliteSubmissionQueue } from "../liveries/queue.js"
+import { SqliteTokenStore } from "../liveries/upload-token.js"
 import { loadProfile } from "../profile/load.js"
 import { loadPits, reportUsageError, runCli, UsageError } from "./args.js"
 
@@ -31,6 +36,7 @@ const USAGE = `champctl-bot — champctl's voice in Discord
 
 Usage:
   champctl-bot report                 check every championship and post what's wrong
+  champctl-bot serve                  answer /livery until stopped
 
 Options:
   --profile <id|path>   league profile (default: batl)
@@ -40,6 +46,9 @@ Options:
   --suppress <codes>    comma-separated finding codes or prefixes to hide
   --all                 include championships whose every round has been raced
   --dry-run             print what would be posted; talk to nobody
+  --store <path>        queue, claims and tokens, shared with champctl-liveries
+                        (default: data/liveries/liveries.db)
+  --register-only       publish the slash commands and exit, without serving
   --base-url <url>      override the profile's ACSM base URL
   --no-cache            bypass the on-disk response cache
   --now <iso>           pretend it is this time (for the schedule checks)
@@ -50,6 +59,11 @@ Exit codes:
   1  warnings only
   2  at least one error, or a championship that couldn't be read
   3  the run itself failed
+
+The serve command takes drivers' liveries and writes them to the local queue.
+It cannot put them on the game server: that is champctl-liveries --drain, the
+process holding the credentials. Uploads apply by themselves only while
+--drain --watch is running, and the bot checks that rather than assuming it.
 
 The bot token comes from CHAMPCTL_DISCORD_TOKEN and is never a flag — a flag
 lands in shell history and in every ps listing on the box. There is deliberately
@@ -69,6 +83,8 @@ interface Args {
   pits?: string
   min?: Severity
   suppress: string[]
+  store?: string
+  registerOnly: boolean
   all: boolean
   dryRun: boolean
   baseUrl?: string
@@ -82,6 +98,7 @@ export function parseArgs(argv: readonly string[]): Args {
     command: "",
     profile: "batl",
     suppress: [],
+    registerOnly: false,
     all: false,
     dryRun: false,
     cache: true,
@@ -126,6 +143,12 @@ export function parseArgs(argv: readonly string[]): Args {
         break
       case "--dry-run":
         args.dryRun = true
+        break
+      case "--store":
+        args.store = next()
+        break
+      case "--register-only":
+        args.registerOnly = true
         break
       case "--base-url":
         args.baseUrl = next()
@@ -221,6 +244,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     process.stdout.write(USAGE)
     return args.help ? 0 : 3
   }
+  if (args.command === "serve") return await serve(args)
   if (args.command !== "report") throw new UsageError(`Unknown command ${args.command}`)
 
   const profile = await loadProfile(args.profile)
@@ -326,6 +350,94 @@ function summarise(checked: number, finished: number, failed: number, posted: nu
   if (failed) parts.push(`${failed} failed`)
   parts.push(`${posted} ${posted === 1 ? "message" : "messages"}`)
   return parts.join(", ")
+}
+
+/**
+ * Answers `/livery` until something stops the process
+ * (docs/discord-livery-upload.md §3).
+ *
+ * The last mile, and it changes nothing about what the bot may do. It opens the
+ * queue, the claims and the tokens — all local SQLite — and a *read-only* ACSM
+ * reader for the entry list, which needs no login because the export is public.
+ * There is still no way to give this process credentials, and
+ * `test/bot.test.ts` walks the module graph to keep it that way.
+ */
+async function serve(args: Args): Promise<number> {
+  const profile = await loadProfile(args.profile)
+  const baseUrl = args.baseUrl ?? profile.acsmBaseUrl
+  if (!baseUrl) {
+    throw new UsageError(
+      `No ACSM base URL. Set acsmBaseUrl in the ${args.profile} profile, or pass --base-url.`,
+    )
+  }
+
+  const guildId = profile.discord?.guildId
+  if (!guildId) {
+    // Refused before connecting. A bot that logs in and then has nowhere to
+    // publish its commands sits there looking healthy and answering nothing.
+    throw new UsageError(
+      `No Discord server. Set discord.guildId in the ${args.profile} profile — /livery is ` +
+        `registered per server, not globally, so it needs to know which one.`,
+    )
+  }
+  if (!profile.discord?.livery) {
+    throw new UsageError(
+      `This profile has no discord.livery section, so the league hasn't turned livery uploads ` +
+        `on. Add one — an empty object accepts uploads from anyone, anywhere, which is probably ` +
+        `not what you want.`,
+    )
+  }
+
+  const storePath = args.store ?? resolve(process.cwd(), "data/liveries/liveries.db")
+  const claims = await SqliteClaimStore.open(storePath)
+  const queue = await SqliteSubmissionQueue.open(storePath)
+  const tokens = await SqliteTokenStore.open(storePath)
+  const transport = await connect()
+
+  try {
+    if (!(transport instanceof GatewayTransport)) {
+      throw new BotError("serve needs a real Discord connection.")
+    }
+    await transport.registerCommands(guildId, LIVERY_COMMANDS)
+    process.stderr.write(`Registered /livery in ${guildId}.\n`)
+    if (args.registerOnly) return 0
+
+    const livery = profile.discord.livery
+    const router = new LiveryRouter({
+      reader: new HttpAcsmReader({ baseUrl, userAgent: BOT_USER_AGENT }),
+      claims,
+      queue,
+      tokens,
+      clamp: {
+        ...(livery.channelIds ? { channelIds: livery.channelIds } : {}),
+        ...(livery.roleIds ? { roleIds: livery.roleIds } : {}),
+      },
+      ...(livery.autoApply !== undefined ? { autoApply: livery.autoApply } : {}),
+      ...(livery.uploadBaseUrl ? { uploadBaseUrl: livery.uploadBaseUrl } : {}),
+    })
+
+    transport.listen(router, {
+      ...(profile.discord.adminChannelId ? { adminChannelId: profile.discord.adminChannelId } : {}),
+    })
+    process.stderr.write(
+      `Answering /livery. Uploads go to ${storePath}; champctl-liveries --drain applies them.\n`,
+    )
+
+    await new Promise<void>((done) => {
+      const stop = () => done()
+      process.once("SIGINT", stop)
+      process.once("SIGTERM", stop)
+    })
+    return 0
+  } finally {
+    // Closed in reverse, and the databases last: SQLite leaves a -wal beside
+    // the file, and a queue whose log was never checkpointed is one the drain
+    // reads short.
+    await transport.close()
+    tokens.close()
+    queue.close()
+    claims.close()
+  }
 }
 
 async function connect(): Promise<DiscordTransport> {

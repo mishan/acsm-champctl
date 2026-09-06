@@ -111,6 +111,15 @@ export interface DiscordSettings {
    */
   adminChannelId?: string
   /**
+   * The guild `/livery` is registered in.
+   *
+   * Guild-scoped rather than global, because guild commands update immediately
+   * and global ones propagate on Discord's schedule — which turns a renamed
+   * option into an hour of drivers seeing the old one. champctl is a
+   * single-league tool; there is no second guild to serve.
+   */
+  guildId?: string
+  /**
    * Livery uploads. Absent means the league has no self-serve uploads and the
    * commands are not registered at all — the same shape as `discord` being
    * absent meaning no bot.

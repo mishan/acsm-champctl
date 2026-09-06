@@ -407,7 +407,17 @@ already installed, and that failure looks like nothing at all.
 Recording is the only copy champctl has: a livery uploaded through ACSM's own
 web UI is invisible to it and won't be in the carset.
 
-**Drivers can send their own.** `src/bot/livery.ts` validates a driver's zip
+**Drivers send their own with `/livery`.** `champctl-bot serve` registers three
+subcommands in one guild — `claim`, `upload` and `upload-url` — and answers
+them. It asks Discord for **no intents**: an attachment option puts the file in
+the interaction payload, along with the roles and channel the clamp needs, where
+taking a zip off an ordinary message would have needed `MessageContent` and let
+the token read every message it can see. Replies are ephemeral, because a
+refusal usually names something embarrassing in somebody's zip. Every
+interaction is deferred first — Discord allows three seconds and a 20 MB
+download does not fit in them.
+
+`src/bot/livery.ts` validates a driver's zip
 behind a channel and role check, resolves who they are, and queues it;
 `--drain` applies the lot in **one** championship save. One save rather than one
 per driver is the point — `saveChampionshipSkins` is a full-form replace, so
@@ -691,8 +701,31 @@ configuration, not a secret; the token is the secret and stays in
 since a committed channel id is a channel every fork posts into.
 
 ```json
-"discord": { "adminChannelId": "1234567890123456789" }
+"discord": {
+  "adminChannelId": "1234567890123456789",
+  "guildId": "1234567890123456789",
+  "livery": {
+    "channelIds": ["1234567890123456789"],
+    "roleIds": ["1234567890123456789"],
+    "autoApply": false,
+    "uploadBaseUrl": "https://liveries.example.com"
+  }
+}
 ```
+
+`guildId` is where `/livery` is registered — per server rather than globally,
+because guild commands update the moment `champctl-bot serve` starts and global
+ones propagate on Discord's schedule.
+
+`channelIds` and `roleIds` are **ANDed, and an empty or absent list means
+unrestricted**. Worth reading twice: a league that sets `roleIds` and leaves
+`channelIds` out has accepted uploads in every channel the bot can see. Setting
+`roleIds` also confines uploads to the server, since a DM has no member and no
+roles for a clamp to check.
+
+Omitting `livery` entirely means the league has no self-serve uploads and
+`champctl-bot serve` refuses to start, rather than registering commands that
+accept anything from anyone.
 
 **Credentials.** `CHAMPCTL_USERNAME` and `CHAMPCTL_PASSWORD`, read from the
 environment and never written to disk. Only the write *commands* need them —
@@ -720,9 +753,10 @@ have a web UI. What's left:
   standings, the format poll and the poll-to-proposal loop are not, and neither
   are the `/stats` lookups, which want the archive projections that don't exist
   yet.
-- **Livery uploads have no slash commands yet.** The handlers, the queue, the
-  drain and the carset are built and tested; what is missing is registering
-  `/livery` in `discord.ts` and downloading the attachment. Design in
+- **Livery uploads have never run against a real Discord server.** Everything
+  is built and tested — `/livery claim`, `/livery upload`, `/livery upload-url`,
+  the queue, the drain, the carset — but only against fixtures and a stub. The
+  first run against a live guild is the one that will find things. Design in
   [`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
 - **The nightly report has no memory.** It says the same thing every night until
   someone fixes it, which is gridmom's voice by design but also means there is

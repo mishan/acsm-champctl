@@ -9,16 +9,34 @@
  * two places to notice that a token expired. Logging in costs a couple of
  * seconds on a job that runs once a night.
  *
- * No intents are requested. Intents are a subscription to events, the report
- * reads nothing, and the ones that matter later — message content in
- * particular — are privileged and have to be turned on deliberately in
- * Discord's own developer portal. Asking for nothing now means the token this
- * job runs under can do nothing but talk.
+ * No intents are requested, and `/livery` did not change that. Intents are a
+ * subscription to events; interactions arrive without one, and the roles and
+ * channel a clamp needs are in the interaction payload rather than behind
+ * `GuildMembers`. The alternative — taking a driver's zip off an ordinary
+ * message — would have needed `MessageContent`, which is privileged and would
+ * let this token read every message in every channel it can see. Asking for
+ * nothing still means the token this job runs under can do nothing but talk and
+ * answer.
  */
 
-import { Client, Events } from "discord.js"
+import {
+  type ApplicationCommandDataResolvable,
+  type ChatInputCommandInteraction,
+  Client,
+  Events,
+  MessageFlags,
+  type Interaction,
+} from "discord.js"
 
-import { BotError, type DiscordMessage, type DiscordTransport } from "./transport.js"
+import type { CommandDefinition } from "./commands.js"
+import {
+  BotError,
+  type CommandRouter,
+  type DiscordMessage,
+  type DiscordTransport,
+  type IncomingAttachment,
+  type SlashCommand,
+} from "./transport.js"
 
 export interface GatewayOptions {
   token: string
@@ -94,8 +112,161 @@ export class GatewayTransport implements DiscordTransport {
     await channel.send(message.content)
   }
 
+  /**
+   * Publishes the command list to one guild.
+   *
+   * Guild-scoped, not global. Guild commands update the moment this returns;
+   * global ones propagate on Discord's own schedule, which turns "I renamed an
+   * option" into "why is it still the old one" for an hour. champctl is a
+   * single-league tool and there is no second guild to serve.
+   *
+   * `set` rather than `create`: it replaces the list, so a subcommand that has
+   * been removed from `commands.ts` disappears from Discord rather than
+   * lingering as something a driver can run and champctl will not answer.
+   */
+  async registerCommands(guildId: string, commands: readonly CommandDefinition[]): Promise<void> {
+    const application = this.#client.application
+    if (!application) {
+      throw new BotError("Discord has not told us who this bot is yet — cannot register commands.")
+    }
+    try {
+      // Cast at the boundary, deliberately. `commands.ts` holds the plain JSON
+      // Discord's API documents so it can be asserted without this library;
+      // discord.js types the same JSON through its own builder unions, and the
+      // one place they meet is here.
+      await application.commands.set(
+        commands.map((c) => ({
+          name: c.name,
+          description: c.description,
+          dmPermission: c.dmPermission,
+          options: c.options,
+        })) as unknown as ApplicationCommandDataResolvable[],
+        guildId,
+      )
+    } catch (e) {
+      throw new BotError(
+        `Could not register commands in guild ${guildId}: ${message(e)}. The bot needs the ` +
+          `applications.commands scope — re-invite it with that ticked if it was added without.`,
+      )
+    }
+  }
+
+  /**
+   * Answers `/livery` until something stops the process.
+   *
+   * **Deferred immediately.** Discord gives three seconds to acknowledge an
+   * interaction, and a 20 MB attachment does not download in three seconds — so
+   * the reply is deferred first and edited when there is something to say.
+   * Without that, every real upload fails with "the application did not
+   * respond" *and* still lands in the queue, which is the worst pair.
+   *
+   * **Ephemeral, always.** A refusal usually names something embarrassing in
+   * somebody's zip, and an upload link is a bearer credential. Neither belongs
+   * in a channel.
+   */
+  listen(router: CommandRouter, options: { adminChannelId?: string } = {}): void {
+    this.#client.on(Events.InteractionCreate, (interaction: Interaction) => {
+      if (!interaction.isChatInputCommand()) return
+      void this.#dispatch(interaction, router, options.adminChannelId)
+    })
+  }
+
+  async #dispatch(
+    interaction: ChatInputCommandInteraction,
+    router: CommandRouter,
+    adminChannelId?: string,
+  ): Promise<void> {
+    try {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+    } catch {
+      // Nothing can be said to a driver whose interaction we failed to
+      // acknowledge, and running the command anyway would queue an upload they
+      // were told nothing about.
+      return
+    }
+
+    try {
+      const reply = await router.handle(toSlashCommand(interaction))
+      await interaction.editReply({ content: reply.content })
+
+      if (reply.announcement && adminChannelId) {
+        // After the driver's own reply, and separately: a failure to post the
+        // announcement must not turn a successful claim into an error message.
+        await this.post({ channelId: adminChannelId, content: reply.announcement }).catch(() => {})
+      }
+    } catch (e) {
+      // The exception itself never reaches the driver — it is champctl being
+      // broken rather than anything they did, and a stack trace gives them
+      // nothing to act on.
+      process.stderr.write(`/${interaction.commandName} failed: ${message(e)}\n`)
+      await interaction
+        .editReply({
+          content: "Something went wrong at my end rather than with your file. Tell an admin.",
+        })
+        .catch(() => {})
+    }
+  }
+
   async close(): Promise<void> {
     await this.#client.destroy()
+  }
+}
+
+/**
+ * A `discord.js` interaction as champctl's own shape.
+ *
+ * The whole adapter, and the reason nothing else in `src/bot` imports
+ * `discord.js`: past this function it is ids, strings and one thunk.
+ */
+export function toSlashCommand(interaction: ChatInputCommandInteraction): SlashCommand {
+  const options: Record<string, string> = {}
+  for (const option of interaction.options.data[0]?.options ?? interaction.options.data) {
+    if (typeof option.value === "string") options[option.name] = option.value
+  }
+
+  const file = interaction.options.getAttachment("file")
+  const attachment: IncomingAttachment | undefined = file
+    ? {
+        filename: file.name,
+        size: file.size,
+        // Fetched when asked for, not before, so the router can refuse an
+        // oversized attachment without pulling it over the wire first. Discord's
+        // CDN URLs now carry expiring signed parameters, so this has to happen
+        // while the interaction is still in flight rather than from a queue.
+        download: async () => {
+          const res = await fetch(file.url)
+          if (!res.ok) {
+            throw new BotError(
+              `Discord wouldn't give me that file back (${res.status}). Try uploading it again.`,
+            )
+          }
+          return new Uint8Array(await res.arrayBuffer())
+        },
+      }
+    : undefined
+
+  // `member.roles` arrives in the payload, so no GuildMembers intent and no
+  // fetch. In a DM there is no member at all, which is the case the clamp
+  // reports as "a DM has no roles in it".
+  const roleIds =
+    interaction.inCachedGuild() && interaction.member
+      ? [...interaction.member.roles.cache.keys()]
+      : Array.isArray((interaction.member as { roles?: unknown } | null)?.roles)
+        ? ((interaction.member as unknown as { roles: string[] }).roles ?? [])
+        : []
+
+  return {
+    name: interaction.commandName,
+    ...(interaction.options.getSubcommand(false)
+      ? { subcommand: interaction.options.getSubcommand(false) as string }
+      : {}),
+    options,
+    ...(attachment ? { attachment } : {}),
+    userId: interaction.user.id,
+    username: interaction.user.username,
+    ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
+    channelId: interaction.channelId,
+    roleIds,
   }
 }
 
