@@ -15,6 +15,7 @@
     "champctl-championship": "./bin/champctl-championship.js",
     "champctl-liveries": "./bin/champctl-liveries.js",
     "champctl-serve": "./bin/champctl-serve.js",
+    "champctl-upload": "./bin/champctl-upload.js",
     "champctl-bot": "./bin/champctl-bot.js"
   },
   "//files": "dist/ is in .gitignore, and without an explicit list npm packs by gitignore rules — so the tarball shipped bin/ scripts importing a directory that wasn't in it. README and LICENSE come along whatever this says.",
