@@ -1,8 +1,8 @@
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 
-import { USAGE, UsageError, exitFor, parseArgs, renderPlan } from "../src/cli/liveries.js"
 import { AcsmError } from "../src/acsm/client.js"
+import { USAGE, UsageError, exitFor, parseArgs, renderPlan } from "../src/cli/liveries.js"
 import type { Entrant } from "../src/acsm/types.js"
 import {
   LiveryApplyError,

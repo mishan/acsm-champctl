@@ -34,7 +34,9 @@ import {
   RosterChangedError,
   applyLiveries,
 } from "../liveries/apply.js"
+import { defaultStorePath } from "../sqlite.js"
 import { DEFAULT_LIMITS, LiveryPackError, readLiveryPack } from "../liveries/pack.js"
+import { SqliteLiveryStore } from "../liveries/store.js"
 import { loadProfile } from "../profile/load.js"
 import {
   LiveryPlanError,
@@ -62,7 +64,11 @@ ui_skin.json. The inner zip's name is matched against the entrant's name
 exactly, and becomes the skin folder on the server.
 
 Options:
-  --zip <path>          the livery pack (required)
+  --zip <path>          the livery pack
+  --store <path>        where applied liveries are kept
+                        (default: $CHAMPCTL_STORE, else data/liveries/liveries.db)
+  --no-store            apply without recording. The carset will be missing
+                        these, and nothing will say so later.
   --restart <round>     restart that round's looping practice server afterwards
   --base-url <url>      override the profile's ACSM base URL
   --profile <id|path>   league profile (default: batl)
@@ -83,6 +89,10 @@ ACSM what is already in a skin folder, so a corrected livery has to be re-sent
 rather than guessed at; the championship itself is only written when a skin
 assignment actually changes.
 
+Everything pushed is also recorded locally, so the set can be handed to drivers
+later. That is the only copy champctl has: a livery uploaded through ACSM's own
+web UI is invisible to it and will never be in it.
+
 Exit codes:
   0  previewed cleanly, or pushed
   2  the pack or the entry list wouldn't allow it
@@ -92,6 +102,8 @@ Exit codes:
 interface Args {
   championshipId?: string
   zip?: string
+  store?: string
+  noStore: boolean
   restart?: number
   profile: string
   baseUrl?: string
@@ -102,7 +114,14 @@ interface Args {
 }
 
 export function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { profile: "batl", push: false, yes: false, json: false, help: false }
+  const args: Args = {
+    profile: "batl",
+    noStore: false,
+    push: false,
+    yes: false,
+    json: false,
+    help: false,
+  }
   const rest: string[] = []
 
   for (let i = 0; i < argv.length; i++) {
@@ -126,6 +145,12 @@ export function parseArgs(argv: readonly string[]): Args {
         break
       case "--zip":
         args.zip = next()
+        break
+      case "--store":
+        args.store = next()
+        break
+      case "--no-store":
+        args.noStore = true
         break
       case "--restart": {
         const raw = next()
@@ -279,6 +304,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     return 0
   }
   if (!args.championshipId) throw new UsageError("Needs a championship id.")
+
   if (!args.zip) throw new UsageError("Needs a livery pack: --zip <pack.zip>.")
 
   const profile = await loadProfile(args.profile)
@@ -330,16 +356,33 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     return 0
   }
 
-  const result = await applyLiveries(session, plan, {
-    ...(args.restart !== undefined ? { restartPracticeRound: args.restart } : {}),
-    eventIds,
-  })
-  say(
-    `Uploaded ${result.uploaded.length} ${result.uploaded.length === 1 ? "livery" : "liveries"}` +
-      `${result.championshipSaved ? ", championship saved" : ", championship unchanged"}` +
-      `${result.practiceRestarted ? ", practice restarted" : ""}.\n`,
-  )
+  const store = args.noStore ? undefined : await SqliteLiveryStore.open(storePath(args))
+  try {
+    const result = await applyLiveries(session, plan, {
+      ...(args.restart !== undefined ? { restartPracticeRound: args.restart } : {}),
+      eventIds,
+      ...(store ? { record: store, source: "zip" as const } : {}),
+    })
+    say(
+      `Uploaded ${result.uploaded.length} ${result.uploaded.length === 1 ? "livery" : "liveries"}` +
+        `${result.championshipSaved ? ", championship saved" : ", championship unchanged"}` +
+        `${result.practiceRestarted ? ", practice restarted" : ""}.\n`,
+    )
+    if (store) {
+      // Named rather than silent: the carset is only as complete as this, and
+      // "recorded" is the word that makes --carset make sense later.
+      say(`Recorded ${plan.assignments.length} for the carset in ${storePath(args)}.\n`)
+    }
+  } finally {
+    store?.close()
+  }
   return 0
+}
+
+/** Waits, but wakes early when asked to stop, so Ctrl-C isn't a two-minute wait. */
+
+function storePath(args: Args): string {
+  return args.store ?? defaultStorePath()
 }
 
 async function readPack(path: string): Promise<Uint8Array> {
