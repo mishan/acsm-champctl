@@ -13,6 +13,7 @@ import { pathToFileURL } from "node:url"
 
 import { DEFAULT_LIMITS } from "../liveries/pack.js"
 import { SqliteSubmissionQueue } from "../liveries/queue.js"
+import { SqliteLiveryStore } from "../liveries/store.js"
 import { SqliteTokenStore } from "../liveries/upload-token.js"
 import { createUploadServer } from "../upload/server.js"
 
@@ -21,11 +22,17 @@ const USAGE = `champctl-upload — takes livery uploads from one-time links.
 Usage:
   champctl-upload [options]
 
+Serves two things: the one-time links drivers upload through, and the carset
+everyone downloads. The carset has to be a link rather than a Discord
+attachment because it is every livery at once — larger, by construction, than
+any single upload.
+
 Options:
   --port <n>       port to listen on (default: 8477)
   --host <addr>    address to bind (default: 127.0.0.1)
   --store <path>   queue database, shared with champctl-liveries
                    (default: data/liveries/liveries.db)
+  --cache-dir <p>  where built carsets are kept (default: under the temp dir)
   --auto-apply     say uploads will be applied on a timer rather than by an
                    admin. Changes what drivers are told, nothing else.
   -h, --help       this
@@ -45,6 +52,7 @@ export interface Args {
   port: number
   host: string
   store?: string
+  cacheDir?: string
   autoApply: boolean
   help: boolean
 }
@@ -74,6 +82,9 @@ export function parseArgs(argv: readonly string[]): Args {
         break
       case "--store":
         args.store = next(arg)
+        break
+      case "--cache-dir":
+        args.cacheDir = next(arg)
         break
       case "--auto-apply":
         args.autoApply = true
@@ -105,10 +116,13 @@ export async function main(argv: readonly string[]): Promise<number> {
   const store = args.store ?? resolve(process.cwd(), "data/liveries/liveries.db")
   const tokens = await SqliteTokenStore.open(store)
   const queue = await SqliteSubmissionQueue.open(store)
+  const liveries = await SqliteLiveryStore.open(store)
 
   const server = createUploadServer({
     tokens,
     queue,
+    store: liveries,
+    ...(args.cacheDir ? { cacheDir: args.cacheDir } : {}),
     limits: DEFAULT_LIMITS,
     autoApply: args.autoApply,
   })
@@ -125,6 +139,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   await new Promise<void>((done) => {
     const stop = () => {
       server.close(() => {
+        liveries.close()
         tokens.close()
         queue.close()
         done()

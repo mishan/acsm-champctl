@@ -1,9 +1,11 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs"
+import { mkdtemp, readdir } from "node:fs/promises"
 import type { AddressInfo } from "node:net"
+import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { zipSync } from "fflate"
+import { unzipSync, zipSync } from "fflate"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { parseArgs, UsageError } from "../src/cli/upload.js"
@@ -17,7 +19,8 @@ import {
   UploadTokenError,
   uploadUrl,
 } from "../src/liveries/upload-token.js"
-import { createUploadServer } from "../src/upload/server.js"
+import { SqliteLiveryStore } from "../src/liveries/store.js"
+import { carsetSlugFromPath, createUploadServer } from "../src/upload/server.js"
 
 const CAR = "rss_formula_hybrid_2021"
 const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -437,5 +440,162 @@ describe("the champctl-upload CLI", () => {
   it("refuses a port that isn't one", () => {
     expect(() => parseArgs(["--port", "banana"])).toThrow(/must be a port number/)
     expect(() => parseArgs(["--port", "70000"])).toThrow(/must be a port number/)
+  })
+})
+
+/**
+ * The other half of the feature (docs/discord-livery-upload.md §6).
+ *
+ * A livery on the server does nothing for the twenty-nine people who cannot see
+ * it, and the carset is every livery at once — so it is, by construction,
+ * larger than any single upload. If one driver's zip was too big for Discord
+ * the pack certainly is, which is why it cannot be posted in a channel and has
+ * to come from here.
+ */
+describe("downloading the carset", () => {
+  let server: ReturnType<typeof createUploadServer>
+  let tokens: SqliteTokenStore
+  let queue: SqliteSubmissionQueue
+  let store: SqliteLiveryStore
+  let base: string
+  let cacheDir: string
+  let slug: string
+
+  const skinFiles = (body: string) => [
+    { name: "livery.dds", bytes: bytes(body) },
+    { name: "preview.jpg", bytes: bytes("jpg") },
+  ]
+
+  beforeAll(async () => {
+    cacheDir = await mkdtemp(join(tmpdir(), "champctl-carset-cache-"))
+    tokens = await SqliteTokenStore.open(":memory:")
+    queue = await SqliteSubmissionQueue.open(":memory:")
+    store = await SqliteLiveryStore.open(":memory:")
+    await store.record(
+      CHAMP,
+      [
+        {
+          carModel: CAR,
+          driverName: "Misha",
+          skinFolder: "Misha",
+          files: skinFiles("misha-pixels"),
+          totalBytes: 15,
+        },
+      ],
+      NOW,
+      "discord",
+    )
+    slug = await store.carsetLink(CHAMP, NOW)
+
+    server = createUploadServer({ tokens, queue, store, cacheDir, now: () => NOW })
+    await new Promise<void>((ready) => server.listen(0, "127.0.0.1", ready))
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  })
+
+  afterAll(async () => {
+    await new Promise<void>((done) => server.close(() => done()))
+    store.close()
+    tokens.close()
+    queue.close()
+  })
+
+  it("hands back a zip laid out for Content Manager", async () => {
+    const res = await fetch(`${base}/c/${slug}`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toBe("application/zip")
+
+    const entries = unzipSync(new Uint8Array(await res.arrayBuffer()))
+    expect(Object.keys(entries)).toContain(`content/cars/${CAR}/skins/Misha/livery.dds`)
+  })
+
+  it("names the file so two months' carsets are tellable apart", async () => {
+    const res = await fetch(`${base}/c/${slug}`)
+    expect(res.headers.get("content-disposition")).toMatch(
+      /attachment; filename="carset-[0-9a-f]{8}\.zip"/,
+    )
+  })
+
+  it("answers a revalidation with 304 and no body", async () => {
+    // The whole grid re-checks this before a race night and usually nothing has
+    // changed. The digest is over the manifest rather than the archive, so a
+    // rebuild does not invalidate everyone's copy.
+    const first = await fetch(`${base}/c/${slug}`)
+    const etag = first.headers.get("etag") as string
+    await first.arrayBuffer()
+
+    const again = await fetch(`${base}/c/${slug}`, { headers: { "if-none-match": etag } })
+    expect(again.status).toBe(304)
+    expect((await again.arrayBuffer()).byteLength).toBe(0)
+  })
+
+  it("changes the tag when somebody's livery lands", async () => {
+    const before = (await fetch(`${base}/c/${slug}`)).headers.get("etag")
+    await store.record(
+      CHAMP,
+      [
+        {
+          carModel: CAR,
+          driverName: "postaL",
+          skinFolder: "postaL",
+          files: skinFiles("postal-pixels"),
+          totalBytes: 16,
+        },
+      ],
+      NOW,
+      "discord",
+    )
+    expect((await fetch(`${base}/c/${slug}`)).headers.get("etag")).not.toBe(before)
+  })
+
+  it("keeps the link stable as the carset changes, so a pin still works", async () => {
+    expect(await store.carsetLink(CHAMP, NOW)).toBe(slug)
+  })
+
+  it("caches the built archive on disk rather than in the heap", async () => {
+    // A thirty-driver carset is a few hundred megabytes. One in memory per
+    // request is how a small box dies on the evening everyone downloads.
+    await fetch(`${base}/c/${slug}`).then((r) => r.arrayBuffer())
+    expect((await readdir(cacheDir)).some((f) => f.endsWith(".zip"))).toBe(true)
+  })
+
+  it("answers HEAD with the size and no body", async () => {
+    const res = await fetch(`${base}/c/${slug}`, { method: "HEAD" })
+    expect(res.status).toBe(200)
+    expect(Number(res.headers.get("content-length"))).toBeGreaterThan(0)
+  })
+
+  it("is not indexable", async () => {
+    expect((await fetch(`${base}/c/${slug}`)).headers.get("x-robots-tag")).toMatch(/noindex/)
+  })
+
+  it("gives nothing away for a slug it doesn't know", async () => {
+    const res = await fetch(`${base}/c/${"z".repeat(22)}`)
+    expect(res.status).toBe(404)
+    expect(await res.text()).toBe("Not found.\n")
+  })
+
+  it("refuses to be uploaded to", async () => {
+    const res = await fetch(`${base}/c/${slug}`, { method: "POST", body: bytes("x") })
+    expect(res.status).toBe(405)
+  })
+
+  it("says plainly when a championship has no liveries yet", async () => {
+    const empty = await store.carsetLink("11111111-1111-1111-1111-111111111111", NOW)
+    const res = await fetch(`${base}/c/${empty}`)
+    expect(res.status).toBe(404)
+    expect(await res.text()).toMatch(/no carset to download/)
+  })
+})
+
+describe("carsetSlugFromPath", () => {
+  it("reads a slug, with or without a trailing filename", () => {
+    expect(carsetSlugFromPath("/c/AbC-123_xyz9876543210")).toBe("AbC-123_xyz9876543210")
+    expect(carsetSlugFromPath("/c/AbC-123_xyz9876543210/carset.zip")).toBe("AbC-123_xyz9876543210")
+  })
+
+  it("ignores anything else", () => {
+    for (const p of ["/c/", "/c/short", "/c/../etc/passwd", "/", "/u/abc"]) {
+      expect(carsetSlugFromPath(p)).toBeUndefined()
+    }
   })
 })

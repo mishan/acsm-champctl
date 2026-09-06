@@ -643,12 +643,30 @@ Two things to decide:
   stable public URL is also a stable public URL, and a league may not want its
   carset indexed. An unguessable per-championship path costs nothing and can be
   pinned in Discord exactly like a public one.
-- **How drivers hear about it.** Not through ACSM's Content Manager wrapper:
-  its `cars` map is one URL per *car model*, meant for the car mod itself, so
-  putting the carset there would replace the link to the car people need before
-  the livery matters. Distribute it out of band — pinned in Discord, and named
-  in the bot's reply when an upload lands, since the driver who just submitted
-  is the one person guaranteed to be reading.
+- **How drivers get it.** A link, and it has to be — this was nearly a hole in
+  the plan. The reason `/livery upload-url` exists is that one driver's zip can
+  be larger than Discord will carry; the carset is *every* driver's zip at once,
+  so it is larger than that by construction. "Pinned in Discord" would have been
+  an instruction to attach a file Discord refuses. `champctl-upload` serves it
+  from `/c/<slug>` and `/livery carset` hands out the address.
+
+  Not through ACSM's Content Manager wrapper either: its `cars` map is one URL
+  per *car model*, meant for the car mod itself, so putting the carset there
+  would replace the link to the car people need before the livery matters.
+
+- **The link is shared and permanent**, unlike an upload token. Everyone on the
+  grid needs this file, so a token each would leave a driver who joined last
+  week with nothing to click when somebody pasted theirs — and it gets pinned,
+  which only works if it survives the season. Unguessable rather than public,
+  because the folder names are driver names and a league may reasonably not want
+  its carset indexed.
+
+- **Cached on disk, keyed on the digest.** A thirty-driver carset is a few
+  hundred megabytes; one held in the heap per request is how a league's VPS dies
+  on the evening everyone downloads at once. Served with the digest as an
+  `ETag`, so the whole grid re-checking before a race night costs one 304 each
+  when nothing has changed — which the manifest digest makes possible, since a
+  rebuild does not move it.
 
 ## 7. No practice restart, and telling the driver why
 

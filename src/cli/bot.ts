@@ -28,6 +28,7 @@ import type { Severity } from "../gridmom/finding.js"
 import { DEFAULT_MIN_SEVERITY } from "../gridmom/report.js"
 import { SqliteClaimStore } from "../liveries/claims.js"
 import { SqliteSubmissionQueue } from "../liveries/queue.js"
+import { SqliteLiveryStore } from "../liveries/store.js"
 import { SqliteTokenStore } from "../liveries/upload-token.js"
 import { loadProfile } from "../profile/load.js"
 import { loadPits, reportUsageError, runCli, UsageError } from "./args.js"
@@ -392,6 +393,7 @@ async function serve(args: Args): Promise<number> {
   const claims = await SqliteClaimStore.open(storePath)
   const queue = await SqliteSubmissionQueue.open(storePath)
   const tokens = await SqliteTokenStore.open(storePath)
+  const liveries = await SqliteLiveryStore.open(storePath)
   const transport = await connect()
 
   try {
@@ -408,6 +410,7 @@ async function serve(args: Args): Promise<number> {
       claims,
       queue,
       tokens,
+      store: liveries,
       clamp: {
         ...(livery.channelIds ? { channelIds: livery.channelIds } : {}),
         ...(livery.roleIds ? { roleIds: livery.roleIds } : {}),
@@ -434,6 +437,7 @@ async function serve(args: Args): Promise<number> {
     // the file, and a queue whose log was never checkpointed is one the drain
     // reads short.
     await transport.close()
+    liveries.close()
     tokens.close()
     queue.close()
     claims.close()

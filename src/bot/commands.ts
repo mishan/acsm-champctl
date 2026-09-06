@@ -79,6 +79,16 @@ export const LIVERY_COMMAND: CommandDefinition = {
       ],
     },
     {
+      name: "carset",
+      // The other half of the feature. Every driver needs everyone else's
+      // liveries or they see default skins on the grid, and the pack is by
+      // construction larger than any single upload — so it cannot be posted in
+      // a channel and has to be a link.
+      description: "Get the link to everyone's liveries, for Content Manager",
+      type: 1,
+      options: [],
+    },
+    {
       name: "upload-url",
       description: "Get a one-time link, for a zip too big for Discord",
       type: 1,

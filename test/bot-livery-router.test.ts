@@ -10,6 +10,7 @@ import type { SlashCommand } from "../src/bot/transport.js"
 import { SqliteClaimStore } from "../src/liveries/claims.js"
 import { DEFAULT_LIMITS } from "../src/liveries/pack.js"
 import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
+import { SqliteLiveryStore } from "../src/liveries/store.js"
 import { SqliteTokenStore } from "../src/liveries/upload-token.js"
 import { championship, championshipClass, entryList, raceEvent } from "./support/build.js"
 
@@ -104,9 +105,12 @@ describe("the /livery command definition", () => {
     expect(claim?.options[0]?.description).toMatch(/exactly/)
   })
 
-  it("offers the three subcommands and nothing else", () => {
+  it("offers the four subcommands and nothing else", () => {
+    // `carset` is here because the upload half alone is not the feature: a
+    // livery on the server does nothing for the drivers who cannot see it.
     expect(LIVERY_COMMANDS).toHaveLength(1)
     expect(LIVERY_COMMAND.options.map((o) => o.name).sort()).toEqual([
+      "carset",
       "claim",
       "upload",
       "upload-url",
@@ -441,5 +445,94 @@ describe("toSlashCommand", () => {
       }),
     )
     expect(bare.subcommand).toBeUndefined()
+  })
+})
+
+/**
+ * `/livery carset` — the half of the feature the uploader does not benefit from.
+ *
+ * A livery on the server does nothing for the twenty-nine people who cannot see
+ * it, and the pack of everyone's is by construction larger than any single
+ * upload — so it has to be a link, for the same reason `/livery upload-url`
+ * exists, only more so.
+ */
+describe("/livery carset", () => {
+  it("gives a link, and says the link is worth pinning", async () => {
+    const r = await router({ uploadBaseUrl: "https://liveries.example.com", store: undefined })
+    const liveries = await SqliteLiveryStore.open(":memory:")
+    await liveries.record(
+      CHAMP,
+      [
+        {
+          carModel: CAR,
+          driverName: "Misha",
+          skinFolder: "Misha",
+          files: [{ name: "livery.dds", bytes: bytes("d") }],
+          totalBytes: 1,
+        },
+      ],
+      NOW,
+      "discord",
+    )
+    const withStore = new LiveryRouter({
+      reader: new StaticAcsmReader([champ()]),
+      claims: r.claims,
+      queue: r.queue,
+      tokens: r.tokens,
+      store: liveries,
+      clamp: {},
+      uploadBaseUrl: "https://liveries.example.com",
+      now: () => NOW,
+    })
+
+    const reply = await withStore.handle(command({ subcommand: "carset" }))
+    expect(reply.content).toMatch(/https:\/\/liveries\.example\.com\/c\//)
+    expect(reply.content).toMatch(/1 livery for September 2026/)
+    expect(reply.content).toMatch(/worth pinning/)
+    liveries.close()
+    r.close()
+  })
+
+  it("says there is nothing to send before anything has been applied", async () => {
+    const r = await router()
+    const liveries = await SqliteLiveryStore.open(":memory:")
+    const withStore = new LiveryRouter({
+      reader: new StaticAcsmReader([champ()]),
+      claims: r.claims,
+      queue: r.queue,
+      tokens: r.tokens,
+      store: liveries,
+      clamp: {},
+      uploadBaseUrl: "https://liveries.example.com",
+      now: () => NOW,
+    })
+    expect((await withStore.handle(command({ subcommand: "carset" }))).content).toMatch(
+      /nothing in the carset/,
+    )
+    liveries.close()
+    r.close()
+  })
+
+  it("says so when the league has nowhere to serve it from", async () => {
+    const r = await router()
+    const liveries = await SqliteLiveryStore.open(":memory:")
+    const withStore = new LiveryRouter({
+      reader: new StaticAcsmReader([champ()]),
+      claims: r.claims,
+      queue: r.queue,
+      tokens: r.tokens,
+      store: liveries,
+      clamp: {},
+      now: () => NOW,
+    })
+    expect((await withStore.handle(command({ subcommand: "carset" }))).content).toMatch(
+      /handing it out some other way/,
+    )
+    liveries.close()
+    r.close()
+  })
+
+  it("is one of the registered subcommands, or nobody can find it", () => {
+    expect(LIVERY_COMMAND.options.map((o) => o.name)).toContain("carset")
   })
 })

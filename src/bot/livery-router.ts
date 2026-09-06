@@ -17,7 +17,14 @@ import { autoApplyPromised } from "../liveries/accept.js"
 import type { SqliteClaimStore } from "../liveries/claims.js"
 import type { SqliteSubmissionQueue } from "../liveries/queue.js"
 import type { SqliteTokenStore } from "../liveries/upload-token.js"
-import { DEFAULT_UPLOAD_LIMITS, handleClaim, handleUpload, handleUploadUrl } from "./livery.js"
+import type { SqliteLiveryStore } from "../liveries/store.js"
+import {
+  DEFAULT_UPLOAD_LIMITS,
+  handleCarsetLink,
+  handleClaim,
+  handleUpload,
+  handleUploadUrl,
+} from "./livery.js"
 import type { LiveryClamp, UploadContext, UploadLimits } from "./livery.js"
 import { isFinished } from "./nightly.js"
 import type { CommandReply, CommandRouter, SlashCommand } from "./transport.js"
@@ -27,6 +34,8 @@ export interface LiveryRouterOptions {
   claims: SqliteClaimStore
   queue: SqliteSubmissionQueue
   tokens: SqliteTokenStore
+  /** Applied liveries, for the carset link. Absent means /livery carset says so. */
+  store?: SqliteLiveryStore
   clamp: LiveryClamp
   /** From the profile. Only ever a promise about the drain; see `autoApplyPromised`. */
   autoApply?: boolean
@@ -112,6 +121,24 @@ export class LiveryRouter implements CommandRouter {
             now,
           ),
         })
+        return { content: result.reply }
+      }
+
+      case "carset": {
+        if (!this.#options.store) {
+          return { content: `I can't reach the record of what's been applied — tell an admin.` }
+        }
+        const result = await handleCarsetLink(
+          {
+            context,
+            clamp: this.#options.clamp,
+            championshipId,
+            ...(championship.Name ? { championshipName: championship.Name } : {}),
+            ...(this.#options.uploadBaseUrl ? { uploadBaseUrl: this.#options.uploadBaseUrl } : {}),
+          },
+          this.#options.store,
+          now,
+        )
         return { content: result.reply }
       }
 

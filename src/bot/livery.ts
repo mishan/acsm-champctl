@@ -338,3 +338,70 @@ export async function handleUploadUrl(
       `Don't share it: anyone with it can upload your livery.`,
   }
 }
+
+export interface CarsetLinkRequest {
+  context: UploadContext
+  clamp: LiveryClamp
+  championshipId: string
+  championshipName?: string
+  /** From `discord.livery.uploadBaseUrl`; the carset is served by the same process. */
+  uploadBaseUrl?: string
+}
+
+export interface CarsetLinkStore {
+  carsetLink(championshipId: string, at?: Date): Promise<string>
+  list(championshipId: string): Promise<readonly { driverName: string }[]>
+}
+
+/**
+ * `/livery carset` — where to get everyone else's liveries.
+ *
+ * This is the half of the feature that is easy to forget, because the driver
+ * who uploads is not the one who suffers when nobody has it: a livery on the
+ * server does nothing for the twenty-nine people who cannot see it. And it has
+ * to be a link rather than an attachment for the same reason `/livery
+ * upload-url` exists, only more so — the carset is every livery at once, so if
+ * one of them was too big for Discord the pack certainly is.
+ *
+ * The link is deliberately the same for everyone and does not expire. It gets
+ * pinned; a per-driver token would rot the moment somebody pasted theirs.
+ */
+export async function handleCarsetLink(
+  request: CarsetLinkRequest,
+  store: CarsetLinkStore,
+  now: Date,
+): Promise<{ ok: boolean; reply: string }> {
+  const clamped = clampProblem(request.clamp, request.context)
+  if (clamped) return { ok: false, reply: clamped }
+
+  if (!request.uploadBaseUrl) {
+    return {
+      ok: false,
+      reply:
+        `This league doesn't have anywhere for me to serve the carset from, so an admin is ` +
+        `handing it out some other way — ask them.`,
+    }
+  }
+
+  const applied = await store.list(request.championshipId)
+  if (applied.length === 0) {
+    return {
+      ok: false,
+      reply: `Nobody's liveries have been applied yet, so there's nothing in the carset to send.`,
+    }
+  }
+
+  const slug = await store.carsetLink(request.championshipId, now)
+  const base = new URL(request.uploadBaseUrl)
+  const path = base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`
+  const url = new URL(`${path}c/${slug}`, base).toString()
+
+  return {
+    ok: true,
+    reply:
+      `${applied.length} ${applied.length === 1 ? "livery" : "liveries"} for ` +
+      `${request.championshipName ?? "this championship"}: ${url}\n` +
+      `Drop the zip on Content Manager, or extract it over your Assetto Corsa folder. The link ` +
+      `stays the same as people add liveries, so it's worth pinning.`,
+  }
+}

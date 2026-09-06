@@ -446,6 +446,15 @@ watcher the bot notices the stale heartbeat and goes back to telling drivers an
 admin has to apply it — rather than promising "shortly" for ever while nothing
 applies anything.
 
+**Getting the carset back out** is a link too, and for a stronger version of
+the same reason: it is every driver's livery at once, so if one zip was too big
+for Discord the pack certainly is. `champctl-upload` serves it from `/c/<slug>`
+and `/livery carset` gives drivers the address. That link is shared and
+permanent — everyone on the grid needs the same file and it gets pinned — and
+unguessable, since a league may not want its carset indexed. It is cached on
+disk keyed on the content digest and served with that digest as an `ETag`, so
+the whole grid re-checking before a race night costs one 304 each.
+
 **Drivers whose zip is too big for Discord** get a one-time link instead.
 `champctl-upload` hosts it — its own process, holding no ACSM credentials and no
 Discord token, writing to the same queue. That is the same argument as the bot

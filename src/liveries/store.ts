@@ -34,7 +34,7 @@
  * timezone.
  */
 
-import { createHash } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -133,6 +133,23 @@ CREATE TABLE IF NOT EXISTS livery (
 
 CREATE UNIQUE INDEX IF NOT EXISTS livery_current
   ON livery (championship_id, car_model, driver_name);
+
+-- A stable, unguessable path for a championship's carset.
+--
+-- Stable because the whole point is that it can be pinned in a channel and
+-- still work in November. Unguessable because it is the only access control
+-- there is: the folder names are driver names, which are already in the public
+-- entry list, but a league may reasonably not want its carset indexed and a
+-- guessable path is one somebody else's crawler finds.
+--
+-- Not per driver, unlike an upload token. Everyone on the grid needs this file,
+-- and a link each would mean a driver who joined last week has nothing to
+-- click when somebody pastes theirs.
+CREATE TABLE IF NOT EXISTS carset_link (
+  championship_id  TEXT PRIMARY KEY,
+  slug             TEXT NOT NULL UNIQUE,
+  created_at       TEXT NOT NULL
+) STRICT;
 
 CREATE TABLE IF NOT EXISTS livery_file (
   livery_id  INTEGER NOT NULL REFERENCES livery(id) ON DELETE CASCADE,
@@ -360,6 +377,34 @@ export class SqliteLiveryStore implements LiveryRecorder {
     }
 
     return rows.map((row) => ({ ...toStored(row), files: byLivery.get(row.id) ?? [] }))
+  }
+
+  /**
+   * The path this championship's carset is served from, minting one if needed.
+   *
+   * Read by the bot to tell a driver where to get it, and by `champctl-upload`
+   * to answer. Both processes see the same row because they share this file,
+   * which is the same reason the queue works.
+   */
+  async carsetLink(championshipId: string, at: Date = new Date()): Promise<string> {
+    const existing = this.#db
+      .prepare("SELECT slug FROM carset_link WHERE championship_id = ?")
+      .get(championshipId) as unknown as { slug: string } | undefined
+    if (existing) return existing.slug
+
+    const slug = randomBytes(16).toString("base64url")
+    this.#db
+      .prepare("INSERT INTO carset_link (championship_id, slug, created_at) VALUES (?, ?, ?)")
+      .run(championshipId, slug, at.toISOString())
+    return slug
+  }
+
+  /** Which championship a slug belongs to, or undefined. */
+  async championshipForSlug(slug: string): Promise<string | undefined> {
+    const row = this.#db
+      .prepare("SELECT championship_id FROM carset_link WHERE slug = ?")
+      .get(slug) as unknown as { championship_id: string } | undefined
+    return row?.championship_id
   }
 
   /**

@@ -14,6 +14,13 @@
  * `test/upload.test.ts` enforces that structurally, the way `test/bot.test.ts`
  * does for the bot.
  *
+ * ## It serves the carset too
+ *
+ * Uploads were only half the problem. The carset is, by construction, larger
+ * than any single livery in it — so if one driver's zip is too big for Discord,
+ * the pack of everyone's certainly is, and "pin it in the channel" was never
+ * going to work. The same process that takes the files hands them back.
+ *
  * ## Raw bodies, not multipart
  *
  * The POST takes the zip as the request body. A multipart parser is a parser,
@@ -23,19 +30,36 @@
  * browser path needs JavaScript, which is stated on the page.
  */
 
+import { createReadStream } from "node:fs"
+import { mkdir, rename, stat, writeFile } from "node:fs/promises"
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { pipeline } from "node:stream/promises"
 
 import { acceptLivery } from "../liveries/accept.js"
+import { buildCarset, carsetFilename, carsetZip } from "../liveries/carset.js"
 import { DEFAULT_LIMITS, type PackLimits } from "../liveries/pack.js"
 import type { SqliteSubmissionQueue } from "../liveries/queue.js"
+import type { SqliteLiveryStore } from "../liveries/store.js"
 import { type SqliteTokenStore, tokenFromPath } from "../liveries/upload-token.js"
 
 export interface UploadServerOptions {
   tokens: SqliteTokenStore
   queue: SqliteSubmissionQueue
+  /** Absent means carset downloads are not served. */
+  store?: SqliteLiveryStore
+  /** Where built carsets are kept. Defaults under the OS temp directory. */
+  cacheDir?: string
   limits?: PackLimits
   autoApply?: boolean
   now?: () => Date
+}
+
+/** Pulls a carset slug out of `/c/<slug>`. */
+export function carsetSlugFromPath(pathname: string): string | undefined {
+  const match = /^\/c\/([A-Za-z0-9_-]{16,128})(?:\/[^/]*)?$/.exec(pathname)
+  return match?.[1]
 }
 
 /** Text for a token that cannot be used, in the words a driver needs. */
@@ -128,6 +152,44 @@ async function readBody(req: IncomingMessage, maxBytes: number): Promise<Uint8Ar
   return new Uint8Array(Buffer.concat(chunks))
 }
 
+/**
+ * Builds the carset, or reuses the copy on disk.
+ *
+ * Cached to a file rather than to memory, and keyed on the content digest. A
+ * thirty-driver carset is a few hundred megabytes; holding one in the heap per
+ * request is how a league's VPS gets an OOM on the evening everyone downloads
+ * at once, and rebuilding it per request is worse. The digest is already stable
+ * against rebuilds — it hashes the manifest, not the archive — so a cached file
+ * stays valid until a livery actually changes.
+ *
+ * Written to a temporary name and renamed, so two requests arriving during the
+ * first build cannot serve each other a half-written zip.
+ */
+async function cachedCarset(
+  store: SqliteLiveryStore,
+  championshipId: string,
+  cacheDir: string,
+): Promise<{ path: string; digest: string; filename: string; bytes: number } | undefined> {
+  const carset = buildCarset(championshipId, await store.read(championshipId))
+  if (carset.skins.length === 0) return undefined
+
+  await mkdir(cacheDir, { recursive: true, mode: 0o700 })
+  const path = join(cacheDir, `${carset.digest}.zip`)
+  const filename = carsetFilename(carset)
+
+  try {
+    const existing = await stat(path)
+    return { path, digest: carset.digest, filename, bytes: existing.size }
+  } catch {
+    // Not built yet, which is the common case exactly once per change.
+  }
+
+  const partial = `${path}.${process.pid}.partial`
+  await writeFile(partial, carsetZip(carset))
+  await rename(partial, path)
+  return { path, digest: carset.digest, filename, bytes: (await stat(path)).size }
+}
+
 export function uploadRequestHandler(
   options: UploadServerOptions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
@@ -145,9 +207,88 @@ export function uploadRequestHandler(
     res.end(body)
   }
 
+  const cacheDir = options.cacheDir ?? join(tmpdir(), "champctl-carsets")
+
+  /**
+   * Hands the whole grid's liveries back as one archive.
+   *
+   * The link is stable and shared — everyone on the grid needs this file, so a
+   * token each would leave a driver who joined last week with nothing to click
+   * when somebody pastes theirs. What it is *not* is guessable, which is the
+   * only access control here and about right for a list of driver names that
+   * are already in the public entry list.
+   */
+  const serveCarset = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    slug: string,
+  ): Promise<void> => {
+    if (!options.store) {
+      send(res, 404, "text/plain; charset=utf-8", "Not found.\n")
+      return
+    }
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      send(res, 405, "text/plain; charset=utf-8", "Carsets are downloads.\n")
+      return
+    }
+
+    const championshipId = await options.store.championshipForSlug(slug)
+    if (!championshipId) {
+      send(res, 404, "text/plain; charset=utf-8", "Not found.\n")
+      return
+    }
+
+    const built = await cachedCarset(options.store, championshipId, cacheDir)
+    if (!built) {
+      send(
+        res,
+        404,
+        "text/plain; charset=utf-8",
+        "No liveries have been applied to this championship yet, so there's no carset to " +
+          "download.\n",
+      )
+      return
+    }
+
+    // The digest is over the manifest rather than the archive, so a rebuild
+    // does not invalidate everyone's copy — which matters when the whole grid
+    // re-checks this before a race night and nothing has changed.
+    const etag = `"${built.digest}"`
+    if (req.headers["if-none-match"] === etag) {
+      res.writeHead(304, { etag, "cache-control": "no-cache" })
+      res.end()
+      return
+    }
+
+    res.writeHead(200, {
+      "content-type": "application/zip",
+      "content-length": String(built.bytes),
+      // `no-cache` rather than `no-store`: revalidate every time, but let a
+      // driver keep the bytes so an unchanged carset costs one request.
+      "cache-control": "no-cache",
+      etag,
+      "content-disposition": `attachment; filename="${built.filename}"`,
+      "x-robots-tag": "noindex, nofollow",
+    })
+    if (req.method === "HEAD") {
+      res.end()
+      return
+    }
+    // Streamed, not read into a buffer. This is the largest thing champctl
+    // serves and the only one where that distinction decides whether a small
+    // box survives the grid downloading at once.
+    await pipeline(createReadStream(built.path), res)
+  }
+
   return async (req, res) => {
     const pathname = new URL(req.url ?? "/", "http://localhost").pathname
     const token = tokenFromPath(pathname)
+
+    const carsetSlug = carsetSlugFromPath(pathname)
+    if (carsetSlug) {
+      await serveCarset(req, res, carsetSlug)
+      return
+    }
 
     if (!token) {
       // No index, no listing, no hint that anything else is here.
