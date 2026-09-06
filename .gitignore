@@ -61,3 +61,7 @@ docs/review-*.md
 # Playwright leaves traces and screenshots behind on a failing run.
 test-results/
 playwright-report/
+
+# git bundles made while moving a branch between machines. One got swept into a
+# commit by `git add -A`, which is the reason AGENTS.md says to stage explicitly.
+*.bundle

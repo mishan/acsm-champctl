@@ -37,14 +37,22 @@ kind of thing nobody looks for until it bites.
 | Web UI + backend | Node/TS service, separate host for now | Read + write | User's own, per session, never stored |
 | Sanity checker | Library + CLI, also called by the other two | Read only | None (Public Access) |
 | Discord bot | Separate process, same SQLite file | Read only | None, ever |
+| Upload server | Separate process, same SQLite file | Never | None, ever |
 | Archive + stats | Ingest job plus public dashboards | Read only | None (Public Access) |
 
-The credential split is deliberate. Only the interactive web UI can write to
-ACSM, and only using the credentials of the person clicking the button. The bot
-proposes; a human applies.
+The credential split is deliberate. Only the interactive web UI and the
+credentialed CLI can write to ACSM, and only using the credentials of the person
+running them. The bot proposes; a human applies.
+
+The upload server is the same argument a third time, and by now it is a rule:
+**every process that faces something untrusted has nothing worth stealing.** It
+accepts tens of megabytes from strangers over the open internet and holds
+neither an ACSM login nor a Discord token — see
+[`docs/discord-livery-upload.md`](docs/discord-livery-upload.md) §3. What the
+three share is one SQLite file and nothing else.
 
 **Stack:** Node + TypeScript, SQLite (better-sqlite3), React + Vite, Luxon for
-timezone maths, discord.js. One repo, three entry points.
+timezone maths, discord.js. One repo, eight entry points.
 
 **League defaults ship as a profile, not as code.** BATL's baseline lives in
 `profiles/batl.json`; another league drops in their own. Anything that can't be
@@ -430,11 +438,23 @@ re-fetch the form immediately before POST and compare its entry list against the
 one fetched when the screen opened. If it changed, refuse the write and reload.
 This is the most likely way champctl could destroy data while appearing to work.
 
-**Privacy note.** Sign-up responses are inside the export, and the export is
-public. Names, Steam GUIDs, chosen cars and free-text answers are readable by
-anyone without logging in. Nothing to fix in ACSM necessarily, but the archive
-should strip `SignUpForm.Responses` before anything reaches a public dashboard,
-and the `AskForEmail` option should stay off for that reason.
+**Privacy note — unsettled, and two files here disagree.** This paragraph and
+the **PUBLIC DATA** annotation on `SignUpForm.Responses` in `src/acsm/types.ts`
+both say sign-up responses are in the public export. The OSS handler
+(`ChampionshipsHandler.export`) blanks `SignUpForm.Responses` for anything below
+`GroupAdmin`, "for data protection reasons", and `src/liveries/claims.ts` is
+written assuming that gate holds on premium.
+
+One of the two is wrong and it takes one `curl` with no cookie jar against
+`/championship/{id}/export` to find out which — recon item §10.3 of the livery
+doc, which was not done before §2 of it was built. Whichever way it lands,
+something here gets corrected: if the gate holds, this paragraph and that
+annotation describe a leak that does not exist; if it does not, the leak is
+worse than written, because a Discord handle would be published beside a Steam
+GUID and that pair is what lets somebody find a driver off the server.
+
+Either way the archive should strip `SignUpForm.Responses` before anything
+reaches a public dashboard, and `AskForEmail` should stay off.
 
 New recon item: capture the approve/reject POST.
 
