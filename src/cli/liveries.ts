@@ -119,8 +119,8 @@ whole set later. That is the only copy champctl has: a livery uploaded through
 ACSM's own web UI is invisible to it and will not be in the carset.
 
 Exit codes:
-  0  previewed cleanly, pushed, or wrote a carset
-  1  nothing to do — every livery is already assigned, or the carset is empty
+  0  previewed cleanly, pushed, drained, or wrote a carset
+  1  nothing there — an empty queue, no recorded liveries, no claims
   2  the pack or the entry list wouldn't allow it
   3  a usage mistake, or champctl itself failed
 `
@@ -587,7 +587,11 @@ async function drain(
 
     if (!args.push) {
       process.stdout.write("\nPreview only. Re-run with --push to apply.\n")
-      return plan.noop ? 1 : 0
+      // Always 0 here, unlike --zip. Everything in the queue is artwork a
+      // driver sent since the last drain, so there is work to do even when no
+      // `EntryList.Skin` changes — the skin folder is the driver's own name and
+      // does not move when they resubmit.
+      return 0
     }
 
     const session = new AcsmSession({ baseUrl })

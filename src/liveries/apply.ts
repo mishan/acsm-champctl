@@ -212,10 +212,15 @@ export async function applyLiveries(
     result.championshipSaved = true
   }
 
-  // After the save, not after the uploads. An uploaded skin nothing points at
-  // is not on the grid, and putting it in the carset would hand every driver
-  // artwork for a car that still shows the default — so what gets recorded is
-  // what is actually in use, and a failed save leaves nothing to un-record.
+  // Last, after the uploads and after any write they needed. Everything in
+  // `assignments` is recorded, including the ones that produced no
+  // `skinChanges` — a driver who fixed a wrong sponsor and resubmitted keeps
+  // the same skin folder, so the entry list needs no edit and the *bytes* are
+  // still new. Recording only what moved the form would leave the carset
+  // handing the whole grid the livery that was just replaced.
+  //
+  // A throw anywhere above means nothing is recorded, which is the right way
+  // round: a skin that never reached the server has no business in the carset.
   if (options.record) {
     try {
       result.recorded = await options.record.record(

@@ -233,12 +233,17 @@ describe("what an error means for the exit code", () => {
     )
   })
 
-  it("no longer has an exit code for having nothing to do", () => {
-    // The pack is always uploaded now, so there is no run that does nothing —
-    // and the help text should not offer a code that can never happen.
+  it("no longer has an exit code for a pack that changes nothing", () => {
+    // The pack is always uploaded now, so an apply never does nothing and the
+    // help must not offer a code for it.
+    //
+    // Exit 1 has since come back for a different question — an empty queue, no
+    // recorded liveries, no claims — which is a real state a script wants to
+    // branch on rather than the vanished one. So this checks the meaning is
+    // gone rather than the digit.
     expect(USAGE).not.toContain("nothing to do")
-    expect(USAGE).toContain("  0  previewed cleanly, or pushed")
-    expect(USAGE).not.toMatch(/^ {2}1 {2}/m)
+    expect(USAGE).not.toContain("already assigned")
+    expect(USAGE).toContain("  1  nothing there")
   })
 })
 

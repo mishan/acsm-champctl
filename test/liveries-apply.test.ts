@@ -482,7 +482,17 @@ describe("recording what was applied", () => {
     await expect(applyLiveries(session, plan(), { record })).rejects.toThrow(/database is locked/)
   })
 
-  it("records nothing for a plan that changes nothing", async () => {
+  /**
+   * The case that used to be "nothing to do", and is the one that matters most.
+   *
+   * A driver who fixed a wrong sponsor and resubmitted keeps the same skin
+   * folder — it is their own name — so `EntryList.Skin` needs no edit and
+   * `skinChanges` is empty. The *bytes* still changed, and the upload still
+   * happened. Recording only what moved the form would leave the carset handing
+   * the whole grid the livery that was just replaced, which is the exact bug
+   * the plan's `noop` flag used to cause on the server.
+   */
+  it("records a re-upload even when the entry list needs no change", async () => {
     const c = championship({
       ID: CHAMP_ID,
       Classes: [
@@ -492,15 +502,15 @@ describe("recording what was applied", () => {
     })
     const { session } = await fakeSession()
     const record = recorder()
-    const result = await applyLiveries(
-      session,
-      planLiveries(c, CHAMP_ID, packOf(livery("Misha"))),
-      {
-        record,
-      },
-    )
-    expect(record.calls).toEqual([])
-    expect(result.recorded).toBeUndefined()
+    const plan = planLiveries(c, CHAMP_ID, packOf(livery("Misha")))
+    expect(plan.skinChanges).toEqual([])
+
+    const result = await applyLiveries(session, plan, { record })
+    expect(result.championshipSaved).toBe(false)
+    expect(record.calls).toEqual([
+      { championshipId: CHAMP_ID, drivers: ["Misha"], source: "unknown" },
+    ])
+    expect(result.recorded).toEqual({ stored: 1, unchanged: 0 })
   })
 
   it("applies exactly as before when there is no recorder", async () => {
