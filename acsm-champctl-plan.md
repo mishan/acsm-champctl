@@ -641,6 +641,12 @@ What it does:
   from the archive in §8.
 - **New sign-up alerts** into the admin channel, with a link into the approval
   queue. A link, not a button — the bot never holds write credentials.
+- **Livery uploads** — a driver sends their own zip and it reaches the entry
+  list without an operator handling a file. This is the one item here that
+  needs a *write*, so it does not fit the proposal shape the rest of this
+  section assumes: the bot validates and queues, and a second process with the
+  credentials drains the queue. Neither ever holds the other's secret. Full
+  design in [`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
 
 The poll-to-proposal loop is the piece that makes the voting model cheap to
 run. It turns "someone reads the poll, opens ACSM, remembers which of 130
