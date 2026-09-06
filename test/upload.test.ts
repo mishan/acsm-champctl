@@ -1,9 +1,17 @@
-import { mkdtemp, rm } from "node:fs/promises"
+import { readdirSync } from "node:fs"
+import { mkdtemp, readdir, rm } from "node:fs/promises"
+import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 
-import { describe, expect, it } from "vitest"
+import { unzipSync, zipSync } from "fflate"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
+import { parseArgs, UsageError } from "../src/cli/upload.js"
+import { DEFAULT_ACCEPT_LIMITS } from "../src/liveries/accept.js"
+import { maxSubmissionBytes } from "../src/liveries/pack.js"
+import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
 import {
   DEFAULT_TOKEN_TTL_MS,
   SqliteTokenStore,
@@ -13,10 +21,17 @@ import {
   UploadTokenError,
   uploadUrl,
 } from "../src/liveries/upload-token.js"
+import { SqliteLiveryStore } from "../src/liveries/store.js"
+import { carsetSlugFromPath, createUploadServer } from "../src/upload/server.js"
+import { importsOf, reachesAny, resolveSpecifier } from "./support/imports.js"
 
 const CAR = "rss_formula_hybrid_2021"
 const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 const MISHA = "111111111111111111"
+
+const bytes = (s: string) => new TextEncoder().encode(s)
+const skin = (extra: Record<string, Uint8Array> = {}) =>
+  zipSync({ "livery.dds": bytes("dds"), "preview.jpg": bytes("jpg"), ...extra })
 
 const grant = () => ({
   discordUserId: MISHA,
@@ -234,6 +249,189 @@ describe("secretsMatch", () => {
   })
 })
 
+describe("the upload endpoint", () => {
+  let server: ReturnType<typeof createUploadServer>
+  let tokens: SqliteTokenStore
+  let queue: SqliteSubmissionQueue
+  let base: string
+  let clock = NOW
+
+  beforeAll(async () => {
+    tokens = await SqliteTokenStore.open(":memory:")
+    queue = await SqliteSubmissionQueue.open(":memory:")
+    server = createUploadServer({ tokens, queue, now: () => clock })
+    await new Promise<void>((ready) => server.listen(0, "127.0.0.1", ready))
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  })
+
+  afterAll(async () => {
+    await new Promise<void>((done) => server.close(() => done()))
+    tokens.close()
+    queue.close()
+  })
+
+  const mint = async (over = {}) => (await tokens.mint({ ...grant(), ...over }, clock)).token
+
+  it("shows an upload page for a live token", async () => {
+    const token = await mint({ discordUserId: "300000000000000001" })
+    const res = await fetch(`${base}/u/${token}`)
+    const body = await res.text()
+
+    expect(res.status).toBe(200)
+    expect(body).toContain("Misha")
+    expect(body).toContain(CAR)
+    // The URL is a credential; nothing here should be cached or indexed.
+    expect(res.headers.get("cache-control")).toBe("no-store")
+    expect(res.headers.get("x-robots-tag")).toMatch(/noindex/)
+  })
+
+  it("does not spend the token when the page is fetched", async () => {
+    const token = await mint({ discordUserId: "300000000000000002" })
+    await fetch(`${base}/u/${token}`)
+    await fetch(`${base}/u/${token}`)
+    expect(await tokens.peek(token, clock)).toMatchObject({ ok: true })
+  })
+
+  it("accepts a livery and says what happens next", async () => {
+    const token = await mint({ discordUserId: "300000000000000003", driverName: "Ann" })
+    const res = await fetch(`${base}/u/${token}`, { method: "POST", body: skin() })
+    const body = await res.text()
+
+    expect(res.status).toBe(200)
+    expect(body).toMatch(/2 files for Ann/)
+    expect(body).toMatch(/practice that's running now keeps the old entry list/)
+    expect((await queue.queued(CHAMP)).some((s) => s.driverName === "Ann")).toBe(true)
+  })
+
+  it("takes the driver and car from the token, not from the request", async () => {
+    // The URL carries no "who", so a leaked link uploads for the person it was
+    // minted for and nobody else.
+    const token = await mint({ discordUserId: "300000000000000004", driverName: "Bob" })
+    await fetch(`${base}/u/${token}?driverName=Someone&carModel=ford_transit`, {
+      method: "POST",
+      body: skin(),
+    })
+    const queued = (await queue.queued(CHAMP)).find((s) => s.discordUserId === "300000000000000004")
+    expect(queued).toMatchObject({ driverName: "Bob", carModel: CAR })
+  })
+
+  it("spends the token on a successful upload", async () => {
+    const token = await mint({ discordUserId: "300000000000000005", driverName: "Cat" })
+    await fetch(`${base}/u/${token}`, { method: "POST", body: skin() })
+    const res = await fetch(`${base}/u/${token}`, { method: "POST", body: skin() })
+    expect(res.status).toBe(410)
+    expect(await res.text()).toMatch(/already been used/)
+  })
+
+  it("gives the pack refusal in the driver's own terms, and queues nothing", async () => {
+    const token = await mint({ discordUserId: "300000000000000006", driverName: "Dee" })
+    const before = (await queue.queued(CHAMP)).length
+    const res = await fetch(`${base}/u/${token}`, {
+      method: "POST",
+      body: skin({ "work.psd": bytes("x") }),
+    })
+    expect(res.status).toBe(400)
+    expect(await res.text()).toMatch(/Photoshop source file/)
+    // Asserted, not assumed. A refusal that still enqueued would look identical
+    // from here and would put a rejected zip in front of the drain.
+    expect((await queue.queued(CHAMP)).length).toBe(before)
+  })
+
+  it("holds this route to the same cooldown as Discord's", async () => {
+    // The cooldown and the queue budget used to live in `handleUpload`, which
+    // this process never calls — so the one route that faces the open internet
+    // was the one with no volume controls on it at all. Anyone holding a link
+    // could mint, POST, mint, POST until the disk filled.
+    const who = "300000000000000010"
+    const first = await mint({ discordUserId: who, driverName: "Eve" })
+    expect((await fetch(`${base}/u/${first}`, { method: "POST", body: skin() })).status).toBe(200)
+
+    const second = await mint({ discordUserId: who, driverName: "Eve" })
+    const res = await fetch(`${base}/u/${second}`, { method: "POST", body: skin() })
+    expect(res.status).toBe(400)
+    expect(await res.text()).toMatch(/try again in/)
+  })
+
+  it("refuses a body larger than one skin before looking at the token", async () => {
+    // readBody was sized on maxTotalBytes — the whole-pack zip-bomb ceiling, a
+    // gigabyte — so an anonymous POST to a token-shaped path could make this
+    // process buffer that much before it had so much as looked the token up.
+    const oversized = new Uint8Array(maxSubmissionBytes(DEFAULT_ACCEPT_LIMITS.pack) + 1024)
+    const res = await fetch(`${base}/u/${"a".repeat(43)}`, { method: "POST", body: oversized })
+    expect(res.status).toBe(413)
+    // The sentence has to arrive. Refusing by destroying the request also
+    // destroyed the socket the response was going out on, so the driver got a
+    // network error and no idea their file was simply too big.
+    expect(await res.text()).toMatch(/try again with a smaller zip/)
+  })
+
+  it("does not spend the link on a file that was too big", async () => {
+    // The whole reason the size check runs before the token is looked at: a
+    // driver who picked the wrong file should shrink it and use the same link,
+    // not go back to Discord for another.
+    const token = await mint({ discordUserId: "300000000000000011", driverName: "Fay" })
+    const oversized = new Uint8Array(maxSubmissionBytes(DEFAULT_ACCEPT_LIMITS.pack) + 1024)
+    expect((await fetch(`${base}/u/${token}`, { method: "POST", body: oversized })).status).toBe(
+      413,
+    )
+    expect(await tokens.peek(token, clock)).toMatchObject({ ok: true })
+  })
+
+  it("says the link is spent when it refuses a file", async () => {
+    // Keeping it alive would turn one link into an unlimited upload endpoint
+    // for as long as the driver kept sending things that failed validation.
+    const token = await mint({ discordUserId: "300000000000000007", driverName: "Eve" })
+    const res = await fetch(`${base}/u/${token}`, { method: "POST", body: bytes("not a zip") })
+    expect(await res.text()).toMatch(/link is spent now/)
+    expect(await tokens.peek(token, clock)).toMatchObject({ ok: false, reason: "used" })
+  })
+
+  it("explains an expired link and offers the way to get another", async () => {
+    const token = await mint({ discordUserId: "300000000000000008" })
+    const before = clock
+    clock = later(DEFAULT_TOKEN_TTL_MS + 1000)
+    const res = await fetch(`${base}/u/${token}`)
+    clock = before
+
+    expect(res.status).toBe(410)
+    expect(await res.text()).toMatch(/\/livery upload-url/)
+  })
+
+  it("has no index and gives nothing away about other paths", async () => {
+    for (const path of ["/", "/admin", "/u", "/championship/x/export"]) {
+      const res = await fetch(`${base}${path}`)
+      expect(res.status).toBe(404)
+      expect(await res.text()).toBe("Not found.\n")
+    }
+  })
+
+  it("refuses a token it has never seen without saying which part was wrong", async () => {
+    const res = await fetch(`${base}/u/${"z".repeat(43)}`)
+    expect(res.status).toBe(410)
+    const body = await res.text()
+    expect(body).toMatch(/champctl recognises/)
+    // And the message goes through the escaper on the way, so a driver name
+    // with a quote or an angle bracket in it cannot become markup.
+    expect(body).toContain("isn&#39;t")
+  })
+
+  it("escapes the driver name into the page", async () => {
+    const token = await mint({
+      discordUserId: "300000000000000010",
+      driverName: `<script>alert('x')</script>`,
+    })
+    const body = await fetch(`${base}/u/${token}`).then((r) => r.text())
+    expect(body).not.toContain("<script>alert")
+    expect(body).toContain("&lt;script&gt;")
+  })
+
+  it("refuses a method that isn't GET or POST", async () => {
+    const token = await mint({ discordUserId: "300000000000000009" })
+    const res = await fetch(`${base}/u/${token}`, { method: "DELETE" })
+    expect(res.status).toBe(405)
+  })
+})
+
 /**
  * The same rule as the bot, for the same reason.
  *
@@ -242,3 +440,275 @@ describe("secretsMatch", () => {
  * not part of it — and "these are separate" is a promise kept by everyone
  * remembering it unless something checks.
  */
+describe("champctl-upload cannot write to ACSM", () => {
+  const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src")
+  const uploadDir = join(srcDir, "upload")
+
+  const writePath = [
+    "acsm/session.js",
+    "acsm/write.js",
+    "finalize/apply.js",
+    "reorder/apply.js",
+    "liveries/apply.js",
+    "web/",
+  ]
+
+  const entryPoints = () => [
+    ...readdirSync(uploadDir)
+      .filter((f) => f.endsWith(".ts"))
+      .map((f) => join(uploadDir, f)),
+    join(srcDir, "cli", "upload.ts"),
+  ]
+
+  it("reaches nothing in the write path, however many hops away", () => {
+    expect(reachesAny(entryPoints(), writePath)).toEqual([])
+    expect(entryPoints().length).toBeGreaterThan(0)
+  })
+
+  it("holds no Discord token either", () => {
+    // It is the third process following the rule: whatever faces something
+    // untrusted has nothing worth stealing.
+    const seen = new Set<string>()
+    const walk = (file: string): void => {
+      if (seen.has(file)) return
+      seen.add(file)
+      for (const specifier of importsOf(file)) {
+        expect(specifier).not.toMatch(/discord/)
+        const next = resolveSpecifier(file, specifier)
+        if (next) walk(next)
+      }
+    }
+    for (const file of entryPoints()) walk(file)
+    expect(seen.size).toBeGreaterThan(entryPoints().length)
+  })
+})
+
+describe("the champctl-upload CLI", () => {
+  it("has no way to be given ACSM credentials", () => {
+    expect(() => parseArgs(["--username", "admin"])).toThrow(UsageError)
+    expect(() => parseArgs(["--push"])).toThrow(/takes no credentials/)
+  })
+
+  it("has no way to be given a Discord token", () => {
+    expect(() => parseArgs(["--token", "hunter2"])).toThrow(UsageError)
+  })
+
+  it("defaults to localhost, so TLS is somebody else's job and not skipped", () => {
+    expect(parseArgs([])).toMatchObject({ host: "127.0.0.1", port: 8477, autoApply: false })
+  })
+
+  it("refuses a port that isn't one", () => {
+    expect(() => parseArgs(["--port", "banana"])).toThrow(/must be a port number/)
+    expect(() => parseArgs(["--port", "70000"])).toThrow(/must be a port number/)
+  })
+})
+
+/**
+ * The other half of the feature (docs/discord-livery-upload.md §6).
+ *
+ * A livery on the server does nothing for the twenty-nine people who cannot see
+ * it, and the carset is every livery at once — so it is, by construction,
+ * larger than any single upload. If one driver's zip was too big for Discord
+ * the pack certainly is, which is why it cannot be posted in a channel and has
+ * to come from here.
+ */
+describe("downloading the carset", () => {
+  let server: ReturnType<typeof createUploadServer>
+  let tokens: SqliteTokenStore
+  let queue: SqliteSubmissionQueue
+  let store: SqliteLiveryStore
+  let base: string
+  let cacheDir: string
+  let slug: string
+
+  const skinFiles = (body: string) => [
+    { name: "livery.dds", bytes: bytes(body) },
+    { name: "preview.jpg", bytes: bytes("jpg") },
+  ]
+
+  beforeAll(async () => {
+    cacheDir = await mkdtemp(join(tmpdir(), "champctl-carset-cache-"))
+    tokens = await SqliteTokenStore.open(":memory:")
+    queue = await SqliteSubmissionQueue.open(":memory:")
+    store = await SqliteLiveryStore.open(":memory:")
+    await store.record(
+      CHAMP,
+      [
+        {
+          carModel: CAR,
+          driverName: "Misha",
+          skinFolder: "Misha",
+          files: skinFiles("misha-pixels"),
+          totalBytes: 15,
+        },
+      ],
+      NOW,
+      "discord",
+    )
+    slug = await store.carsetLink(CHAMP, NOW)
+
+    server = createUploadServer({ tokens, queue, store, cacheDir, now: () => NOW })
+    await new Promise<void>((ready) => server.listen(0, "127.0.0.1", ready))
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  })
+
+  afterAll(async () => {
+    await new Promise<void>((done) => server.close(() => done()))
+    store.close()
+    tokens.close()
+    queue.close()
+  })
+
+  it("hands back a zip laid out for Content Manager", async () => {
+    const res = await fetch(`${base}/c/${slug}`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toBe("application/zip")
+
+    const entries = unzipSync(new Uint8Array(await res.arrayBuffer()))
+    expect(Object.keys(entries)).toContain(`content/cars/${CAR}/skins/Misha/livery.dds`)
+  })
+
+  it("names the file so two months' carsets are tellable apart", async () => {
+    const res = await fetch(`${base}/c/${slug}`)
+    expect(res.headers.get("content-disposition")).toMatch(
+      /attachment; filename="carset-[0-9a-f]{8}\.zip"/,
+    )
+  })
+
+  it("answers a revalidation with 304 and no body", async () => {
+    // The whole grid re-checks this before a race night and usually nothing has
+    // changed. The digest is over the manifest rather than the archive, so a
+    // rebuild does not invalidate everyone's copy.
+    const first = await fetch(`${base}/c/${slug}`)
+    const etag = first.headers.get("etag") as string
+    await first.arrayBuffer()
+
+    const again = await fetch(`${base}/c/${slug}`, { headers: { "if-none-match": etag } })
+    expect(again.status).toBe(304)
+    expect((await again.arrayBuffer()).byteLength).toBe(0)
+  })
+
+  it("changes the tag when somebody's livery lands", async () => {
+    const before = (await fetch(`${base}/c/${slug}`)).headers.get("etag")
+    await store.record(
+      CHAMP,
+      [
+        {
+          carModel: CAR,
+          driverName: "postaL",
+          skinFolder: "postaL",
+          files: skinFiles("postal-pixels"),
+          totalBytes: 16,
+        },
+      ],
+      NOW,
+      "discord",
+    )
+    expect((await fetch(`${base}/c/${slug}`)).headers.get("etag")).not.toBe(before)
+  })
+
+  it("keeps the link stable as the carset changes, so a pin still works", async () => {
+    expect(await store.carsetLink(CHAMP, NOW)).toBe(slug)
+  })
+
+  it("caches the built archive on disk rather than in the heap", async () => {
+    // A thirty-driver carset is a few hundred megabytes. One in memory per
+    // request is how a small box dies on the evening everyone downloads.
+    await fetch(`${base}/c/${slug}`).then((r) => r.arrayBuffer())
+    expect((await readdir(cacheDir)).some((f) => f.endsWith(".zip"))).toBe(true)
+  })
+
+  it("reads no file bytes at all when the archive is already cached", async () => {
+    // The cache was only saving the zip. Every request — the 304s included —
+    // still pulled every blob of every livery out of SQLite and hashed the lot,
+    // synchronously, to work out which carset it was. On the evening the grid
+    // revalidates that is a few hundred megabytes per request, blocking the
+    // event loop, with uploads queued behind it.
+    await fetch(`${base}/c/${slug}`).then((r) => r.arrayBuffer())
+
+    let readsOfFileBytes = 0
+    const real = store.filesFor.bind(store)
+    store.filesFor = async (...args: Parameters<typeof real>) => {
+      readsOfFileBytes += 1
+      return real(...args)
+    }
+    try {
+      const etag = (await fetch(`${base}/c/${slug}`, { method: "HEAD" })).headers.get(
+        "etag",
+      ) as string
+      const revalidated = await fetch(`${base}/c/${slug}`, { headers: { "if-none-match": etag } })
+      expect(revalidated.status).toBe(304)
+      await fetch(`${base}/c/${slug}`).then((r) => r.arrayBuffer())
+    } finally {
+      store.filesFor = real
+    }
+
+    expect(readsOfFileBytes).toBe(0)
+  })
+
+  it("leaves only the current carset in the cache", async () => {
+    // Every livery change mints a new digest, and nothing removed the file the
+    // previous one left behind — thirty updates over a season is thirty
+    // complete carsets on the disk holding the queue database.
+    await fetch(`${base}/c/${slug}`).then((r) => r.arrayBuffer())
+    await store.record(
+      CHAMP,
+      [
+        {
+          carModel: CAR,
+          driverName: "Shoebacca",
+          skinFolder: "Shoebacca",
+          files: skinFiles("shoe-pixels"),
+          totalBytes: 14,
+        },
+      ],
+      NOW,
+      "discord",
+    )
+    await fetch(`${base}/c/${slug}`).then((r) => r.arrayBuffer())
+
+    const left = (await readdir(cacheDir)).filter((f) => f.endsWith(".zip"))
+    expect(left).toHaveLength(1)
+  })
+
+  it("answers HEAD with the size and no body", async () => {
+    const res = await fetch(`${base}/c/${slug}`, { method: "HEAD" })
+    expect(res.status).toBe(200)
+    expect(Number(res.headers.get("content-length"))).toBeGreaterThan(0)
+  })
+
+  it("is not indexable", async () => {
+    expect((await fetch(`${base}/c/${slug}`)).headers.get("x-robots-tag")).toMatch(/noindex/)
+  })
+
+  it("gives nothing away for a slug it doesn't know", async () => {
+    const res = await fetch(`${base}/c/${"z".repeat(22)}`)
+    expect(res.status).toBe(404)
+    expect(await res.text()).toBe("Not found.\n")
+  })
+
+  it("refuses to be uploaded to", async () => {
+    const res = await fetch(`${base}/c/${slug}`, { method: "POST", body: bytes("x") })
+    expect(res.status).toBe(405)
+  })
+
+  it("says plainly when a championship has no liveries yet", async () => {
+    const empty = await store.carsetLink("11111111-1111-1111-1111-111111111111", NOW)
+    const res = await fetch(`${base}/c/${empty}`)
+    expect(res.status).toBe(404)
+    expect(await res.text()).toMatch(/no carset to download/)
+  })
+})
+
+describe("carsetSlugFromPath", () => {
+  it("reads a slug, with or without a trailing filename", () => {
+    expect(carsetSlugFromPath("/c/AbC-123_xyz9876543210")).toBe("AbC-123_xyz9876543210")
+    expect(carsetSlugFromPath("/c/AbC-123_xyz9876543210/carset.zip")).toBe("AbC-123_xyz9876543210")
+  })
+
+  it("ignores anything else", () => {
+    for (const p of ["/c/", "/c/short", "/c/../etc/passwd", "/", "/u/abc"]) {
+      expect(carsetSlugFromPath(p)).toBeUndefined()
+    }
+  })
+})

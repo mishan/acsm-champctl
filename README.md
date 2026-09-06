@@ -5,7 +5,7 @@
 Championship creation, validation and stats for Assetto Corsa Server Manager.
 Built for BATL, usable by any league.
 
-Six commands:
+Eight commands:
 
 | | |
 |---|---|
@@ -15,6 +15,7 @@ Six commands:
 | `champctl-championship` | create a championship from a template |
 | `champctl-liveries` | upload drivers' custom liveries and assign them |
 | `champctl-serve` | the finalize and create-a-championship flows as a web UI, for people without a terminal |
+| `champctl-upload` | take drivers' livery uploads from one-time links, holding no credentials |
 | `champctl-bot` | say what gridmom found in Discord |
 
 Working on champctl itself? See [AGENTS.md](AGENTS.md) and
@@ -30,9 +31,9 @@ npm install
 npm run gridmom -- check --file fixtures/synthetic/suzuka-duplicate-pitboxes.json
 ```
 
-Installed, the seven commands are on your `PATH` as `gridmom`,
+Installed, the eight commands are on your `PATH` as `gridmom`,
 `champctl-archive`, `champctl-finalize`, `champctl-championship`,
-`champctl-liveries`, `champctl-serve` and `champctl-bot`.
+`champctl-liveries`, `champctl-serve`, `champctl-upload` and `champctl-bot`.
 From a checkout, `npm run gridmom -- <args>` is the same thing.
 
 Every command takes `--profile` and `--base-url`; `--help` on any of them is
@@ -405,9 +406,8 @@ web UI is invisible to it and won't be in the carset.
 **The queue is the wall in the middle of the upload feature.** The process that
 will accept bytes from a stranger holds a Discord token and no ACSM
 credentials; this one holds ACSM credentials and no Discord token; they share
-one SQLite table and nothing else. Nothing fills it yet — that end lands in a
-later change, so a drain is driven by rows inserted directly, which is how it is
-tested.
+one SQLite table and nothing else. `champctl-upload` fills it from one side and
+`--drain` empties it from the other, and neither can do the other's job.
 
 Bytes are stored as received rather than as a validated file list, so the drain
 runs the same checks a second time on the same input. A driver who uploads twice
@@ -451,6 +451,48 @@ Exit codes: `0` previewed cleanly, pushed, drained, or wrote a carset; `1`
 nothing there — an empty queue, no recorded liveries, no claims; `2` the pack or
 the entry list wouldn't allow it; `3` a usage mistake, or champctl itself
 failed.
+
+## champctl-upload
+
+The process that faces strangers, and the reason it exists is that it has
+nothing worth stealing. No ACSM credentials, no Discord token, and no option to
+give it either — it validates uploads and writes them to the queue, and
+`champctl-liveries --drain` is the only thing that talks to the game server.
+`test/upload.test.ts` checks that through the module graph rather than one
+import deep.
+
+Two things are served. `/u/<token>` is a driver's one-time upload link, for
+whoever's zip Discord refused to carry; `/c/<slug>` is the carset everyone
+downloads.
+
+```
+champctl-upload [options]
+
+  --port <n>       port to listen on (default: 8477)
+  --host <addr>    address to bind (default: 127.0.0.1)
+  --store <path>   queue database, shared with champctl-liveries
+                   (default: $CHAMPCTL_STORE, else data/liveries/liveries.db)
+  --cache-dir <p>  where built carsets are kept (default: under the temp dir)
+  --auto-apply     say uploads will be applied on a timer rather than by an
+                   admin. Changes what drivers are told, nothing else.
+```
+
+Bind it to localhost and put a TLS terminator in front. The token travels in the
+URL, so whatever hands a link out has to be https — `uploadUrl` throws rather
+than downgrading. Nothing mints one yet; that lands with the Discord side.
+
+**All three processes have to open the same database** — that is what the
+credential split *is*. `$CHAMPCTL_STORE` is the way to say so once, in an
+environment file, rather than depending on three working directories agreeing:
+if they disagree there are two databases, a queue nothing drains, and drivers
+told "queued for an admin" for ever with nothing reporting it.
+
+Uploads are held to one skin's worth of bytes, counted as they arrive and
+before the token is looked at — so a request from a stranger cannot make this
+process hold a gigabyte, and a driver whose file is too big keeps their link.
+The cooldown and the queue budget live in `acceptLivery` rather than here,
+because the second way in lands in the same place and neither should be the
+route with no volume controls on it.
 
 ## champctl-serve
 
@@ -705,8 +747,9 @@ have a web UI. What's left:
   are the `/stats` lookups, which want the archive projections that don't exist
   yet.
 - **Self-serve livery uploads are part-built.** The recording, the carset, the
-  claims, the queue and the drain are all here; nothing fills the queue yet.
-  Design in [`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
+  claims, the queue, the drain and the upload server are all here; the Discord
+  side that hands out links and takes attachments is not. Design in
+  [`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
 - **The nightly report has no memory.** It says the same thing every night until
   someone fixes it, which is gridmom's voice by design but also means there is
   nothing to lean on if a league wants "tell me once". A digest per championship
