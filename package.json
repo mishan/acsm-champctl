@@ -13,6 +13,7 @@
     "champctl-archive": "./bin/champctl-archive.js",
     "champctl-finalize": "./bin/champctl-finalize.js",
     "champctl-championship": "./bin/champctl-championship.js",
+    "champctl-liveries": "./bin/champctl-liveries.js",
     "champctl-serve": "./bin/champctl-serve.js",
     "champctl-bot": "./bin/champctl-bot.js"
   },
@@ -27,6 +28,7 @@
     "gridmom": "tsx src/cli/gridmom.ts",
     "archive": "tsx src/cli/archive.ts",
     "finalize": "tsx src/cli/finalize.ts",
+    "liveries": "tsx src/cli/liveries.ts",
     "serve": "tsx src/cli/serve.ts",
     "bot": "tsx src/cli/bot.ts",
     "dev": "vite",
@@ -54,6 +56,7 @@
     "harness:steam-check": "docker compose --project-directory docker run --rm --entrypoint steamcmd acsm +quit",
     "test:live": "vitest run --config vitest.live.config.ts",
     "recon:forms": "tsx scripts/recon/forms.ts",
+    "recon:champ-form": "tsx scripts/recon/champ-form.ts",
     "recon:roundtrip": "tsx scripts/recon/roundtrip.ts",
     "recon:layouts": "tsx scripts/recon/layouts.ts",
     "recon:entry-list-type": "tsx scripts/recon/entry-list-type.ts",
@@ -66,6 +69,7 @@
     "cheerio": "^1.2.0",
     "discord.js": "^14.27.0",
     "fastify": "^5.12.1",
+    "fflate": "0.8.3",
     "ipaddr.js": "^2.5.0",
     "luxon": "^3.5.0",
     "undici": "^7.19.0"

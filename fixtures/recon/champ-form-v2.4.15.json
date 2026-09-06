@@ -1,0 +1,383 @@
+{
+  "capturedAt": "2026-09-03T00:02:50.799Z",
+  "serverManagerVersion": "v2.4.15",
+  "baseUrl": "https://<redacted>",
+  "source": "existing championship {id}, read-only",
+  "classCount": 1,
+  "entrantsPerClass": [
+    29
+  ],
+  "entrantCount": 29,
+  "roundCount": 5,
+  "internalUuidJoin": {
+    "classEntrants": 29,
+    "classEntrantsWithoutUuid": 29,
+    "matchedPerRound": [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "roundsWithoutEntryList": [],
+    "matchedEverywhere": 0
+  },
+  "internalUuids": {
+    "classEntrants": {
+      "empty": 0,
+      "nil": 29,
+      "real": 0
+    },
+    "perRound": [
+      {
+        "empty": 0,
+        "nil": 29,
+        "real": 0
+      },
+      {
+        "empty": 0,
+        "nil": 29,
+        "real": 0
+      },
+      {
+        "empty": 0,
+        "nil": 29,
+        "real": 0
+      },
+      {
+        "empty": 0,
+        "nil": 29,
+        "real": 0
+      },
+      {
+        "empty": 0,
+        "nil": 29,
+        "real": 0
+      }
+    ],
+    "asRendered": {
+      "empty": 2,
+      "nil": 29,
+      "real": 1
+    }
+  },
+  "templateRows": {
+    "EntryList.Car": [
+      2
+    ],
+    "EntryList.Skin": [
+      2
+    ],
+    "EntryList.Name": [
+      2
+    ],
+    "EntryList.Team": [
+      2
+    ],
+    "EntryList.GUID": [
+      2
+    ],
+    "EntryList.Ballast": [
+      2
+    ],
+    "EntryList.Restrictor": [
+      2
+    ],
+    "EntryList.FixedSetup": [
+      2
+    ],
+    "EntryList.InternalUUID": [
+      2
+    ],
+    "EntryList.EntrantID": [],
+    "EntryList.OverwriteAllEvents": [
+      2
+    ],
+    "EntryList.TransferTeamPoints": [
+      0
+    ]
+  },
+  "form": {
+    "path": "/championship/{id}/edit",
+    "action": "/championships/new/submit",
+    "method": "POST",
+    "enctype": "application/x-www-form-urlencoded",
+    "shape": {
+      "ChampionshipName": 1,
+      "MaxClients": 1,
+      "ChampionshipEntryListType": 1,
+      "ChampionshipPersistOpenEntrants": 1,
+      "ChampionshipInfo": 1,
+      "ChampionshipOGImage": 1,
+      "CMWLoadingImageURL": 1,
+      "ChampionshipDefaultTab": 1,
+      "ChampionshipIsInactive": 1,
+      "ACSR": 1,
+      "ACSRDescription": 1,
+      "ExcludeProvisionalDrivers": 1,
+      "RequiredCompletedACSRSessions": 1,
+      "ACSRDisableSafety": 1,
+      "EnableACSRSkillGate": 1,
+      "SkillGate": 1,
+      "EnableACSRSafetyGate": 1,
+      "SafetyGate": 1,
+      "OverridePassword": 1,
+      "ReplacementPassword": 1,
+      "IgnoreXWorstEvents": 1,
+      "ChampionshipPracticeEntryListType": 1,
+      "RequiredPracticeLaps": 1,
+      "StartNextPracticeOnEventComplete": 1,
+      "FullRestartPractice": 1,
+      "q": 3,
+      "Cars": 526,
+      "NumAvailableSpectatorCars": 1,
+      "Championship.SpectatorCar.Enabled": 1,
+      "EntrantAutoFill": 32,
+      "EntryList.OverwriteAllEvents": 32,
+      "EntryList.CarFlags.BlockKeyboard": 32,
+      "EntryList.CarFlags.BlockJoystick": 32,
+      "EntryList.CarFlags.BlockSteeringWheel": 32,
+      "EntryList.CarFlags.ForceHeadlights": 32,
+      "EntryList.CarFlags.AllowColorChange": 32,
+      "EntryList.CarFlags.AllowTeleporting": 32,
+      "EntryList.CarFlags.AllowImmediateRepair": 32,
+      "EntryList.CarFlags.AllowImmediateRefuel": 32,
+      "EntryList.InternalUUID": 32,
+      "EntryList.Spectator": 2,
+      "EntryList.Name": 32,
+      "EntryList.Team": 32,
+      "EntryList.GUID": 32,
+      "EntryList.Car": 32,
+      "EntryList.Skin": 32,
+      "EntryList.Ballast": 32,
+      "EntryList.Restrictor": 32,
+      "EntryList.FixedSetup": 32,
+      "numEntrantsToAdd": 1,
+      "Championship.SignUpForm.Enabled": 1,
+      "Championship.SignUpForm.RegistrationDeadlineDate": 1,
+      "Championship.SignUpForm.RegistrationDeadlineTime": 1,
+      "Championship.SignUpForm.RegistrationDeadlineTimezone": 1,
+      "Championship.SignUpForm.RequiresApproval": 1,
+      "Championship.SignUpForm.AskForEmail": 1,
+      "Championship.SignUpForm.AskForTeam": 1,
+      "Championship.SignUpForm.AllowDuplicateSkinChoices": 1,
+      "Championship.SignUpForm.HideCarChoice": 1,
+      "Championship.SignUpForm.RequireRegistrationWithSteam": 1,
+      "Championship.SignUpForm.DynamicClassSize": 1,
+      "Championship.SignUpForm.ExtraFields": 2,
+      "EntryList.TransferTeamPoints": 30,
+      "ClassID": 2,
+      "ClassName": 2,
+      "ClassColor": 2,
+      "NumCars": 2,
+      "NumEntrantsToAdd": 2,
+      "EntryList.NumEntrants": 2,
+      "Points.RequiredRaceTimePercentage": 2,
+      "Points.Place": 40,
+      "NumPoints": 2,
+      "Points.BestLap": 2,
+      "Points.PolePosition": 2,
+      "Points.SecondRaceMultiplier": 2,
+      "Points.MostLapsLed": 2,
+      "Points.CollisionWithDriver": 2,
+      "Points.CollisionWithEnv": 2,
+      "Points.CutTrack": 2,
+      "BoPModel": 15,
+      "BoPBallast": 15,
+      "BoPRestrictor": 15,
+      "DiscordEnabled": 1,
+      "DiscordChannelID": 1,
+      "DiscordOverrideRoleID": 1,
+      "DiscordRoleID": 1,
+      "Editing": 1
+    },
+    "order": [
+      "ChampionshipName",
+      "MaxClients",
+      "ChampionshipEntryListType",
+      "ChampionshipPersistOpenEntrants",
+      "ChampionshipInfo",
+      "ChampionshipOGImage",
+      "CMWLoadingImageURL",
+      "ChampionshipDefaultTab",
+      "ChampionshipIsInactive",
+      "ACSR",
+      "ACSRDescription",
+      "ExcludeProvisionalDrivers",
+      "RequiredCompletedACSRSessions",
+      "ACSRDisableSafety",
+      "EnableACSRSkillGate",
+      "SkillGate",
+      "EnableACSRSafetyGate",
+      "SafetyGate",
+      "OverridePassword",
+      "ReplacementPassword",
+      "IgnoreXWorstEvents",
+      "ChampionshipPracticeEntryListType",
+      "RequiredPracticeLaps",
+      "StartNextPracticeOnEventComplete",
+      "FullRestartPractice",
+      "q",
+      "Cars",
+      "NumAvailableSpectatorCars",
+      "Championship.SpectatorCar.Enabled",
+      "EntrantAutoFill",
+      "EntryList.OverwriteAllEvents",
+      "EntryList.CarFlags.BlockKeyboard",
+      "EntryList.CarFlags.BlockJoystick",
+      "EntryList.CarFlags.BlockSteeringWheel",
+      "EntryList.CarFlags.ForceHeadlights",
+      "EntryList.CarFlags.AllowColorChange",
+      "EntryList.CarFlags.AllowTeleporting",
+      "EntryList.CarFlags.AllowImmediateRepair",
+      "EntryList.CarFlags.AllowImmediateRefuel",
+      "EntryList.InternalUUID",
+      "EntryList.Spectator",
+      "EntryList.Name",
+      "EntryList.Team",
+      "EntryList.GUID",
+      "EntryList.Car",
+      "EntryList.Skin",
+      "EntryList.Ballast",
+      "EntryList.Restrictor",
+      "EntryList.FixedSetup",
+      "numEntrantsToAdd",
+      "Championship.SignUpForm.Enabled",
+      "Championship.SignUpForm.RegistrationDeadlineDate",
+      "Championship.SignUpForm.RegistrationDeadlineTime",
+      "Championship.SignUpForm.RegistrationDeadlineTimezone",
+      "Championship.SignUpForm.RequiresApproval",
+      "Championship.SignUpForm.AskForEmail",
+      "Championship.SignUpForm.AskForTeam",
+      "Championship.SignUpForm.AllowDuplicateSkinChoices",
+      "Championship.SignUpForm.HideCarChoice",
+      "Championship.SignUpForm.RequireRegistrationWithSteam",
+      "Championship.SignUpForm.DynamicClassSize",
+      "Championship.SignUpForm.ExtraFields",
+      "EntryList.TransferTeamPoints",
+      "ClassID",
+      "ClassName",
+      "ClassColor",
+      "NumCars",
+      "NumEntrantsToAdd",
+      "EntryList.NumEntrants",
+      "Points.RequiredRaceTimePercentage",
+      "Points.Place",
+      "NumPoints",
+      "Points.BestLap",
+      "Points.PolePosition",
+      "Points.SecondRaceMultiplier",
+      "Points.MostLapsLed",
+      "Points.CollisionWithDriver",
+      "Points.CollisionWithEnv",
+      "Points.CutTrack",
+      "BoPModel",
+      "BoPBallast",
+      "BoPRestrictor",
+      "DiscordEnabled",
+      "DiscordChannelID",
+      "DiscordOverrideRoleID",
+      "DiscordRoleID",
+      "Editing"
+    ]
+  },
+  "entrantIdRendered": false,
+  "skinSelectCount": 32,
+  "skinOptionCounts": [
+    0,
+    1,
+    0,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "controlSites": {
+    "EntryList.Car": {
+      "select in [col-sm-8 < row < col-md-6 form-group < row]": 32
+    },
+    "EntryList.Skin": {
+      "select in [col-sm-8 < row < col-md-6 form-group < row]": 32
+    },
+    "EntryList.Name": {
+      "text in [col-sm-8 < row < col-md-6 form-group mb-2 < row]": 32
+    },
+    "EntryList.Team": {
+      "text in [col-sm-8 < row < col-md-6 form-group mb-2 < row]": 32
+    },
+    "EntryList.GUID": {
+      "text in [col-sm-8 < row < col-md-6 form-group < row]": 32
+    },
+    "EntryList.Ballast": {
+      "number in [col-sm-8 < row < col-md-6 form-group < row]": 32
+    },
+    "EntryList.Restrictor": {
+      "number in [col-sm-8 < row < col-md-6 form-group < row]": 32
+    },
+    "EntryList.FixedSetup": {
+      "select in [col-sm-8 < row < col-md-6 form-group < row]": 32
+    },
+    "EntryList.InternalUUID": {
+      "hidden in [row < col-12 col-lg-8 < row < card-body]": 32
+    },
+    "EntryList.EntrantID": {},
+    "EntryList.OverwriteAllEvents": {
+      "checkbox (hidden) in [mb-0 < d-inline-block mr-4 < float-right < col-12 mb-2 mb-lg-0 col-lg-9]": 2,
+      "checkbox in [mb-0 < d-inline-block mr-4 < float-right < col-12 mb-2 mb-lg-0 col-lg-9]": 30
+    },
+    "EntryList.TransferTeamPoints": {
+      "checkbox in [col-sm-2 < row < col-12 points-transfer < row]": 30
+    }
+  },
+  "hiddenOccurrences": {
+    "EntryList.Car": 0,
+    "EntryList.Skin": 0,
+    "EntryList.Name": 0,
+    "EntryList.Team": 0,
+    "EntryList.GUID": 0,
+    "EntryList.Ballast": 0,
+    "EntryList.Restrictor": 0,
+    "EntryList.FixedSetup": 0,
+    "EntryList.InternalUUID": 0,
+    "EntryList.EntrantID": 0,
+    "EntryList.OverwriteAllEvents": 2,
+    "EntryList.TransferTeamPoints": 0
+  },
+  "entryListShapeProblems": [
+    {
+      "key": "EntryList.Spectator",
+      "count": 2,
+      "expected": 32
+    },
+    {
+      "key": "EntryList.EntrantID",
+      "count": 0,
+      "expected": 32
+    }
+  ]
+}

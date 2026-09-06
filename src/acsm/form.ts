@@ -433,7 +433,28 @@ export interface EntryListShapeProblem {
   expected: number
 }
 
-export function checkEntryListShape(fields: readonly FormField[]): EntryListShapeProblem[] {
+export interface EntryListShapeOptions {
+  /**
+   * Which keys a payload carrying entrants must include.
+   *
+   * Defaults to `REQUIRED_ENTRY_LIST_FIELDS`, which describes the *event* form.
+   * The championship form legitimately renders no `EntryList.EntrantID` — its
+   * template excludes the field when `$.IsChampionship` — so a caller writing
+   * that form passes `CHAMPIONSHIP_REQUIRED_ENTRY_LIST_FIELDS` instead.
+   *
+   * A parameter rather than a looser default on purpose. The default has to
+   * keep failing closed for every caller that doesn't think about it, and the
+   * one caller that has measured its form says so at the call site, where the
+   * reason is next to the code.
+   */
+  required?: readonly string[]
+}
+
+export function checkEntryListShape(
+  fields: readonly FormField[],
+  options: EntryListShapeOptions = {},
+): EntryListShapeProblem[] {
+  const required = options.required ?? REQUIRED_ENTRY_LIST_FIELDS
   const counts = shape(fields)
   const excluded = new Set<string>(NON_ARRAY_ENTRY_LIST_FIELDS)
   const entries = Object.entries(counts).filter(
@@ -460,7 +481,7 @@ export function checkEntryListShape(fields: readonly FormField[]): EntryListShap
   // A key that isn't there has no count to disagree with, so the loop above
   // can't see it — which is why the required list exists.
   if (expected > 0) {
-    for (const key of REQUIRED_ENTRY_LIST_FIELDS) {
+    for (const key of required) {
       if (counts[key] === undefined) problems.push({ key, count: 0, expected })
     }
   }
