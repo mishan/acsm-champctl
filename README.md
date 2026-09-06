@@ -402,6 +402,20 @@ already installed, and that failure looks like nothing at all.
 Recording is the only copy champctl has: a livery uploaded through ACSM's own
 web UI is invisible to it and won't be in the carset.
 
+**The queue is the wall in the middle of the upload feature.** The process that
+will accept bytes from a stranger holds a Discord token and no ACSM
+credentials; this one holds ACSM credentials and no Discord token; they share
+one SQLite table and nothing else. Nothing fills it yet and nothing empties it —
+both ends land in later changes.
+
+Bytes are stored as received rather than as a validated file list, so whatever
+eventually applies them runs the same checks a second time on the same input. A
+driver who uploads twice before it is emptied leaves one queued row: both were
+always going to land on the same skin folder, so keeping both would mean
+uploading the dead one first. Settled rows keep their audit line and lose their
+bytes — "who uploaded the thing that broke Suzuka" should keep having an answer,
+and two copies of a driver's zip is one too many.
+
 Credentials come from `CHAMPCTL_USERNAME` / `CHAMPCTL_PASSWORD` and are needed
 only for `--push`; a preview reads the export, which is public. `--carset` needs
 none at all.
