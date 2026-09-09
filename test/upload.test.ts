@@ -700,14 +700,108 @@ describe("downloading the carset", () => {
   })
 })
 
+describe("the carset cache under load", () => {
+  let server: ReturnType<typeof createUploadServer>
+  let tokens: SqliteTokenStore
+  let queue: SqliteSubmissionQueue
+  let store: SqliteLiveryStore
+  let base: string
+  let cacheDir: string
+
+  const OTHER = "22222222-2222-2222-2222-222222222222"
+
+  /** Big enough that eight builds of it genuinely overlap. */
+  const fatSkin = (seed: string) => [
+    { name: "livery.dds", bytes: bytes(seed.repeat(200_000)) },
+    { name: "preview.jpg", bytes: bytes("jpg") },
+  ]
+
+  beforeAll(async () => {
+    cacheDir = await mkdtemp(join(tmpdir(), "champctl-carset-load-"))
+    tokens = await SqliteTokenStore.open(":memory:")
+    queue = await SqliteSubmissionQueue.open(":memory:")
+    store = await SqliteLiveryStore.open(":memory:")
+    for (const [champ, seed] of [
+      [CHAMP, "a"],
+      [OTHER, "b"],
+    ] as const) {
+      await store.record(
+        champ,
+        [
+          {
+            carModel: CAR,
+            driverName: "Misha",
+            skinFolder: "Misha",
+            files: fatSkin(seed),
+            totalBytes: 200_003,
+          },
+        ],
+        NOW,
+        "discord",
+      )
+    }
+
+    server = createUploadServer({ tokens, queue, store, cacheDir, now: () => NOW })
+    await new Promise<void>((ready) => server.listen(0, "127.0.0.1", ready))
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  })
+
+  afterAll(async () => {
+    await new Promise<void>((done) => server.close(() => done()))
+    store.close()
+    tokens.close()
+    queue.close()
+    await rm(cacheDir, { recursive: true, force: true })
+  })
+
+  it("serves every one of eight cold requests that arrive together", async () => {
+    // The bug: prune deleted every `.partial` it found, including the ones the
+    // other seven requests were still writing into, so their rename failed
+    // ENOENT and the download 500'd. Cold cache and concurrent is the whole
+    // point — the evening before a race is exactly when this happens.
+    const slug = await store.carsetLink(CHAMP, NOW)
+    const codes = await Promise.all(
+      Array.from({ length: 8 }, async () => {
+        const res = await fetch(`${base}/c/${slug}`)
+        await res.arrayBuffer()
+        return res.status
+      }),
+    )
+    expect(codes).toEqual(Array.from({ length: 8 }, () => 200))
+  })
+
+  it("keeps one championship's carset while another is built", async () => {
+    // One cache directory for every championship, and prune kept only the file
+    // it had just built — so two series evicted each other and every alternating
+    // request rebuilt a few hundred megabytes.
+    const mine = await store.carsetLink(CHAMP, NOW)
+    const theirs = await store.carsetLink(OTHER, NOW)
+    await fetch(`${base}/c/${mine}`).then((r) => r.arrayBuffer())
+    await fetch(`${base}/c/${theirs}`).then((r) => r.arrayBuffer())
+
+    expect((await readdir(cacheDir)).filter((f) => f.endsWith(".zip"))).toHaveLength(2)
+  })
+})
+
 describe("carsetSlugFromPath", () => {
   it("reads a slug, with or without a trailing filename", () => {
     expect(carsetSlugFromPath("/c/AbC-123_xyz9876543210")).toBe("AbC-123_xyz9876543210")
     expect(carsetSlugFromPath("/c/AbC-123_xyz9876543210/carset.zip")).toBe("AbC-123_xyz9876543210")
   })
 
+  it("reads a slug under a mount prefix, which handleCarsetLink can mint", () => {
+    expect(carsetSlugFromPath("/champctl/c/AbC-123_xyz9876543210")).toBe("AbC-123_xyz9876543210")
+  })
+
   it("ignores anything else", () => {
-    for (const p of ["/c/", "/c/short", "/c/../etc/passwd", "/", "/u/abc"]) {
+    for (const p of [
+      "/c/",
+      "/c/short",
+      "/c/../etc/passwd",
+      "/",
+      "/u/abc",
+      "/cc/AbC-123_xyz9876543210",
+    ]) {
       expect(carsetSlugFromPath(p)).toBeUndefined()
     }
   })

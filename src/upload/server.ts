@@ -30,7 +30,7 @@
  * browser path needs JavaScript, which is stated on the page.
  */
 
-import { randomBytes } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { createReadStream, createWriteStream } from "node:fs"
 import { mkdir, readdir, rename, rm, stat } from "node:fs/promises"
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
@@ -57,9 +57,15 @@ export interface UploadServerOptions {
   now?: () => Date
 }
 
-/** Pulls a carset slug out of `/c/<slug>`. */
+/**
+ * Pulls a carset slug out of `/c/<slug>`.
+ *
+ * Prefix-tolerant for the reason `tokenFromPath` is: `handleCarsetLink` keeps
+ * whatever path `uploadBaseUrl` carries, so a league mounted at
+ * `https://host/champctl/` was handed links this refused to match.
+ */
 export function carsetSlugFromPath(pathname: string): string | undefined {
-  const match = /^\/c\/([A-Za-z0-9_-]{16,128})(?:\/[^/]*)?$/.exec(pathname)
+  const match = /(?:^|\/)c\/([A-Za-z0-9_-]{16,128})(?:\/[^/]*)?$/.exec(pathname)
   return match?.[1]
 }
 
@@ -184,7 +190,13 @@ async function cachedCarset(
   if (plan.skins.length === 0) return undefined
 
   await mkdir(cacheDir, { recursive: true, mode: 0o700 })
-  const path = join(cacheDir, `${plan.digest}.zip`)
+  // The championship is in the file name because the cache directory is shared
+  // by all of them: prune keeps the newest carset and nothing else, so two
+  // series read as each other's leftovers and evicted one another on every
+  // alternating request. Hashed rather than used raw — the id reaches here from
+  // a URL, and this is a path.
+  const key = createHash("sha256").update(championshipId).digest("hex").slice(0, 16)
+  const path = join(cacheDir, `${key}-${plan.digest}.zip`)
   const filename = carsetFilename(plan)
 
   try {
@@ -206,26 +218,44 @@ async function cachedCarset(
     throw e
   }
 
-  await pruneCarsets(cacheDir, path)
+  await pruneCarsets(cacheDir, path, key)
   return { path, digest: plan.digest, filename, bytes: (await stat(path)).size }
 }
 
+/** A `.partial` older than this is nobody's in-flight write; it is a crash. */
+const PARTIAL_GRACE_MS = 60 * 60 * 1000
+
 /**
- * Drops every cached carset but the current one.
+ * Drops this championship's older carsets, and abandoned partial writes.
  *
  * Thirty drivers updating a livery once each over a season is thirty complete
  * carsets left in the cache directory, and the disk they fill is the one
  * holding the queue database. Best-effort: a carset that cannot be removed is
- * not a reason to fail a download, and a concurrent request may legitimately
- * still have one open.
+ * not a reason to fail a download.
+ *
+ * Only this championship's, keyed by the prefix, and only `.zip` on sight. It
+ * used to take every `.partial` it found as well, which is precisely the file a
+ * concurrent first-time request is still writing into — unlinking it left that
+ * request's `rename` to fail ENOENT and the download to 500, on the evening
+ * everyone fetches the carset at once. Partials are cleaned up by the request
+ * that made them; the age check is only for the ones whose process died.
  */
-async function pruneCarsets(cacheDir: string, keep: string): Promise<void> {
+async function pruneCarsets(cacheDir: string, keep: string, prefix: string): Promise<void> {
   try {
+    const now = Date.now()
     for (const name of await readdir(cacheDir)) {
-      if (!name.endsWith(".zip") && !name.endsWith(".partial")) continue
       const path = join(cacheDir, name)
       if (path === keep) continue
-      await rm(path, { force: true }).catch(() => {})
+      if (name.startsWith(`${prefix}-`) && name.endsWith(".zip")) {
+        await rm(path, { force: true }).catch(() => {})
+        continue
+      }
+      if (name.endsWith(".partial")) {
+        const age = await stat(path)
+          .then((s) => now - s.mtimeMs)
+          .catch(() => 0)
+        if (age > PARTIAL_GRACE_MS) await rm(path, { force: true }).catch(() => {})
+      }
     }
   } catch {
     // A cache directory that cannot be listed is not worth an error here.
