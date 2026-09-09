@@ -16,7 +16,7 @@ Eight commands:
 | `champctl-liveries` | upload drivers' custom liveries and assign them |
 | `champctl-serve` | the finalize and create-a-championship flows as a web UI, for people without a terminal |
 | `champctl-upload` | take drivers' livery uploads from one-time links, holding no credentials |
-| `champctl-bot` | say what gridmom found and what's on this week, in Discord |
+| `champctl-bot` | say what gridmom found, what's on this week, and where everyone stands, in Discord |
 
 Working on champctl itself? See [AGENTS.md](AGENTS.md) and
 [docs/development.md](docs/development.md).
@@ -584,12 +584,14 @@ What champctl says in Discord.
 ```
 champctl-bot report                       check every championship, post what's wrong
 champctl-bot announce <champ-id> [round]  post the next round's details
+champctl-bot standings <champ-id>         post the championship standings
 
   --profile <id|path>   league profile (default: batl)
   --channel <id>        override the channel this command posts to
   --min <severity>      ERROR | WARN | INFO     (default: WARN)   [report]
   --suppress <codes>    comma-separated finding codes or prefixes  [report]
   --all                 include championships already fully raced   [report]
+  --source <where>      endpoint | export | auto  (default: auto) [standings]
   --dry-run             print what would be posted; talk to nobody
   --pits <path>         track pit table (default: data/track-pits.json)
   --base-url <url>      override the profile's ACSM base URL
@@ -598,7 +600,7 @@ champctl-bot announce <champ-id> [round]  post the next round's details
   -h, --help            this
 ```
 
-`report` posts to `discord.adminChannelId`; `announce` posts to
+`report` posts to `discord.adminChannelId`; `announce` and `standings` post to
 `discord.announceChannelId`. **Neither falls back to the other**, and that is a
 safety rule rather than tidiness: gridmom quotes the entry list, so a report
 that fell back to the announce channel would tell the whole league which three
@@ -703,6 +705,52 @@ It is one-shot and keeps no record of having run. Cron decides when a round is
 announced; champctl does not decide it has already done it.
 
 
+### standings
+
+```
+$ champctl-bot standings 1111… --dry-run
+
+**BATL September 2026 — RSS Formula Hybrid**
+ 1. ada                  43
+ 1. bo                   43
+ 3. cy                   30
+```
+
+**Two sources, and the difference matters.** `standings.json` is ACSM's own
+arithmetic, so it can never disagree with the page drivers look at — but it is
+premium-only, absent from the public build entirely. The export carries results
+inline on every build, so champctl can do the sums itself. `--source` picks;
+`auto` prefers the endpoint.
+
+Under `auto` champctl computes the export standings *as well*, purely to compare
+them, and reports any disagreement to stderr — never to the channel. That is
+what stops the fallback rotting: at a premium league the endpoint always
+answers, so without this the computation would sit unexercised until the day it
+was needed. A disagreement is a real finding either way round — either
+champctl's sums are wrong, or ACSM changed how it scores.
+
+**The export fallback refuses more than it computes, on purpose.** Four things
+about ACSM's scoring have never been measured against a real manager, and each
+would change every number in the table:
+
+| | |
+|---|---|
+| more than one class | which position a class scores — the one in the class or the one on the road — is written down nowhere, and matching a class's entrants to results is unmeasured in its own right |
+| `IgnoreXWorstEvents` | something is dropped; which rounds, and whether per driver or per championship, is written down nowhere |
+| `CollisionWithDriver`, `CollisionWithEnv`, `CutTrack` | on the points table, and the incidents are in the export, but whether ACSM applies them automatically is unknown |
+| the second race of a reversed-grid round | `SecondRaceMultiplier` says there is one; nothing knows what session key its results arrive under |
+
+So it declines and names the reason rather than posting a table that is quietly
+wrong. **BATL's own 2x20 is the last case**, which means at BATL the endpoint
+is the only source today and the cross-check reports "not comparable" rather
+than agreeing. `npm run recon:standings -- <base-url> <champ-id>` is what closes
+these: it reads standings.json without credentials and prints its *shape* —
+key paths and value types, no driver names — so the answer is safe to paste.
+
+A message that says "Worked out from the championship export, not read from
+Server Manager" is champctl's own arithmetic, and worth knowing before anyone
+argues about a point.
+
 ## Configuration
 
 **League profile.** BATL's baseline is `profiles/batl.json`; another league
@@ -796,14 +844,19 @@ have a web UI. What's left:
 - **Reordering is web-only.** The engine is in `src/reorder/`, and nothing on
   the command line reaches it — unlike every other engine here, which has a CLI
   as its first front end.
-- **The bot only talks.** The nightly report and announcements are there;
-  standings, the format poll and the poll-to-proposal loop are not, and neither
-  are the `/stats` lookups, which want the archive projections that don't exist
-  yet.
+- **The bot only talks.** The nightly report, announcements and standings are
+  there; the format poll and the poll-to-proposal loop are not, and neither are
+  the `/stats` lookups, which want archive projections that don't exist yet.
 - **Self-serve livery uploads are part-built.** The recording, the carset, the
   claims, the queue, the drain and the upload server are all here; the Discord
   side that hands out links and takes attachments is not. Design in
   [`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
+- **Standings from the export refuse more than they compute.** Drop-worst,
+  penalty points and the second race of a reversed-grid round are all
+  unmeasured, so the fallback declines rather than guessing — which means it
+  declines on BATL's own 2x20. `npm run recon:standings` against a premium
+  manager is what closes this, and until someone runs it the cross-check
+  between the two sources has nothing to compare at BATL.
 - **The nightly report has no memory.** It says the same thing every night until
   someone fixes it, which is gridmom's voice by design but also means there is
   nothing to lean on if a league wants "tell me once". A digest per championship
