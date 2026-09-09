@@ -17,7 +17,7 @@
 import { DateTime } from "luxon"
 
 import type { Championship, ChampionshipEvent } from "../acsm/types.js"
-import { eventHasStarted, events, trackLabel } from "../acsm/view.js"
+import { eventHasResults, events, trackLabel } from "../acsm/view.js"
 import { championshipPath } from "../acsm/paths.js"
 import { describeLength, readFormat, sameFormat, type RaceFormat } from "../finalize/format.js"
 import { currentQualiStart, practiceMinutesFor } from "../finalize/schedule.js"
@@ -60,11 +60,17 @@ export function partsFor(profile: LeagueProfile): Required<AnnounceParts> {
  * running order, and a reorder moves what a round is between the slots while
  * the dates stay put (see `src/reorder/`). Round 2 is the second element, and
  * that stays true whatever its date says.
+ *
+ * Raced means `eventHasResults`, not `eventHasStarted`. ACSM stamps an event's
+ * `StartedTime` from the UDP new-session callback, so a looping practice server
+ * — which BATL leaves open on the upcoming round — makes an untouched round
+ * look started, and this skipped straight past it to announce the round after.
+ * Wrong track and wrong date, to the channel drivers set an alarm by.
  */
 export function nextRound(c: Championship): number | undefined {
   const all = events(c)
   for (let i = 0; i < all.length; i++) {
-    if (!eventHasStarted(all[i]!)) return i + 1
+    if (!eventHasResults(all[i]!)) return i + 1
   }
   return undefined
 }
@@ -106,7 +112,11 @@ export function announce(c: Championship, options: AnnounceOptions): Announcemen
   // A raced round is refused rather than announced in the past tense. An
   // explicit --round is usually a typo for the one beside it, and "this week at
   // Suzuka" about a race that happened is worse than an error.
-  if (eventHasStarted(ev) && options.round !== undefined) {
+  //
+  // Same predicate as `nextRound`, and for the same reason: on `eventHasStarted`
+  // this refused `--round 3` as already raced while round 3's practice server
+  // was merely open.
+  if (eventHasResults(ev) && options.round !== undefined) {
     throw new NothingToAnnounce(`Round ${round} has already been raced.`)
   }
 

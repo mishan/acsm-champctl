@@ -41,7 +41,32 @@ const leagueProfile = () =>
     ],
   })
 
-const raced = (over = {}) => raceEvent({ StartedTime: "2026-08-05T19:00:00-07:00", ...over })
+/** A round that genuinely happened: it started *and* it finished. */
+const raced = (over = {}) =>
+  raceEvent({
+    StartedTime: "2026-08-05T19:00:00-07:00",
+    CompletedTime: "2026-08-05T20:30:00-07:00",
+    ...over,
+  })
+
+/**
+ * A round nobody has raced, with a practice server open on it.
+ *
+ * ACSM stamps `StartedTime` from the UDP new-session callback and a looping
+ * practice writes its own `CompletedTime` each loop, so both marks are on an
+ * untouched round. This is BATL's normal state for the round coming up.
+ */
+const practiceOpen = (over = {}) =>
+  raceEvent({
+    StartedTime: "2026-08-30T18:00:00-07:00",
+    Sessions: {
+      PRACTICE: {
+        StartedTime: "2026-08-30T18:00:00-07:00",
+        CompletedTime: "2026-08-30T19:00:00-07:00",
+      },
+    },
+    ...over,
+  })
 
 describe("which round gets announced", () => {
   it("picks the next one nobody has raced", () => {
@@ -66,6 +91,41 @@ describe("which round gets announced", () => {
     })
     expect(nextRound(c)).toBe(2)
     expect(announce(c, { profile: leagueProfile() }).round).toBe(2)
+  })
+
+  it("does not count a round as raced because its practice server is open", () => {
+    // The bug this exists for: on `eventHasStarted` a looping practice server
+    // made round 2 look raced, so the bot announced round 3 — wrong track and
+    // wrong date, to the channel drivers set an alarm by.
+    const c = championship({ Events: [raced(), practiceOpen(), raceEvent()] })
+    expect(nextRound(c)).toBe(2)
+  })
+
+  it("still counts a round raced off qualifying results alone", () => {
+    // Qualifying with results is a session somebody may go back to the replay
+    // of, so it counts. Practice, which loops, does not.
+    const c = championship({
+      Events: [raceEvent({ Sessions: { QUALIFY: { Results: { Result: [] } } } }), raceEvent()],
+    })
+    expect(nextRound(c)).toBe(2)
+  })
+
+  it("announces the round a practice server is open on, not the one after", () => {
+    const c = championship({
+      Events: [
+        practiceOpen({ RaceSetup: { Track: "suzuka" } }),
+        raceEvent({ RaceSetup: { Track: "spa" } }),
+      ],
+    })
+    const out = announce(c, { profile: testProfile() })
+    expect(out.round).toBe(1)
+    expect(out.content).toContain("suzuka")
+    expect(out.content).not.toContain("spa")
+  })
+
+  it("does not refuse an explicit round whose practice server is merely open", () => {
+    const c = championship({ Events: [practiceOpen(), raceEvent()] })
+    expect(announce(c, { profile: testProfile(), round: 1 }).round).toBe(1)
   })
 
   it("says the season is over rather than throwing something scary", () => {
