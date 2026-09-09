@@ -24,6 +24,62 @@ export interface DiscordTransport {
 }
 
 /**
+ * An attachment on an incoming command, not yet fetched.
+ *
+ * `size` arrives in the interaction payload and `download` is a thunk, so the
+ * router can refuse something too large *before* pulling tens of megabytes over
+ * the wire. Downloading eagerly would make the size limit a formality paid for
+ * after the fact.
+ *
+ * `filename` is here because Discord sends it, and is used for nothing: it is
+ * the one piece of driver-controlled text in the flow, and the skin folder and
+ * car model both come from the entry list.
+ */
+export interface IncomingAttachment {
+  filename: string
+  size: number
+  download(): Promise<Uint8Array>
+}
+
+/**
+ * A slash command as champctl sees it: ids, strings and a thunk.
+ *
+ * Deliberately not a `discord.js` type. That library stays in `discord.ts`, the
+ * way `acsm/client.ts` is the only place that knows about HTTP — which is what
+ * lets every refusal, every clamp and every reply be tested without a gateway
+ * or a token.
+ */
+export interface SlashCommand {
+  name: string
+  subcommand?: string
+  /** String options by name. */
+  options: Record<string, string>
+  attachment?: IncomingAttachment
+  userId: string
+  username: string
+  /** Absent in a DM. A role clamp cannot be satisfied without one. */
+  guildId?: string
+  channelId: string
+  /** From the interaction payload — no privileged intent needed. */
+  roleIds: readonly string[]
+}
+
+export interface CommandReply {
+  content: string
+  /**
+   * Something else to say in the admin channel, if anything.
+   *
+   * A claim announcement rides back this way rather than the router posting it
+   * itself, so the router keeps having no way to talk to Discord.
+   */
+  announcement?: string
+}
+
+export interface CommandRouter {
+  handle(command: SlashCommand): Promise<CommandReply>
+}
+
+/**
  * Discord's per-message character limit.
  *
  * It refuses an over-long message outright — HTTP 400, code 50035 — rather than

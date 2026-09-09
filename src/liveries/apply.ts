@@ -38,6 +38,7 @@ import { AcsmWriteError, isRedirectStatus, type AcsmSession } from "../acsm/sess
 import { championshipIdFromRedirect } from "../acsm/write.js"
 import type { Livery } from "./pack.js"
 import type { LiveryPlan } from "./plan.js"
+import type { LiverySource, RecordResult, LiveryRecorder } from "./store.js"
 
 export class LiveryApplyError extends Error {
   constructor(message: string) {
@@ -72,6 +73,26 @@ export class RosterChangedError extends LiveryApplyError {
  * running practice session is stale, and re-running would re-post a whole
  * championship to fix something a click in ACSM fixes.
  */
+/**
+ * The liveries are on the server and champctl failed to write them down.
+ *
+ * Its own type, and its own sentence, because the obvious message is wrong in
+ * both directions. "Failed to apply liveries" would send an operator to
+ * re-upload something that is already applied; swallowing it would leave a
+ * carset quietly missing cars that are on the grid, which nobody discovers
+ * until a driver asks why they can't see one.
+ */
+export class LiveryRecordError extends LiveryApplyError {
+  constructor(override readonly cause: unknown) {
+    super(
+      `The liveries are uploaded and assigned — that part worked. What failed was ` +
+        `recording them locally, so they'll be missing from the carset pack until the next ` +
+        `time they're applied: ${cause instanceof Error ? cause.message : String(cause)}`,
+    )
+    this.name = "LiveryRecordError"
+  }
+}
+
 export class PracticeRestartError extends LiveryApplyError {
   constructor(
     round: number,
@@ -133,6 +154,22 @@ export interface ApplyLiveriesOptions {
   restartPracticeRound?: number
   /** Event ids by round, 1-based, from the export. Needed for the restart. */
   eventIds?: readonly string[]
+  /**
+   * Where to record what was applied, for the carset pack
+   * (docs/discord-livery-upload.md §6).
+   *
+   * Hung off the apply rather than off each caller so that every route in gets
+   * recorded by construction — an operator's `--zip` as much as the Discord
+   * drain. A carset assembled from only one of those routes is wrong in a way
+   * nobody can see: the file is on the server, absent from the pack, and the
+   * driver who installed the pack still cannot see that car.
+   *
+   * An interface rather than the store itself, so this module keeps its
+   * distance from SQLite. The CLI does the wiring.
+   */
+  record?: LiveryRecorder
+  /** Recorded as-is. Not branched on; it is there for the audit trail. */
+  source?: LiverySource
 }
 
 export interface ApplyLiveriesResult {
@@ -141,6 +178,8 @@ export interface ApplyLiveriesResult {
   championshipSaved: boolean
   /** True when the practice restart was requested. */
   practiceRestarted: boolean
+  /** What the recorder did, when there was one. */
+  recorded?: RecordResult
 }
 
 export async function applyLiveries(
@@ -171,6 +210,28 @@ export async function applyLiveries(
   if (plan.skinChanges.length > 0) {
     await saveChampionshipSkins(session, plan)
     result.championshipSaved = true
+  }
+
+  // Last, after the uploads and after any write they needed. Everything in
+  // `assignments` is recorded, including the ones that produced no
+  // `skinChanges` — a driver who fixed a wrong sponsor and resubmitted keeps
+  // the same skin folder, so the entry list needs no edit and the *bytes* are
+  // still new. Recording only what moved the form would leave the carset
+  // handing the whole grid the livery that was just replaced.
+  //
+  // A throw anywhere above means nothing is recorded, which is the right way
+  // round: a skin that never reached the server has no business in the carset.
+  if (options.record) {
+    try {
+      result.recorded = await options.record.record(
+        plan.championshipId,
+        plan.assignments.map((a) => a.livery),
+        new Date(),
+        options.source ?? "unknown",
+      )
+    } catch (e) {
+      throw new LiveryRecordError(e)
+    }
   }
 
   const round = options.restartPracticeRound

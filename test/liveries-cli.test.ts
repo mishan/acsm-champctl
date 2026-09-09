@@ -1,8 +1,16 @@
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 
-import { USAGE, UsageError, exitFor, parseArgs, renderPlan } from "../src/cli/liveries.js"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+
+import { unzipSync } from "fflate"
+
 import { AcsmError } from "../src/acsm/client.js"
+import { USAGE, UsageError, exitFor, main, parseArgs, renderPlan } from "../src/cli/liveries.js"
+import { SqliteClaimStore } from "../src/liveries/claims.js"
+import { SqliteLiveryStore } from "../src/liveries/store.js"
 import type { Entrant } from "../src/acsm/types.js"
 import {
   LiveryApplyError,
@@ -12,6 +20,7 @@ import {
 } from "../src/liveries/apply.js"
 import { LiveryPackError, readLiveryPack } from "../src/liveries/pack.js"
 import { LiveryPlanError, planLiveries } from "../src/liveries/plan.js"
+import { acsmStub } from "./support/acsm-stub.js"
 import { championship, championshipClass, entryList, raceEvent } from "./support/build.js"
 
 const CAR = "rss_formula_hybrid_2021"
@@ -195,7 +204,8 @@ describe("rendering a livery plan", () => {
 describe("what an error means for the exit code", () => {
   it("calls a refusal a 2 and a failure a 3", () => {
     expect(exitFor(new LiveryPackError("x"))?.code).toBe(2)
-    expect(exitFor(new LiveryPlanError("x"))?.code).toBe(2)
+    expect(exitFor(new LiveryPlanError("x", "entrant"))?.code).toBe(2)
+    expect(exitFor(new LiveryPlanError("x", "championship"))?.code).toBe(2)
     expect(exitFor(new RosterChangedError("x"))?.code).toBe(2)
     expect(exitFor(new MultiClassError(2))?.code).toBe(2)
     expect(exitFor(new PracticeRestartError(1, new Error("x")))?.code).toBe(3)
@@ -225,11 +235,278 @@ describe("what an error means for the exit code", () => {
     )
   })
 
-  it("no longer has an exit code for having nothing to do", () => {
-    // The pack is always uploaded now, so there is no run that does nothing —
-    // and the help text should not offer a code that can never happen.
+  it("no longer has an exit code for a pack that changes nothing", () => {
+    // The pack is always uploaded now, so an apply never does nothing and the
+    // help must not offer a code for it.
+    //
+    // Exit 1 has since come back for a different question — an empty queue, no
+    // recorded liveries, no claims — which is a real state a script wants to
+    // branch on rather than the vanished one. So this checks the meaning is
+    // gone rather than the digit.
     expect(USAGE).not.toContain("nothing to do")
-    expect(USAGE).toContain("  0  previewed cleanly, or pushed")
-    expect(USAGE).not.toMatch(/^ {2}1 {2}/m)
+    expect(USAGE).not.toContain("already assigned")
+    expect(USAGE).toContain("  1  nothing there")
+  })
+})
+
+describe("champctl-liveries --carset", () => {
+  const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+  const scratch = async () => {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-carset-"))
+    return { dir, db: join(dir, "liveries.db"), out: join(dir, "carset.zip") }
+  }
+
+  const captureStdout = () => {
+    const written: string[] = []
+    const original = process.stdout.write.bind(process.stdout)
+    process.stdout.write = ((chunk: string) => {
+      written.push(String(chunk))
+      return true
+    }) as typeof process.stdout.write
+    return { written, restore: () => (process.stdout.write = original) }
+  }
+
+  it("parses the flags", () => {
+    expect(parseArgs(["abc", "--carset", "out.zip", "--store", "s.db"])).toMatchObject({
+      championshipId: "abc",
+      carset: "out.zip",
+      store: "s.db",
+      noStore: false,
+    })
+    expect(parseArgs(["abc", "--zip", "p.zip", "--no-store"]).noStore).toBe(true)
+  })
+
+  it("refuses to upload and build a carset in one run", async () => {
+    // They are opposite directions: one writes to the server, the other writes
+    // a file for drivers out of what the server already has.
+    expect(await main(["abc", "--zip", "p.zip", "--carset", "out.zip"])).toBe(3)
+  })
+
+  it("writes an archive Content Manager can install, from what was recorded", async () => {
+    const { db, out } = await scratch()
+    const store = await SqliteLiveryStore.open(db)
+    await store.record(
+      CHAMP,
+      [
+        {
+          carModel: CAR,
+          driverName: "Misha",
+          skinFolder: "Misha",
+          files: [
+            { name: "livery.dds", bytes: bytes("pixels") },
+            { name: "preview.jpg", bytes: bytes("jpeg") },
+          ],
+          totalBytes: 10,
+        },
+      ],
+      new Date(),
+      "zip",
+    )
+    store.close()
+
+    const out1 = captureStdout()
+    const code = await main([CHAMP, "--carset", out, "--store", db])
+    out1.restore()
+
+    expect(code).toBe(0)
+    const entries = unzipSync(new Uint8Array(await readFile(out)))
+    expect(Object.keys(entries)).toContain(`content/cars/${CAR}/skins/Misha/livery.dds`)
+    expect(out1.written.join("")).toContain("Content Manager")
+  })
+
+  it("exits 1 with an explanation when nothing has been recorded", async () => {
+    const { db, out } = await scratch()
+    expect(await main([CHAMP, "--carset", out, "--store", db])).toBe(1)
+  })
+
+  it("says which drivers will show as blank tiles", async () => {
+    const { db, out } = await scratch()
+    const store = await SqliteLiveryStore.open(db)
+    await store.record(
+      CHAMP,
+      [
+        {
+          carModel: CAR,
+          driverName: "Bob",
+          skinFolder: "Bob",
+          files: [{ name: "livery.dds", bytes: bytes("x") }],
+          totalBytes: 1,
+        },
+      ],
+      new Date(),
+      "zip",
+    )
+    store.close()
+
+    const captured = captureStdout()
+    await main([CHAMP, "--carset", out, "--store", db])
+    captured.restore()
+    expect(captured.written.join("")).toMatch(/No preview.jpg for Bob/)
+  })
+})
+
+describe("champctl-liveries --claims", () => {
+  const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+  const MISHA = "111111111111111111"
+
+  const scratch = async () => {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-"))
+    return { db: join(dir, "liveries.db") }
+  }
+
+  const captureStdout = () => {
+    const written: string[] = []
+    const original = process.stdout.write.bind(process.stdout)
+    process.stdout.write = ((chunk: string) => {
+      written.push(String(chunk))
+      return true
+    }) as typeof process.stdout.write
+    return { written, restore: () => (process.stdout.write = original) }
+  }
+
+  const roster = () =>
+    championship({
+      Name: "September 2026",
+      Classes: [championshipClass({ Entrants: entryList([person({ Name: "Misha" })]) })],
+    })
+
+  it("parses the flags", () => {
+    expect(parseArgs(["abc", "--claims"]).claims).toBe(true)
+    expect(parseArgs(["abc", "--release", MISHA]).release).toBe(MISHA)
+  })
+
+  it("won't list claims and upload in the same run", async () => {
+    expect(await main(["abc", "--claims", "--zip", "p.zip"])).toBe(3)
+  })
+
+  it("lists who is claimed as whom, with the sign-up beside it", async () => {
+    const { db } = await scratch()
+    const store = await SqliteClaimStore.open(db)
+    await store.claim(CHAMP, roster(), "Misha", MISHA, { discordHandle: "misha" })
+    await store.rememberHandleHint("Misha", "someone_else", new Date())
+    store.close()
+
+    const out = captureStdout()
+    const code = await main([CHAMP, "--claims", "--store", db])
+    out.restore()
+
+    expect(code).toBe(0)
+    expect(out.written.join("")).toContain("Misha")
+    expect(out.written.join("")).toMatch(/sign-up says "someone_else"/)
+  })
+
+  it("exits 1 and says why when nobody has claimed anything", async () => {
+    const { db } = await scratch()
+    const out = captureStdout()
+    const code = await main([CHAMP, "--claims", "--store", db])
+    out.restore()
+    expect(code).toBe(1)
+    expect(out.written.join("")).toMatch(/nobody can upload a livery through Discord/)
+  })
+
+  it("releases a claim and says the name is free", async () => {
+    const { db } = await scratch()
+    const store = await SqliteClaimStore.open(db)
+    await store.claim(CHAMP, roster(), "Misha", MISHA)
+    store.close()
+
+    const out = captureStdout()
+    const code = await main([CHAMP, "--release", MISHA, "--push", "--yes", "--store", db])
+    out.restore()
+
+    expect(code).toBe(0)
+    expect(out.written.join("")).toMatch(/free for someone else to claim/)
+  })
+
+  it("previews a release rather than doing it without --push", async () => {
+    // Irreversible, leaves no audit row, and frees the name for anyone to
+    // take — so a mistyped-but-valid Discord id was the one mistake in this
+    // CLI that handed somebody else a driver's identity.
+    const { db } = await scratch()
+    const store = await SqliteClaimStore.open(db)
+    await store.claim(CHAMP, roster(), "Misha", MISHA)
+    store.close()
+
+    const out = captureStdout()
+    const code = await main([CHAMP, "--release", MISHA, "--store", db])
+    out.restore()
+
+    expect(code).toBe(0)
+    expect(out.written.join("")).toMatch(/Re-run with --push/)
+
+    const after = await SqliteClaimStore.open(db)
+    expect(await after.forDiscordUser(CHAMP, MISHA)).toMatchObject({ entrantName: "Misha" })
+    after.close()
+  })
+
+  it("exits 1 releasing an account that holds nothing", async () => {
+    const { db } = await scratch()
+    expect(await main([CHAMP, "--release", MISHA, "--store", db])).toBe(1)
+  })
+})
+
+describe("champctl-liveries --watch", () => {
+  it("parses the flags", () => {
+    expect(parseArgs(["abc", "--drain", "--push", "--watch"]).watch).toBe(true)
+    expect(parseArgs(["abc", "--drain", "--push", "--watch", "--interval", "30"])).toMatchObject({
+      intervalSeconds: 30,
+    })
+  })
+
+  it("leaves the interval unset unless it was asked for", () => {
+    // Not defaulted at parse time on purpose. It was, and the guard below —
+    // `intervalSeconds !== undefined && !watch` — could then never be false, so
+    // every run without --watch died on it. The default lives at the point of
+    // use, and the usage text is the one place that states it.
+    expect(parseArgs(["abc", "--drain"]).intervalSeconds).toBeUndefined()
+    expect(parseArgs(["abc", "--drain", "--interval", "30"]).intervalSeconds).toBe(30)
+    expect(USAGE).toContain("default: 120")
+  })
+
+  it("previews a pack without --watch, which the interval guard used to refuse", async () => {
+    // The regression this pins is the whole --zip path: the primary documented
+    // command exited 3 on a guard about a flag the operator never typed.
+    const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    const dir = await mkdtemp(join(tmpdir(), "champctl-zip-"))
+    const packPath = join(dir, "pack.zip")
+    await writeFile(packPath, zipSync({ [`${CAR}/Misha.zip`]: skin() }))
+    const stub = await acsmStub(
+      CHAMP,
+      championship({
+        ID: CHAMP,
+        Name: "September 2026",
+        Classes: [championshipClass({ Entrants: entryList([person({ Name: "Misha" })]) })],
+        Events: [raceEvent({ EntryList: {} })],
+      }),
+    )
+
+    try {
+      expect(await main([CHAMP, "--zip", packPath, "--base-url", stub.baseUrl, "--no-store"])).toBe(
+        0,
+      )
+    } finally {
+      await stub.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("refuses a interval tight enough to hammer the server", () => {
+    // A login and an export every couple of seconds, against a box that is also
+    // running races.
+    expect(() => parseArgs(["abc", "--drain", "--interval", "1"])).toThrow(/at least 5 seconds/)
+    expect(() => parseArgs(["abc", "--drain", "--interval", "soon"])).toThrow(/at least 5 seconds/)
+  })
+
+  /**
+   * A watcher that only previews looks exactly like one that works — in the
+   * logs, in the process list, and in the profile — while applying nothing.
+   */
+  it("refuses to watch without --push", async () => {
+    expect(await main(["abc", "--drain", "--watch"])).toBe(3)
+  })
+
+  it("refuses --watch on its own", async () => {
+    expect(await main(["abc", "--watch"])).toBe(3)
   })
 })

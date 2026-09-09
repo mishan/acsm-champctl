@@ -35,10 +35,29 @@ import type { Championship, ChampionshipEvent, Entrant, SessionKey } from "../ac
 import { classes, events, eventSession, isZeroTime, slots } from "../acsm/view.js"
 import type { Livery, LiveryPack } from "./pack.js"
 
+/**
+ * Whether a refusal is about the one livery or about the championship.
+ *
+ * The drain plans each submission on its own, so that a driver who has left
+ * the entry list takes down only their own upload. That is only safe if a
+ * refusal which has nothing to do with the driver can be told apart from one
+ * that does: a second class on the championship refuses every submission in
+ * turn, and charging each of those to its own driver refused everybody and
+ * dropped the bytes of everyone who happened to upload that week.
+ *
+ * No default on purpose. A refusal added later has to say which it is, and
+ * guessing `championship` costs a stopped drain while guessing `entrant` costs
+ * somebody their artwork.
+ */
+export type LiveryPlanScope = "championship" | "entrant"
+
 export class LiveryPlanError extends Error {
-  constructor(message: string) {
+  readonly scope: LiveryPlanScope
+
+  constructor(message: string, scope: LiveryPlanScope) {
     super(message)
     this.name = "LiveryPlanError"
+    this.scope = scope
   }
 }
 
@@ -132,6 +151,7 @@ export function planLiveries(
         `drivers holding the same pit box, and one of them disappears from the entry list when ` +
         `the next session starts. Nothing has been uploaded. Assign these skins in ACSM by hand, ` +
         `or see docs/acsm-champ-form.md §4.4.`,
+      "championship",
     )
   }
 
@@ -152,12 +172,14 @@ export function planLiveries(
         `No entrant called "${driverName}" in this championship. Names are matched exactly, ` +
           `so a trailing space or different capitalisation in the zip is enough to miss. ` +
           `${nearbyNames(roster, driverName)}`,
+        "entrant",
       )
     }
     if (matches.length > 1) {
       throw new LiveryPlanError(
         `"${driverName}" appears ${matches.length} times in the entry list, so champctl ` +
           `can't tell which one the livery is for. Fix the duplicate in ACSM first.`,
+        "entrant",
       )
     }
 
@@ -167,6 +189,7 @@ export function planLiveries(
         `${driverName} is entered in ${match.model || "no car"}, but the livery is filed ` +
           `under ${carModel}. Uploading it would put the skin on a car they don't drive. ` +
           `Move it to the right folder in the pack, or fix their car in ACSM.`,
+        "entrant",
       )
     }
 
@@ -193,7 +216,7 @@ export function planLiveries(
   }
 }
 
-interface RosterEntry {
+export interface RosterEntry {
   name: string
   model: string
   skin: string
@@ -211,7 +234,7 @@ interface RosterEntry {
  * lays the rows out in. Getting that order wrong puts a livery on the wrong
  * driver, so it is worth saying out loud that these two sorts are the same one.
  */
-function rosterOf(championship: Championship): RosterEntry[] {
+export function rosterOf(championship: Championship): RosterEntry[] {
   const out: RosterEntry[] = []
   classes(championship).forEach((cls, classIndex) => {
     slots(cls.Entrants).forEach((slot, entrantIndex) => {
@@ -317,7 +340,7 @@ function eventHasResults(ev: ChampionshipEvent | undefined): boolean {
  * someone to accept a suggestion, and the failure mode of accepting the wrong
  * one is a driver racing under another driver's name.
  */
-function nearbyNames(roster: readonly RosterEntry[], wanted: string): string {
+export function nearbyNames(roster: readonly RosterEntry[], wanted: string): string {
   const fold = (s: string) => normalise(s).toLowerCase().replace(/\s+/g, "")
   const close = roster.filter((r) => r.name && fold(r.name) === fold(wanted)).map((r) => r.name)
   if (close.length === 0) return "No entrant name is close to it either."

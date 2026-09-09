@@ -4,6 +4,7 @@ import { CHAMPIONSHIP_SUBMIT_PATH } from "../src/acsm/paths.js"
 import { AcsmSession } from "../src/acsm/session.js"
 import type { Entrant } from "../src/acsm/types.js"
 import {
+  LiveryRecordError,
   MultiClassError,
   RosterChangedError,
   applyLiveries,
@@ -404,6 +405,120 @@ describe("applyLiveries", () => {
     const result = await applyLiveries(session, plan())
     expect(result.practiceRestarted).toBe(false)
     expect(requests.filter((r) => r.url.includes("/practice"))).toEqual([])
+  })
+})
+
+/**
+ * Recording what was applied, for the carset pack
+ * (docs/discord-livery-upload.md §6).
+ *
+ * Hung off the apply so that every route in is covered by construction. The
+ * tests that matter here are the two orderings: nothing recorded when the
+ * server write did not land, and a recording failure that does not read as an
+ * apply failure.
+ */
+describe("recording what was applied", () => {
+  const recorder = (fail?: Error) => {
+    const calls: { championshipId: string; drivers: string[]; source: string }[] = []
+    return {
+      calls,
+      record: async (
+        championshipId: string,
+        liveries: readonly Livery[],
+        _at: Date,
+        source: string,
+      ) => {
+        if (fail) throw fail
+        calls.push({ championshipId, drivers: liveries.map((l) => l.driverName), source })
+        return { stored: liveries.length, unchanged: 0 }
+      },
+    }
+  }
+
+  it("records every livery it applied, with the source it was given", async () => {
+    const { session } = await fakeSession()
+    const record = recorder()
+    const result = await applyLiveries(
+      session,
+      plan(undefined, livery("Misha"), livery("postaL")),
+      {
+        record,
+        source: "discord",
+      },
+    )
+
+    expect(record.calls).toEqual([
+      { championshipId: CHAMP_ID, drivers: ["Misha", "postaL"], source: "discord" },
+    ])
+    expect(result.recorded).toEqual({ stored: 2, unchanged: 0 })
+  })
+
+  it("records nothing when the championship save failed", async () => {
+    // An uploaded skin nothing points at is not on the grid. Recording it would
+    // put artwork in the carset for a car that still shows the default.
+    const { session } = await fakeSession({ submitStatus: 200 })
+    const record = recorder()
+    await expect(applyLiveries(session, plan(), { record })).rejects.toThrow()
+    expect(record.calls).toEqual([])
+  })
+
+  it("records nothing when an upload failed", async () => {
+    const { session } = await fakeSession({ uploadStatus: 200 })
+    const record = recorder()
+    await expect(applyLiveries(session, plan(), { record })).rejects.toThrow()
+    expect(record.calls).toEqual([])
+  })
+
+  it("says the liveries are applied when only the recording failed", async () => {
+    // The obvious message is wrong in both directions: "failed to apply" sends
+    // an operator to re-upload something already on the server, and swallowing
+    // it leaves the carset quietly missing a car.
+    const { session } = await fakeSession()
+    const record = recorder(new Error("database is locked"))
+    await expect(applyLiveries(session, plan(), { record })).rejects.toThrow(LiveryRecordError)
+    await expect(applyLiveries(session, plan(), { record })).rejects.toThrow(
+      /uploaded and assigned — that part worked/,
+    )
+    await expect(applyLiveries(session, plan(), { record })).rejects.toThrow(/database is locked/)
+  })
+
+  /**
+   * The case that used to be "nothing to do", and is the one that matters most.
+   *
+   * A driver who fixed a wrong sponsor and resubmitted keeps the same skin
+   * folder — it is their own name — so `EntryList.Skin` needs no edit and
+   * `skinChanges` is empty. The *bytes* still changed, and the upload still
+   * happened. Recording only what moved the form would leave the carset handing
+   * the whole grid the livery that was just replaced, which is the exact bug
+   * the plan's `noop` flag used to cause on the server.
+   */
+  it("records a re-upload even when the entry list needs no change", async () => {
+    const c = championship({
+      ID: CHAMP_ID,
+      Classes: [
+        championshipClass({ Entrants: entryList([person({ Name: "Misha", Skin: "Misha" })]) }),
+      ],
+      Events: [raceEvent({ ID: EVENT_ID, EntryList: {} })],
+    })
+    const { session } = await fakeSession()
+    const record = recorder()
+    const plan = planLiveries(c, CHAMP_ID, packOf(livery("Misha")))
+    expect(plan.skinChanges).toEqual([])
+
+    const result = await applyLiveries(session, plan, { record })
+    expect(result.championshipSaved).toBe(false)
+    expect(record.calls).toEqual([
+      { championshipId: CHAMP_ID, drivers: ["Misha"], source: "unknown" },
+    ])
+    expect(result.recorded).toEqual({ stored: 1, unchanged: 0 })
+  })
+
+  it("applies exactly as before when there is no recorder", async () => {
+    const { session, requests } = await fakeSession()
+    const result = await applyLiveries(session, plan())
+    expect(result.championshipSaved).toBe(true)
+    expect(result.recorded).toBeUndefined()
+    expect(requests.some((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))).toBe(true)
   })
 })
 

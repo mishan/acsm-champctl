@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest"
 import {
   DEFAULT_LIMITS,
   LiveryPackError,
+  liveryPack,
   type PackLimits,
   readLiveryPack,
+  readSingleLivery,
 } from "../src/liveries/pack.js"
 
 const bytes = (s: string): Uint8Array => new TextEncoder().encode(s)
@@ -589,5 +591,150 @@ describe("readLiveryPack limits", () => {
       }),
     })
     expect(() => readLiveryPack(p)).toThrowError(/unpacks to more than 128.0 MB/)
+  })
+})
+
+/**
+ * The Discord path (docs/discord-livery-upload.md §4).
+ *
+ * A driver sends a bare skin zip and champctl supplies the two things the CLI
+ * reads off the pack's own filenames. The point of these tests is not that
+ * `readSingleLivery` works — it is that it refuses everything `readLiveryPack`
+ * refuses, since it is about to be handed bytes by a stranger rather than by an
+ * operator who looked at them.
+ */
+describe("readSingleLivery", () => {
+  const identity = { carModel: CAR, driverName: "Misha" }
+
+  it("takes the car and driver from the caller, not from the zip", () => {
+    const livery = readSingleLivery(skin(), identity)
+    expect(livery).toMatchObject({ carModel: CAR, driverName: "Misha", skinFolder: "Misha" })
+    expect(livery.files.map((f) => f.name).sort()).toEqual(["livery.dds", "ui_skin.json"])
+  })
+
+  it("unwraps a skin whose files sit in one folder inside the zip", () => {
+    // The shape you get from zipping the folder rather than its contents, which
+    // is what most people do.
+    const wrapped = zipSync({
+      "MyLivery/livery.dds": bytes("DDS pixels"),
+      "MyLivery/ui_skin.json": bytes("{}"),
+    })
+    expect(
+      readSingleLivery(wrapped, identity)
+        .files.map((f) => f.name)
+        .sort(),
+    ).toEqual(["livery.dds", "ui_skin.json"])
+  })
+
+  it("refuses a path that climbs out with ..", () => {
+    const evil = zipSync({ "livery.dds": bytes("d"), "../evil.dds": bytes("x") })
+    expect(() => readSingleLivery(evil, identity)).toThrowError(/climbs out/)
+  })
+
+  it("refuses a leftover source file", () => {
+    expect(() => readSingleLivery(skin({ "work.psd": bytes("x") }), identity)).toThrowError(
+      /Photoshop source file/,
+    )
+  })
+
+  it("refuses a zip with no .dds in it, so it isn't a livery", () => {
+    const notALivery = zipSync({ "readme.txt": bytes("hi") })
+    expect(() => readSingleLivery(notALivery, identity)).toThrowError(/no .dds file/)
+  })
+
+  it("refuses a file over the per-file cap", () => {
+    const huge = zipSync({ "livery.dds": new Uint8Array(49 * 1024 * 1024) })
+    expect(() => readSingleLivery(huge, identity)).toThrowError(/over the 48.0 MB limit/)
+  })
+
+  it("refuses something that isn't a zip, without leaking the exception", () => {
+    expect(() => readSingleLivery(bytes("not a zip at all"), identity)).toThrowError(
+      LiveryPackError,
+    )
+  })
+
+  it("normalises the driver name, so a Mac-made zip still lands on one folder", () => {
+    // "Häkkinen" decomposed and precomposed are different strings for the same
+    // text. The skin folder has to be one of them, consistently, or a re-upload
+    // makes a second folder beside the first.
+    const decomposed = "Ha\u0308kkinen"
+    const livery = readSingleLivery(skin(), { carModel: CAR, driverName: decomposed })
+    expect(livery.skinFolder).toBe("H\u00e4kkinen")
+  })
+
+  /**
+   * The refusal that is aimed at the operator rather than the driver.
+   *
+   * ACSM will store an entrant name that champctl cannot turn into a folder, so
+   * this is reachable without anybody doing anything wrong — and telling the
+   * driver their zip is bad would send them re-zipping a file that was never
+   * the problem.
+   */
+  it("says an unusable entrant name is an entry list problem, not a zip problem", () => {
+    const bad = { carModel: CAR, driverName: ".hidden" }
+    expect(() => readSingleLivery(skin(), bad)).toThrowError(/entry list problem/)
+    expect(() => readSingleLivery(skin(), bad)).toThrowError(/an admin has to change the name/)
+  })
+
+  it("refuses an entrant name that could be read as a path", () => {
+    expect(() => readSingleLivery(skin(), { carModel: CAR, driverName: "a/b" })).toThrowError(
+      /can't be one/,
+    )
+  })
+
+  it("refuses a car model that could be read as a path", () => {
+    expect(() =>
+      readSingleLivery(skin(), { carModel: "../etc", driverName: "Misha" }),
+    ).toThrowError(/Can't upload for car model/)
+  })
+})
+
+/**
+ * The whole-pack checks, reachable on their own because the drain assembles a
+ * pack out of queued submissions rather than out of a zip.
+ */
+describe("liveryPack", () => {
+  const one = (driverName: string, car = CAR) =>
+    readSingleLivery(skin(), { carModel: car, driverName })
+
+  it("sums the bytes across liveries", () => {
+    const p = liveryPack([one("Ann"), one("Bob")])
+    expect(p.liveries).toHaveLength(2)
+    expect(p.totalBytes).toBe(one("Ann").totalBytes * 2)
+  })
+
+  it("refuses two liveries for the same driver and car", () => {
+    // Two queued submissions for one driver would upload the dead one first and
+    // then overwrite it — right by luck, and a bug the week it isn't.
+    expect(() => liveryPack([one("Ann"), one("Ann")])).toThrowError(/appears more than once/)
+  })
+
+  it("allows the same driver in two different cars", () => {
+    expect(liveryPack([one("Ann"), one("Ann", "ford_transit")]).liveries).toHaveLength(2)
+  })
+
+  it("refuses an empty pack rather than reporting a clean no-op", () => {
+    expect(() => liveryPack([])).toThrowError(/No liveries in the pack/)
+  })
+
+  it("refuses more liveries than the limit allows", () => {
+    const limits: PackLimits = { ...DEFAULT_LIMITS, maxSkins: 2 }
+    expect(() => liveryPack([one("Ann"), one("Bob"), one("Cat")], limits)).toThrowError(
+      /more than 2 liveries/,
+    )
+  })
+
+  it("refuses a set that unpacks past the whole-pack ceiling", () => {
+    const limits: PackLimits = { ...DEFAULT_LIMITS, maxTotalBytes: 10 }
+    expect(() => liveryPack([one("Ann"), one("Bob")], limits)).toThrowError(/zip bomb/)
+  })
+
+  it("does not share the array it was given", () => {
+    // The drain builds its list incrementally; a pack that aliased it would
+    // change under whoever is holding it.
+    const liveries = [one("Ann")]
+    const p = liveryPack(liveries)
+    liveries.push(one("Bob"))
+    expect(p.liveries).toHaveLength(1)
   })
 })

@@ -9,9 +9,11 @@ dist/
 #
 # data/ is league data, not code, and some of it is personal data: the
 # championship archive (data/archive/archive.db, plan §8.1) stores every export
-# verbatim, and every export carries driver names and Steam GUIDs. The tool
-# builds this directory; the league owns what's in it. Only the *.example.json
-# files that document a format are tracked.
+# verbatim, and every export carries driver names and Steam GUIDs. The livery
+# store (data/liveries/liveries.db) holds drivers' own artwork, which is theirs
+# rather than the league's to publish. The tool builds this directory; the
+# league owns what's in it. Only the *.example.json files that document a
+# format are tracked.
 .cache/
 data/*
 !data/*.example.json
