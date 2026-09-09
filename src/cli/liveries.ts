@@ -138,7 +138,8 @@ interface Args {
   carset?: string
   drain: boolean
   watch: boolean
-  intervalSeconds: number
+  /** Unset unless --interval was given: the guard below has to tell the two apart. */
+  intervalSeconds?: number
   claims: boolean
   release?: string
   store?: string
@@ -157,7 +158,6 @@ export function parseArgs(argv: readonly string[]): Args {
     profile: "batl",
     drain: false,
     watch: false,
-    intervalSeconds: 120,
     claims: false,
     noStore: false,
     push: false,
@@ -569,8 +569,14 @@ async function drain(
     // outlast the lease, and a lease that lapsed mid-upload would let the next
     // drain in to do exactly what the lease exists to prevent. Unref'd so it
     // never holds the process open.
+    let lostLease = false
     renewal = setInterval(() => {
-      void queue.renewDrainLease(championshipId, holder, new Date(), DRAIN_LEASE_MS)
+      void queue
+        .renewDrainLease(championshipId, holder, new Date(), DRAIN_LEASE_MS)
+        .then((held) => {
+          if (!held) lostLease = true
+        })
+        .catch(() => {})
     }, DRAIN_LEASE_MS / 3)
     renewal.unref()
 
@@ -708,6 +714,24 @@ async function drain(
       return 0
     }
 
+    // Re-asserted here rather than trusted from the timer, and checked at all
+    // because the timer's answer used to be thrown away. Everything above this
+    // point is reads; from here the drain logs in and saves the championship,
+    // and a drain that lost the lease doing that is the two-writers case the
+    // lease exists to prevent — the later POST replays an entry list read
+    // before the other drain's skins landed, and they are gone.
+    if (
+      lostLease ||
+      !(await queue.renewDrainLease(championshipId, holder, new Date(), DRAIN_LEASE_MS))
+    ) {
+      say(
+        `Another drain took ${championshipId} over while this one was reading. ` +
+          `Nothing applied — the queue is untouched and the holder is applying it.\n`,
+      )
+      emit({ championshipId, lostLease: true, applied: [], refused: [], deferred: [] })
+      return 3
+    }
+
     const session = new AcsmSession({ baseUrl })
     await login(session)
 
@@ -773,6 +797,9 @@ async function drain(
  */
 const DRAIN_LEASE_MS = 10 * 60 * 1000
 
+/** Matches the `--interval` line in the usage text. */
+const DEFAULT_INTERVAL_SECONDS = 120
+
 /**
  * As many submissions as one pack will carry, and the rest for next time.
  *
@@ -836,7 +863,8 @@ async function watchDrain(args: Args, championshipId: string): Promise<number> {
     )
   }
 
-  const intervalMs = args.intervalSeconds * 1000
+  const intervalSeconds = args.intervalSeconds ?? DEFAULT_INTERVAL_SECONDS
+  const intervalMs = intervalSeconds * 1000
   const maxBackoffMs = 15 * 60_000
   let consecutiveFailures = 0
   let stopping = false
@@ -853,7 +881,7 @@ async function watchDrain(args: Args, championshipId: string): Promise<number> {
   process.once("SIGTERM", stop)
 
   process.stderr.write(
-    `Draining ${championshipId} every ${args.intervalSeconds}s. ` +
+    `Draining ${championshipId} every ${intervalSeconds}s. ` +
       `Uploads apply by themselves while this is running.\n`,
   )
 
@@ -867,7 +895,7 @@ async function watchDrain(args: Args, championshipId: string): Promise<number> {
       if (e instanceof AcsmAuthError) {
         process.stderr.write(
           `Stopping: ${e.message}\nBad credentials don't come right on their own, and retrying ` +
-            `a login every ${args.intervalSeconds}s is worse for the server than stopping.\n`,
+            `a login every ${intervalSeconds}s is worse for the server than stopping.\n`,
         )
         return 3
       }

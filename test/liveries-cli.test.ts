@@ -1,7 +1,7 @@
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 
-import { mkdtemp, readFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -20,6 +20,7 @@ import {
 } from "../src/liveries/apply.js"
 import { LiveryPackError, readLiveryPack } from "../src/liveries/pack.js"
 import { LiveryPlanError, planLiveries } from "../src/liveries/plan.js"
+import { acsmStub } from "./support/acsm-stub.js"
 import { championship, championshipClass, entryList, raceEvent } from "./support/build.js"
 
 const CAR = "rss_formula_hybrid_2021"
@@ -453,8 +454,41 @@ describe("champctl-liveries --watch", () => {
     })
   })
 
-  it("defaults to two minutes", () => {
-    expect(parseArgs(["abc", "--drain"]).intervalSeconds).toBe(120)
+  it("leaves the interval unset unless it was asked for", () => {
+    // Not defaulted at parse time on purpose. It was, and the guard below —
+    // `intervalSeconds !== undefined && !watch` — could then never be false, so
+    // every run without --watch died on it. The default lives at the point of
+    // use, and the usage text is the one place that states it.
+    expect(parseArgs(["abc", "--drain"]).intervalSeconds).toBeUndefined()
+    expect(parseArgs(["abc", "--drain", "--interval", "30"]).intervalSeconds).toBe(30)
+    expect(USAGE).toContain("default: 120")
+  })
+
+  it("previews a pack without --watch, which the interval guard used to refuse", async () => {
+    // The regression this pins is the whole --zip path: the primary documented
+    // command exited 3 on a guard about a flag the operator never typed.
+    const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    const dir = await mkdtemp(join(tmpdir(), "champctl-zip-"))
+    const packPath = join(dir, "pack.zip")
+    await writeFile(packPath, zipSync({ [`${CAR}/Misha.zip`]: skin() }))
+    const stub = await acsmStub(
+      CHAMP,
+      championship({
+        ID: CHAMP,
+        Name: "September 2026",
+        Classes: [championshipClass({ Entrants: entryList([person({ Name: "Misha" })]) })],
+        Events: [raceEvent({ EntryList: {} })],
+      }),
+    )
+
+    try {
+      expect(await main([CHAMP, "--zip", packPath, "--base-url", stub.baseUrl, "--no-store"])).toBe(
+        0,
+      )
+    } finally {
+      await stub.close()
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   it("refuses a interval tight enough to hammer the server", () => {

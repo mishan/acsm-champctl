@@ -13,9 +13,10 @@
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { DatabaseSync } from "node:sqlite"
 
 import { zipSync } from "fflate"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { Championship } from "../src/acsm/types.js"
 import { main } from "../src/cli/liveries.js"
@@ -57,6 +58,7 @@ const twoClasses = (names: string[]): Championship =>
 let open: { dir: string; stub?: AcsmStub }[] = []
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   for (const o of open) {
     await o.stub?.close()
     await rm(o.dir, { recursive: true, force: true })
@@ -65,7 +67,7 @@ afterEach(async () => {
 })
 
 /** A temp store seeded with one queued submission per name. */
-async function seeded(names: string[], champ: Championship) {
+async function seeded(names: string[], champ: Championship, onExport?: (db: string) => void) {
   const dir = await mkdtemp(join(tmpdir(), "champctl-drain-"))
   const db = join(dir, "liveries.db")
   const queue = await SqliteSubmissionQueue.open(db)
@@ -83,7 +85,11 @@ async function seeded(names: string[], champ: Championship) {
   }
   queue.close()
 
-  const stub = await acsmStub(CHAMP, champ)
+  const stub = await acsmStub(CHAMP, champ, {
+    onRequest: (path) => {
+      if (path.endsWith("/export")) onExport?.(db)
+    },
+  })
   open.push({ dir, stub })
   return { db, stub, dir }
 }
@@ -185,6 +191,48 @@ describe("champctl-liveries --drain", () => {
     expect(code).toBe(3)
     // Refused before the network, so the queue is exactly as it was.
     expect(stub.requests).toEqual([])
+    expect(await queueState(db)).toMatchObject({ queued: 1 })
+  })
+
+  it("stops rather than writing when another drain takes the championship over mid-run", async () => {
+    // The renewal timer's answer was thrown away, so a drain that had lost the
+    // lease carried on and saved the championship alongside the new holder —
+    // exactly what the lease exists to prevent. Stolen while the drain is
+    // fetching the export: past acquiring, not yet writing.
+    let stolen = false
+    const { db, stub } = await seeded(["Ann"], oneClass(["Ann"]), (path) => {
+      if (stolen) return
+      stolen = true
+      const other = new DatabaseSync(path)
+      other
+        .prepare("UPDATE drain_lease SET holder = ?, expires_at = ? WHERE championship_id = ?")
+        .run("someone-else:1", new Date(Date.now() + 60_000).toISOString(), CHAMP)
+      other.close()
+    })
+
+    // Real credentials, or login() refuses on the missing env var before it
+    // reaches the network and the drain stops for a reason that has nothing to
+    // do with the lease — which is how the first version of this test passed
+    // without the guard it was written for.
+    vi.stubEnv("CHAMPCTL_USERNAME", "operator")
+    vi.stubEnv("CHAMPCTL_PASSWORD", "secret")
+
+    const code = await main([
+      CHAMP,
+      "--drain",
+      "--push",
+      "--yes",
+      "--base-url",
+      stub.baseUrl,
+      "--store",
+      db,
+    ])
+
+    expect(stolen).toBe(true)
+    expect(code).toBe(3)
+    // The load-bearing assertion: the export and nothing after it. A drain that
+    // kept going asks for a login next, and that request would be recorded here.
+    expect(stub.requests).toEqual([`/championship/${CHAMP}/export`])
     expect(await queueState(db)).toMatchObject({ queued: 1 })
   })
 
