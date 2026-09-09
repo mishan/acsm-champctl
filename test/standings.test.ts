@@ -22,7 +22,7 @@ import {
   ranked,
   type StandingsClass,
 } from "../src/bot/standings.js"
-import { parseArgs, resolveStandings } from "../src/cli/bot.js"
+import { parseArgs, resolveStandings, runStandings } from "../src/cli/bot.js"
 import { championship, championshipClass, raceEvent } from "./support/build.js"
 
 /** A raced round whose Race session carries a finishing order. */
@@ -158,6 +158,26 @@ describe("what the export cannot be scored for", () => {
     expect(reasonFor(scorable({ Events: [raceEvent()] }))).toMatch(/No round has been raced/)
   })
 
+  it("does not count a practice loop as a round that has been raced", () => {
+    // ACSM stamps StartedTime from the UDP new-session callback and a looping
+    // practice writes its own CompletedTime each loop, so an untouched round
+    // carries both marks. On eventHasStarted that made `raced` non-empty before
+    // anyone had raced, which skipped this refusal and returned a class with no
+    // rows — posting nothing and exiting 0, as though the season had no points
+    // in it rather than not having begun.
+    const practiceOpen = raceEvent({
+      StartedTime: "2026-08-30T18:00:00-07:00",
+      Sessions: {
+        PRACTICE: {
+          Name: "Practice",
+          StartedTime: "2026-08-30T18:00:00-07:00",
+          CompletedTime: "2026-08-30T19:00:00-07:00",
+        },
+      },
+    })
+    expect(reasonFor(scorable({ Events: [practiceOpen] }))).toMatch(/No round has been raced/)
+  })
+
   it("names what champctl would need, so the refusal is a to-do and not a shrug", () => {
     expect(reasonFor(scorable({ IgnoreXWorstEvents: 2 }))).toMatch(/never measured/)
   })
@@ -197,6 +217,50 @@ describe("parsing whatever standings.json answers with", () => {
     expect(parseStandings("nope")).toBeUndefined()
     expect(parseStandings(null)).toBeUndefined()
     expect(parseStandings({ unrelated: true })).toBeUndefined()
+  })
+
+  it("refuses a class whose rows are spelled something it has never seen", () => {
+    // The rows are readable; the key holding them is not. This came back as a
+    // *success* carrying one empty class, so the caller posted nothing, warned
+    // about nothing and never fell back to the export.
+    expect(
+      parseStandings({ Classes: [{ Name: "RSS", Drivers: [{ DriverName: "ada", Points: 43 }] }] }),
+    ).toBeUndefined()
+  })
+
+  it("reads a flat list under a key that also names a class list", () => {
+    // `Standings` spells both layers, and taken as the class layer this produced
+    // one empty class per driver — a shape that parses successfully and holds
+    // nobody.
+    expect(
+      parseStandings({
+        Standings: [
+          { DriverName: "ada", Points: 43 },
+          { DriverName: "bo", Points: 30 },
+        ],
+      }),
+    ).toEqual([
+      {
+        name: "",
+        rows: [
+          { position: 1, driver: "ada", points: 43 },
+          { position: 2, driver: "bo", points: 30 },
+        ],
+      },
+    ])
+  })
+
+  it("keeps a class nobody has scored in, which is not the same as not understanding it", () => {
+    // Week one of every season. An empty rows array is an answer; a missing one
+    // is a shape champctl has misread, and the two must not look alike.
+    //
+    // This one passes against the old code too — it is not the regression test
+    // for that bug, it is the fence around the fix. Refusing every empty class
+    // would also have closed the hole, by calling week one an unreadable
+    // response.
+    expect(parseStandings({ Classes: [{ Name: "RSS", Standings: [] }] })).toEqual([
+      { name: "RSS", rows: [] },
+    ])
   })
 
   it("refuses the whole response when one row is unreadable", () => {
@@ -239,6 +303,39 @@ describe("the cross-check between the two sources", () => {
     expect(compareStandings(acsm, mine)).toEqual([
       "ada: ACSM says 43 points, champctl worked out 40",
     ])
+  })
+
+  it("compares the one class on each side even when the names differ", () => {
+    // The endpoint's flat shape carries no class name; the export takes one from
+    // Classes[].Name. Matching on name alone reported this 43-versus-30 as
+    // "champctl worked out no standings for the unnamed class" and compared not
+    // a single point — the cross-check quietly doing nothing.
+    expect(
+      compareStandings(
+        [{ name: "", rows: [{ position: 1, driver: "ada", points: 43 }] }],
+        [{ name: "RSS", rows: [{ position: 1, driver: "ada", points: 30 }] }],
+      ),
+    ).toEqual(["ada: ACSM says 43 points, champctl worked out 30"])
+  })
+
+  it("notices a driver champctl scored that ACSM has never heard of", () => {
+    // The direction that catches champctl over-scoring — a disqualification it
+    // handled differently, or an entrant ACSM doesn't count. Walking only ACSM's
+    // rows reported this as agreement.
+    expect(
+      compareStandings(
+        [{ name: "RSS", rows: [{ position: 1, driver: "ada", points: 43 }] }],
+        [
+          {
+            name: "RSS",
+            rows: [
+              { position: 1, driver: "ada", points: 43 },
+              { position: 2, driver: "bo", points: 30 },
+            ],
+          },
+        ],
+      ),
+    ).toEqual(["bo is in champctl's standings and not in ACSM's"])
   })
 
   it("notices a driver champctl missed entirely", () => {
@@ -301,6 +398,21 @@ describe("where standings come from", () => {
     expect(captured).toContain("using the export")
   })
 
+  it("falls back to the export when the endpoint answers in a shape it can't read", async () => {
+    // The rows are under a key champctl has never seen. This used to parse as a
+    // success holding one empty class, so the endpoint "won", nothing was
+    // warned about and the export was never consulted.
+    const unrecognised = async (): Promise<unknown> => ({
+      Classes: [{ Name: "RSS", Drivers: [{ DriverName: "ada", Points: 43 }] }],
+    })
+    const args = parseArgs(["standings", "abc"])
+    const out = await resolveStandings(readerWhose(unrecognised), scorable(), "abc", args, url)
+
+    expect(out?.source).toBe("export")
+    expect(out?.classes[0]?.rows).toHaveLength(3)
+    expect(captured).toContain("shape champctl doesn't recognise")
+  })
+
   it("says the cross-check couldn't run rather than staying quiet", async () => {
     // BATL's own 2x20 is this on every run: the endpoint answers, the export
     // can't be scored, and silence reads as the two sources agreeing.
@@ -318,6 +430,50 @@ describe("where standings come from", () => {
 
     expect(out?.source).toBe("endpoint")
     expect(captured).toContain("not comparable")
+  })
+})
+
+describe("what the command says when there is nothing to post", () => {
+  let out = ""
+
+  beforeEach(() => {
+    out = ""
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      out += String(chunk)
+      return true
+    })
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("names an empty table rather than calling it 'Posted 0 messages'", async () => {
+    // A recognised answer that nobody has scored in yet. "Posted 0 messages" is
+    // also what a misread shape looked like from cron, so the two states have to
+    // read differently or neither gets investigated.
+    const champ = scorable({ ID: "abc", Name: "BATL September" })
+    const inner = new StaticAcsmReader([champ])
+    const reader: AcsmReader = {
+      listChampionships: () => inner.listChampionships(),
+      exportChampionship: (id: string) => inner.exportChampionship(id),
+      exportChampionshipRaw: (id: string) => inner.exportChampionshipRaw(id),
+      standings: async () => ({ Classes: [{ Name: "RSS", Standings: [] }] }),
+      healthcheck: () => inner.healthcheck(),
+      listContent: () => inner.listContent(),
+    }
+    const posted: string[] = []
+    const args = parseArgs(["standings", "abc", "--source", "endpoint"])
+
+    const code = await runStandings(reader, args, "https://acsm.example", async (m) => {
+      posted.push(...m)
+    })
+
+    expect(code).toBe(0)
+    expect(posted).toEqual([])
+    expect(out).toContain("Nobody has scored in BATL September yet")
+    expect(out).not.toContain("Posted 0 messages")
   })
 })
 
