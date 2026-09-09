@@ -27,11 +27,16 @@ export interface AcsmStub {
 export async function acsmStub(
   championshipId: string,
   championship: Championship,
+  options: { onRequest?: (path: string) => void } = {},
 ): Promise<AcsmStub> {
   const requests: string[] = []
   const server: Server = createServer((req, res) => {
     const path = req.url ?? ""
     requests.push(path)
+    // The seam a test needs to act *during* a drain. The export fetch is the
+    // one point where the drain is provably past acquiring its lease and not
+    // yet writing, which is the window the lease has to survive.
+    options.onRequest?.(path)
     if (path === `/championship/${encodeURIComponent(championshipId)}/export`) {
       const body = JSON.stringify(championship)
       res.writeHead(200, { "content-type": "application/json" })
