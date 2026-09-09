@@ -200,8 +200,24 @@ describe("tokenFromPath", () => {
     expect(tokenFromPath("/u/AbC-123_xyz9876543210")).toBe("AbC-123_xyz9876543210")
   })
 
+  it("reads it under a mount prefix, which uploadUrl keeps and this used to 404", () => {
+    const token = "AbC-123_xyz9876543210"
+    expect(tokenFromPath(`/champctl/u/${token}`)).toBe(token)
+    expect(
+      tokenFromPath(uploadUrl("https://host/champctl/", token).slice("https://host".length)),
+    ).toBe(token)
+  })
+
   it("ignores anything else, so there is no index to find", () => {
-    for (const path of ["/", "/u/", "/u/short", "/admin", "/u/../etc/passwd", "/u/a/b"]) {
+    for (const path of [
+      "/",
+      "/u/",
+      "/u/short",
+      "/admin",
+      "/u/../etc/passwd",
+      "/u/a/b",
+      "/uu/AbC-123_xyz9876543210",
+    ]) {
       expect(tokenFromPath(path)).toBeUndefined()
     }
   })
