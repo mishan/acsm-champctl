@@ -96,9 +96,17 @@ export class UploadTokenError extends Error {
   }
 }
 
-/** Pulls a token out of `/u/<token>`, or undefined if that isn't the shape. */
+/**
+ * Pulls a token out of `/u/<token>`, or undefined if that isn't the shape.
+ *
+ * Anchored to the end rather than the start, because `uploadUrl` keeps any path
+ * in `uploadBaseUrl` and this used to insist on `/u/` at the root: a league
+ * mounted at `https://host/champctl/` minted links its own server 404'd. Being
+ * relaxed about what comes before costs nothing — the token is the credential
+ * and is still looked up before anything is served.
+ */
 export function tokenFromPath(pathname: string): string | undefined {
-  const match = /^\/u\/([A-Za-z0-9_-]{16,128})\/?$/.exec(pathname)
+  const match = /(?:^|\/)u\/([A-Za-z0-9_-]{16,128})\/?$/.exec(pathname)
   return match?.[1]
 }
 
