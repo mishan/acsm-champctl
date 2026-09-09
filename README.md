@@ -623,7 +623,11 @@ npm run dev        # Vite on :5173, proxying /api to a champctl-serve on :3000
 
 ## champctl-bot
 
-What champctl says in Discord. One command so far: the nightly gridmom report.
+What champctl says in Discord: the nightly gridmom report, and `/livery`.
+
+Getting it running end to end — application, invite, profile, and the drain that
+applies what drivers send — is
+[`docs/discord-bot-setup.md`](docs/discord-bot-setup.md).
 
 ```
 champctl-bot report        check every championship and post what's wrong
@@ -690,12 +694,11 @@ Three things worth knowing:
 Run it nightly, from cron or a timer, and point it at an admin channel: findings
 quote the entry list, so they name drivers.
 
-**Setup.** Create an application at
-<https://discord.com/developers/applications>, add a bot, invite it to the
-server with **Send Messages** in the channel you want, and put its token in
-`CHAMPCTL_DISCORD_TOKEN`. The channel id goes in the profile — right-click the
-channel, "Copy Channel ID". No intents are needed and none are requested; a
-report reads nothing from Discord.
+**Setup** is [`docs/discord-bot-setup.md`](docs/discord-bot-setup.md) — one copy
+of the steps, since the report and `/livery` need the same application and the
+same token. The short version: create an application, invite it with **Send
+Messages**, and put its token in `CHAMPCTL_DISCORD_TOKEN`. A report needs no
+intents and no `guildId`; it reads nothing from Discord.
 
 ```sh
 CHAMPCTL_DISCORD_TOKEN=… champctl-bot report
