@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest"
 
 import type { Entrant } from "../src/acsm/types.js"
 import {
+  LEGACY_CLAIM,
   SqliteClaimStore,
   claimAnnouncement,
   claimProblem,
@@ -425,6 +426,38 @@ describe("migrating a database written before claims were per championship", () 
       ok: false,
       reason: expect.stringContaining("already claimed"),
     })
+    store.close()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it("lists a driver who re-claimed once, not once per row", async () => {
+    // The carried-forward row survives a re-claim on purpose — it still answers
+    // for other championships — so this championship had both. The operator's
+    // listing showed the driver twice and said "2 claimed" for a grid of one.
+    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
+    await openGlobal(dir)
+
+    const store = await SqliteClaimStore.open(join(dir, "liveries.db"))
+    expect(await store.claim(CHAMP, champ(), "Misha", MISHA)).toMatchObject({ ok: true })
+
+    const listed = await store.list(CHAMP)
+    expect(listed).toHaveLength(1)
+    // The real one, not the carried-forward one it took over from.
+    expect(listed[0]).toMatchObject({ championshipId: CHAMP, entrantName: "Misha" })
+    store.close()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it("still lists a carried-forward claim nobody has re-made", async () => {
+    // The other half of the rule: dedupe must not hide a legacy row that is the
+    // only claim this championship has, or a whole migrated grid vanishes.
+    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
+    await openGlobal(dir)
+
+    const store = await SqliteClaimStore.open(join(dir, "liveries.db"))
+    const listed = await store.list(CHAMP)
+    expect(listed).toHaveLength(1)
+    expect(listed[0]).toMatchObject({ championshipId: LEGACY_CLAIM, entrantName: "Misha" })
     store.close()
     await rm(dir, { recursive: true, force: true })
   })

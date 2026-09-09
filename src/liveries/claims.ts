@@ -490,10 +490,26 @@ export class SqliteClaimStore {
     return existing
   }
 
+  /**
+   * Every claim that answers for this championship, one row per account.
+   *
+   * The same precedence `#claimOf` applies, and for the same reason: a driver
+   * who re-claimed after the migration has both a real row and the carried-
+   * forward one, and listing both showed them twice and counted them twice in
+   * the "N claimed" line an operator reads to check the grid.
+   */
   async list(championshipId: string): Promise<DriverClaim[]> {
     const rows = this.#db
-      .prepare(`SELECT * FROM driver_discord WHERE championship_id IN (?, ?) ORDER BY entrant_name`)
-      .all(championshipId, LEGACY_CLAIM) as unknown as ClaimRow[]
+      .prepare(
+        `SELECT * FROM driver_discord AS d
+         WHERE d.championship_id IN (?, ?)
+           AND (d.championship_id = ?
+                OR NOT EXISTS (SELECT 1 FROM driver_discord AS real_claim
+                               WHERE real_claim.championship_id = ?
+                                 AND real_claim.discord_user_id = d.discord_user_id))
+         ORDER BY d.entrant_name`,
+      )
+      .all(championshipId, LEGACY_CLAIM, championshipId, championshipId) as unknown as ClaimRow[]
     return rows.map(toClaim)
   }
 
