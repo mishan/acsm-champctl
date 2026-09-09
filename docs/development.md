@@ -71,6 +71,22 @@ manager is what the server actually runs — so the manager is what gets read.
 `bot/announce.ts` derives quali start rather than printing `Scheduled`, which is
 the one way this message could be confidently wrong every week.
 
+**"Has this round been raced" is `eventHasResults`, never `eventHasStarted`.**
+ACSM stamps an event's `StartedTime` from the UDP new-session callback, and a
+looping practice server is a session on the active championship like any other —
+so a round nobody has touched looks started for as long as practice is open,
+which at BATL is most of the week before it. `eventHasStarted` is right where it
+is used, refusing an import over an event that has begun, and wrong everywhere
+the question is whether a round is behind us.
+
+The cost scales with what the answer decides. `planLiveries` got it wrong and
+printed a stray sentence about replays; `announce` got it wrong and announced the
+wrong round — wrong track and wrong date, to the channel drivers set an alarm by.
+`eventHasResults` lives in `acsm/view.ts` next to `eventHasStarted` so there is
+one answer rather than one per caller, and it reads only the sessions that are a
+race weekend: a looping practice writes its own `CompletedTime` each loop, so
+"any session with results" puts the bug back about an hour later.
+
 ## Gates
 
 ```sh
