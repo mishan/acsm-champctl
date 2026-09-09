@@ -110,6 +110,74 @@ export interface DiscordSettings {
    * looked at it.
    */
   adminChannelId?: string
+  /**
+   * The guild `/livery` is registered in.
+   *
+   * Guild-scoped rather than global, because guild commands update immediately
+   * and global ones propagate on Discord's schedule — which turns a renamed
+   * option into an hour of drivers seeing the old one. champctl is a
+   * single-league tool; there is no second guild to serve.
+   */
+  guildId?: string
+  /**
+   * Livery uploads. Absent means the league has no self-serve uploads and the
+   * commands are not registered at all — the same shape as `discord` being
+   * absent meaning no bot.
+   */
+  livery?: LiveryUploadSettings
+}
+
+/**
+ * Where `/livery upload` is accepted, and by whom.
+ *
+ * Both lists are optional and **ANDed**, and an empty one means unrestricted.
+ * Worth saying out loud rather than only in code: a league that sets `roleIds`
+ * and leaves `channelIds` empty has accepted uploads in every channel the bot
+ * can see, and would rather have known.
+ */
+export interface LiveryUploadSettings {
+  /** Channels the command is accepted in. Empty or absent means anywhere. */
+  channelIds?: string[]
+  /**
+   * Roles that may run it. Empty or absent means anyone who can see it.
+   *
+   * Setting this also confines uploads to the server: a DM has no member and no
+   * roles, so a role clamp cannot be satisfied in one.
+   */
+  roleIds?: string[]
+  /**
+   * Run the drain on a timer instead of waiting for an admin.
+   *
+   * Off by default, which is plan §7 verbatim — the bot queues and a human
+   * applies. Turning it on is what makes the feature self-serve, and it is one
+   * line rather than a fork because a league should be able to watch what
+   * arrives for a season before deciding.
+   */
+  autoApply?: boolean
+  /**
+   * Public base URL of `champctl-upload`, if the league runs one.
+   *
+   * Enables `/livery upload-url`, which is the only route open to a driver
+   * whose zip is over their Discord tier's ceiling — that rejection happens on
+   * their client, before the bot exists, so without this they cannot tell
+   * champctl anything at all.
+   *
+   * Must be `https`. The token travels in the URL, so plain HTTP puts a bearer
+   * credential in every proxy log between the driver and the server; champctl
+   * refuses to mint rather than downgrading quietly. `http://localhost` is
+   * allowed for development.
+   */
+  uploadBaseUrl?: string
+  /**
+   * Pins which championship uploads belong to.
+   *
+   * The bot resolves it from the manager by default and refuses when the answer
+   * is ambiguous — zero unfinished championships and two are both cases where
+   * quietly choosing one puts a livery on the wrong car. Two active
+   * championships is a real state for a league running a second series, and
+   * this is how that league says which one, since a driver cannot.
+   */
+  championshipId?: string
 }
 
 export interface LeagueProfile {

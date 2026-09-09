@@ -140,6 +140,71 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
           '"Copy Channel ID" gives it, not a channel name and not a link',
       )
     }
+
+    const guildId = (discord as Record<string, unknown>)["guildId"]
+    if (guildId !== undefined && (typeof guildId !== "string" || !/^\d{17,20}$/.test(guildId))) {
+      bad(
+        "`discord.guildId` must be a Discord server id — 17 to 20 digits, from right-clicking " +
+          "the server with Developer Mode on",
+      )
+    }
+
+    // Same check, same reason: a channel *name* and a role *mention* both reach
+    // Discord as an id it cannot find. Here the failure is worse than a missing
+    // report — a clamp built from ids that match nothing refuses every driver,
+    // and reads as a bot that is down.
+    const livery = (discord as Record<string, unknown>)["livery"]
+    if (livery !== undefined) {
+      if (typeof livery !== "object" || livery === null) bad("`discord.livery` must be an object")
+      const l = livery as Record<string, unknown>
+      for (const key of ["channelIds", "roleIds"] as const) {
+        const value = l[key]
+        if (value === undefined) continue
+        if (
+          !Array.isArray(value) ||
+          value.some((v) => typeof v !== "string" || !/^\d{17,20}$/.test(v))
+        ) {
+          bad(
+            `\`discord.livery.${key}\` must be an array of Discord ids — 17 to 20 digits each, ` +
+              `the way "Copy ID" gives them, not names and not mentions`,
+          )
+        }
+      }
+      if (l["autoApply"] !== undefined && typeof l["autoApply"] !== "boolean") {
+        bad("`discord.livery.autoApply` must be true or false")
+      }
+
+      if (l["championshipId"] !== undefined && typeof l["championshipId"] !== "string") {
+        bad("`discord.livery.championshipId` must be a championship id")
+      }
+
+      // Checked here as well as at mint time. Finding out from a failed profile
+      // load is a great deal better than finding out because a driver's upload
+      // link never worked, and better still than not finding out because it did.
+      const base = l["uploadBaseUrl"]
+      if (base !== undefined) {
+        if (typeof base !== "string") bad("`discord.livery.uploadBaseUrl` must be a URL")
+        let parsed: URL
+        try {
+          parsed = new URL(base as string)
+        } catch {
+          bad(`\`discord.livery.uploadBaseUrl\` isn't a URL: ${JSON.stringify(base)}`)
+          throw new Error("unreachable")
+        }
+        // Written as "https, or http on loopback" rather than "not https unless
+        // loopback". The second spelling exempted the *scheme check itself* on
+        // localhost, so `ftp://localhost/up` and `file://localhost/` validated
+        // and then handed a driver a link that could never work.
+        const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)
+        const ok = parsed.protocol === "https:" || (parsed.protocol === "http:" && loopback)
+        if (!ok) {
+          bad(
+            "`discord.livery.uploadBaseUrl` must be https — the upload token travels in the URL, " +
+              "so http would put it in every proxy log on the way. http is allowed on localhost.",
+          )
+        }
+      }
+    }
   }
 
   const profile = v as LeagueProfile
