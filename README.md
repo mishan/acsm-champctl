@@ -653,6 +653,21 @@ Three things worth knowing:
 Run it nightly, from cron or a timer, and point it at an admin channel: findings
 quote the entry list, so they name drivers.
 
+**Setup.** Create an application at
+<https://discord.com/developers/applications>, add a bot, invite it to the
+server with **Send Messages** in the channel you want, and put its token in
+`CHAMPCTL_DISCORD_TOKEN`. The channel id goes in the profile — right-click the
+channel, "Copy Channel ID". No intents are needed and none are requested; a
+report reads nothing from Discord.
+
+```sh
+CHAMPCTL_DISCORD_TOKEN=… champctl-bot report
+```
+
+The token is never a flag. A token on a command line is in your shell history
+and in every `ps` listing on the box, so `--token` is an error that says so
+rather than an option that quietly isn't there.
+
 ### announce
 
 ```

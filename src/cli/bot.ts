@@ -88,10 +88,20 @@ interface Args {
   help: boolean
 }
 
-/** Commands taking a championship id, and how many extra positionals each allows. */
-const COMMANDS: Record<string, { positionals: number }> = {
-  report: { positionals: 0 },
-  announce: { positionals: 2 },
+/** Channel keys a command may post to. Named so neither can be typed as a string. */
+type ChannelKey = "adminChannelId" | "announceChannelId"
+
+/**
+ * Every command: how many positionals it takes, and which channel it posts to.
+ *
+ * One table rather than two. The channel used to be decided by a separate
+ * `command === "report"` test, which is the shape that drifts — and here it
+ * drifted in the dangerous direction, since anything that was not "report"
+ * came back as the league's channel.
+ */
+const COMMANDS: Record<string, { positionals: number; channel: ChannelKey }> = {
+  report: { positionals: 0, channel: "adminChannelId" },
+  announce: { positionals: 2, channel: "announceChannelId" },
 }
 
 export function parseArgs(argv: readonly string[]): Args {
@@ -233,15 +243,19 @@ export function exitCodeFor(counts: Record<Severity, number>, failed: number): n
  * a report falling back to the announce channel would tell everyone which three
  * drivers are about to be dropped from the grid. Refusing with "set
  * discord.adminChannelId" is the correct outcome for a half-configured profile.
+ *
+ * A command with no entry in `COMMANDS` is refused rather than defaulted. This
+ * asked `command === "report"` and treated everything else as an announcement,
+ * so the fallback it exists to prevent was one typo away: any string that was
+ * not exactly "report" resolved to the channel the whole league reads.
  */
 export function channelFor(
   command: string,
   profile: LeagueProfile,
-): { id: string | undefined; key: string } {
-  if (command === "report") {
-    return { id: profile.discord?.adminChannelId, key: "adminChannelId" }
-  }
-  return { id: profile.discord?.announceChannelId, key: "announceChannelId" }
+): { id: string | undefined; key: ChannelKey } {
+  const known = COMMANDS[command]
+  if (!known) throw new UsageError(`Unknown command ${command}`)
+  return { id: profile.discord?.[known.channel], key: known.channel }
 }
 
 export function describe(entry: NightlyEntry): string {

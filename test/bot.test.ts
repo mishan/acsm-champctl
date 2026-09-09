@@ -17,6 +17,7 @@ import type { Championship, ChampionshipSummary } from "../src/acsm/types.js"
 import { nightlyMessages, reportMessages } from "../src/bot/message.js"
 import { findingsAtOrAbove, isFinished, nightly } from "../src/bot/nightly.js"
 import { MESSAGE_LIMIT, RecordingTransport, type DiscordTransport } from "../src/bot/transport.js"
+import { UsageError } from "../src/cli/args.js"
 import { channelFor, exitCodeFor, parseArgs, withResources } from "../src/cli/bot.js"
 import { Severity, type Finding } from "../src/gridmom/finding.js"
 import { formatDiscord } from "../src/gridmom/report.js"
@@ -528,6 +529,16 @@ describe("which channel each command posts to", () => {
 
     const announceOnly = profile({ announceChannelId: "2".repeat(18) })
     expect(channelFor("report", announceOnly).id).toBeUndefined()
+  })
+
+  it("refuses a command it does not know rather than defaulting to the league", () => {
+    // The fallback this exists to prevent was one typo away: the routing asked
+    // `command === "report"` and treated everything else as an announcement, so
+    // any string that was not exactly "report" resolved to the channel the whole
+    // league reads — including a misspelling of "report" itself.
+    const p = profile({ adminChannelId: "1".repeat(18), announceChannelId: "2".repeat(18) })
+    expect(() => channelFor("reprot", p)).toThrow(UsageError)
+    expect(() => channelFor("", p)).toThrow(UsageError)
   })
 
   it("names the key to set, so the refusal is actionable", () => {
