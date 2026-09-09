@@ -503,10 +503,15 @@ export class SqliteSubmissionQueue {
     return rows.map(toSubmission)
   }
 
+  // Named columns for the same reason as ROW_COLUMNS itself: the one caller is
+  // submit(), immediately after inserting the zip, so SELECT * read the whole
+  // submission back out of SQLite to build a row of metadata from it. Not
+  // separately tested — the result is identical either way, and the cost is
+  // only visible from inside the statement.
   #read(id: number): Submission {
     const row = this.#db
-      .prepare("SELECT * FROM livery_submission WHERE id = ?")
-      .get(id) as unknown as Row
+      .prepare(`SELECT ${ROW_COLUMNS} FROM livery_submission WHERE id = ?`)
+      .get(id) as unknown as Omit<Row, "body">
     return toSubmission(row)
   }
 
