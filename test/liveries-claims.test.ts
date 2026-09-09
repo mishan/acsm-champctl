@@ -399,6 +399,36 @@ describe("migrating a database written before claims were per championship", () 
     await rm(dir, { recursive: true, force: true })
   })
 
+  it("refuses a second account the name the carried-forward claim already holds", async () => {
+    // claim() matched championship_id exactly, so the legacy row was invisible
+    // to the holder check while forEntrant still resolved it — both accounts
+    // then answered to "Misha" and could upload onto the same car.
+    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
+    await openGlobal(dir)
+
+    const store = await SqliteClaimStore.open(join(dir, "liveries.db"))
+    expect(await store.claim(CHAMP, champ(), "Misha", IMPOSTOR)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("already been claimed"),
+    })
+    expect(await store.forEntrant(CHAMP, "Misha")).toMatchObject({ discordUserId: MISHA })
+    store.close()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it("holds the carried-forward claimant to the name they already have", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
+    await openGlobal(dir)
+
+    const store = await SqliteClaimStore.open(join(dir, "liveries.db"))
+    expect(await store.claim(CHAMP, champ(), "postaL", MISHA)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("already claimed"),
+    })
+    store.close()
+    await rm(dir, { recursive: true, force: true })
+  })
+
   it("runs once, not on every open", async () => {
     const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
     await openGlobal(dir)

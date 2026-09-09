@@ -369,6 +369,21 @@ export class SqliteClaimStore {
     championshipId: string,
     discordUserId: string,
   ): Promise<DriverClaim | undefined> {
+    return this.#claimOf(championshipId, discordUserId)
+  }
+
+  async forEntrant(championshipId: string, entrantName: string): Promise<DriverClaim | undefined> {
+    return this.#holderOf(championshipId, entrantName)
+  }
+
+  /**
+   * Both resolutions are shared with `claim`, which is the whole point of them
+   * being here. `claim` used to match `championship_id` exactly, so a legacy
+   * row was invisible to the check that refuses a name somebody already holds —
+   * and a second account could claim a name that was already spoken for, which
+   * is the impersonation the unique index cannot catch across the two ids.
+   */
+  #claimOf(championshipId: string, discordUserId: string): DriverClaim | undefined {
     const row = this.#db
       .prepare(
         `SELECT * FROM driver_discord
@@ -381,7 +396,7 @@ export class SqliteClaimStore {
     return row ? toClaim(row) : undefined
   }
 
-  async forEntrant(championshipId: string, entrantName: string): Promise<DriverClaim | undefined> {
+  #holderOf(championshipId: string, entrantName: string): DriverClaim | undefined {
     const row = this.#db
       .prepare(
         `SELECT * FROM driver_discord
@@ -417,20 +432,10 @@ export class SqliteClaimStore {
 
     this.#db.exec("BEGIN IMMEDIATE")
     try {
-      const heldRow = this.#db
-        .prepare("SELECT * FROM driver_discord WHERE championship_id = ? AND entrant_name = ?")
-        .get(championshipId, wanted) as unknown as ClaimRow | undefined
-      const previousRow = this.#db
-        .prepare("SELECT * FROM driver_discord WHERE championship_id = ? AND discord_user_id = ?")
-        .get(championshipId, discordUserId) as unknown as ClaimRow | undefined
+      const held = this.#holderOf(championshipId, wanted)
+      const previous = this.#claimOf(championshipId, discordUserId)
 
-      const problem = claimProblem(
-        championship,
-        entrantName,
-        discordUserId,
-        heldRow ? toClaim(heldRow) : undefined,
-        previousRow ? toClaim(previousRow) : undefined,
-      )
+      const problem = claimProblem(championship, entrantName, discordUserId, held, previous)
       if (problem) {
         this.#db.exec("ROLLBACK")
         return { ok: false, reason: problem }
