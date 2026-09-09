@@ -79,9 +79,11 @@ which at BATL is most of the week before it. `eventHasStarted` is right where it
 is used, refusing an import over an event that has begun, and wrong everywhere
 the question is whether a round is behind us.
 
-The cost scales with what the answer decides. `planLiveries` got it wrong and
-printed a stray sentence about replays; `announce` got it wrong and announced the
-wrong round — wrong track and wrong date, to the channel drivers set an alarm by.
+The cost scales with what the answer decides, which is why this has been got
+wrong three times: `planLiveries` printed a stray sentence about replays,
+`computeStandings` skipped "no round has been raced yet" and answered with an
+empty table instead, and `announce` announced the wrong round — wrong track and
+wrong date, to the channel drivers set an alarm by.
 `eventHasResults` lives in `acsm/view.ts` next to `eventHasStarted` so there is
 one answer rather than one per caller, and it reads only the sessions that are a
 race weekend: a looping practice writes its own `CompletedTime` each loop, so
@@ -96,9 +98,9 @@ The export works everywhere, at the cost of champctl doing the sums.
 
 `computeStandings` refuses where ACSM's scoring is unmeasured — more than one
 class, `IgnoreXWorstEvents`, the three penalty-points fields, and the second
-race of a reversed-grid round — and names which one stopped it. That is the fail-closed rule applied to a read:
-a standings table posted to a league is believed, so being quietly wrong costs
-more than being unavailable. The refusal doubles as the to-do list, and
+race of a reversed-grid round — and names which one stopped it. That is the
+fail-closed rule applied to a read: a standings table posted to a league is
+believed, so being quietly wrong costs more than being unavailable. The refusal doubles as the to-do list, and
 `npm run recon:standings` is the script that would close it.
 
 `compareStandings` is what stops the fallback rotting. At a premium league the

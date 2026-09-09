@@ -41,7 +41,7 @@
  */
 
 import type { Championship, ChampionshipClass, SessionResults } from "../acsm/types.js"
-import { classes, eventHasStarted, events, eventSession } from "../acsm/view.js"
+import { classes, eventHasResults, events, eventSession } from "../acsm/view.js"
 
 export interface StandingsRow {
   /** 1-based, after sorting by points. */
@@ -94,23 +94,48 @@ export function parseStandings(body: unknown): StandingsClass[] | undefined {
   if (body === null || typeof body !== "object") return undefined
 
   const root = body as Record<string, unknown>
-  const classList = firstArray(root, ["Classes", "classes", "Standings", "standings"])
+  const classList = firstArray(root, CLASS_LIST_KEYS)
 
   // A flat array of rows, with no class layer at all.
   if (classList === undefined) {
-    const flat = Array.isArray(body) ? body : firstArray(root, ["Results", "results"])
-    if (!flat) return undefined
-    const rows = parseRows(flat)
-    return rows && rows.length > 0 ? [{ name: "", rows }] : undefined
+    return asFlat(Array.isArray(body) ? body : firstArray(root, ["Results", "results"]))
   }
 
+  // `Standings` names both a list of classes and a list of rows, so a key that
+  // looked like the class layer may be the rows themselves — `{"Standings":
+  // [{DriverName, Points}, …]}` is the shape that showed it. Taken as classes
+  // it produced one empty class per driver, which parses as a *success* with
+  // nothing in it: no warning, no fall back to the export, and a weekly cron
+  // entry that posts nothing and exits 0.
+  return asClasses(classList) ?? asFlat(classList)
+}
+
+const CLASS_LIST_KEYS = ["Classes", "classes", "Standings", "standings"] as const
+const ROW_LIST_KEYS = ["Standings", "standings", "Results", "results", "Rows", "rows"] as const
+
+/** A list of rows with no class layer above it, as the single unnamed class. */
+function asFlat(raw: readonly unknown[] | undefined): StandingsClass[] | undefined {
+  if (!raw) return undefined
+  const rows = parseRows(raw)
+  return rows && rows.length > 0 ? [{ name: "", rows }] : undefined
+}
+
+/** A list of classes, or undefined if that is not what this list is. */
+function asClasses(classList: readonly unknown[]): StandingsClass[] | undefined {
   const out: StandingsClass[] = []
   for (const entry of classList) {
-    if (entry === null || typeof entry !== "object") continue
+    if (entry === null || typeof entry !== "object") return undefined
     const cls = entry as Record<string, unknown>
-    const rows = parseRows(
-      firstArray(cls, ["Standings", "standings", "Results", "results", "Rows", "rows"]) ?? [],
-    )
+
+    // Absent and empty are different answers, and conflating them is what let an
+    // unrecognised shape through. An empty array is a class nobody has scored in
+    // yet, which is true in week one; no array at all means the rows are spelled
+    // something champctl has never seen, and guessing is the one outcome worse
+    // than the endpoint being unavailable.
+    const raw = firstArray(cls, ROW_LIST_KEYS)
+    if (raw === undefined) return undefined
+
+    const rows = parseRows(raw)
     if (!rows) return undefined
     out.push({ name: firstString(cls, ["Name", "name", "Class", "class"]) ?? "", rows })
   }
@@ -177,7 +202,12 @@ export function computeStandings(c: Championship): StandingsClass[] | Unscorable
   const blocked = whyNotScorable(c)
   if (blocked) return { scorable: false, reason: blocked }
 
-  const raced = events(c).filter((ev) => eventHasStarted(ev))
+  // `eventHasResults`, not `eventHasStarted`: a looping practice server marks an
+  // untouched round as started, which made `raced` non-empty before anybody had
+  // raced. This then skipped the refusal below and returned a class with no rows
+  // in it — the caller posts nothing and exits 0, which reads as "there are no
+  // standings" rather than "the season has not begun".
+  const raced = events(c).filter((ev) => eventHasResults(ev))
   if (raced.length === 0) {
     return { scorable: false, reason: "No round has been raced yet." }
   }
@@ -243,7 +273,7 @@ function whyNotScorable(c: Championship): string | undefined {
   }
 
   for (const [i, ev] of events(c).entries()) {
-    if (!eventHasStarted(ev)) continue
+    if (!eventHasResults(ev)) continue
     const reversed = ev.RaceSetup?.ReversedGridRacePositions
     if (typeof reversed === "number" && reversed > 0) {
       return `round ${i + 1} is a reversed-grid two-race round, and champctl doesn't know which session key holds the second race's results`
@@ -300,11 +330,22 @@ export function compareStandings(
   const byName = new Map(computed.map((c) => [c.name, c]))
 
   for (const cls of endpoint) {
-    const mine = byName.get(cls.name)
+    // Paired by name, and failing that positionally when there is one class on
+    // each side. Names come from different places and need not match: the
+    // endpoint's flat shape carries no class name at all, while the export takes
+    // one from `Classes[].Name`. Matching on name alone reported a 40-versus-999
+    // disagreement about the same driver as "champctl worked out no standings
+    // for the unnamed class" and compared not a single point — the cross-check
+    // silently doing nothing, which is the one failure it cannot afford.
+    // `computeStandings` refuses more than one class, so one-on-one is the only
+    // case that runs today.
+    const only = endpoint.length === 1 && computed.length === 1 ? computed[0] : undefined
+    const mine = byName.get(cls.name) ?? only
     if (!mine) {
       differences.push(`champctl worked out no standings for ${cls.name || "the unnamed class"}`)
       continue
     }
+
     const minePoints = new Map(mine.rows.map((r) => [r.driver, r.points]))
     for (const row of cls.rows) {
       const got = minePoints.get(row.driver)
@@ -314,6 +355,18 @@ export function compareStandings(
         differences.push(
           `${row.driver}: ACSM says ${row.points} points, champctl worked out ${got}`,
         )
+      }
+    }
+
+    // And the other way round, which is the direction that catches champctl
+    // *over*-scoring: a disqualification it handled differently, or an entrant
+    // ACSM does not count at all. Walking only ACSM's rows meant champctl
+    // awarding points to a driver ACSM has never heard of came back as
+    // agreement, which is the opposite of what this exists to report.
+    const theirs = new Set(cls.rows.map((r) => r.driver))
+    for (const row of mine.rows) {
+      if (!theirs.has(row.driver)) {
+        differences.push(`${row.driver} is in champctl's standings and not in ACSM's`)
       }
     }
   }

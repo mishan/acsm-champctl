@@ -474,7 +474,8 @@ async function runAnnounce(
   return 0
 }
 
-async function runStandings(
+/** Exported for the tests, like `resolveStandings` and for the same reason. */
+export async function runStandings(
   reader: AcsmReader,
   args: Args,
   baseUrl: string,
@@ -491,6 +492,15 @@ async function runStandings(
   }
 
   const messages = standingsMessage(subject, resolved)
+  // Said in its own words rather than as "Posted 0 messages", which is what a
+  // shape champctl had misread used to look like from cron. Nobody having
+  // scored yet is a real state — week one, every season — and it should not
+  // read the same as a bug.
+  if (messages.length === 0) {
+    process.stdout.write(`Nobody has scored in ${subject} yet, so there is nothing to post.\n`)
+    return 0
+  }
+
   await post(messages)
   process.stdout.write(
     `Posted ${messages.length} ${messages.length === 1 ? "message" : "messages"} from the ${resolved.source}.\n`,
