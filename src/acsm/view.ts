@@ -199,6 +199,58 @@ export function eventHasStarted(ev: ChampionshipEvent): boolean {
   return false
 }
 
+/**
+ * Has this round actually been raced?
+ *
+ * Not `eventHasStarted`, which reports a round as raced while its *practice
+ * server* is running. ACSM stamps `StartedTime` from the UDP new-session
+ * callback:
+ *
+ *     case udp.SessionInfo:
+ *         if a.Event() == udp.EventNewSession {
+ *             if championship.Events[i].StartedTime.IsZero() {
+ *                 championship.Events[i].StartedTime = time.Now()
+ *
+ * and a looping practice is a session on the active championship like any
+ * other, so an untouched round that somebody opened practice on looks started.
+ *
+ * `eventHasStarted` is right where it is used — refusing an import over an
+ * event that has begun is the safe side of that question. It is wrong for
+ * every caller asking "is this round behind us", and the cost of getting it
+ * backwards scales with what the answer decides: `planLiveries` prints a
+ * sentence about replays, and `announce` picks which round it tells the whole
+ * league to turn up for. A practice loop open on round 3 announced round 4 —
+ * wrong track, wrong date, to the channel drivers set an alarm by.
+ *
+ * Results are the thing being asked about, so results are what this reads:
+ * ACSM's own `ChampionshipSession.Completed()` is `!CompletedTime.IsZero() &&
+ * Results != nil`.
+ *
+ * **And only the sessions that are a race weekend.** Reading every session in
+ * the map put the original bug straight back: a looping practice server writes
+ * its own `CompletedTime` each time a loop ends, so the untouched round was
+ * reported as raced again about an hour later. Practice and booking are
+ * excluded by name; qualifying counts, because a qualifying session with
+ * results is a session whose replay somebody may go back to.
+ *
+ * Read through `eventSession` rather than off `Sessions` directly — the map is
+ * keyed by ACSM's `SessionType`, whose spelling varies by build, and a lookup
+ * that misses reports "not raced" without saying so.
+ */
+const RACED_SESSIONS: readonly SessionKey[] = ["Qualifying", "Race"]
+
+export function eventHasResults(ev: ChampionshipEvent | undefined): boolean {
+  if (!ev) return false
+  if (!isZeroTime(ev.CompletedTime)) return true
+  for (const key of RACED_SESSIONS) {
+    const s = eventSession(ev, key)
+    if (!s) continue
+    if (s.Results) return true
+    if (!isZeroTime(s.CompletedTime)) return true
+  }
+  return false
+}
+
 /** Which field a championship keeps its spectator car in. */
 export type SpectatorCarField = "SpectatorCars[0]" | "SpectatorCar"
 

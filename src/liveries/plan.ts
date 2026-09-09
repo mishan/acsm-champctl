@@ -31,8 +31,8 @@
  * happened in the database.
  */
 
-import type { Championship, ChampionshipEvent, Entrant, SessionKey } from "../acsm/types.js"
-import { classes, events, eventSession, isZeroTime, slots } from "../acsm/view.js"
+import type { Championship, Entrant } from "../acsm/types.js"
+import { classes, events, eventHasResults, slots } from "../acsm/view.js"
 import type { Livery, LiveryPack } from "./pack.js"
 
 /**
@@ -284,53 +284,6 @@ function overridingRounds(championship: Championship, classEntrant: Entrant): nu
       return match ? i + 1 : 0
     })
     .filter((n) => n > 0)
-}
-
-/**
- * Has this round actually been raced?
- *
- * Not `eventHasStarted`, which is what this used to call and which reported a
- * round as raced while its *practice server* was running. ACSM stamps
- * `StartedTime` from the UDP new-session callback:
- *
- *     case udp.SessionInfo:
- *         if a.Event() == udp.EventNewSession {
- *             if championship.Events[i].StartedTime.IsZero() {
- *                 championship.Events[i].StartedTime = time.Now()
- *
- * and a looping practice is a session on the active championship like any
- * other, so an untouched round that somebody opened practice on looks started.
- * `eventHasStarted` is right where it is used — refusing an import over an
- * event that has begun is the safe side of that question — and wrong here,
- * where the answer only decides whether to print a sentence about replays.
- *
- * Results are the thing being asked about, so results are what this reads:
- * ACSM's own `ChampionshipSession.Completed()` is `!CompletedTime.IsZero() &&
- * Results != nil`.
- *
- * **And only the sessions that are a race weekend.** Reading every session in
- * the map put the original bug straight back: a looping practice server writes
- * its own `CompletedTime` each time a loop ends, so the untouched round was
- * reported as raced again about an hour later. Practice and booking are
- * excluded by name; qualifying counts, because a qualifying session with
- * results is a session whose replay somebody may go back to.
- *
- * Read through `eventSession` rather than off `Sessions` directly — the map is
- * keyed by ACSM's `SessionType`, whose spelling varies by build, and a lookup
- * that misses reports "not raced" without saying so.
- */
-const RACED_SESSIONS: readonly SessionKey[] = ["Qualifying", "Race"]
-
-function eventHasResults(ev: ChampionshipEvent | undefined): boolean {
-  if (!ev) return false
-  if (!isZeroTime(ev.CompletedTime)) return true
-  for (const key of RACED_SESSIONS) {
-    const session = eventSession(ev, key)
-    if (!session) continue
-    if (session.Results) return true
-    if (!isZeroTime(session.CompletedTime)) return true
-  }
-  return false
 }
 
 /**

@@ -17,8 +17,9 @@ src/
   finalize/    race format, schedule maths, plan + apply
   reorder/     moving rounds around the calendar, plan + apply
   emit/        template merge, championship generation, clone
-  bot/         what champctl says in Discord: the nightly walk, the message
-               composer, and the one module that imports discord.js
+  bot/         what champctl says in Discord: the nightly walk, the week's
+               announcement, the message composer, and the one module that
+               imports discord.js
   web/         the HTTP service: Fastify routes, session and plan stores,
                error translation, and the wire types the client shares
   cli/         the command-line entry points, over a shared args module
@@ -60,6 +61,31 @@ from the findings, since the heading, the bullets and the "Also" joins are all
 characters. Discord refuses anything over 2000 outright rather than truncating,
 so the failure without it is the championship with the most wrong with it being
 the one whose report never arrives.
+
+**There is no schedule table, and there should not be one.** Plan §7 has the
+announcement coming "from the tool's own schedule table, not ACSM". The export
+already carries `Scheduled`, champctl already knows `Scheduled = qualiStart −
+practice`, and a second copy of the calendar is a second thing to be wrong. If
+the announcement and the manager ever disagreed about when the race was, the
+manager is what the server actually runs — so the manager is what gets read.
+`bot/announce.ts` derives quali start rather than printing `Scheduled`, which is
+the one way this message could be confidently wrong every week.
+
+**"Has this round been raced" is `eventHasResults`, never `eventHasStarted`.**
+ACSM stamps an event's `StartedTime` from the UDP new-session callback, and a
+looping practice server is a session on the active championship like any other —
+so a round nobody has touched looks started for as long as practice is open,
+which at BATL is most of the week before it. `eventHasStarted` is right where it
+is used, refusing an import over an event that has begun, and wrong everywhere
+the question is whether a round is behind us.
+
+The cost scales with what the answer decides. `planLiveries` got it wrong and
+printed a stray sentence about replays; `announce` got it wrong and announced the
+wrong round — wrong track and wrong date, to the channel drivers set an alarm by.
+`eventHasResults` lives in `acsm/view.ts` next to `eventHasStarted` so there is
+one answer rather than one per caller, and it reads only the sessions that are a
+race weekend: a looping practice writes its own `CompletedTime` each loop, so
+"any session with results" puts the bug back about an hour later.
 
 ## Gates
 

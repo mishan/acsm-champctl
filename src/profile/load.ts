@@ -45,6 +45,9 @@ export async function loadProfile(idOrPath: string): Promise<LeagueProfile> {
   return validateProfile(parsed, path)
 }
 
+/** Every key `discord.announce` accepts. Rejecting the rest catches a typo. */
+export const ANNOUNCE_PARTS: readonly string[] = ["track", "quali", "format", "signUp"]
+
 /** Structural validation. Enough to fail loudly on a typo, not a full schema. */
 export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile {
   const bad = (msg: string): never => {
@@ -133,12 +136,30 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
   const discord = p["discord"]
   if (discord !== undefined) {
     if (typeof discord !== "object" || discord === null) bad("`discord` must be an object")
-    const channel = (discord as Record<string, unknown>)["adminChannelId"]
-    if (channel !== undefined && (typeof channel !== "string" || !/^\d{17,20}$/.test(channel))) {
-      bad(
-        "`discord.adminChannelId` must be a Discord channel id — 17 to 20 digits, the way " +
-          '"Copy Channel ID" gives it, not a channel name and not a link',
-      )
+    const d = discord as Record<string, unknown>
+    for (const key of ["adminChannelId", "announceChannelId"] as const) {
+      const channel = d[key]
+      if (channel !== undefined && (typeof channel !== "string" || !/^\d{17,20}$/.test(channel))) {
+        bad(
+          `\`discord.${key}\` must be a Discord channel id — 17 to 20 digits, the way ` +
+            '"Copy Channel ID" gives it, not a channel name and not a link',
+        )
+      }
+    }
+    const announce = d["announce"]
+    if (announce !== undefined) {
+      if (typeof announce !== "object" || announce === null) {
+        bad("`discord.announce` must be an object")
+      }
+      // Named rather than accepted wholesale: a typo in an opt-*out* block is
+      // silent in the worst direction. `"quail": false` leaves quali on and
+      // reads, to whoever wrote it, as a part they have already turned off.
+      for (const [k, v] of Object.entries(announce as Record<string, unknown>)) {
+        if (!ANNOUNCE_PARTS.includes(k)) {
+          bad(`\`discord.announce.${k}\` is not a thing. Known parts: ${ANNOUNCE_PARTS.join(", ")}`)
+        }
+        if (typeof v !== "boolean") bad(`\`discord.announce.${k}\` must be true or false`)
+      }
     }
   }
 
