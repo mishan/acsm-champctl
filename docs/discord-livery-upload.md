@@ -1,6 +1,9 @@
 # Self-serve livery upload via the Discord bot
 
-Status: plan. Nothing here is built.
+Status: built, and never run against a live Discord server. §2–§9 are
+implemented and tested against fixtures and a stub; four of the five
+measurements in §10 have not been taken. The design below is kept as written
+except where the build disagreed with it — those places say so.
 
 `champctl-liveries` already does the hard half — read an untrusted zip, match it
 to the entry list, upload it, assign it. What it does not do is get the zip. A
@@ -643,12 +646,30 @@ Two things to decide:
   stable public URL is also a stable public URL, and a league may not want its
   carset indexed. An unguessable per-championship path costs nothing and can be
   pinned in Discord exactly like a public one.
-- **How drivers hear about it.** Not through ACSM's Content Manager wrapper:
-  its `cars` map is one URL per *car model*, meant for the car mod itself, so
-  putting the carset there would replace the link to the car people need before
-  the livery matters. Distribute it out of band — pinned in Discord, and named
-  in the bot's reply when an upload lands, since the driver who just submitted
-  is the one person guaranteed to be reading.
+- **How drivers get it.** A link, and it has to be — this was nearly a hole in
+  the plan. The reason `/livery upload-url` exists is that one driver's zip can
+  be larger than Discord will carry; the carset is *every* driver's zip at once,
+  so it is larger than that by construction. "Pinned in Discord" would have been
+  an instruction to attach a file Discord refuses. `champctl-upload` serves it
+  from `/c/<slug>` and `/livery carset` hands out the address.
+
+  Not through ACSM's Content Manager wrapper either: its `cars` map is one URL
+  per *car model*, meant for the car mod itself, so putting the carset there
+  would replace the link to the car people need before the livery matters.
+
+- **The link is shared and permanent**, unlike an upload token. Everyone on the
+  grid needs this file, so a token each would leave a driver who joined last
+  week with nothing to click when somebody pasted theirs — and it gets pinned,
+  which only works if it survives the season. Unguessable rather than public,
+  because the folder names are driver names and a league may reasonably not want
+  its carset indexed.
+
+- **Cached on disk, keyed on the digest.** A thirty-driver carset is a few
+  hundred megabytes; one held in the heap per request is how a league's VPS dies
+  on the evening everyone downloads at once. Served with the digest as an
+  `ETag`, so the whole grid re-checking before a race night costs one 304 each
+  when nothing has changed — which the manifest digest makes possible, since a
+  rebuild does not move it.
 
 ## 7. No practice restart, and telling the driver why
 
@@ -734,7 +755,17 @@ now carry expiring signed parameters and a queued download will 403.
 ## 10. What has to be measured before building
 
 The repo's rule (plan §3.4) is that a request gets captured before code is
-written against it. Outstanding here:
+written against it. **This was not followed.** All of §2–§9 was built and only
+item 3 has been looked at, and only the easy half of it — so this list is a
+record of what the build is resting on rather than a list of things done first.
+Everything here is still outstanding except where marked.
+
+Item 3 is the one to do before a live run: it decides whether §5.3 of the plan
+and the **PUBLIC DATA** annotation in `src/acsm/types.ts` are describing a leak
+that does not exist, and `src/liveries/claims.ts` already asserts the gate holds
+while `acsm-champctl-plan.md` §5.3 asserts the opposite. Two files in this repo
+contradict each other on a privacy claim, which is precisely what this item
+existed to prevent.
 
 1. **`POST /car/{model}/skin` against a car with no `skins/` directory yet.**
    `apply.ts` reads ACSM's handler as `MkdirAll` on the derived path, but the
@@ -763,7 +794,8 @@ written against it. Outstanding here:
 
    `ExtraFields` itself needs no recon: it is `[]string` in the OSS source, the
    question labels and nothing more. `src/acsm/types.ts` should be narrowed from
-   `unknown[]` to `string[]` either way.
+   `unknown[]` to `string[]` either way. **That half is settled and is all that
+   is settled** — reading the OSS source is not the `curl` this item asks for.
 4. **Does Content Manager overwrite an existing skin folder when the carset is
    re-installed?** The pack is downloaded repeatedly through a season and most
    of what it contains is already on the driver's disk, so an install that
@@ -781,6 +813,11 @@ written against it. Outstanding here:
    rather than in the pack — "if a livery looks wrong, delete the skin folder
    and re-install" — and the pack should ship a plain-text manifest listing each
    skin and its hash so the answer to "did mine update" is checkable.
+
+   **The mitigation was built without the measurement.** Every carset ships
+   `carset.txt` with a digest per file and that sentence in its header. If CM
+   does overwrite, that is a few lines nobody needed; if it does not, it is the
+   only way a driver can tell.
 5. **A slash command with an attachment option, end to end**, on a scratch
    guild — the payload shape, `interaction.member.roles` in a guild, and the
    deferral needed for a 20 MB download to finish inside Discord's 3-second
@@ -791,6 +828,9 @@ written against it. Outstanding here:
 ## 11. Build order
 
 Each step is a commit that leaves the tree working.
+
+All done. Kept because the order it argues for is the order to redo this in,
+and because step 9 turned out to be the one that mattered.
 
 1. Merge `main` (§0).
 2. `readSingleLivery` in `pack.ts`, with tests. No bot involved; the CLI can
@@ -813,25 +853,61 @@ Each step is a commit that leaves the tree working.
    drain path imports `src/bot/`. The invariant is a wall, and a wall tested
    from one side is a fence.
 
+   The guard needed no extending — it walks the directory — but the mirror was
+   built last and should have been built first, because it was missing for the
+   whole of §6 and §7 while `src/bot/livery.ts` grew a re-export from
+   `liveries/accept.ts`. Two things worth writing down from doing it: the
+   guard's `importsOf` matched `from "…"` only, so a dynamic `import()` — which
+   is the exact shape a "just this once" convenience takes — went straight
+   past it; and a guard is worth a test of its own, since one that resolves
+   nothing passes everything.
+
 ---
 
-## 12. Open questions
+## 12. Questions, and what they turned into
 
-- **Does a claim need to survive a championship?** Entrant names are per
-  championship. A driver who races as "Misha" in September and "Misha [BATL]"
-  in October has to re-claim, and §8.2's canonical driver table is the real
-  answer — this plan is storing a name where it should eventually store a
-  driver id.
+### Settled while building
+
+- **Does a claim need to survive a championship?** No — it belongs to one.
+  `driver_discord` is keyed on `(championship_id, discord_user_id)` and the
+  uniqueness guard moved with it, so a driver in two series claims in each and
+  two different people can hold the same entry list name in different series.
+  Claims written before the column existed carry over under a sentinel and
+  resolve for any championship with no claim of its own, so nobody had to
+  re-claim. §8.2's canonical driver table is still the real answer; this stores
+  a name where it should eventually store a driver id.
+- **What happens to a queued livery for a driver dropped from the entry list?**
+  Per-submission planning, exactly as this section guessed: their submission is
+  refused with a reason and the rest go through.
+
+  The part it did not guess is the one that mattered. `planLiveries` also
+  refuses things that are nothing to do with the driver — a second class on the
+  championship — and planning one at a time charged that to each of them in
+  turn, found nothing left to apply, and settled all of them, dropping their
+  artwork. `LiveryPlanError` now says whether a refusal is about the entrant or
+  the championship, and the drain re-throws the second kind. **A refusal added
+  to `planLiveries` later has to say which it is**, and the constructor has no
+  default so that it cannot be forgotten.
+- **Re-claiming.** §2 says unclaim and re-claim are operator-only; the first
+  implementation let a driver re-claim and released their old name on the way,
+  which leaves the name they had raced under free for anyone. Both are
+  operator-only now. Claiming the same name twice is still idempotent.
+
+### Still open
+
 - **Should a refused upload be visible to the operator?** Ephemeral replies
   mean the operator never learns that four drivers spent Tuesday fighting the
   extension allowlist, which is the signal that the documentation is wrong.
   A daily count in the admin channel, perhaps, rather than each refusal.
-- **What happens to a queued livery for a driver who is dropped from the entry
-  list before the drain?** `planLiveries` will refuse the whole pack over the
-  missing name — which is the right call for a hand-assembled pack and the
-  wrong one here, where it means one departed driver blocks everyone else's
-  liveries. The drain probably needs to plan per-submission, drop the ones that
-  no longer match with a reason, and batch the rest. That is a real divergence
-  from the CLI's all-or-nothing rule and needs deciding before §5 is built.
+
+  Worse than this section thought: §9 asks for every refusal to be logged with
+  the Discord user id, and a bot-side refusal is not recorded anywhere at all.
+  It returns a string and nothing is inserted, because nothing is inserted
+  until the zip has passed. `markRefused` is drain-side only.
 - **`GuidsList` and multiple Discord accounts** — deferred, but the table shape
   in §2 should not make it hard.
+- **Per-user serialisation across processes.** The cooldown and the queue
+  budget are read-then-write across an await. `acceptLivery` serialises per
+  driver within one process, which covers the bot and covers the upload server;
+  two *different* processes accepting for the same driver in the same instant
+  still race, and the supersede transaction is all that bounds it.

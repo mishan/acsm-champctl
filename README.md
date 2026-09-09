@@ -278,10 +278,14 @@ driver who sent it.
 champctl-liveries <championship-id> --zip <pack.zip> [options]
 champctl-liveries <championship-id> --carset <out.zip> [options]
 champctl-liveries <championship-id> --claims [--release <discord-user-id>]
+champctl-liveries <championship-id> --drain [--push] [--watch]
 
   --zip <path>          the livery pack
   --carset <path>       write the archive drivers install, from what has been
                         applied. Reads the local store; touches no server.
+  --drain               apply everything drivers sent through the bot
+  --watch               keep draining on a timer (needs --push)
+  --interval <s>        seconds between drains under --watch (default: 120)
   --claims              list which Discord account is claimed as which driver
   --release <id>        drop that Discord account's claim, freeing the name
   --store <path>        where applied liveries and claims are kept
@@ -403,45 +407,86 @@ already installed, and that failure looks like nothing at all.
 Recording is the only copy champctl has: a livery uploaded through ACSM's own
 web UI is invisible to it and won't be in the carset.
 
-**The queue is the wall in the middle of the upload feature.** The process that
-will accept bytes from a stranger holds a Discord token and no ACSM
-credentials; this one holds ACSM credentials and no Discord token; they share
-one SQLite table and nothing else. `champctl-upload` fills it from one side and
-`--drain` empties it from the other, and neither can do the other's job.
+**Drivers send their own with `/livery`.** `champctl-bot serve` registers four
+subcommands in one guild — `claim`, `upload`, `upload-url` and `carset` — and
+answers them. It asks Discord for **no intents**: an attachment option puts the file in
+the interaction payload, along with the roles and channel the clamp needs, where
+taking a zip off an ordinary message would have needed `MessageContent` and let
+the token read every message it can see. Replies are ephemeral, because a
+refusal usually names something embarrassing in somebody's zip. Every
+interaction is deferred first — Discord allows three seconds and a 20 MB
+download does not fit in them.
 
-Bytes are stored as received rather than as a validated file list, so the drain
-runs the same checks a second time on the same input. A driver who uploads twice
-before a drain leaves one queued row: both were
-always going to land on the same skin folder, so keeping both would mean
-uploading the dead one first. Settled rows keep their audit line and lose their
-bytes — "who uploaded the thing that broke Suzuka" should keep having an answer,
-and two copies of a driver's zip is one too many.
+`src/bot/livery.ts` checks the channel and role clamp, resolves who the driver
+is, plans the upload against the entry list, and only then fetches the file and
+queues it — so a refusal arrives while they are still looking at Discord rather
+than at drain time in a channel nobody reads, and a driver in the wrong channel
+never costs the bot the download. `--drain` applies the lot in **one**
+championship save. One save rather than one
+per driver is the point — `saveChampionshipSkins` is a full-form replace, so
+three separate applies are three overlapping read-modify-writes, and
+`RosterChangedError` doesn't catch it because a concurrent skin write doesn't
+change any names.
 
-**`--drain` empties it.** One championship save for the lot, not one per
-driver: `saveChampionshipSkins` is a full-form replace, so three separate
-applies are three overlapping read-modify-writes, and `RosterChangedError`
-doesn't catch it because a concurrent skin write changes no names. Only one
-drain runs at a time whatever started it, by a lease in the same database — the
-watcher and an operator running `--drain` by hand are two processes, and two
-full-form replaces overlapping lose one of them silently.
+The bot half holds no ACSM credentials, ever, and `test/bot.test.ts` checks that
+through the whole module graph rather than one import deep — in both directions,
+since a wall tested from one side is a fence. Only one drain runs at a time,
+whatever started it: a lease in the shared database, because the watcher and an
+operator running `--drain` by hand are two processes and two full-form replaces
+overlapping lose one of them silently. A drain never
+restarts practice: a driver uploading at 8pm must not be able to disconnect
+everyone racing over a cosmetic change, so the reply says the livery appears at
+the *next* practice start. Unlike `--zip`, one driver leaving the entry list
+refuses only their own submission rather than the whole batch.
 
-Unlike `--zip`, one driver leaving the entry list refuses only their own
-submission rather than the whole batch. A refusal that is *not* about the
-driver — a second class on the championship — stops the drain instead, because
-charging it to each of them in turn refuses everybody and drops the artwork of
-everyone who happened to upload that week. A drain never restarts practice: a
-driver uploading at 8pm must not be able to disconnect everyone racing over a
-cosmetic change, so the livery appears at the *next* practice start.
+**`--watch` is what makes uploads self-serve**, and it runs here rather than in
+the bot, because the timer needs the credentials the bot must never have. An
+idle pass reads only local SQLite — a watcher over an empty queue never logs in
+and never appears in ACSM's logs. Transient failures back off; bad credentials
+stop it, since retrying a login every two minutes for ever is worse for the
+server than stopping. Ctrl-C finishes the pass in flight rather than
+interrupting between the skin upload and the championship save.
 
-**`--watch` is what will make uploads self-serve**, and it runs here rather
-than wherever the uploads come from, because the timer needs the credentials
-that end must never have. An idle pass reads only local SQLite — a watcher over
-an empty queue never logs in and never appears in ACSM's logs. Transient
-failures back off; bad credentials stop it, since retrying a login every two
-minutes for ever is worse for the server than stopping. Ctrl-C finishes the
-pass in flight rather than interrupting between the skin upload and the
-championship save. Each pass writes a heartbeat, so whatever tells drivers
-their upload applies itself can check that something is actually running.
+Each pass writes a heartbeat, which is what keeps `discord.livery.autoApply`
+honest: that flag is a claim about *this* process, so if nobody is running the
+watcher the bot notices the stale heartbeat and goes back to telling drivers an
+admin has to apply it — rather than promising "shortly" for ever while nothing
+applies anything.
+
+**Getting the carset back out** is a link too, and for a stronger version of
+the same reason: it is every driver's livery at once, so if one zip was too big
+for Discord the pack certainly is. `champctl-upload` serves it from `/c/<slug>`
+and `/livery carset` gives drivers the address. That link is shared and
+permanent — everyone on the grid needs the same file and it gets pinned — and
+unguessable, since a league may not want its carset indexed. It is cached on
+disk keyed on the content digest and served with that digest as an `ETag`, so
+the whole grid re-checking before a race night costs one 304 each.
+
+**Drivers whose zip is too big for Discord** get a one-time link instead.
+`champctl-upload` hosts it — its own process, holding no ACSM credentials and no
+Discord token, writing to the same queue. That is the same argument as the bot
+applied a third time, and by now it is a rule: every process that faces
+something untrusted has nothing worth stealing. The token is 256 random bits
+stored as a digest, scoped at mint time to one driver and one car, good for
+thirty minutes and one POST. `GET` never spends it, because Discord's unfurler
+fetches the link within a second of it being sent and a token that burned on
+`GET` would be dead before the driver clicked. `discord.livery.uploadBaseUrl`
+must be https: the token travels in the URL, and champctl refuses to mint rather
+than downgrade.
+
+**Who is who** is champctl's problem, because ACSM has nowhere to put it — no
+Discord field on an account or an entrant, and the sign-up answers that could
+hold a handle are hidden from anything below `GroupAdmin` and overwritable by
+anyone who knows a driver's public Steam id. So `--claims` lists the mapping
+from Discord account to entrant name and `--release` frees one. Drivers claim
+themselves; first claim wins and every claim is announced, which is the whole
+verification story — an impersonation attempt gets named in the admin channel
+rather than passing silently. A claim belongs to one championship, so a driver
+in two series claims in each. Releasing *and* re-claiming are operator-only,
+because a driver who could release their own claim could be talked into it —
+and because moving to a new name used to free the old one on the way out. Full design, including the
+Discord upload flow this is built for, in
+[`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
 
 Credentials come from `CHAMPCTL_USERNAME` / `CHAMPCTL_PASSWORD` and are needed
 only for `--push`; a preview reads the export, which is public. `--carset` needs
@@ -458,8 +503,8 @@ The process that faces strangers, and the reason it exists is that it has
 nothing worth stealing. No ACSM credentials, no Discord token, and no option to
 give it either — it validates uploads and writes them to the queue, and
 `champctl-liveries --drain` is the only thing that talks to the game server.
-`test/upload.test.ts` checks that through the module graph rather than one
-import deep.
+`test/upload.test.ts` checks that through the module graph the same way the
+bot's guard does.
 
 Two things are served. `/u/<token>` is a driver's one-time upload link, for
 whoever's zip Discord refused to carry; `/c/<slug>` is the carset everyone
@@ -478,8 +523,8 @@ champctl-upload [options]
 ```
 
 Bind it to localhost and put a TLS terminator in front. The token travels in the
-URL, so whatever hands a link out has to be https — `uploadUrl` throws rather
-than downgrading. Nothing mints one yet; that lands with the Discord side.
+URL, so `discord.livery.uploadBaseUrl` has to be https and `champctl-bot`
+refuses to mint a link that isn't.
 
 **All three processes have to open the same database** — that is what the
 credential split *is*. `$CHAMPCTL_STORE` is the way to say so once, in an
@@ -490,9 +535,8 @@ told "queued for an admin" for ever with nothing reporting it.
 Uploads are held to one skin's worth of bytes, counted as they arrive and
 before the token is looked at — so a request from a stranger cannot make this
 process hold a gigabyte, and a driver whose file is too big keeps their link.
-The cooldown and the queue budget live in `acceptLivery` rather than here,
-because the second way in lands in the same place and neither should be the
-route with no volume controls on it.
+The same cooldown and queue budget apply here as on the Discord path, because
+both routes end up in the same `acceptLivery`.
 
 ## champctl-serve
 
@@ -717,8 +761,45 @@ configuration, not a secret; the token is the secret and stays in
 since a committed channel id is a channel every fork posts into.
 
 ```json
-"discord": { "adminChannelId": "1234567890123456789" }
+"discord": {
+  "adminChannelId": "1234567890123456789",
+  "guildId": "1234567890123456789",
+  "livery": {
+    "channelIds": ["1234567890123456789"],
+    "roleIds": ["1234567890123456789"],
+    "autoApply": false,
+    "uploadBaseUrl": "https://liveries.example.com",
+    "championshipId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+  }
+}
 ```
+
+`guildId` is where `/livery` is registered — per server rather than globally,
+because guild commands update the moment `champctl-bot serve` starts and global
+ones propagate on Discord's schedule.
+
+`channelIds` and `roleIds` are **ANDed, and an empty or absent list means
+unrestricted**. Worth reading twice: a league that sets `roleIds` and leaves
+`channelIds` out has accepted uploads in every channel the bot can see. Setting
+`roleIds` also confines uploads to the server, since a DM has no member and no
+roles for a clamp to check.
+
+`championshipId` is optional and pins which championship uploads belong to. The
+bot works it out from the manager otherwise, and refuses when the answer is
+ambiguous — nought unfinished championships and two are both cases where
+quietly choosing one puts a livery on the wrong car. A league running a second
+series wants this set.
+
+Omitting `livery` entirely means the league has no self-serve uploads and
+`champctl-bot serve` refuses to start, rather than registering commands that
+accept anything from anyone.
+
+**Where the shared database lives.** `CHAMPCTL_STORE`, read by
+`champctl-liveries`, `champctl-bot` and `champctl-upload` alike, and overridden
+by `--store`. The three processes must open the same file — the queue is the
+only thing they share and it is what the credential split is built on — so put
+it in the environment file rather than trusting three working directories to
+agree.
 
 **Credentials.** `CHAMPCTL_USERNAME` and `CHAMPCTL_PASSWORD`, read from the
 environment and never written to disk. Only the write *commands* need them —
@@ -746,9 +827,12 @@ have a web UI. What's left:
   standings, the format poll and the poll-to-proposal loop are not, and neither
   are the `/stats` lookups, which want the archive projections that don't exist
   yet.
-- **Self-serve livery uploads are part-built.** The recording, the carset, the
-  claims, the queue, the drain and the upload server are all here; the Discord
-  side that hands out links and takes attachments is not. Design in
+- **Livery uploads have never run against a real Discord server.** Everything
+  is built and tested — `/livery claim`, `/livery upload`, `/livery upload-url`,
+  `/livery carset`, the queue, the drain, the carset — but only against fixtures
+  and a stub. The first run against a live guild is the one that will find
+  things, and four of the five measurements in §10 of the design have not been
+  taken. Design in
   [`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
 - **The nightly report has no memory.** It says the same thing every night until
   someone fixes it, which is gridmom's voice by design but also means there is
