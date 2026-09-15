@@ -2,8 +2,8 @@
 /**
  * champctl-bot — what champctl says in Discord (plan §7).
  *
- * Three commands: the nightly gridmom report, the week's round announcement,
- * and `serve`, which answers `/livery`. The bot holds **no ACSM credentials,
+ * Four commands: the nightly gridmom report, the week's round announcement,
+ * the championship standings, and `serve`, which answers `/livery`. The bot holds **no ACSM credentials,
  * ever** — it reads through Public Access and posts a message, and anything
  * that would change a championship is a link into `champctl-serve` that a
  * person clicks under their own login.

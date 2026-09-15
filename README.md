@@ -624,7 +624,7 @@ npm run dev        # Vite on :5173, proxying /api to a champctl-serve on :3000
 ## champctl-bot
 
 What champctl says in Discord: the nightly gridmom report, the week's round
-announcement, and `/livery`.
+announcement, the championship standings, and `/livery`.
 
 Getting it running end to end — application, invite, profile, and the drain that
 applies what drivers send — is
@@ -705,10 +705,10 @@ Run it nightly, from cron or a timer, and point it at an admin channel: findings
 quote the entry list, so they name drivers.
 
 **Setup** is [`docs/discord-bot-setup.md`](docs/discord-bot-setup.md) — one copy
-of the steps, since the report, `announce` and `/livery` need the same
-application and the same token. The short version: create an application, invite it with **Send
-Messages**, and put its token in `CHAMPCTL_DISCORD_TOKEN`. A report needs no
-intents and no `guildId`; it reads nothing from Discord.
+of the steps, since the report, `announce`, `standings` and `/livery` need the
+same application and the same token. The short version: create an application,
+invite it with **Send Messages**, and put its token in `CHAMPCTL_DISCORD_TOKEN`.
+A report needs no intents and no `guildId`; it reads nothing from Discord.
 
 ### announce
 
@@ -771,13 +771,14 @@ inline on every build, so champctl can do the sums itself. `--source` picks;
 `auto` prefers the endpoint.
 
 Under `auto` champctl computes the export standings *as well*, purely to compare
-them, and reports any disagreement to stderr — never to the channel. That is
-what stops the fallback rotting: at a premium league the endpoint always
-answers, so without this the computation would sit unexercised until the day it
-was needed. A disagreement is a real finding either way round — either
-champctl's sums are wrong, or ACSM changed how it scores.
+them, and reports any disagreement to stderr — never to the channel — and in the
+exit code, which is `1`. That is what stops the fallback rotting: at a premium
+league the endpoint always answers, so without this the computation would sit
+unexercised until the day it was needed. A disagreement is a real finding
+either way round — either champctl's sums are wrong, or ACSM changed how it
+scores.
 
-**The export fallback refuses more than it computes, on purpose.** Four things
+**The export fallback refuses more than it computes, on purpose.** Five things
 about ACSM's scoring have never been measured against a real manager, and each
 would change every number in the table:
 
@@ -786,7 +787,13 @@ would change every number in the table:
 | more than one class | which position a class scores — the one in the class or the one on the road — is written down nowhere, and matching a class's entrants to results is unmeasured in its own right |
 | `IgnoreXWorstEvents` | something is dropped; which rounds, and whether per driver or per championship, is written down nowhere |
 | `CollisionWithDriver`, `CollisionWithEnv`, `CutTrack` | on the points table, and the incidents are in the export, but whether ACSM applies them automatically is unknown |
-| the second race of a reversed-grid round | `SecondRaceMultiplier` says there is one; nothing knows what session key its results arrive under |
+| `PolePosition`, `BestLap` | points for pole and the fastest lap; which session each is taken from, and what a disqualification does to them, is written down nowhere |
+| the second race of a reversed-grid round | `SecondRaceMultiplier` says there is one, and `-1` — the whole grid — counts; nothing knows what session key its results arrive under |
+
+It also declines two things the export itself leaves open: a round that
+finished with no race results champctl can find, and a driver in a points place
+with no race time, who may never have started. Drivers are matched across
+rounds by Steam GUID, so one who renames mid-season stays one row.
 
 So it declines and names the reason rather than posting a table that is quietly
 wrong. **BATL's own 2x20 is the last case**, which means at BATL the endpoint
@@ -798,6 +805,11 @@ key paths and value types, no driver names — so the answer is safe to paste.
 A message that says "Worked out from the championship export, not read from
 Server Manager" is champctl's own arithmetic, and worth knowing before anyone
 argues about a point.
+
+Exit codes: `0` posted, or nobody has scored yet; `1` posted, but the two
+sources disagreed or ACSM answered in a shape champctl can't read; `2` nothing
+it can honestly post — the export refused, the endpoint was gone under
+`--source endpoint`, or the championship couldn't be read.
 
 ## Configuration
 
