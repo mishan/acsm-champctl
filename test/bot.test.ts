@@ -618,6 +618,38 @@ describe("the CLI", () => {
   it("names an unknown command rather than treating it as an id", () => {
     expect(() => parseArgs(["frobnicate", "abc"])).toThrow(/Unknown command/)
   })
+
+  it("refuses a name every object inherits, not only one it has never heard of", () => {
+    // The command table is an object, and `COMMANDS["constructor"]` is not
+    // undefined. These parsed as commands, and one run with --channel logged in
+    // to Discord before anything noticed.
+    for (const name of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      expect(() => parseArgs([name, "x"])).toThrow(/Unknown command/)
+    }
+  })
+
+  it("needs a championship id for announce before it does anything else", () => {
+    // Checked only after the profile, the channel and the Discord login, so the
+    // error a user saw was about a channel they had not got to yet.
+    expect(() => parseArgs(["announce"])).toThrow(/announce needs a championship id/)
+  })
+
+  it("refuses a round that Number() would have coerced", () => {
+    // The comment on parseRound said "rejected rather than coerced" while
+    // Number() read hex, exponents and padding: "1e1" announced round 10.
+    for (const round of ["0x2", "1e1", " 2 ", "2.0", "+2"]) {
+      expect(() => parseArgs(["announce", "abc", round])).toThrow(/whole number/)
+    }
+  })
+
+  it("won't dry-run serve, which would log in and answer drivers regardless", () => {
+    // --dry-run promises "talk to nobody". serve ignored it and registered
+    // commands for real; --register-only is the way to check the wiring.
+    expect(() => parseArgs(["serve", "--dry-run"])).toThrow(/serve has no dry run/)
+    expect(() => parseArgs(["serve", "--channel", "1".repeat(18)])).toThrow(
+      /serve takes no --channel/,
+    )
+  })
 })
 
 describe("which channel each command posts to", () => {
@@ -653,6 +685,12 @@ describe("which channel each command posts to", () => {
   it("names the key to set, so the refusal is actionable", () => {
     expect(channelFor("report", testProfile()).key).toBe("adminChannelId")
     expect(channelFor("announce", testProfile()).key).toBe("announceChannelId")
+  })
+
+  it("routes nothing for serve, which never posts through this", () => {
+    // Its entry carried adminChannelId, which nothing read: serve takes the
+    // admin channel off the profile itself.
+    expect(() => channelFor("serve", testProfile())).toThrow(UsageError)
   })
 })
 

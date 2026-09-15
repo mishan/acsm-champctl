@@ -110,20 +110,38 @@ interface Args {
 /** Channel keys a command may post to. Named so neither can be typed as a string. */
 type ChannelKey = "adminChannelId" | "announceChannelId"
 
+interface CommandShape {
+  /** Positionals it must be given. */
+  required: number
+  /** Positionals it may be given at most. */
+  positionals: number
+  /** Where it posts. Absent for serve, which reads the admin channel itself. */
+  channel?: ChannelKey
+}
+
 /**
- * Every command: how many positionals it takes, and which channel it posts to.
+ * Every command: its positionals, and which channel it posts to.
  *
  * One table rather than two. The channel used to be decided by a separate
  * `command === "report"` test, which is the shape that drifts — and here it
  * drifted in the dangerous direction, since anything that was not "report"
  * came back as the league's channel.
  */
-const COMMANDS: Record<string, { positionals: number; channel: ChannelKey }> = {
-  report: { positionals: 0, channel: "adminChannelId" },
-  announce: { positionals: 2, channel: "announceChannelId" },
-  // serve posts nothing on its own, but the notices it sends while answering
-  // /livery go to the admins, never the league.
-  serve: { positionals: 0, channel: "adminChannelId" },
+const COMMANDS: Record<string, CommandShape> = {
+  report: { required: 0, positionals: 0, channel: "adminChannelId" },
+  announce: { required: 1, positionals: 2, channel: "announceChannelId" },
+  serve: { required: 0, positionals: 0 },
+}
+
+/**
+ * A command's entry, or undefined for anything that isn't one.
+ *
+ * Own properties only. `COMMANDS["constructor"]` is Object's constructor, not
+ * undefined, so a plain lookup took "constructor", "toString" and "__proto__"
+ * for commands — and `channelFor` resolved them to `discord.undefined`.
+ */
+function commandShape(name: string): CommandShape | undefined {
+  return Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined
 }
 
 export function parseArgs(argv: readonly string[]): Args {
@@ -212,8 +230,25 @@ export function parseArgs(argv: readonly string[]): Args {
 
   args.command = rest[0] ?? ""
 
-  const shape = COMMANDS[args.command]
+  const shape = commandShape(args.command)
   if (args.command && shape === undefined) throw new UsageError(`Unknown command ${args.command}`)
+
+  if (args.command === "serve") {
+    // serve is a live service, and there is nothing it can do without logging
+    // in and answering people. It honoured neither flag — --dry-run registered
+    // commands for real — so both are refused rather than quietly ignored.
+    if (args.dryRun) {
+      throw new UsageError(
+        "serve has no dry run: it would still log in and answer drivers. " +
+          "--register-only checks the wiring and exits.",
+      )
+    }
+    if (args.channel) {
+      throw new UsageError(
+        "serve takes no --channel: its notices go to discord.adminChannelId in the profile.",
+      )
+    }
+  }
 
   const positionals = rest.slice(1)
   if (shape && positionals.length > shape.positionals) {
@@ -222,6 +257,13 @@ export function parseArgs(argv: readonly string[]): Args {
       `${args.command} takes ${shape.positionals === 0 ? "no arguments" : `at most ${shape.positionals}`}, ` +
         `but got ${extra.join(", ")}. Did that belong to an option, such as --channel?`,
     )
+  }
+
+  // Here rather than when the command runs, which was after the profile, the
+  // channel and the Discord login — so the first error was about a channel
+  // nobody had got to yet. Not under --help, which should just print the usage.
+  if (shape && !args.help && positionals.length < shape.required) {
+    throw new UsageError(`${args.command} needs a championship id`)
   }
 
   if (positionals[0] !== undefined) args.championshipId = positionals[0]
@@ -244,7 +286,9 @@ function parseSeverity(v: string): Severity {
  * round they meant in words is worse than one that says what it wanted.
  */
 function parseRound(v: string): number {
-  const n = Number(v)
+  // Digits first, then Number. Number alone reads "0x2", "1e1" and " 2 ", so
+  // this coerced after all — "1e1" announced round 10.
+  const n = /^\d+$/.test(v) ? Number(v) : Number.NaN
   if (!Number.isInteger(n) || n < 1) {
     throw new UsageError(`Round must be a whole number from 1, not ${JSON.stringify(v)}`)
   }
@@ -282,8 +326,9 @@ export function channelFor(
   command: string,
   profile: LeagueProfile,
 ): { id: string | undefined; key: ChannelKey } {
-  const known = COMMANDS[command]
+  const known = commandShape(command)
   if (!known) throw new UsageError(`Unknown command ${command}`)
+  if (!known.channel) throw new UsageError(`${command} doesn't post to a channel of its own`)
   return { id: profile.discord?.[known.channel], key: known.channel }
 }
 
@@ -496,6 +541,10 @@ async function runAnnounce(
   return 0
 }
 
+/**
+ * The id, narrowed. `parseArgs` has already refused a command missing it, so
+ * the throw is unreachable from the CLI; it stays for the type, not as a check.
+ */
 function requireChampionshipId(args: Args, command: string): string {
   if (!args.championshipId) throw new UsageError(`${command} needs a championship id`)
   return args.championshipId
