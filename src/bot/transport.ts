@@ -15,6 +15,12 @@
 export interface DiscordMessage {
   channelId: string
   content: string
+  /**
+   * Where `channelId` came from — "discord.announceChannelId in the batl
+   * profile", "--channel" — for the error when it turns out to be wrong. Only
+   * the caller knows; the transport guessed, and guessed the admin channel.
+   */
+  source?: string
 }
 
 export interface DiscordTransport {

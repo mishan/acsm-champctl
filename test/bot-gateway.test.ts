@@ -95,6 +95,40 @@ describe("GatewayTransport.post", () => {
       allowedMentions: { parse: [] },
     })
   })
+
+  /** A client whose every channel lookup answers `channel`. */
+  const clientFinding = (channel: unknown) =>
+    ({
+      channels: { fetch: async () => channel },
+      on() {
+        return this
+      },
+    }) as unknown as Client
+
+  const announceSource = "discord.announceChannelId in the profile"
+
+  it("names the setting a missing channel came from, not always the admin one", async () => {
+    // This said "Check discord.adminChannelId" whatever was posting, so a wrong
+    // announce channel sent the operator to check the one setting that was right.
+    const post = GatewayTransport.wrapping(clientFinding(null)).post({
+      channelId: "444444444444444444",
+      content: "hi",
+      source: announceSource,
+    })
+    await expect(post).rejects.toThrow(/Check discord\.announceChannelId in the profile/)
+    await expect(post).rejects.not.toThrow(/adminChannelId/)
+  })
+
+  it("says champctl, not gridmom, can't post into a channel of the wrong kind", async () => {
+    const category = { isSendable: () => false, type: 4 }
+    const post = GatewayTransport.wrapping(clientFinding(category)).post({
+      channelId: "444444444444444444",
+      content: "hi",
+      source: announceSource,
+    })
+    await expect(post).rejects.toThrow(/ordinary text channel; check discord\.announceChannelId/)
+    await expect(post).rejects.not.toThrow(/gridmom/)
+  })
 })
 
 describe("GatewayTransport.listen", () => {

@@ -407,11 +407,17 @@ async function runCommand(argv: readonly string[]): Promise<number> {
         ...(cache ? { cache } : {}),
       })
 
+      // Named for the transport's errors. No test sees this wiring: the dry-run
+      // transport never fails a channel, and a real one needs a login. What the
+      // transport does with it is covered in test/bot-gateway.test.ts.
+      const source = args.channel
+        ? "--channel"
+        : `discord.${configured.key} in the ${args.profile} profile`
       const post = async (messages: readonly string[]): Promise<void> => {
         for (const content of messages) {
           // `channelId` is non-empty here for a real post; a dry run records
           // whatever it was given and prints it afterwards.
-          await transport.post({ channelId: channelId ?? "(dry run)", content })
+          await transport.post({ channelId: channelId ?? "(dry run)", content, source })
         }
         if (args.dryRun) for (const m of messages) process.stdout.write(`${m}\n\n`)
       }

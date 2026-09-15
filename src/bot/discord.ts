@@ -125,10 +125,14 @@ export class GatewayTransport implements DiscordTransport {
 
   async post(message: DiscordMessage): Promise<void> {
     const channel = await this.#client.channels.fetch(message.channelId).catch(() => null)
+    // Where the id came from is the caller's to say. This named
+    // discord.adminChannelId whatever was posting, so a wrong announce channel
+    // sent the operator to check the one setting that was right.
+    const source = message.source ?? "the channel id"
     if (!channel) {
       throw new BotError(
-        `No Discord channel ${message.channelId}. Check discord.adminChannelId in the profile, ` +
-          `and that the bot has been invited to that server.`,
+        `No Discord channel ${message.channelId}. Check ${source}, and that the bot has been ` +
+          `invited to that server and can see the channel.`,
       )
     }
     // Not `isTextBased()`: a category, a forum and a stage are all text-based
@@ -136,7 +140,7 @@ export class GatewayTransport implements DiscordTransport {
     if (!channel.isSendable()) {
       throw new BotError(
         `Discord channel ${message.channelId} is a ${channel.type} — nothing can be posted to ` +
-          `it. gridmom wants an ordinary text channel.`,
+          `it. champctl needs an ordinary text channel; check ${source}.`,
       )
     }
     // Nothing this bot posts should ever ping anybody. The claim announcement
@@ -227,7 +231,11 @@ export class GatewayTransport implements DiscordTransport {
       if (reply.announcement && adminChannelId) {
         // After the driver's own reply, and separately: a failure to post the
         // announcement must not turn a successful claim into an error message.
-        await this.post({ channelId: adminChannelId, content: reply.announcement }).catch(() => {})
+        await this.post({
+          channelId: adminChannelId,
+          content: reply.announcement,
+          source: "discord.adminChannelId in the profile",
+        }).catch(() => {})
       }
     } catch (e) {
       // The exception itself never reaches the driver — it is champctl being
