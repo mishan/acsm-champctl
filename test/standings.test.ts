@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { StaticAcsmReader, type AcsmReader } from "../src/acsm/client.js"
-import type { Championship, ChampionshipEvent } from "../src/acsm/types.js"
+import type { Championship, ChampionshipEvent, ResultEntry } from "../src/acsm/types.js"
 import { standingsMessage } from "../src/bot/message.js"
 import { MESSAGE_LIMIT } from "../src/bot/transport.js"
 import {
@@ -38,6 +38,16 @@ const racedRound = (order: string[], over: Partial<ChampionshipEvent> = {}): Cha
     },
     ...over,
   })
+
+/** A raced round whose Race session carries these result rows as they are. */
+const racedRows = (Result: ResultEntry[]): ChampionshipEvent =>
+  raceEvent({
+    StartedTime: "2026-08-05T19:00:00-07:00",
+    Sessions: { RACE: { Name: "Race", Results: { Result } } },
+  })
+
+const ADA = "76561190000000001"
+const BO = "76561190000000002"
 
 /** Points for the first three places and nothing else set. */
 const placesOnly = (places = [25, 18, 15]) =>
@@ -110,6 +120,63 @@ describe("scoring from the export", () => {
     })
     expect(rowsOf(computeStandings(c)).find((r) => r.driver === "cy")?.points).toBe(0)
   })
+
+  it("follows a driver across a rename by their Steam GUID", () => {
+    // Keyed by name, the rename split one driver into two rows of 25, tied
+    // first, where they had 50 alone.
+    const c = scorable({
+      Events: [
+        racedRows([
+          { DriverName: "ada", DriverGuid: ADA },
+          { DriverName: "bo", DriverGuid: BO },
+        ]),
+        racedRows([
+          { DriverName: "Ada L", DriverGuid: ADA },
+          { DriverName: "bo", DriverGuid: BO },
+        ]),
+      ],
+    })
+    expect(rowsOf(computeStandings(c))).toEqual([
+      { position: 1, driver: "Ada L", points: 50 },
+      { position: 2, driver: "bo", points: 36 },
+    ])
+  })
+
+  it("keeps two drivers who share a name apart", () => {
+    const c = scorable({
+      Events: [
+        racedRows([
+          { DriverName: "ada", DriverGuid: ADA },
+          { DriverName: "ada", DriverGuid: BO },
+        ]),
+      ],
+    })
+    expect(rowsOf(computeStandings(c)).map((r) => r.points)).toEqual([25, 18])
+  })
+
+  it("scores a round whose race is still to come as nothing yet, not as a refusal", () => {
+    // Qualifying in, race not run: a round in progress on race night.
+    const c = scorable({
+      Events: [
+        racedRound(["ada", "bo"]),
+        raceEvent({ Sessions: { QUALIFY: { Results: { Result: [{ DriverName: "bo" }] } } } }),
+      ],
+    })
+    expect(rowsOf(computeStandings(c)).map((r) => r.driver)).toEqual(["ada", "bo"])
+  })
+
+  it("scores a driver with no race time when the place pays nothing anyway", () => {
+    const c = scorable({
+      Classes: [placesOnly([25])],
+      Events: [
+        racedRows([
+          { DriverName: "ada", TotalTime: 3_600_000 },
+          { DriverName: "bo", TotalTime: 0 },
+        ]),
+      ],
+    })
+    expect(rowsOf(computeStandings(c)).find((r) => r.driver === "bo")?.points).toBe(0)
+  })
 })
 
 describe("what the export cannot be scored for", () => {
@@ -180,6 +247,46 @@ describe("what the export cannot be scored for", () => {
 
   it("names what champctl would need, so the refusal is a to-do and not a shrug", () => {
     expect(reasonFor(scorable({ IgnoreXWorstEvents: 2 }))).toMatch(/never measured/)
+  })
+
+  it("refuses a class that pays points for pole or the fastest lap", () => {
+    // Only Places was summed and nothing looked at the other two, so this
+    // posted a table with every bonus point missing. The builder's default
+    // class pays one of each.
+    expect(reasonFor(scorable({ Classes: [championshipClass()] }))).toMatch(
+      /pole position and the fastest lap/,
+    )
+  })
+
+  it("refuses a whole-grid reversed round, which AC writes as -1", () => {
+    // `> 0` let -1 through, and a whole-grid 2x20 was scored off race one.
+    const c = scorable({
+      Events: [racedRound(["ada"], { RaceSetup: { ReversedGridRacePositions: -1 } })],
+    })
+    expect(reasonFor(c)).toMatch(/second race/)
+  })
+
+  it("refuses a round that finished with no race results it can find", () => {
+    // Scored as nothing, this posted a table missing a round; with every round
+    // like it, "nobody has scored yet" and exit 0 about a season already raced.
+    const finished = raceEvent({ CompletedTime: "2026-08-05T20:30:00-07:00", Sessions: {} })
+    expect(reasonFor(scorable({ Events: [racedRound(["ada"]), finished] }))).toMatch(
+      /round 2 finished, but champctl can't find its race results/,
+    )
+  })
+
+  it("refuses a driver in a points place with no race time", () => {
+    // AC classifies every car that connected; whether ACSM pays one that never
+    // started is unmeasured, and this paid bo second place.
+    const c = scorable({
+      Events: [
+        racedRows([
+          { DriverName: "ada", TotalTime: 3_600_000 },
+          { DriverName: "bo", TotalTime: 0 },
+        ]),
+      ],
+    })
+    expect(reasonFor(c)).toMatch(/puts bo in a points place with no race time/)
   })
 })
 

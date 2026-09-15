@@ -18,7 +18,7 @@
  *
  * ## What the fallback refuses to do, and why that matters
  *
- * Four things about ACSM's scoring have never been measured against a real
+ * Five things about ACSM's scoring have never been measured against a real
  * manager, and each of them would change every number in the table:
  *
  * - **More than one class.** Which finishing position a class scores — the one
@@ -31,17 +31,24 @@
  *   the points table and the incidents are in the export, but whether ACSM
  *   applies them automatically is unknown. `ResultEntry.Penalties` is typed
  *   `unknown[]` for exactly this reason.
+ * - **Points for pole and the fastest lap.** `PolePosition` and `BestLap` are
+ *   on the points table; which session each is taken from, and what a
+ *   disqualification does to them, is not written down anywhere.
  * - **The second race of a reversed-grid round.** `SecondRaceMultiplier` says
  *   there is one, and nothing in this repo knows what session key its results
  *   arrive under. BATL's 2x20 is this case.
+ *
+ * It also refuses two things the export itself leaves open: a round that
+ * finished with no race results champctl can find, and a driver in a points
+ * place with no race time — who may never have started.
  *
  * So `computeStandings` refuses, naming the reason, rather than producing a
  * table that is quietly wrong in front of a league. A refusal is a to-do list:
  * `npm run recon:standings` is what would close it.
  */
 
-import type { Championship, ChampionshipClass, SessionResults } from "../acsm/types.js"
-import { classes, eventHasResults, events, eventSession } from "../acsm/view.js"
+import type { Championship, ChampionshipClass, ResultEntry } from "../acsm/types.js"
+import { classes, eventHasResults, events, eventSession, isZeroTime } from "../acsm/view.js"
 
 export interface StandingsRow {
   /** 1-based, after sorting by points. */
@@ -207,7 +214,9 @@ export function computeStandings(c: Championship): StandingsClass[] | Unscorable
   // raced. This then skipped the refusal below and returned a class with no rows
   // in it — the caller posts nothing and exits 0, which reads as "there are no
   // standings" rather than "the season has not begun".
-  const raced = events(c).filter((ev) => eventHasResults(ev))
+  const raced = events(c)
+    .map((ev, i) => ({ ev, round: i + 1 }))
+    .filter(({ ev }) => eventHasResults(ev))
   if (raced.length === 0) {
     return { scorable: false, reason: "No round has been raced yet." }
   }
@@ -215,36 +224,81 @@ export function computeStandings(c: Championship): StandingsClass[] | Unscorable
   const out: StandingsClass[] = []
   for (const cls of classes(c)) {
     const places = (cls.Points?.Places ?? []).filter((n) => typeof n === "number")
-    const totals = new Map<string, number>()
+    // Keyed by Steam GUID and shown under the latest name seen. Keyed by name, a
+    // driver who renamed between rounds became two rows splitting their points,
+    // and two drivers sharing a name became one row holding both totals.
+    const totals = new Map<string, { driver: string; points: number }>()
 
-    for (const ev of raced) {
-      const results = eventSession(ev, "Race")?.Results
-      for (const [index, driver] of finishers(results).entries()) {
-        totals.set(driver, (totals.get(driver) ?? 0) + (places[index] ?? 0))
+    for (const { ev, round } of raced) {
+      const race = eventSession(ev, "Race")
+      const rows = race?.Results?.Result
+      if (!Array.isArray(rows)) {
+        // Qualifying in and the race still to come is a round in progress, and
+        // it has scored nothing yet. A round that *finished* with no race
+        // results is one champctl can't read: scored as nothing, it posted a
+        // table missing a round — or, with every round like it, "nobody has
+        // scored yet" and exit 0 about a season that had been raced.
+        if (!isZeroTime(ev.CompletedTime) || !isZeroTime(race?.CompletedTime)) {
+          return {
+            scorable: false,
+            reason: `round ${round} finished, but champctl can't find its race results`,
+          }
+        }
+        continue
+      }
+
+      for (const [index, f] of finishers(rows).entries()) {
+        const points = places[index] ?? 0
+        // AC classifies every car that connected, so a driver who never started
+        // can sit in a points place. Whether ACSM pays them for it is
+        // unmeasured, and a zero race time is the only sign the export gives.
+        if (points > 0 && f.totalTime === 0) {
+          return {
+            scorable: false,
+            reason: `round ${round} puts ${f.name} in a points place with no race time, and champctl has never measured whether ACSM pays a driver who didn't finish`,
+          }
+        }
+        const seen = totals.get(f.key)
+        totals.set(f.key, { driver: f.name, points: (seen?.points ?? 0) + points })
       }
     }
 
     out.push({
       name: cls.Name ?? "",
-      rows: ranked([...totals].map(([driver, points]) => ({ position: 0, driver, points }))),
+      rows: ranked([...totals.values()].map((t) => ({ position: 0, ...t }))),
     })
   }
   return out
 }
 
+interface Finisher {
+  /** The Steam GUID where the row has one, the name where it doesn't. */
+  key: string
+  name: string
+  totalTime: number | undefined
+}
+
 /**
- * Finishing order as driver names, disqualifications removed.
+ * Finishing order, disqualifications removed.
  *
  * Removed rather than scored zero, because the two differ for everyone behind
  * them: ACSM's `Result[]` is the order as classified, so dropping a DSQ is what
  * moves the next driver up into the points they were actually awarded.
  */
-function finishers(results: SessionResults | null | undefined): string[] {
-  const rows = Array.isArray(results?.Result) ? results.Result : []
-  return rows
-    .filter((r) => r && r.Disqualified !== true)
-    .map((r) => (r.DriverName ?? "").trim())
-    .filter(Boolean)
+function finishers(rows: readonly ResultEntry[]): Finisher[] {
+  const out: Finisher[] = []
+  for (const r of rows) {
+    if (!r || r.Disqualified === true) continue
+    const name = (r.DriverName ?? "").trim()
+    if (!name) continue
+    const guid = (r.DriverGuid ?? "").trim()
+    out.push({
+      key: guid ? `guid:${guid}` : `name:${name}`,
+      name,
+      totalTime: typeof r.TotalTime === "number" ? r.TotalTime : undefined,
+    })
+  }
+  return out
 }
 
 /** The first reason this championship can't be scored here, if there is one. */
@@ -270,12 +324,19 @@ function whyNotScorable(c: Championship): string | undefined {
     if (penalty) {
       return `${cls.Name || "a class"} awards ${penalty} points, and champctl has never measured whether ACSM applies those automatically`
     }
+    const bonus = bonusPoints(cls)
+    if (bonus) {
+      return `${cls.Name || "a class"} awards points for ${bonus}, and champctl has never measured which session ACSM takes those from`
+    }
   }
 
   for (const [i, ev] of events(c).entries()) {
     if (!eventHasResults(ev)) continue
     const reversed = ev.RaceSetup?.ReversedGridRacePositions
-    if (typeof reversed === "number" && reversed > 0) {
+    // Any non-zero value, not only a positive one: AC's server config reads -1
+    // as "reverse the whole grid", which is still a second race. `> 0` let a
+    // whole-grid 2x20 through, scored off race one alone.
+    if (typeof reversed === "number" && reversed !== 0) {
       return `round ${i + 1} is a reversed-grid two-race round, and champctl doesn't know which session key holds the second race's results`
     }
   }
@@ -289,6 +350,22 @@ function penaltyPoints(cls: ChampionshipClass): string | undefined {
     const v = cls.Points?.[key]
     if (typeof v === "number" && v !== 0) named.push(key)
   }
+  return named.length > 0 ? named.join(" and ") : undefined
+}
+
+/**
+ * Which bonus points this class pays, named for the refusal.
+ *
+ * Neither summed nor checked before, so a class paying a point for pole and one
+ * for the fastest lap came back with every one of them missing, and nothing in
+ * the message but the "worked out from the export" footer to hint at it.
+ */
+function bonusPoints(cls: ChampionshipClass): string | undefined {
+  const named: string[] = []
+  const pole = cls.Points?.PolePosition
+  const fastest = cls.Points?.BestLap
+  if (typeof pole === "number" && pole !== 0) named.push("pole position")
+  if (typeof fastest === "number" && fastest !== 0) named.push("the fastest lap")
   return named.length > 0 ? named.join(" and ") : undefined
 }
 
