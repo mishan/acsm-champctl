@@ -18,7 +18,8 @@ import { pathToFileURL } from "node:url"
 
 import { SqliteCache } from "../acsm/cache.js"
 import { HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
-import { announce, NothingToAnnounce, type Announcement } from "../bot/announce.js"
+import type { Championship } from "../acsm/types.js"
+import { announce, NothingToAnnounce, RoundRefused, type Announcement } from "../bot/announce.js"
 import { LIVERY_COMMANDS } from "../bot/commands.js"
 import { GatewayTransport } from "../bot/discord.js"
 import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
@@ -56,7 +57,7 @@ Options:
   --register-only       publish the slash commands and exit, without serving
   --base-url <url>      override the profile's ACSM base URL
   --no-cache            bypass the on-disk response cache
-  --now <iso>           pretend it is this time, for the checks     [report]
+  --now <iso>           pretend it is this time           [report, announce]
   -h, --help            this
 
 Exit codes:
@@ -451,13 +452,25 @@ async function runAnnounce(
   post: Post,
 ): Promise<number> {
   const id = requireChampionshipId(args, "announce")
-  const championship = await reader.exportChampionship(id)
+
+  let championship: Championship
+  try {
+    championship = await reader.exportChampionship(id)
+  } catch (e) {
+    // 2, which is what the usage promises for something that couldn't be read.
+    // Left to runCli it was a 3, "the run itself failed" — the code a timer
+    // pages somebody over, for what is usually a mistyped id.
+    const why = e instanceof Error ? e.message : String(e)
+    process.stderr.write(`Couldn't read championship ${id}: ${why}\n`)
+    return 2
+  }
 
   let announcement: Announcement
   try {
     announcement = announce(championship, {
       profile,
       baseUrl: args.baseUrl ?? profile.acsmBaseUrl ?? "",
+      now: args.now ?? new Date(),
       ...(args.round === undefined ? {} : { round: args.round }),
     })
   } catch (e) {
@@ -467,6 +480,13 @@ async function runAnnounce(
     if (e instanceof NothingToAnnounce) {
       process.stdout.write(`${e.message}\n`)
       return 0
+    }
+    // Somebody asked for a round by number and it can't be announced. This
+    // shared the branch above and exited 0, so a typo'd round read to cron as a
+    // successful post.
+    if (e instanceof RoundRefused) {
+      process.stderr.write(`${e.message}\n`)
+      return 2
     }
     throw e
   }

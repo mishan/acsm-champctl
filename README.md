@@ -643,7 +643,7 @@ champctl-bot announce <champ-id> [round]  post the next round's details
   --pits <path>         track pit table (default: data/track-pits.json)
   --base-url <url>      override the profile's ACSM base URL
   --no-cache            bypass the on-disk response cache
-  --now <iso>           pretend it is this time, for the checks     [report]
+  --now <iso>           pretend it is this time           [report, announce]
   -h, --help            this
 ```
 
@@ -720,10 +720,18 @@ Sign up: https://ac.batlracing.com/championship/1111…
 -# All times PDT.
 ```
 
-Without a round it takes the next one nobody has raced, so a weekly cron entry
-needs no argument. An explicit round that has already been raced is refused —
-it is nearly always a typo for the one beside it, and "this week at Suzuka"
-about a race that happened is worse than an error.
+Without a round it takes the next one still ahead — the first in running order
+with no results and a quali time that hasn't gone by — so a weekly cron entry
+needs no argument. The date matters for a round that was never raced at all: a
+server that crashed or a round rained off has no results, and on results alone
+it would be announced again every week for the rest of the season.
+
+An explicit round that has been raced, whose quali has gone by, or that doesn't
+exist is refused with exit `2` — it is nearly always a typo for the one beside
+it, and "this week at Suzuka" about a race that happened is worse than an error.
+A season with nothing left to announce exits `0`: that is the ordinary end
+state, and a weekly job should not start failing after the last race. `--now`
+pretends it is another time, to see what a future week would say.
 
 **It announces quali start, which is not what the export stores.** `Scheduled`
 is *practice* start, so repeating it would tell everyone to turn up an hour
