@@ -12,7 +12,7 @@
 
 import { readInstalledContent, type InstalledContent } from "./content.js"
 import { walkChampionships } from "./listing.js"
-import { exportPath } from "./paths.js"
+import { exportPath, standingsPath } from "./paths.js"
 import type { AcsmHealthcheck, Championship, ChampionshipSummary } from "./types.js"
 import { RateLimiter, type RateLimiterOptions } from "./rate-limit.js"
 
@@ -190,7 +190,7 @@ export class HttpAcsmReader implements AcsmReader {
   }
 
   async standings(id: string): Promise<unknown> {
-    return this.#getJson(`/championship/${encodeURIComponent(id)}/standings.json`)
+    return this.#getJson(standingsPath(id))
   }
 
   async healthcheck(): Promise<AcsmHealthcheck> {

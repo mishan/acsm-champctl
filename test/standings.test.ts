@@ -1,0 +1,808 @@
+/**
+ * Standings, from ACSM if it will say and from the export if not.
+ *
+ * The tests that matter most here are the *refusals*. Five things about ACSM's
+ * scoring have never been measured against a real manager, and each would
+ * change every number in the table — so the fallback has to decline rather than
+ * produce something plausible. A wrong standings table posted to a league is
+ * the worst thing this half of the bot can do.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+
+import { StaticAcsmReader, type AcsmReader } from "../src/acsm/client.js"
+import type { Championship, ChampionshipEvent, ResultEntry } from "../src/acsm/types.js"
+import { standingsMessage } from "../src/bot/message.js"
+import { MESSAGE_LIMIT } from "../src/bot/transport.js"
+import {
+  compareStandings,
+  computeStandings,
+  isUnscorable,
+  parseStandings,
+  ranked,
+  type StandingsClass,
+} from "../src/bot/standings.js"
+import { parseArgs, resolveStandings, runStandings } from "../src/cli/bot.js"
+import { championship, championshipClass, raceEvent } from "./support/build.js"
+
+/** A raced round whose Race session carries a finishing order. */
+const racedRound = (order: string[], over: Partial<ChampionshipEvent> = {}): ChampionshipEvent =>
+  raceEvent({
+    StartedTime: "2026-08-05T19:00:00-07:00",
+    Sessions: {
+      RACE: {
+        Name: "Race",
+        StartedTime: "2026-08-05T19:00:00-07:00",
+        Results: { Result: order.map((name) => ({ DriverName: name })) },
+      },
+    },
+    ...over,
+  })
+
+/** A raced round whose Race session carries these result rows as they are. */
+const racedRows = (Result: ResultEntry[]): ChampionshipEvent =>
+  raceEvent({
+    StartedTime: "2026-08-05T19:00:00-07:00",
+    Sessions: { RACE: { Name: "Race", Results: { Result } } },
+  })
+
+const ADA = "76561190000000001"
+const BO = "76561190000000002"
+
+/** Points for the first three places and nothing else set. */
+const placesOnly = (places = [25, 18, 15]) =>
+  championshipClass({ Points: { Places: places, BestLap: 0, PolePosition: 0 } })
+
+const scorable = (over: Partial<Championship> = {}): Championship =>
+  championship({
+    Classes: [placesOnly()],
+    Events: [racedRound(["ada", "bo", "cy"])],
+    IgnoreXWorstEvents: 0,
+    ...over,
+  })
+
+/** `from` to `to`, inclusive. */
+const range = (from: number, to: number): number[] =>
+  Array.from({ length: to - from + 1 }, (_, i) => from + i)
+
+const rowsOf = (v: StandingsClass[] | { scorable: false; reason: string }) => {
+  if (isUnscorable(v)) throw new Error(`expected scorable, got: ${v.reason}`)
+  return v[0]!.rows
+}
+
+describe("scoring from the export", () => {
+  it("awards points down the finishing order", () => {
+    expect(rowsOf(computeStandings(scorable()))).toEqual([
+      { position: 1, driver: "ada", points: 25 },
+      { position: 2, driver: "bo", points: 18 },
+      { position: 3, driver: "cy", points: 15 },
+    ])
+  })
+
+  it("adds up across rounds", () => {
+    const c = scorable({
+      Events: [racedRound(["ada", "bo"]), racedRound(["bo", "ada"])],
+    })
+    expect(rowsOf(computeStandings(c))).toEqual([
+      { position: 1, driver: "ada", points: 43 },
+      { position: 1, driver: "bo", points: 43 },
+    ])
+  })
+
+  it("promotes everyone behind a disqualification", () => {
+    // ACSM's Result[] is the order as classified, so dropping a DSQ is what
+    // moves the next driver into the points they were actually awarded.
+    // Scoring the DSQ zero and leaving everyone in place would give bo 18.
+    const c = scorable({
+      Events: [
+        raceEvent({
+          StartedTime: "2026-08-05T19:00:00-07:00",
+          Sessions: {
+            RACE: {
+              Results: {
+                Result: [
+                  { DriverName: "ada", Disqualified: true },
+                  { DriverName: "bo" },
+                  { DriverName: "cy" },
+                ],
+              },
+            },
+          },
+        }),
+      ],
+    })
+    expect(rowsOf(computeStandings(c))).toEqual([
+      { position: 1, driver: "bo", points: 25 },
+      { position: 2, driver: "cy", points: 18 },
+    ])
+  })
+
+  it("scores nothing for a place the points table doesn't reach", () => {
+    const c = scorable({
+      Classes: [placesOnly([25, 18])],
+      Events: [racedRound(["ada", "bo", "cy"])],
+    })
+    expect(rowsOf(computeStandings(c)).find((r) => r.driver === "cy")?.points).toBe(0)
+  })
+
+  it("follows a driver across a rename by their Steam GUID", () => {
+    // Keyed by name, the rename split one driver into two rows of 25, tied
+    // first, where they had 50 alone.
+    const c = scorable({
+      Events: [
+        racedRows([
+          { DriverName: "ada", DriverGuid: ADA },
+          { DriverName: "bo", DriverGuid: BO },
+        ]),
+        racedRows([
+          { DriverName: "Ada L", DriverGuid: ADA },
+          { DriverName: "bo", DriverGuid: BO },
+        ]),
+      ],
+    })
+    expect(rowsOf(computeStandings(c))).toEqual([
+      { position: 1, driver: "Ada L", points: 50 },
+      { position: 2, driver: "bo", points: 36 },
+    ])
+  })
+
+  it("keeps two drivers who share a name apart", () => {
+    const c = scorable({
+      Events: [
+        racedRows([
+          { DriverName: "ada", DriverGuid: ADA },
+          { DriverName: "ada", DriverGuid: BO },
+        ]),
+      ],
+    })
+    expect(rowsOf(computeStandings(c)).map((r) => r.points)).toEqual([25, 18])
+  })
+
+  it("scores a round whose race is still to come as nothing yet, not as a refusal", () => {
+    // Qualifying in, race not run: a round in progress on race night.
+    const c = scorable({
+      Events: [
+        racedRound(["ada", "bo"]),
+        raceEvent({ Sessions: { QUALIFY: { Results: { Result: [{ DriverName: "bo" }] } } } }),
+      ],
+    })
+    expect(rowsOf(computeStandings(c)).map((r) => r.driver)).toEqual(["ada", "bo"])
+  })
+
+  it("scores a driver with no race time when the place pays nothing anyway", () => {
+    const c = scorable({
+      Classes: [placesOnly([25])],
+      Events: [
+        racedRows([
+          { DriverName: "ada", TotalTime: 3_600_000 },
+          { DriverName: "bo", TotalTime: 0 },
+        ]),
+      ],
+    })
+    expect(rowsOf(computeStandings(c)).find((r) => r.driver === "bo")?.points).toBe(0)
+  })
+})
+
+describe("what the export cannot be scored for", () => {
+  const reasonFor = (c: Championship): string => {
+    const out = computeStandings(c)
+    if (!isUnscorable(out)) throw new Error("expected a refusal")
+    return out.reason
+  }
+
+  it("refuses a championship running more than one class", () => {
+    // Every class was scored off the *overall* finishing order, so both classes
+    // came back holding the same rows and the GT4 driver who finished third on
+    // the road took third-place points in the GT3 table too. Filtering the
+    // class's entrants fixes half of that and guesses at the other half.
+    const c = scorable({
+      Classes: [
+        championshipClass({ Name: "GT3", Points: { Places: [25, 18, 15] } }),
+        championshipClass({ Name: "GT4", Points: { Places: [25, 18, 15] } }),
+      ],
+      Events: [racedRound(["gt3-ada", "gt3-bo", "gt4-cy"])],
+    })
+    expect(reasonFor(c)).toMatch(/runs 2 classes/)
+  })
+
+  it("refuses a championship that drops its worst rounds", () => {
+    // Something is dropped; which rounds, and whether per driver or per
+    // championship, is written down nowhere.
+    expect(reasonFor(scorable({ IgnoreXWorstEvents: 1 }))).toMatch(/drops its 1 worst round/)
+  })
+
+  it("refuses one with penalty points configured", () => {
+    const c = scorable({
+      Classes: [championshipClass({ Points: { Places: [25], CollisionWithDriver: -5 } })],
+    })
+    expect(reasonFor(c)).toMatch(/CollisionWithDriver/)
+  })
+
+  it("refuses a reversed-grid round, which is BATL's own 2x20", () => {
+    const c = scorable({
+      Events: [racedRound(["ada"], { RaceSetup: { ReversedGridRacePositions: 5 } })],
+    })
+    expect(reasonFor(c)).toMatch(/second race/)
+  })
+
+  it("says so when nothing has been raced yet", () => {
+    expect(reasonFor(scorable({ Events: [raceEvent()] }))).toMatch(/No round has been raced/)
+  })
+
+  it("does not count a practice loop as a round that has been raced", () => {
+    // ACSM stamps StartedTime from the UDP new-session callback and a looping
+    // practice writes its own CompletedTime each loop, so an untouched round
+    // carries both marks. On eventHasStarted that made `raced` non-empty before
+    // anyone had raced, which skipped this refusal and returned a class with no
+    // rows — posting nothing and exiting 0, as though the season had no points
+    // in it rather than not having begun.
+    const practiceOpen = raceEvent({
+      StartedTime: "2026-08-30T18:00:00-07:00",
+      Sessions: {
+        PRACTICE: {
+          Name: "Practice",
+          StartedTime: "2026-08-30T18:00:00-07:00",
+          CompletedTime: "2026-08-30T19:00:00-07:00",
+        },
+      },
+    })
+    expect(reasonFor(scorable({ Events: [practiceOpen] }))).toMatch(/No round has been raced/)
+  })
+
+  it("names what champctl would need, so the refusal is a to-do and not a shrug", () => {
+    expect(reasonFor(scorable({ IgnoreXWorstEvents: 2 }))).toMatch(/never measured/)
+  })
+
+  it("refuses a class that pays points for pole or the fastest lap", () => {
+    // Only Places was summed and nothing looked at the other two, so this
+    // posted a table with every bonus point missing. The builder's default
+    // class pays one of each.
+    expect(reasonFor(scorable({ Classes: [championshipClass()] }))).toMatch(
+      /pole position and the fastest lap/,
+    )
+  })
+
+  it("refuses a whole-grid reversed round, which AC writes as -1", () => {
+    // `> 0` let -1 through, and a whole-grid 2x20 was scored off race one.
+    const c = scorable({
+      Events: [racedRound(["ada"], { RaceSetup: { ReversedGridRacePositions: -1 } })],
+    })
+    expect(reasonFor(c)).toMatch(/second race/)
+  })
+
+  it("refuses a round that finished with no race results it can find", () => {
+    // Scored as nothing, this posted a table missing a round; with every round
+    // like it, "nobody has scored yet" and exit 0 about a season already raced.
+    const finished = raceEvent({ CompletedTime: "2026-08-05T20:30:00-07:00", Sessions: {} })
+    expect(reasonFor(scorable({ Events: [racedRound(["ada"]), finished] }))).toMatch(
+      /round 2 finished, but champctl can't find its race results/,
+    )
+  })
+
+  it("refuses a driver in a points place with no race time", () => {
+    // AC classifies every car that connected; whether ACSM pays one that never
+    // started is unmeasured, and this paid bo second place.
+    const c = scorable({
+      Events: [
+        racedRows([
+          { DriverName: "ada", TotalTime: 3_600_000 },
+          { DriverName: "bo", TotalTime: 0 },
+        ]),
+      ],
+    })
+    expect(reasonFor(c)).toMatch(/puts bo in a points place with no race time/)
+  })
+})
+
+describe("parsing whatever standings.json answers with", () => {
+  it("reads a class-wrapped shape", () => {
+    const parsed = parseStandings({
+      Classes: [{ Name: "RSS", Standings: [{ DriverName: "ada", Points: 43 }] }],
+    })
+    expect(parsed).toEqual([{ name: "RSS", rows: [{ position: 1, driver: "ada", points: 43 }] }])
+  })
+
+  it("reads lowercase keys, because the listing endpoint already taught us that", () => {
+    // 2.4.15 answers /api/championships/list.json in lowercase where the export
+    // uses ID and Name, and champctl read only the capitalised spelling — every
+    // entry silently lost its id. Assuming one casing for a response nobody has
+    // measured would be repeating that on purpose.
+    const parsed = parseStandings({
+      classes: [{ name: "RSS", standings: [{ driver: { name: "ada" }, points: 43 }] }],
+    })
+    expect(parsed?.[0]?.rows[0]).toEqual({ position: 1, driver: "ada", points: 43 })
+  })
+
+  it("reads a flat array with no class layer", () => {
+    const parsed = parseStandings([{ DriverName: "ada", Points: 43 }])
+    expect(parsed).toEqual([{ name: "", rows: [{ position: 1, driver: "ada", points: 43 }] }])
+  })
+
+  it("reads an empty flat answer as nobody having scored, not as a shape it doesn't know", () => {
+    // Week one at a league answering in this shape. Refused, it warned about an
+    // unrecognised response, and with nothing raced to fall back on, exited 2.
+    const empty = [{ name: "", rows: [] }]
+    expect(parseStandings([])).toEqual(empty)
+    expect(parseStandings({ Standings: [] })).toEqual(empty)
+  })
+
+  it("does not read a list of non-classes under Classes as driver rows", () => {
+    // Only `Standings` names both layers. Retried as rows, this was a table of
+    // two drivers called GT3 and GT4.
+    expect(
+      parseStandings({
+        Classes: [
+          { Name: "GT3", Total: 12 },
+          { Name: "GT4", Total: 8 },
+        ],
+      }),
+    ).toBeUndefined()
+  })
+
+  it("keeps ACSM's own positions and order when it gives them", () => {
+    // Re-ranked by points and then name, amy went above zed and both came out
+    // tied first — whatever the standings page said about who is ahead.
+    const parsed = parseStandings({
+      Classes: [
+        {
+          Name: "RSS",
+          Standings: [
+            { DriverName: "zed", Points: 40, Position: 1 },
+            { DriverName: "amy", Points: 40, Position: 2 },
+          ],
+        },
+      ],
+    })
+    expect(parsed?.[0]?.rows).toEqual([
+      { position: 1, driver: "zed", points: 40 },
+      { position: 2, driver: "amy", points: 40 },
+    ])
+  })
+
+  it("ranks by points when a position is missing from any row", () => {
+    const parsed = parseStandings([
+      { DriverName: "zed", Points: 30, Position: 1 },
+      { DriverName: "amy", Points: 40 },
+    ])
+    expect(parsed?.[0]?.rows.map((r) => r.driver)).toEqual(["amy", "zed"])
+  })
+
+  it("returns undefined rather than guessing at a shape it doesn't know", () => {
+    // Undefined means "I don't recognise this", which is the honest answer for
+    // a response whose shape has never been measured. A hopeful dig through an
+    // unfamiliar object posts a made-up table.
+    expect(
+      parseStandings({ Classes: [{ Name: "RSS", Standings: [{ who: "ada", pts: 43 }] }] }),
+    ).toBeUndefined()
+    expect(parseStandings("nope")).toBeUndefined()
+    expect(parseStandings(null)).toBeUndefined()
+    expect(parseStandings({ unrelated: true })).toBeUndefined()
+  })
+
+  it("refuses a class whose rows are spelled something it has never seen", () => {
+    // The rows are readable; the key holding them is not. This came back as a
+    // *success* carrying one empty class, so the caller posted nothing, warned
+    // about nothing and never fell back to the export.
+    expect(
+      parseStandings({ Classes: [{ Name: "RSS", Drivers: [{ DriverName: "ada", Points: 43 }] }] }),
+    ).toBeUndefined()
+  })
+
+  it("reads a flat list under a key that also names a class list", () => {
+    // `Standings` spells both layers, and taken as the class layer this produced
+    // one empty class per driver — a shape that parses successfully and holds
+    // nobody.
+    expect(
+      parseStandings({
+        Standings: [
+          { DriverName: "ada", Points: 43 },
+          { DriverName: "bo", Points: 30 },
+        ],
+      }),
+    ).toEqual([
+      {
+        name: "",
+        rows: [
+          { position: 1, driver: "ada", points: 43 },
+          { position: 2, driver: "bo", points: 30 },
+        ],
+      },
+    ])
+  })
+
+  it("keeps a class nobody has scored in, which is not the same as not understanding it", () => {
+    // Week one of every season. An empty rows array is an answer; a missing one
+    // is a shape champctl has misread, and the two must not look alike.
+    //
+    // This one passes against the old code too — it is not the regression test
+    // for that bug, it is the fence around the fix. Refusing every empty class
+    // would also have closed the hole, by calling week one an unreadable
+    // response.
+    expect(parseStandings({ Classes: [{ Name: "RSS", Standings: [] }] })).toEqual([
+      { name: "RSS", rows: [] },
+    ])
+  })
+
+  it("refuses the whole response when one row is unreadable", () => {
+    // Half a standings table is worse than none: it looks complete.
+    const parsed = parseStandings({
+      Classes: [{ Name: "RSS", Standings: [{ DriverName: "ada", Points: 43 }, { junk: true }] }],
+    })
+    expect(parsed).toBeUndefined()
+  })
+})
+
+describe("ranking", () => {
+  it("gives equal points the same position, and skips the next", () => {
+    // Two drivers on 40 are both second and the next is fourth. Numbering them
+    // 2 and 3 invents a gap the season doesn't have.
+    expect(
+      ranked([
+        { position: 0, driver: "a", points: 50 },
+        { position: 0, driver: "b", points: 40 },
+        { position: 0, driver: "c", points: 40 },
+        { position: 0, driver: "d", points: 10 },
+      ]).map((r) => r.position),
+    ).toEqual([1, 2, 2, 4])
+  })
+})
+
+describe("the cross-check between the two sources", () => {
+  const acsm: StandingsClass[] = [
+    { name: "RSS", rows: [{ position: 1, driver: "ada", points: 43 }] },
+  ]
+
+  it("says nothing when they agree", () => {
+    expect(compareStandings(acsm, acsm)).toEqual([])
+  })
+
+  it("names the driver and both numbers when they don't", () => {
+    const mine: StandingsClass[] = [
+      { name: "RSS", rows: [{ position: 1, driver: "ada", points: 40 }] },
+    ]
+    expect(compareStandings(acsm, mine)).toEqual([
+      "ada: ACSM says 43 points, champctl worked out 40",
+    ])
+  })
+
+  it("compares the one class on each side even when the names differ", () => {
+    // The endpoint's flat shape carries no class name; the export takes one from
+    // Classes[].Name. Matching on name alone reported this 43-versus-30 as
+    // "champctl worked out no standings for the unnamed class" and compared not
+    // a single point — the cross-check quietly doing nothing.
+    expect(
+      compareStandings(
+        [{ name: "", rows: [{ position: 1, driver: "ada", points: 43 }] }],
+        [{ name: "RSS", rows: [{ position: 1, driver: "ada", points: 30 }] }],
+      ),
+    ).toEqual(["ada: ACSM says 43 points, champctl worked out 30"])
+  })
+
+  it("notices a driver champctl scored that ACSM has never heard of", () => {
+    // The direction that catches champctl over-scoring — a disqualification it
+    // handled differently, or an entrant ACSM doesn't count. Walking only ACSM's
+    // rows reported this as agreement.
+    expect(
+      compareStandings(
+        [{ name: "RSS", rows: [{ position: 1, driver: "ada", points: 43 }] }],
+        [
+          {
+            name: "RSS",
+            rows: [
+              { position: 1, driver: "ada", points: 43 },
+              { position: 2, driver: "bo", points: 30 },
+            ],
+          },
+        ],
+      ),
+    ).toEqual(["bo is in champctl's standings and not in ACSM's"])
+  })
+
+  it("notices a driver champctl missed entirely", () => {
+    expect(compareStandings(acsm, [{ name: "RSS", rows: [] }])).toEqual([
+      "ada is in ACSM's standings and not in champctl's",
+    ])
+  })
+})
+
+describe("where standings come from", () => {
+  let captured = ""
+
+  beforeEach(() => {
+    captured = ""
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      captured += String(chunk)
+      return true
+    })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  /** A reader whose `standings` does whatever the test wants and nothing else. */
+  const readerWhose = (standings: () => Promise<unknown>): AcsmReader => {
+    const inner = new StaticAcsmReader([])
+    return {
+      listChampionships: () => inner.listChampionships(),
+      exportChampionship: (id: string) => inner.exportChampionship(id),
+      exportChampionshipRaw: (id: string) => inner.exportChampionshipRaw(id),
+      standings,
+      healthcheck: () => inner.healthcheck(),
+      listContent: () => inner.listContent(),
+    }
+  }
+
+  const gone = async (): Promise<unknown> => {
+    throw new Error("404 Not Found")
+  }
+
+  const url = "https://acsm.example"
+
+  it("does not offer the export when --source endpoint rules it out", async () => {
+    // It said "using the export" and then didn't, because the flag forbids it —
+    // the log described the opposite of what the command did.
+    const args = parseArgs(["standings", "abc", "--source", "endpoint"])
+    const out = await resolveStandings(readerWhose(gone), scorable(), "abc", args, url)
+
+    expect(out).toBeUndefined()
+    expect(captured).toContain("rules out the export")
+    expect(captured).not.toContain("using the export")
+  })
+
+  it("does fall back to the export under auto, and says so", async () => {
+    const args = parseArgs(["standings", "abc"])
+    const out = await resolveStandings(readerWhose(gone), scorable(), "abc", args, url)
+
+    expect(out?.source).toBe("export")
+    expect(captured).toContain("using the export")
+  })
+
+  it("falls back to the export when the endpoint answers in a shape it can't read", async () => {
+    // The rows are under a key champctl has never seen. This used to parse as a
+    // success holding one empty class, so the endpoint "won", nothing was
+    // warned about and the export was never consulted.
+    const unrecognised = async (): Promise<unknown> => ({
+      Classes: [{ Name: "RSS", Drivers: [{ DriverName: "ada", Points: 43 }] }],
+    })
+    const args = parseArgs(["standings", "abc"])
+    const out = await resolveStandings(readerWhose(unrecognised), scorable(), "abc", args, url)
+
+    expect(out?.source).toBe("export")
+    expect(out?.classes[0]?.rows).toHaveLength(3)
+    expect(captured).toContain("shape champctl doesn't recognise")
+  })
+
+  it("says the cross-check couldn't run rather than staying quiet", async () => {
+    // BATL's own 2x20 is this on every run: the endpoint answers, the export
+    // can't be scored, and silence reads as the two sources agreeing.
+    const answered = async (): Promise<unknown> => ({
+      Classes: [{ Name: "RSS", Standings: [{ DriverName: "ada", Points: 43 }] }],
+    })
+    const args = parseArgs(["standings", "abc"])
+    const out = await resolveStandings(
+      readerWhose(answered),
+      scorable({ IgnoreXWorstEvents: 1 }),
+      "abc",
+      args,
+      url,
+    )
+
+    expect(out?.source).toBe("endpoint")
+    expect(captured).toContain("not comparable")
+  })
+})
+
+describe("what the command says when there is nothing to post", () => {
+  let out = ""
+
+  beforeEach(() => {
+    out = ""
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      out += String(chunk)
+      return true
+    })
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("names an empty table rather than calling it 'Posted 0 messages'", async () => {
+    // A recognised answer that nobody has scored in yet. "Posted 0 messages" is
+    // also what a misread shape looked like from cron, so the two states have to
+    // read differently or neither gets investigated.
+    const champ = scorable({ ID: "abc", Name: "BATL September" })
+    const inner = new StaticAcsmReader([champ])
+    const reader: AcsmReader = {
+      listChampionships: () => inner.listChampionships(),
+      exportChampionship: (id: string) => inner.exportChampionship(id),
+      exportChampionshipRaw: (id: string) => inner.exportChampionshipRaw(id),
+      standings: async () => ({ Classes: [{ Name: "RSS", Standings: [] }] }),
+      healthcheck: () => inner.healthcheck(),
+      listContent: () => inner.listContent(),
+    }
+    const posted: string[] = []
+    const args = parseArgs(["standings", "abc", "--source", "endpoint"])
+
+    const code = await runStandings(reader, args, "https://acsm.example", async (m) => {
+      posted.push(...m)
+    })
+
+    expect(code).toBe(0)
+    expect(posted).toEqual([])
+    expect(out).toContain("Nobody has scored in BATL September yet")
+    expect(out).not.toContain("Posted 0 messages")
+  })
+})
+
+describe("the standings message", () => {
+  const big = (n: number): StandingsClass => ({
+    name: "RSS Formula Hybrid",
+    rows: Array.from({ length: n }, (_, i) => ({
+      position: i + 1,
+      driver: `driver-with-a-long-name-${i}`,
+      points: 100 - i,
+    })),
+  })
+
+  it("says where the numbers came from when champctl worked them out", () => {
+    const [msg] = standingsMessage("August 2026", { source: "export", classes: [big(3)] })
+    expect(msg).toContain("Worked out from the championship export")
+  })
+
+  it("says nothing extra when ACSM did the sums", () => {
+    const [msg] = standingsMessage("August 2026", { source: "endpoint", classes: [big(3)] })
+    expect(msg).not.toContain("Worked out from")
+  })
+
+  it("splits a long table rather than posting nothing", () => {
+    const messages = standingsMessage("August 2026", { source: "endpoint", classes: [big(60)] })
+    expect(messages.length).toBeGreaterThan(1)
+    for (const m of messages) expect(m.length).toBeLessThanOrEqual(2000)
+  })
+
+  it("keeps every driver across the split", () => {
+    const cls = big(60)
+    const joined = standingsMessage("August 2026", {
+      source: "endpoint",
+      classes: [cls],
+    }).join("\n")
+    for (const row of cls.rows) expect(joined).toContain(row.driver)
+  })
+
+  it("does not call a second class's first table a continuation", () => {
+    // The count was global across classes, so the first table of the second
+    // class was headed "(continued)" — GT4's points reading as more of GT3's,
+    // which is what the repeated heading exists to prevent.
+    const one = (name: string): StandingsClass => ({
+      name,
+      rows: [{ position: 1, driver: "ada", points: 25 }],
+    })
+    const messages = standingsMessage("August 2026", {
+      source: "endpoint",
+      classes: [one("GT3"), one("GT4")],
+    })
+
+    expect(messages).toHaveLength(2)
+    expect(messages[1]).toContain("**August 2026 — GT4**")
+    expect(messages[1]).not.toContain("(continued)")
+  })
+
+  it("measures the message it will send rather than estimating it", () => {
+    // The estimate allowed twenty characters for the fences and the heading
+    // where a continuation needs twenty-one, so a table landing exactly on the
+    // boundary posted 2001 characters — refused outright, losing the table.
+    //
+    // Swept rather than pinned to one row count: the arithmetic only lands on
+    // the boundary for particular widths, and a single magic fixture would stop
+    // testing this the moment a line's width changed.
+    //
+    // Two bands, because the first message and a continuation hit the limit at
+    // different row counts, and the continuation — twelve characters longer —
+    // is the one the estimate got wrong. This swept 130 to 145 rows, which fills
+    // a first message and never a second, so once the name column shrank to
+    // fit the names it passed against the estimate as well.
+    const over: string[] = []
+    const counts = [...range(88, 100), ...range(180, 196)]
+    for (let subject = 1; subject <= 40; subject++) {
+      for (const n of counts) {
+        const cls: StandingsClass = {
+          name: "C",
+          rows: Array.from({ length: n }, () => ({
+            position: 1,
+            driver: "d".repeat(12),
+            points: 100,
+          })),
+        }
+        const messages = standingsMessage("s".repeat(subject), {
+          source: "endpoint",
+          classes: [cls],
+        })
+        for (const m of messages) {
+          if (m.length > MESSAGE_LIMIT) over.push(`subject ${subject}, ${n} rows: ${m.length}`)
+        }
+      }
+    }
+    expect(over).toEqual([])
+  })
+
+  it("lines the points up under each other whatever the names are", () => {
+    // The name column was a hardcoded pad of 20 sitting next to a points width
+    // measured off the rows, so a single name past the pad pushed that row's
+    // points out of line with every other row in the table.
+    const cls: StandingsClass = {
+      name: "RSS",
+      rows: [
+        { position: 1, driver: "ada", points: 43 },
+        { position: 2, driver: "a-driver-with-a-longer-name", points: 30 },
+      ],
+    }
+    const [msg] = standingsMessage("August 2026", { source: "endpoint", classes: [cls] })
+    const rows = msg!.split("\n").filter((l) => /^\s*\d+\. /.test(l))
+
+    expect(rows).toHaveLength(2)
+    expect(new Set(rows.map((l) => l.length)).size).toBe(1)
+  })
+
+  it("keeps a table inside its code block whatever a driver is called", () => {
+    // Entry list names are whatever people typed, and three backticks closed
+    // the fence halfway down, spilling the rest of the table out as markdown.
+    const cls: StandingsClass = {
+      name: "RSS",
+      rows: [
+        { position: 1, driver: "a```b", points: 43 },
+        { position: 2, driver: "bo", points: 30 },
+      ],
+    }
+    const [msg] = standingsMessage("August 2026", { source: "endpoint", classes: [cls] })
+    expect(msg!.match(/```/g)).toHaveLength(2)
+  })
+
+  it("escapes markdown in the heading, which sits outside the code block", () => {
+    const cls: StandingsClass = { name: "GT_3", rows: [{ position: 1, driver: "ada", points: 1 }] }
+    const [msg] = standingsMessage("Sprint *Cup*", { source: "endpoint", classes: [cls] })
+    expect(msg).toContain("**Sprint \\*Cup\\* — GT\\_3**")
+  })
+
+  it("stays inside Discord's limit however long a name or a championship is", () => {
+    // The first row of a message was always accepted, and nothing bounded the
+    // name or the heading, so one 2100-character entry list name made a message
+    // Discord refuses outright — losing the table.
+    const cls: StandingsClass = {
+      name: "RSS",
+      rows: [
+        { position: 1, driver: "x".repeat(2100), points: 43 },
+        { position: 2, driver: "bo", points: 30 },
+      ],
+    }
+    for (const subject of ["August 2026", "s".repeat(1990)]) {
+      const messages = standingsMessage(subject, { source: "export", classes: [cls] })
+      expect(messages.length).toBeGreaterThan(0)
+      for (const m of messages) expect(m.length).toBeLessThanOrEqual(MESSAGE_LIMIT)
+    }
+  })
+
+  it("lines up a negative total with the rest", () => {
+    // The width was measured off the largest total, so -10 was wider than the
+    // column 5 set.
+    const cls: StandingsClass = {
+      name: "RSS",
+      rows: [
+        { position: 1, driver: "ada", points: 5 },
+        { position: 2, driver: "bo", points: -10 },
+      ],
+    }
+    const [msg] = standingsMessage("August 2026", { source: "endpoint", classes: [cls] })
+    const rows = msg!.split("\n").filter((l) => /^\s*\d+\. /.test(l))
+    expect(new Set(rows.map((l) => l.length)).size).toBe(1)
+  })
+
+  it("posts nothing for a class nobody has scored in", () => {
+    expect(standingsMessage("August 2026", { source: "endpoint", classes: [] })).toEqual([])
+    expect(
+      standingsMessage("August 2026", { source: "endpoint", classes: [{ name: "RSS", rows: [] }] }),
+    ).toEqual([])
+  })
+})

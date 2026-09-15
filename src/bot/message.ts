@@ -21,6 +21,7 @@ import {
 } from "../gridmom/finding.js"
 import { DEFAULT_MIN_SEVERITY, filterBySeverity, formatDiscord } from "../gridmom/report.js"
 import type { NightlyEntry, NightlyReport } from "./nightly.js"
+import type { Standings } from "./standings.js"
 import { MESSAGE_LIMIT } from "./transport.js"
 
 export interface MessageOptions {
@@ -118,6 +119,114 @@ export function reportMessages(
 
   flush()
   return messages
+}
+
+/**
+ * A standings table as a Discord message.
+ *
+ * A code block, because Discord renders proportional text everywhere else and a
+ * table of points that doesn't line up is harder to read than a list. The
+ * source is named in the footer: when champctl worked the numbers out itself
+ * rather than asking ACSM, whoever reads this should know that before they
+ * argue with someone about a point.
+ */
+export function standingsMessage(
+  subject: string,
+  standings: Standings,
+  opts: MessageOptions = {},
+): string[] {
+  const limit = opts.limit ?? MESSAGE_LIMIT
+  const scored = standings.classes.filter((c) => c.rows.length > 0)
+  if (scored.length === 0) return []
+
+  const footer =
+    standings.source === "endpoint"
+      ? ""
+      : "\n-# Worked out from the championship export, not read from Server Manager."
+
+  const messages: string[] = []
+  for (const cls of scored) {
+    const heading = cls.name
+      ? `**${headingText(subject)} — ${headingText(cls.name)}**`
+      : `**${headingText(subject)}**`
+    // Off each printed total rather than the largest one: "-10" is wider than
+    // the "5" above it, and measuring the maximum left it sticking out.
+    const width = Math.max(...cls.rows.map((r) => String(r.points).length))
+    // Both columns are measured off the rows. The name column was a hardcoded
+    // 20, which holds for a Steam persona (capped at 32) about as often as not
+    // and not at all for an entry list, where ACSM validates the name's length
+    // no further than "it is a string" — and one name past the pad pushed that
+    // row's points out of line with every other row in the table.
+    const cells = cls.rows.map((r) => nameCell(r.driver))
+    const names = Math.max(...cells.map((c) => c.length))
+
+    // Chunked by rows so a 30-driver class still posts. The heading repeats for
+    // the same reason it does in a split gridmom report: Discord hides the
+    // author on consecutive messages.
+    //
+    // `sent` counts *this class's* messages, not every message so far. Counting
+    // all of them headed the second class's first table "(continued)", which
+    // reads as more of the class above it — the exact confusion the repeated
+    // heading exists to prevent.
+    let sent = 0
+    let rows: string[] = []
+
+    const renderTable = (lines: readonly string[]): string => {
+      const head = sent === 0 ? heading : `${heading} (continued)`
+      return `${head}\n\`\`\`\n${lines.join("\n")}\n\`\`\`${footer}`
+    }
+
+    const flush = (): void => {
+      if (rows.length === 0) return
+      messages.push(renderTable(rows))
+      sent++
+      rows = []
+    }
+
+    for (const [i, row] of cls.rows.entries()) {
+      const line = `${String(row.position).padStart(2)}. ${cells[i]!.padEnd(names)} ${String(row.points).padStart(width)}`
+      // Measured, not estimated, for the same reason `reportMessages` measures:
+      // the fences, the newlines and the twelve characters " (continued)" adds
+      // are all length. The estimate here allowed twenty for all of it where a
+      // continuation needs twenty-one, so a table landing exactly on the
+      // boundary posted 2001 characters — which Discord refuses outright rather
+      // than trimming, losing the whole table.
+      if (rows.length > 0 && renderTable([...rows, line]).length > limit) flush()
+      rows = [...rows, line]
+    }
+    flush()
+  }
+  return messages
+}
+
+/** Widest a driver's name gets in a standings table. Steam caps a persona at 32. */
+const NAME_CELL = 32
+
+/** Longest the championship or class name gets in a standings heading. */
+const HEADING_PART = 100
+
+/**
+ * A driver's name as it goes in the table: bounded, and unable to end it.
+ *
+ * Entry list names are whatever people typed, with no length limit. Three
+ * backticks closed the code block halfway down the table, and one very long
+ * name made a message Discord refuses outright — the first row of a message is
+ * always accepted, so measuring could not split its way out of that. Every
+ * backtick goes, since counting runs of them is more code than it is worth.
+ */
+function nameCell(name: string): string {
+  const safe = name.replaceAll("`", "'")
+  return safe.length > NAME_CELL ? `${safe.slice(0, NAME_CELL - 1)}…` : safe
+}
+
+/**
+ * Championship and class names for a heading, which sits outside the code block
+ * and is rendered as markdown: bounded, and with markdown's characters escaped
+ * so a "*" or "_" in a name doesn't restyle the rest of the line.
+ */
+function headingText(text: string): string {
+  const bounded = text.length > HEADING_PART ? `${text.slice(0, HEADING_PART - 1)}…` : text
+  return bounded.replace(/[\\`*_~|>]/g, "\\$&")
 }
 
 function render(subject: string, findings: readonly Finding[], opts: MessageOptions): string {

@@ -16,7 +16,7 @@ Eight commands:
 | `champctl-liveries` | upload drivers' custom liveries and assign them |
 | `champctl-serve` | the finalize and create-a-championship flows as a web UI, for people without a terminal |
 | `champctl-upload` | take drivers' livery uploads from one-time links, holding no credentials |
-| `champctl-bot` | say what gridmom found in Discord |
+| `champctl-bot` | say what gridmom found, what's on this week, and where everyone stands, in Discord |
 
 Working on champctl itself? See [AGENTS.md](AGENTS.md) and
 [docs/development.md](docs/development.md).
@@ -623,27 +623,37 @@ npm run dev        # Vite on :5173, proxying /api to a champctl-serve on :3000
 
 ## champctl-bot
 
-What champctl says in Discord: the nightly gridmom report, and `/livery`.
+What champctl says in Discord: the nightly gridmom report, the week's round
+announcement, the championship standings, and `/livery`.
 
 Getting it running end to end — application, invite, profile, and the drain that
 applies what drivers send — is
 [`docs/discord-bot-setup.md`](docs/discord-bot-setup.md).
 
 ```
-champctl-bot report        check every championship and post what's wrong
+champctl-bot report                       check every championship, post what's wrong
+champctl-bot announce <champ-id> [round]  post the next round's details
+champctl-bot standings <champ-id>         post the championship standings
 
   --profile <id|path>   league profile (default: batl)
-  --channel <id>        override the profile's discord.adminChannelId
-  --min <severity>      ERROR | WARN | INFO     (default: WARN)
-  --suppress <codes>    comma-separated finding codes or prefixes to hide
-  --all                 include championships whose every round has been raced
+  --channel <id>        override the channel this command posts to
+  --min <severity>      ERROR | WARN | INFO     (default: WARN)   [report]
+  --suppress <codes>    comma-separated finding codes or prefixes  [report]
+  --all                 include championships already fully raced   [report]
+  --source <where>      endpoint | export | auto  (default: auto) [standings]
   --dry-run             print what would be posted; talk to nobody
   --pits <path>         track pit table (default: data/track-pits.json)
   --base-url <url>      override the profile's ACSM base URL
   --no-cache            bypass the on-disk response cache
-  --now <iso>           pretend it is this time (for the schedule checks)
+  --now <iso>           pretend it is this time           [report, announce]
   -h, --help            this
 ```
+
+`report` posts to `discord.adminChannelId`; `announce` and `standings` post to
+`discord.announceChannelId`. **Neither falls back to the other**, and that is a
+safety rule rather than tidiness: gridmom quotes the entry list, so a report
+that fell back to the announce channel would tell the whole league which three
+drivers are about to be dropped from the grid.
 
 ```
 $ champctl-bot report --dry-run
@@ -695,18 +705,111 @@ Run it nightly, from cron or a timer, and point it at an admin channel: findings
 quote the entry list, so they name drivers.
 
 **Setup** is [`docs/discord-bot-setup.md`](docs/discord-bot-setup.md) — one copy
-of the steps, since the report and `/livery` need the same application and the
-same token. The short version: create an application, invite it with **Send
-Messages**, and put its token in `CHAMPCTL_DISCORD_TOKEN`. A report needs no
-intents and no `guildId`; it reads nothing from Discord.
+of the steps, since the report, `announce`, `standings` and `/livery` need the
+same application and the same token. The short version: create an application,
+invite it with **Send Messages**, and put its token in `CHAMPCTL_DISCORD_TOKEN`.
+A report needs no intents and no `guildId`; it reads nothing from Discord.
 
-```sh
-CHAMPCTL_DISCORD_TOKEN=… champctl-bot report
+### announce
+
+```
+$ champctl-bot announce 1111… --dry-run
+
+**BATL September 2026 — round 3: suzuka**
+Quali 20:00 on Wednesday 2 September.
+Format: 1x40.
+Sign up: https://ac.batlracing.com/championship/1111…
+-# All times PDT.
 ```
 
-The token is never a flag. A token on a command line is in your shell history
-and in every `ps` listing on the box, so `--token` is an error that says so
-rather than an option that quietly isn't there.
+Without a round it takes the next one still ahead — the first in running order
+with no results and a quali time that hasn't gone by — so a weekly cron entry
+needs no argument. The date matters for a round that was never raced at all: a
+server that crashed or a round rained off has no results, and on results alone
+it would be announced again every week for the rest of the season.
+
+An explicit round that has been raced, whose quali has gone by, or that doesn't
+exist is refused with exit `2` — it is nearly always a typo for the one beside
+it, and "this week at Suzuka" about a race that happened is worse than an error.
+A season with nothing left to announce exits `0`: that is the ordinary end
+state, and a weekly job should not start failing after the last race. `--now`
+pretends it is another time, to see what a future week would say.
+
+**It announces quali start, which is not what the export stores.** `Scheduled`
+is *practice* start, so repeating it would tell everyone to turn up an hour
+early, weekly, in public. The time comes out of the same
+`Scheduled = qualiStart − practice` maths `champctl-finalize` writes with.
+
+Rounds are counted in running order, not by date. The event array *is* the
+running order — a reorder moves what a round is between the slots while the
+dates stay put — so re-sorting would make champctl and Server Manager disagree
+about which round is round 2.
+
+The format is named with the league's own shorthand when a profile preset
+matches, since "1x40" is what the racers voted for and "40 minutes with a
+mandatory stop" is the same thing in words nobody used.
+
+It is one-shot and keeps no record of having run. Cron decides when a round is
+announced; champctl does not decide it has already done it.
+
+
+### standings
+
+```
+$ champctl-bot standings 1111… --dry-run
+
+**BATL September 2026 — RSS Formula Hybrid**
+ 1. ada                  43
+ 1. bo                   43
+ 3. cy                   30
+```
+
+**Two sources, and the difference matters.** `standings.json` is ACSM's own
+arithmetic, so it can never disagree with the page drivers look at — but it is
+premium-only, absent from the public build entirely. The export carries results
+inline on every build, so champctl can do the sums itself. `--source` picks;
+`auto` prefers the endpoint.
+
+Under `auto` champctl computes the export standings *as well*, purely to compare
+them, and reports any disagreement to stderr — never to the channel — and in the
+exit code, which is `1`. That is what stops the fallback rotting: at a premium
+league the endpoint always answers, so without this the computation would sit
+unexercised until the day it was needed. A disagreement is a real finding
+either way round — either champctl's sums are wrong, or ACSM changed how it
+scores.
+
+**The export fallback refuses more than it computes, on purpose.** Five things
+about ACSM's scoring have never been measured against a real manager, and each
+would change every number in the table:
+
+| | |
+|---|---|
+| more than one class | which position a class scores — the one in the class or the one on the road — is written down nowhere, and matching a class's entrants to results is unmeasured in its own right |
+| `IgnoreXWorstEvents` | something is dropped; which rounds, and whether per driver or per championship, is written down nowhere |
+| `CollisionWithDriver`, `CollisionWithEnv`, `CutTrack` | on the points table, and the incidents are in the export, but whether ACSM applies them automatically is unknown |
+| `PolePosition`, `BestLap` | points for pole and the fastest lap; which session each is taken from, and what a disqualification does to them, is written down nowhere |
+| the second race of a reversed-grid round | `SecondRaceMultiplier` says there is one, and `-1` — the whole grid — counts; nothing knows what session key its results arrive under |
+
+It also declines two things the export itself leaves open: a round that
+finished with no race results champctl can find, and a driver in a points place
+with no race time, who may never have started. Drivers are matched across
+rounds by Steam GUID, so one who renames mid-season stays one row.
+
+So it declines and names the reason rather than posting a table that is quietly
+wrong. **BATL's own 2x20 is the last case**, which means at BATL the endpoint
+is the only source today and the cross-check reports "not comparable" rather
+than agreeing. `npm run recon:standings -- <base-url> <champ-id>` is what closes
+these: it reads standings.json without credentials and prints its *shape* —
+key paths and value types, no driver names — so the answer is safe to paste.
+
+A message that says "Worked out from the championship export, not read from
+Server Manager" is champctl's own arithmetic, and worth knowing before anyone
+argues about a point.
+
+Exit codes: `0` posted, or nobody has scored yet; `1` posted, but the two
+sources disagreed or ACSM answered in a shape champctl can't read; `2` nothing
+it can honestly post — the export refused, the endpoint was gone under
+`--source endpoint`, or the championship couldn't be read.
 
 ## Configuration
 
@@ -755,17 +858,18 @@ with `manual` always winning, because mod tracks routinely lie in their ui file.
 The file is gitignored: it's league data, not code. Without it the grid checks
 degrade to a warning that the pit count is unknown rather than guessing.
 
-**Discord.** `discord.adminChannelId` in the profile, a channel id as "Copy
-Channel ID" gives it — 17 to 20 digits, not a name and not a link, both of which
-would otherwise fail at post time on a job nobody watches. It lives in the
-profile rather than the environment because a channel id is league
-configuration, not a secret; the token is the secret and stays in
-`CHAMPCTL_DISCORD_TOKEN`. `profiles/batl.json` deliberately ships without one,
-since a committed channel id is a channel every fork posts into.
+**Discord.** Channel ids as "Copy Channel ID" gives them — 17 to 20 digits, not
+a name and not a link, both of which would otherwise fail at post time on a job
+nobody watches. They live in the profile rather than the environment because a
+channel id is league configuration, not a secret; the token is the secret and
+stays in `CHAMPCTL_DISCORD_TOKEN`. `profiles/batl.json` deliberately ships
+without either, since a committed channel id is a channel every fork posts into.
 
 ```json
 "discord": {
   "adminChannelId": "1234567890123456789",
+  "announceChannelId": "9876543210987654321",
+  "announce": { "format": false, "signUp": false },
   "guildId": "1234567890123456789",
   "livery": {
     "channelIds": ["1234567890123456789"],
@@ -776,6 +880,15 @@ since a committed channel id is a channel every fork posts into.
   }
 }
 ```
+
+`announce` trims the parts of an announcement champctl says, because ACSM has
+its own Discord integration and BATL already has it switched on — so some of
+this is said twice by default. Which parts overlap depends on how that
+integration is configured, which champctl cannot see, so the league decides
+rather than champctl guessing. The four parts are `track`, `quali`, `format` and
+`signUp`, all on unless named. An unknown key is an error rather than ignored: a
+typo in an opt-*out* block is silent in the worst direction, since `"quail":
+false` leaves quali on while reading, to whoever wrote it, as already off.
 
 `guildId` is where `/livery` is registered — per server rather than globally,
 because guild commands update the moment `champctl-bot serve` starts and global
@@ -826,10 +939,9 @@ have a web UI. What's left:
 - **Reordering is web-only.** The engine is in `src/reorder/`, and nothing on
   the command line reaches it — unlike every other engine here, which has a CLI
   as its first front end.
-- **The bot only reports.** The nightly gridmom report is there; announcements,
-  standings, the format poll and the poll-to-proposal loop are not, and neither
-  are the `/stats` lookups, which want the archive projections that don't exist
-  yet.
+- **The bot only talks.** The nightly report, announcements and standings are
+  there; the format poll and the poll-to-proposal loop are not, and neither are
+  the `/stats` lookups, which want archive projections that don't exist yet.
 - **Livery uploads have never run against a real Discord server.** Everything
   is built and tested — `/livery claim`, `/livery upload`, `/livery upload-url`,
   `/livery carset`, the queue, the drain, the carset — but only against fixtures
@@ -837,6 +949,12 @@ have a web UI. What's left:
   things, and four of the five measurements in §10 of the design have not been
   taken. Design in
   [`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
+- **Standings from the export refuse more than they compute.** Drop-worst,
+  penalty points and the second race of a reversed-grid round are all
+  unmeasured, so the fallback declines rather than guessing — which means it
+  declines on BATL's own 2x20. `npm run recon:standings` against a premium
+  manager is what closes this, and until someone runs it the cross-check
+  between the two sources has nothing to compare at BATL.
 - **The nightly report has no memory.** It says the same thing every night until
   someone fixes it, which is gridmom's voice by design but also means there is
   nothing to lean on if a league wants "tell me once". A digest per championship
