@@ -61,6 +61,10 @@ const scorable = (over: Partial<Championship> = {}): Championship =>
     ...over,
   })
 
+/** `from` to `to`, inclusive. */
+const range = (from: number, to: number): number[] =>
+  Array.from({ length: to - from + 1 }, (_, i) => from + i)
+
 const rowsOf = (v: StandingsClass[] | { scorable: false; reason: string }) => {
   if (isUnscorable(v)) throw new Error(`expected scorable, got: ${v.reason}`)
   return v[0]!.rows
@@ -694,9 +698,16 @@ describe("the standings message", () => {
     // Swept rather than pinned to one row count: the arithmetic only lands on
     // the boundary for particular widths, and a single magic fixture would stop
     // testing this the moment a line's width changed.
+    //
+    // Two bands, because the first message and a continuation hit the limit at
+    // different row counts, and the continuation — twelve characters longer —
+    // is the one the estimate got wrong. This swept 130 to 145 rows, which fills
+    // a first message and never a second, so once the name column shrank to
+    // fit the names it passed against the estimate as well.
     const over: string[] = []
+    const counts = [...range(88, 100), ...range(180, 196)]
     for (let subject = 1; subject <= 40; subject++) {
-      for (let n = 130; n <= 145; n++) {
+      for (const n of counts) {
         const cls: StandingsClass = {
           name: "C",
           rows: Array.from({ length: n }, () => ({
@@ -732,6 +743,59 @@ describe("the standings message", () => {
     const rows = msg!.split("\n").filter((l) => /^\s*\d+\. /.test(l))
 
     expect(rows).toHaveLength(2)
+    expect(new Set(rows.map((l) => l.length)).size).toBe(1)
+  })
+
+  it("keeps a table inside its code block whatever a driver is called", () => {
+    // Entry list names are whatever people typed, and three backticks closed
+    // the fence halfway down, spilling the rest of the table out as markdown.
+    const cls: StandingsClass = {
+      name: "RSS",
+      rows: [
+        { position: 1, driver: "a```b", points: 43 },
+        { position: 2, driver: "bo", points: 30 },
+      ],
+    }
+    const [msg] = standingsMessage("August 2026", { source: "endpoint", classes: [cls] })
+    expect(msg!.match(/```/g)).toHaveLength(2)
+  })
+
+  it("escapes markdown in the heading, which sits outside the code block", () => {
+    const cls: StandingsClass = { name: "GT_3", rows: [{ position: 1, driver: "ada", points: 1 }] }
+    const [msg] = standingsMessage("Sprint *Cup*", { source: "endpoint", classes: [cls] })
+    expect(msg).toContain("**Sprint \\*Cup\\* — GT\\_3**")
+  })
+
+  it("stays inside Discord's limit however long a name or a championship is", () => {
+    // The first row of a message was always accepted, and nothing bounded the
+    // name or the heading, so one 2100-character entry list name made a message
+    // Discord refuses outright — losing the table.
+    const cls: StandingsClass = {
+      name: "RSS",
+      rows: [
+        { position: 1, driver: "x".repeat(2100), points: 43 },
+        { position: 2, driver: "bo", points: 30 },
+      ],
+    }
+    for (const subject of ["August 2026", "s".repeat(1990)]) {
+      const messages = standingsMessage(subject, { source: "export", classes: [cls] })
+      expect(messages.length).toBeGreaterThan(0)
+      for (const m of messages) expect(m.length).toBeLessThanOrEqual(MESSAGE_LIMIT)
+    }
+  })
+
+  it("lines up a negative total with the rest", () => {
+    // The width was measured off the largest total, so -10 was wider than the
+    // column 5 set.
+    const cls: StandingsClass = {
+      name: "RSS",
+      rows: [
+        { position: 1, driver: "ada", points: 5 },
+        { position: 2, driver: "bo", points: -10 },
+      ],
+    }
+    const [msg] = standingsMessage("August 2026", { source: "endpoint", classes: [cls] })
+    const rows = msg!.split("\n").filter((l) => /^\s*\d+\. /.test(l))
     expect(new Set(rows.map((l) => l.length)).size).toBe(1)
   })
 

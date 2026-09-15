@@ -146,14 +146,19 @@ export function standingsMessage(
 
   const messages: string[] = []
   for (const cls of scored) {
-    const heading = cls.name ? `**${subject} — ${cls.name}**` : `**${subject}**`
-    const width = String(Math.max(...cls.rows.map((r) => r.points))).length
+    const heading = cls.name
+      ? `**${headingText(subject)} — ${headingText(cls.name)}**`
+      : `**${headingText(subject)}**`
+    // Off each printed total rather than the largest one: "-10" is wider than
+    // the "5" above it, and measuring the maximum left it sticking out.
+    const width = Math.max(...cls.rows.map((r) => String(r.points).length))
     // Both columns are measured off the rows. The name column was a hardcoded
     // 20, which holds for a Steam persona (capped at 32) about as often as not
     // and not at all for an entry list, where ACSM validates the name's length
     // no further than "it is a string" — and one name past the pad pushed that
     // row's points out of line with every other row in the table.
-    const names = Math.max(...cls.rows.map((r) => r.driver.length))
+    const cells = cls.rows.map((r) => nameCell(r.driver))
+    const names = Math.max(...cells.map((c) => c.length))
 
     // Chunked by rows so a 30-driver class still posts. The heading repeats for
     // the same reason it does in a split gridmom report: Discord hides the
@@ -178,8 +183,8 @@ export function standingsMessage(
       rows = []
     }
 
-    for (const row of cls.rows) {
-      const line = `${String(row.position).padStart(2)}. ${row.driver.padEnd(names)} ${String(row.points).padStart(width)}`
+    for (const [i, row] of cls.rows.entries()) {
+      const line = `${String(row.position).padStart(2)}. ${cells[i]!.padEnd(names)} ${String(row.points).padStart(width)}`
       // Measured, not estimated, for the same reason `reportMessages` measures:
       // the fences, the newlines and the twelve characters " (continued)" adds
       // are all length. The estimate here allowed twenty for all of it where a
@@ -192,6 +197,36 @@ export function standingsMessage(
     flush()
   }
   return messages
+}
+
+/** Widest a driver's name gets in a standings table. Steam caps a persona at 32. */
+const NAME_CELL = 32
+
+/** Longest the championship or class name gets in a standings heading. */
+const HEADING_PART = 100
+
+/**
+ * A driver's name as it goes in the table: bounded, and unable to end it.
+ *
+ * Entry list names are whatever people typed, with no length limit. Three
+ * backticks closed the code block halfway down the table, and one very long
+ * name made a message Discord refuses outright — the first row of a message is
+ * always accepted, so measuring could not split its way out of that. Every
+ * backtick goes, since counting runs of them is more code than it is worth.
+ */
+function nameCell(name: string): string {
+  const safe = name.replaceAll("`", "'")
+  return safe.length > NAME_CELL ? `${safe.slice(0, NAME_CELL - 1)}…` : safe
+}
+
+/**
+ * Championship and class names for a heading, which sits outside the code block
+ * and is rendered as markdown: bounded, and with markdown's characters escaped
+ * so a "*" or "_" in a name doesn't restyle the rest of the line.
+ */
+function headingText(text: string): string {
+  const bounded = text.length > HEADING_PART ? `${text.slice(0, HEADING_PART - 1)}…` : text
+  return bounded.replace(/[\\`*_~|>]/g, "\\$&")
 }
 
 function render(subject: string, findings: readonly Finding[], opts: MessageOptions): string {
