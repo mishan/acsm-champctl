@@ -77,14 +77,21 @@ see. Asking for nothing means the token can do nothing but talk and answer.
 Under bot permissions, **Send Messages** is enough. Open the generated URL and
 add it to the server.
 
-## 3. Collect the two ids
+If you will run `announce`, check the announcement channel too. Most leagues
+stop members posting there, and a channel-level deny beats the server-wide
+grant — so give the bot's role **Send Messages** on that channel itself, or its
+posts fail with `Missing Permissions`.
+
+## 3. Collect the ids
 
 In Discord, **User Settings → Advanced → Developer Mode** on. Then right-click:
 
 - the **server** → Copy Server ID — this is `guildId`
 - the **admin channel** → Copy Channel ID — this is `adminChannelId`
+- the **announcement channel**, if you will run `announce` → Copy Channel ID —
+  this is `announceChannelId`
 
-Both are 17–20 digits. A name or a link will fail at post time, on a job nobody
+All are 17–20 digits. A name or a link will fail at post time, on a job nobody
 is watching.
 
 Make the admin channel one the league cannot read. Claim announcements name
@@ -93,6 +100,11 @@ entry list — none of it is secret, since the ACSM export is public, but "these
 three people are about to be dropped from the grid" is not a thing to say in
 front of everyone before anyone has looked at it.
 
+The announcement channel is the opposite: the one drivers read. The two never
+stand in for each other. A command whose channel is not set refuses rather
+than borrowing the other one, since the only way to get that wrong is to post
+the entry list to the league.
+
 ## 4. Configure the profile
 
 In your league profile (`profiles/batl.json`, or your own):
@@ -100,6 +112,7 @@ In your league profile (`profiles/batl.json`, or your own):
 ```json
 "discord": {
   "adminChannelId": "1234567890123456789",
+  "announceChannelId": "9876543210987654321",
   "guildId": "1234567890123456789",
   "livery": {
     "channelIds": ["1234567890123456789"],
@@ -245,7 +258,7 @@ As a driver, in a channel the clamp allows:
 Replies are ephemeral — only the driver sees them. Refusals name what was wrong
 with the file, so a driver can fix it without an admin.
 
-## 10. The nightly report
+## 10. The nightly report and the weekly announcement
 
 Separate from all of the above and worth having regardless: `champctl-bot
 report` posts what gridmom found into `adminChannelId`. It is a one-shot command
@@ -261,6 +274,22 @@ reporting, `1` warnings only, `2` at least one error or a championship that
 could not be read, `3` the run itself failed. `--dry-run` prints what it would
 post and talks to nobody.
 
+`champctl-bot announce` posts the next round — track, quali time, format and a
+link to the championship — into `announceChannelId`. Also one-shot and also
+for cron: run it once a week and it takes the next round with no results whose
+quali hasn't gone by, so the entry needs no round number.
+
+```sh
+champctl-bot announce <championship-id> --dry-run
+```
+
+It exits `0` when it posts, and also when the season has nothing left, so a
+weekly entry doesn't start failing after the last race. It exits `2` for a
+round given by number that has been raced, has gone by or doesn't exist, and
+for a championship it can't read. ACSM has its own Discord integration and
+may already say some of this; `discord.announce` in the profile turns parts
+off, and the README lists them.
+
 ## When it doesn't work
 
 | What you see | What it is |
@@ -268,6 +297,9 @@ post and talks to nobody.
 | `Could not register commands in guild …` | The bot was invited without `applications.commands`. Re-invite it with the scope ticked (step 2). |
 | `No Discord server. Set discord.guildId …` | `guildId` missing from the profile. `serve` refuses before connecting rather than logging in and having nowhere to publish. |
 | `This profile has no discord.livery section …` | Add one. An empty object works but accepts uploads from anyone, anywhere. |
+| `No Discord channel. Set discord.announceChannelId …` | `announce` has no channel set. It never borrows `adminChannelId`; add the announcement channel's id (step 3). |
+| `No Discord channel <id>. Check …` | The id is wrong, or the bot is not in that server or cannot see that channel. The message names the setting the id came from. |
+| `Missing Permissions` from `announce` | The announcement channel stops members posting. Give the bot's role Send Messages on that channel (step 2). |
 | `/livery` missing in Discord | Registered in a different guild, or the bot is not in this server. Re-run `--register-only` and read the guild id it prints. |
 | Uploads accepted, nothing on the server | The drain is not running, or it is on a different `CHAMPCTL_STORE`. Check `champctl-liveries <id> --drain` by hand. |
 | Drivers told an admin will apply it, with `autoApply` on | No drain heartbeat in the last 30 minutes. The watcher is not running (step 7). |

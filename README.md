@@ -703,8 +703,8 @@ Run it nightly, from cron or a timer, and point it at an admin channel: findings
 quote the entry list, so they name drivers.
 
 **Setup** is [`docs/discord-bot-setup.md`](docs/discord-bot-setup.md) — one copy
-of the steps, since the report and `/livery` need the same application and the
-same token. The short version: create an application, invite it with **Send
+of the steps, since the report, `announce` and `/livery` need the same
+application and the same token. The short version: create an application, invite it with **Send
 Messages**, and put its token in `CHAMPCTL_DISCORD_TOKEN`. A report needs no
 intents and no `guildId`; it reads nothing from Discord.
 
