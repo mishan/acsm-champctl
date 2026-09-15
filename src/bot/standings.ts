@@ -101,10 +101,10 @@ export function parseStandings(body: unknown): StandingsClass[] | undefined {
   if (body === null || typeof body !== "object") return undefined
 
   const root = body as Record<string, unknown>
-  const classList = firstArray(root, CLASS_LIST_KEYS)
+  const found = firstArrayEntry(root, CLASS_LIST_KEYS)
 
   // A flat array of rows, with no class layer at all.
-  if (classList === undefined) {
+  if (found === undefined) {
     return asFlat(Array.isArray(body) ? body : firstArray(root, ["Results", "results"]))
   }
 
@@ -114,17 +114,31 @@ export function parseStandings(body: unknown): StandingsClass[] | undefined {
   // it produced one empty class per driver, which parses as a *success* with
   // nothing in it: no warning, no fall back to the export, and a weekly cron
   // entry that posts nothing and exits 0.
-  return asClasses(classList) ?? asFlat(classList)
+  //
+  // Only `Standings`, though. `Classes` names one layer, and a list under it
+  // that isn't classes is a shape champctl doesn't know: retried as rows,
+  // `{"Classes": [{"Name": "GT3", "Total": 12}]}` became a table of drivers
+  // called GT3 and GT4.
+  const [key, classList] = found
+  const namesBothLayers = key === "Standings" || key === "standings"
+  return asClasses(classList) ?? (namesBothLayers ? asFlat(classList) : undefined)
 }
 
 const CLASS_LIST_KEYS = ["Classes", "classes", "Standings", "standings"] as const
 const ROW_LIST_KEYS = ["Standings", "standings", "Results", "results", "Rows", "rows"] as const
 
-/** A list of rows with no class layer above it, as the single unnamed class. */
+/**
+ * A list of rows with no class layer above it, as the single unnamed class.
+ *
+ * An empty list is an answer — nobody has scored yet — for the reason the
+ * comment in `asClasses` gives. Refused here, week one at a league answering
+ * in this shape read as an unrecognised response, sent the operator off to run
+ * recon, and exited 2 when the export had nothing raced to fall back on.
+ */
 function asFlat(raw: readonly unknown[] | undefined): StandingsClass[] | undefined {
   if (!raw) return undefined
   const rows = parseRows(raw)
-  return rows && rows.length > 0 ? [{ name: "", rows }] : undefined
+  return rows ? [{ name: "", rows }] : undefined
 }
 
 /** A list of classes, or undefined if that is not what this list is. */
@@ -168,15 +182,32 @@ function parseRows(raw: readonly unknown[]): StandingsRow[] | undefined {
 
     const points = firstNumber(r, ["Points", "points", "Total", "total"])
     if (driver === undefined || points === undefined) return undefined
-    rows.push({ position: 0, driver, points })
+    const position = firstNumber(r, ["Position", "position", "Pos", "pos"])
+    rows.push({ position: position ?? 0, driver, points })
   }
-  return ranked(rows)
+
+  // ACSM's own positions and order, when every row carries one. Re-ranking by
+  // points threw away whatever tie-break the standings page uses, so two
+  // drivers level on points could post in the opposite order to the page, and
+  // numbered as tied where the page separates them. Anything short of a
+  // whole number from 1 on every row falls back to ranking, since the shape
+  // has never been measured and a guessed position is worse than none.
+  const positioned = rows.every((r) => Number.isInteger(r.position) && r.position >= 1)
+  return positioned ? [...rows].sort((a, b) => a.position - b.position) : ranked(rows)
 }
 
 function firstArray(o: Record<string, unknown>, keys: readonly string[]): unknown[] | undefined {
+  return firstArrayEntry(o, keys)?.[1]
+}
+
+/** The first of `keys` holding an array, and which key it was. */
+function firstArrayEntry(
+  o: Record<string, unknown>,
+  keys: readonly string[],
+): [string, unknown[]] | undefined {
   for (const k of keys) {
     const v = o[k]
-    if (Array.isArray(v)) return v
+    if (Array.isArray(v)) return [k, v]
   }
   return undefined
 }

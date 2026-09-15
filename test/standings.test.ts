@@ -1,7 +1,7 @@
 /**
  * Standings, from ACSM if it will say and from the export if not.
  *
- * The tests that matter most here are the *refusals*. Four things about ACSM's
+ * The tests that matter most here are the *refusals*. Five things about ACSM's
  * scoring have never been measured against a real manager, and each would
  * change every number in the table — so the fallback has to decline rather than
  * produce something plausible. A wrong standings table posted to a league is
@@ -311,7 +311,56 @@ describe("parsing whatever standings.json answers with", () => {
 
   it("reads a flat array with no class layer", () => {
     const parsed = parseStandings([{ DriverName: "ada", Points: 43 }])
-    expect(parsed?.[0]?.rows).toHaveLength(1)
+    expect(parsed).toEqual([{ name: "", rows: [{ position: 1, driver: "ada", points: 43 }] }])
+  })
+
+  it("reads an empty flat answer as nobody having scored, not as a shape it doesn't know", () => {
+    // Week one at a league answering in this shape. Refused, it warned about an
+    // unrecognised response, and with nothing raced to fall back on, exited 2.
+    const empty = [{ name: "", rows: [] }]
+    expect(parseStandings([])).toEqual(empty)
+    expect(parseStandings({ Standings: [] })).toEqual(empty)
+  })
+
+  it("does not read a list of non-classes under Classes as driver rows", () => {
+    // Only `Standings` names both layers. Retried as rows, this was a table of
+    // two drivers called GT3 and GT4.
+    expect(
+      parseStandings({
+        Classes: [
+          { Name: "GT3", Total: 12 },
+          { Name: "GT4", Total: 8 },
+        ],
+      }),
+    ).toBeUndefined()
+  })
+
+  it("keeps ACSM's own positions and order when it gives them", () => {
+    // Re-ranked by points and then name, amy went above zed and both came out
+    // tied first — whatever the standings page said about who is ahead.
+    const parsed = parseStandings({
+      Classes: [
+        {
+          Name: "RSS",
+          Standings: [
+            { DriverName: "zed", Points: 40, Position: 1 },
+            { DriverName: "amy", Points: 40, Position: 2 },
+          ],
+        },
+      ],
+    })
+    expect(parsed?.[0]?.rows).toEqual([
+      { position: 1, driver: "zed", points: 40 },
+      { position: 2, driver: "amy", points: 40 },
+    ])
+  })
+
+  it("ranks by points when a position is missing from any row", () => {
+    const parsed = parseStandings([
+      { DriverName: "zed", Points: 30, Position: 1 },
+      { DriverName: "amy", Points: 40 },
+    ])
+    expect(parsed?.[0]?.rows.map((r) => r.driver)).toEqual(["amy", "zed"])
   })
 
   it("returns undefined rather than guessing at a shape it doesn't know", () => {
