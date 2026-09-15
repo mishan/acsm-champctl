@@ -74,6 +74,7 @@ Options:
 Exit codes:
   0  nothing worth reporting / posted fine
   1  warnings only                                                  [report]
+     the two standings sources disagreed, or ACSM's was unreadable  [standings]
   2  at least one error, or something couldn't be read
   3  the run itself failed
 
@@ -582,8 +583,22 @@ export async function runStandings(
   post: Post,
 ): Promise<number> {
   const id = requireChampionshipId(args, "standings")
-  const championship = await reader.exportChampionship(id)
-  const subject = championship.Name?.trim() || id
+
+  let championship: Championship | undefined
+  try {
+    championship = await reader.exportChampionship(id)
+  } catch (e) {
+    // Under --source endpoint the export is only for the championship's name,
+    // and losing it costs the heading, not the table. Anywhere else it is what
+    // the standings come from or are checked against, so this is 2 — "couldn't
+    // be read" — rather than the 3 that escaping to runCli made it.
+    if (args.source !== "endpoint") {
+      process.stderr.write(`Couldn't read championship ${id}: ${asMessage(e)}\n`)
+      return 2
+    }
+    process.stderr.write(`Couldn't read championship ${id} (${asMessage(e)}); naming it by id.\n`)
+  }
+  const subject = championship?.Name?.trim() || id
 
   const resolved = await resolveStandings(reader, championship, id, args, baseUrl)
   if (!resolved) {
@@ -598,14 +613,18 @@ export async function runStandings(
   // read the same as a bug.
   if (messages.length === 0) {
     process.stdout.write(`Nobody has scored in ${subject} yet, so there is nothing to post.\n`)
-    return 0
+    return resolved.warned ? 1 : 0
   }
 
   await post(messages)
   process.stdout.write(
     `Posted ${messages.length} ${messages.length === 1 ? "message" : "messages"} from the ${resolved.source}.\n`,
   )
-  return 0
+  // 1 when the post went out but something about it needs a person: the two
+  // sources disagreed, or ACSM answered in a shape champctl can't read. Said
+  // only on stderr, it exited 0, and from cron nobody sees stderr — so the
+  // cross-check that keeps the fallback honest was reporting to no one.
+  return resolved.warned ? 1 : 0
 }
 
 /**
@@ -614,33 +633,38 @@ export async function runStandings(
  * Under `auto` the endpoint wins and the export is computed anyway, purely so
  * the two can be compared — see `compareStandings` for why that is worth a
  * request champctl already has cached. The disagreement goes to stderr, never
- * to the channel.
+ * to the channel, and into `warned`, which is the exit code.
  */
 export async function resolveStandings(
   reader: AcsmReader,
-  championship: Championship,
+  championship: Championship | undefined,
   id: string,
   args: Args,
   baseUrl: string,
-): Promise<Standings | undefined> {
+): Promise<ResolvedStandings | undefined> {
   // Undefined means the export is not on the table at all, which only
-  // `--source endpoint` asks for. Every other path either answers from it or
-  // checks the endpoint against it, so there is no "the export was missing"
-  // case below — the export is the one thing here that cannot fail to exist.
-  const computed = args.source === "endpoint" ? undefined : computeStandings(championship)
+  // `--source endpoint` asks for — the one case where `runStandings` carries on
+  // without the export, too. Every other path either answers from it or checks
+  // the endpoint against it.
+  const computed =
+    args.source === "endpoint" || championship === undefined
+      ? undefined
+      : computeStandings(championship)
 
   if (computed && args.source === "export") {
     if (isUnscorable(computed)) {
       process.stderr.write(`champctl can't work these standings out: ${computed.reason}\n`)
       return undefined
     }
-    return { source: "export", classes: computed }
+    return { source: "export", classes: computed, warned: false }
   }
 
+  let warned = false
   let fromEndpoint: StandingsClass[] | undefined
   try {
     fromEndpoint = parseStandings(await reader.standings(id))
     if (!fromEndpoint) {
+      warned = true
       // The endpoint answered with something champctl doesn't recognise. Worth
       // saying loudly: its shape has never been measured, and this is the only
       // moment anyone would find out it changed.
@@ -669,18 +693,24 @@ export async function resolveStandings(
     } else {
       for (const line of compareStandings(fromEndpoint, computed)) {
         process.stderr.write(`disagreement: ${line}\n`)
+        warned = true
       }
     }
   }
 
-  if (fromEndpoint) return { source: "endpoint", classes: fromEndpoint }
+  if (fromEndpoint) return { source: "endpoint", classes: fromEndpoint, warned }
   if (!computed) return undefined
 
   if (isUnscorable(computed)) {
     process.stderr.write(`champctl can't work these standings out either: ${computed.reason}\n`)
     return undefined
   }
-  return { source: "export", classes: computed }
+  return { source: "export", classes: computed, warned }
+}
+
+/** Standings to post, and whether anything about them needs a person to look. */
+export interface ResolvedStandings extends Standings {
+  warned: boolean
 }
 
 /**
