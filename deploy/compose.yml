@@ -1,0 +1,123 @@
+# champctl in production. docs/deployment.md walks through it.
+#
+#   docker compose up -d                        the web UI
+#   docker compose --profile discord up -d      plus the bot, the livery drain
+#                                               and the upload server
+#   docker compose run --rm report              one-shot jobs, from cron
+#
+# Every process gets only the secret it needs: the web UI holds none (each
+# admin logs in with their own ACSM account), the bot holds the Discord token,
+# the drain holds the ACSM account, and the upload server holds neither. Keep
+# it that way when adding a service — the split is the reason there are four.
+
+name: champctl
+
+x-champctl: &champctl
+  image: ${CHAMPCTL_IMAGE:-champctl:local}
+  build:
+    context: ..
+  init: true
+  environment:
+    CHAMPCTL_PROFILE: /etc/champctl/profile.json
+    CHAMPCTL_PITS: /etc/champctl/track-pits.json
+    # The bot, the drain and the upload server must open the same file.
+    CHAMPCTL_STORE: /var/lib/champctl/data/liveries/liveries.db
+  volumes:
+    - champctl-data:/var/lib/champctl
+    - ./config:/etc/champctl:ro
+
+# One-shot jobs never restart; cron runs them again tomorrow.
+x-job: &job
+  <<: *champctl
+  profiles: [jobs]
+  restart: "no"
+
+services:
+  serve:
+    <<: *champctl
+    restart: unless-stopped
+    command: [champctl-serve, --host, 0.0.0.0, --trust-proxy]
+    # Loopback by default: the reverse proxy is what faces people. Setting this
+    # to a LAN address is for a proxy on another machine, and --trust-proxy
+    # means whatever can reach this port can claim any client address.
+    ports:
+      - ${CHAMPCTL_SERVE_LISTEN:-127.0.0.1:3000}:3000
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+
+  bot:
+    <<: *champctl
+    profiles: [discord]
+    restart: unless-stopped
+    command: [champctl-bot, serve]
+    env_file: bot.env
+
+  # Exits 3 when ACSM refuses the credentials, rather than retrying a bad
+  # password forever — so a restart loop here means acsm.env, not the network.
+  drain:
+    <<: *champctl
+    profiles: [discord]
+    restart: unless-stopped
+    command:
+      - champctl-liveries
+      - ${CHAMPCTL_LIVERY_CHAMPIONSHIP:-}
+      - --drain
+      - --push
+      - --watch
+    env_file: acsm.env
+    # Lets a pass that is mid-push finish before the container is killed.
+    stop_grace_period: 2m
+
+  upload:
+    <<: *champctl
+    profiles: [discord]
+    restart: unless-stopped
+    command:
+      - champctl-upload
+      - --host
+      - 0.0.0.0
+      - --cache-dir
+      - /var/lib/champctl/carsets
+    ports:
+      - ${CHAMPCTL_UPLOAD_LISTEN:-127.0.0.1:8477}:8477
+
+  # Each job's command is fixed in its entrypoint, so options given to
+  # `docker compose run` are added to it rather than replacing it.
+  report:
+    <<: *job
+    entrypoint: [champctl-bot, report]
+    env_file: bot.env
+
+  announce:
+    <<: *job
+    entrypoint: [champctl-bot, announce]
+    env_file: bot.env
+
+  standings:
+    <<: *job
+    entrypoint: [champctl-bot, standings]
+    env_file: bot.env
+
+  archive:
+    <<: *job
+    entrypoint: [champctl-archive, run]
+
+  # Anything else, holding no secrets: `docker compose run --rm cli gridmom list`.
+  cli:
+    <<: *job
+
+  # The same with the ACSM account, for finalize, championship --import and
+  # the livery admin commands. Prompts need a terminal, which `run` gives.
+  admin:
+    <<: *job
+    env_file: acsm.env
+
+volumes:
+  champctl-data:

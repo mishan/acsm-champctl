@@ -39,6 +39,9 @@ From a checkout, `npm run gridmom -- <args>` is the same thing.
 Every command takes `--profile` and `--base-url`; `--help` on any of them is
 authoritative.
 
+To run it for a league — the web UI, the bot and the nightly jobs, in Docker
+behind a reverse proxy — see [docs/deployment.md](docs/deployment.md).
+
 ## gridmom
 
 Checks a championship and says what's wrong in plain sentences. Reading a
@@ -49,8 +52,9 @@ gridmom check <championship-id>     check a championship on the league's ACSM
 gridmom check --file <export.json>  check an export already on disk
 gridmom list                        list championships on the league's ACSM
 
-  --profile <id|path>   league profile (default: batl)
-  --pits <path>         track pit table JSON (default: data/track-pits.json)
+  --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
+  --pits <path>         track pit table JSON
+                        (default: $CHAMPCTL_PITS, else data/track-pits.json)
   --format <fmt>        text | json | discord   (default: text)
   --min <severity>      ERROR | WARN | INFO     (default: INFO, discord: WARN)
   --suppress <codes>    comma-separated finding codes or prefixes to hide
@@ -292,7 +296,7 @@ champctl-liveries <championship-id> --drain [--push] [--watch]
                         (default: data/liveries/liveries.db)
   --no-store            apply without recording
   --restart <round>     restart that round's looping practice server afterwards
-  --profile <id|path>   league profile (default: batl)
+  --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
   --base-url <url>      override the profile's ACSM base URL
   --push                actually write. Without it this only previews.
   --yes                 skip the confirmation prompt
@@ -584,8 +588,9 @@ champctl-serve --port 8080 --host 0.0.0.0
 ```
   --port <n>            port to listen on (default: 3000, or $PORT)
   --host <addr>         address to bind (default: 127.0.0.1)
-  --profile <id|path>   league profile (default: batl)
-  --pits <path>         track pit table (default: data/track-pits.json)
+  --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
+  --pits <path>         track pit table
+                        (default: $CHAMPCTL_PITS, else data/track-pits.json)
   --base-url <url>      override the profile's ACSM base URL
   --client <dir>        built client to serve (default: dist/client)
   --no-cache            bypass the on-disk response cache
@@ -635,14 +640,15 @@ champctl-bot report                       check every championship, post what's 
 champctl-bot announce <champ-id> [round]  post the next round's details
 champctl-bot standings <champ-id>         post the championship standings
 
-  --profile <id|path>   league profile (default: batl)
+  --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
   --channel <id>        override the channel this command posts to
   --min <severity>      ERROR | WARN | INFO     (default: WARN)   [report]
   --suppress <codes>    comma-separated finding codes or prefixes  [report]
   --all                 include championships already fully raced   [report]
   --source <where>      endpoint | export | auto  (default: auto) [standings]
   --dry-run             print what would be posted; talk to nobody
-  --pits <path>         track pit table (default: data/track-pits.json)
+  --pits <path>         track pit table
+                        (default: $CHAMPCTL_PITS, else data/track-pits.json)
   --base-url <url>      override the profile's ACSM base URL
   --no-cache            bypass the on-disk response cache
   --now <iso>           pretend it is this time           [report, announce]
@@ -916,6 +922,11 @@ by `--store`. The three processes must open the same file — the queue is the
 only thing they share and it is what the credential split is built on — so put
 it in the environment file rather than trusting three working directories to
 agree.
+
+**Defaults for every command.** `CHAMPCTL_PROFILE` and `CHAMPCTL_PITS` stand
+in for `--profile` and `--pits` when those aren't given, so a deployment names
+its league once. A `CHAMPCTL_PITS` that can't be read is an error, as an
+explicit `--pits` is; only the built-in default may be missing.
 
 **Credentials.** `CHAMPCTL_USERNAME` and `CHAMPCTL_PASSWORD`, read from the
 environment and never written to disk. Only the write *commands* need them —

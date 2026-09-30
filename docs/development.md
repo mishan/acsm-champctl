@@ -25,6 +25,7 @@ src/
   cli/         the command-line entry points, over a shared args module
 client/        the React finalize screen, built by Vite into dist/client
 docker/        throwaway ACSM for recon and live tests
+deploy/        production compose file; see docs/deployment.md
 scripts/recon/ form and round-trip recon against the harness
 docs/          what the ACSM source actually says about the write path
 profiles/      league baselines — batl.json ships here
