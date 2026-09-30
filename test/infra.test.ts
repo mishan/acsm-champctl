@@ -168,6 +168,20 @@ describe("HTTP reader", () => {
   })
 
   /**
+   * ac.batlracing.com after its Premium upgrade: the endpoint now answers a
+   * logged-out request with a 302 to "/", fetch follows it, and the home page
+   * arrives as HTML. The listing page is still served, so the scrape is right.
+   */
+  it("falls back to the listing page when the endpoint redirects to HTML", async () => {
+    const r = reader(async (url) =>
+      String(url).includes("list.json")
+        ? new Response("<html>home</html>", { status: 200 })
+        : new Response(`<a href="/championship/${A}">x</a>`, { status: 200 }),
+    )
+    await expect(r.listChampionships()).resolves.toEqual([{ ID: A, Name: "x" }])
+  })
+
+  /**
    * The failure the fallback must not swallow. With Public Access off the
    * endpoint answers with login HTML, which #getJson reports usefully — and
    * scraping instead reads *another* login page, finds no championships, and

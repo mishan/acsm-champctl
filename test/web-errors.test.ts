@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from "vitest"
 
-import { AcsmError } from "../src/acsm/client.js"
+import { AcsmError, AcsmNotJsonError } from "../src/acsm/client.js"
 import { AcsmAuthError, PasswordChangeRequiredError } from "../src/acsm/session.js"
 import { EntryListChangedError, PartialWriteError } from "../src/finalize/apply.js"
 import { FinalizeError, type FinalizePlan } from "../src/finalize/plan.js"
@@ -173,6 +173,22 @@ describe("failures that came from ACSM", () => {
     expect(d.status).toBe(502)
     expect(d.body.error.message).not.toMatch(/ECONNREFUSED|10\.0\.0\.5|acsm\.internal/)
     expect(d.body.error.message).toMatch(/couldn't reach Server Manager/)
+  })
+})
+
+describe("a page where JSON was expected", () => {
+  it("does not call a manager that answered unreachable", () => {
+    // No status, like a transport failure, because the redirect was followed
+    // and the page came back 200. Reading that as "couldn't reach" sent
+    // someone checking a manager that was up and answering.
+    const d = describeError(
+      new AcsmNotJsonError(
+        "Response from /api/championships/list.json was not JSON (got HTML — is Public Access still enabled?)",
+      ),
+    )
+    expect(d.status).toBe(502)
+    expect(d.body.error.message).not.toMatch(/couldn't reach/)
+    expect(d.body.error.message).toMatch(/Public Access/)
   })
 })
 
