@@ -621,6 +621,9 @@ function fakeReader(options: FakeOptions): AcsmReader & { fetched: string[] } {
     async standings() {
       throw new AcsmError("not used")
     },
+    async championshipPage() {
+      throw new AcsmError("not used")
+    },
     async healthcheck() {
       return { ok: true }
     },

@@ -12,7 +12,7 @@
 
 import { readInstalledContent, type InstalledContent } from "./content.js"
 import { walkChampionships } from "./listing.js"
-import { exportPath, standingsPath } from "./paths.js"
+import { championshipPath, exportPath, standingsPath } from "./paths.js"
 import type { AcsmHealthcheck, Championship, ChampionshipSummary } from "./types.js"
 import { RateLimiter, type RateLimiterOptions } from "./rate-limit.js"
 
@@ -40,6 +40,11 @@ export interface AcsmReader {
    */
   exportChampionshipRaw(id: string): Promise<Buffer>
   standings(id: string): Promise<unknown>
+  /**
+   * The championship's public page, as HTML. Its standings tab is the fallback
+   * for a `standings.json` that wants a login — see `parseStandingsPage`.
+   */
+  championshipPage(id: string): Promise<string>
   healthcheck(): Promise<AcsmHealthcheck>
   /**
    * Cars and tracks installed on the server, with the names people know them
@@ -220,6 +225,11 @@ export class HttpAcsmReader implements AcsmReader {
 
   async standings(id: string): Promise<unknown> {
     return this.#getJson(standingsPath(id))
+  }
+
+  async championshipPage(id: string): Promise<string> {
+    // Not cached, like the other scrapes: the cache holds decoded JSON.
+    return (await this.#request(championshipPath(id))).toString("utf8")
   }
 
   async healthcheck(): Promise<AcsmHealthcheck> {
@@ -428,6 +438,10 @@ export class StaticAcsmReader implements AcsmReader {
 
   async standings(): Promise<unknown> {
     throw new AcsmError("Standings are not available from a static reader")
+  }
+
+  async championshipPage(): Promise<string> {
+    throw new AcsmError("Championship pages are not available from a static reader")
   }
 
   async healthcheck(): Promise<AcsmHealthcheck> {

@@ -10,7 +10,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { StaticAcsmReader, type AcsmReader } from "../src/acsm/client.js"
+import { AcsmNotJsonError, StaticAcsmReader, type AcsmReader } from "../src/acsm/client.js"
 import type { Championship, ChampionshipEvent, ResultEntry } from "../src/acsm/types.js"
 import { standingsMessage } from "../src/bot/message.js"
 import { MESSAGE_LIMIT } from "../src/bot/transport.js"
@@ -19,6 +19,7 @@ import {
   computeStandings,
   isUnscorable,
   parseStandings,
+  parseStandingsPage,
   ranked,
   type StandingsClass,
 } from "../src/bot/standings.js"
@@ -505,6 +506,76 @@ describe("the cross-check between the two sources", () => {
   })
 })
 
+/**
+ * A championship page shaped like BATL's manager renders one, with made-up
+ * drivers. The `Rating` column and its markup are there because the real page
+ * has them, and a parser reading columns by position would trip on them.
+ */
+function standingsPage({ classes }: { classes: boolean }): string {
+  const rating = `<td><a class="acsr-link" href="#"><span class="badge">A*</span><span class="badge">5000</span></a></td>`
+  const row = (pos: number, driver: string, points: number, cls?: [string, number]) =>
+    `<tr style="">${cls ? `<td rowspan="${cls[1]}">${cls[0]}</td>` : ""}<td>${pos}</td>` +
+    `<td>${driver}</td>${rating}<td><span>${points}</span></td></tr>`
+  const head = `<thead><tr>${classes ? "<th>Class</th>" : ""}<th>#</th><th>Driver</th><th class="sorter-acsr">Rating</th><th>Points</th></tr></thead>`
+  const body = classes
+    ? row(1, "ada", 60, ["GT3", 2]) + row(2, "bo", 45) + row(1, "cy", 50, ["GT4", 1])
+    : row(1, "ada", 60) + row(2, "bo", 45) + row(3, "cy", 30)
+  return (
+    `<html><body><ul class="nav nav-tabs"><li><a id="drivers-tab" href="#drivers">Driver Standings</a></li></ul>` +
+    `<div class="tab-content"><div class="tab-pane" id="drivers"><div class="table-responsive">` +
+    `<table class="table">${head}<tbody>${body}</tbody></table></div></div>` +
+    `<div class="tab-pane" id="teams"><table><thead><tr><th>#</th><th>Team</th><th>Points</th></tr></thead></table></div>` +
+    `</div></body></html>`
+  )
+}
+
+describe("reading standings off the championship page", () => {
+  it("reads a single-class table by its headings", () => {
+    expect(parseStandingsPage(standingsPage({ classes: false }))).toEqual([
+      {
+        name: "",
+        rows: [
+          { position: 1, driver: "ada", points: 60 },
+          { position: 2, driver: "bo", points: 45 },
+          { position: 3, driver: "cy", points: 30 },
+        ],
+      },
+    ])
+  })
+
+  it("carries a class cell down the rows it spans", () => {
+    // ACSM renders the class once, with rowspan, and the rows below it start at
+    // the position column. Read by position, "2" became a class.
+    expect(parseStandingsPage(standingsPage({ classes: true }))).toEqual([
+      {
+        name: "GT3",
+        rows: [
+          { position: 1, driver: "ada", points: 60 },
+          { position: 2, driver: "bo", points: 45 },
+        ],
+      },
+      { name: "GT4", rows: [{ position: 1, driver: "cy", points: 50 }] },
+    ])
+  })
+
+  it("calls a page with no standings tab absent, which is not a warning", () => {
+    // A championship nobody has raced in yet renders without the tab at all.
+    expect(parseStandingsPage("<html><body><div id='entrants'></div></body></html>")).toBe("absent")
+  })
+
+  it.each([
+    ["a heading it doesn't know", (h: string) => h.replace("<th>Points</th>", "<th>Pts</th>")],
+    ["a points cell that isn't a number", (h: string) => h.replace("<span>45</span>", "—")],
+    [
+      "a row that spans columns",
+      (h: string) => h.replace("<tbody>", '<tbody><tr><td colspan="4">No results</td></tr>'),
+    ],
+    ["a second table", (h: string) => h.replace("</table>", "</table><table></table>")],
+  ])("refuses %s rather than guessing", (_, alter) => {
+    expect(parseStandingsPage(alter(standingsPage({ classes: false })))).toBe("unrecognised")
+  })
+})
+
 describe("where standings come from", () => {
   let captured = ""
 
@@ -520,14 +591,18 @@ describe("where standings come from", () => {
     vi.restoreAllMocks()
   })
 
-  /** A reader whose `standings` does whatever the test wants and nothing else. */
-  const readerWhose = (standings: () => Promise<unknown>): AcsmReader => {
+  /** A reader whose `standings` and page do whatever the test wants and nothing else. */
+  const readerWhose = (
+    standings: () => Promise<unknown>,
+    championshipPage: () => Promise<string> = () => new StaticAcsmReader([]).championshipPage(),
+  ): AcsmReader => {
     const inner = new StaticAcsmReader([])
     return {
       listChampionships: () => inner.listChampionships(),
       exportChampionship: (id: string) => inner.exportChampionship(id),
       exportChampionshipRaw: (id: string) => inner.exportChampionshipRaw(id),
       standings,
+      championshipPage,
       healthcheck: () => inner.healthcheck(),
       listContent: () => inner.listContent(),
     }
@@ -571,6 +646,53 @@ describe("where standings come from", () => {
     expect(out?.source).toBe("export")
     expect(out?.classes[0]?.rows).toHaveLength(3)
     expect(captured).toContain("shape champctl doesn't recognise")
+  })
+
+  /**
+   * BATL after the Premium upgrade: standings.json redirects to the home page
+   * without a login, which the bot never has, and the export fallback refuses
+   * a reversed-grid format. Before the page was read, that combination posted
+   * nothing every week.
+   */
+  it("reads the championship page when standings.json wants a login", async () => {
+    const redirected = async (): Promise<unknown> => {
+      throw new AcsmNotJsonError("Response from standings.json was not JSON")
+    }
+    const page = async () => standingsPage({ classes: false })
+    const args = parseArgs(["standings", "abc"])
+    const out = await resolveStandings(
+      readerWhose(redirected, page),
+      scorable({ IgnoreXWorstEvents: 1 }),
+      "abc",
+      args,
+      url,
+    )
+
+    expect(out?.source).toBe("page")
+    expect(out?.warned).toBe(false)
+    expect(out?.classes[0]?.rows.map((r) => r.driver)).toEqual(["ada", "bo", "cy"])
+  })
+
+  it("counts the page as Server Manager's own standings under --source endpoint", async () => {
+    const args = parseArgs(["standings", "abc", "--source", "endpoint"])
+    const out = await resolveStandings(
+      readerWhose(gone, async () => standingsPage({ classes: false })),
+      undefined,
+      "abc",
+      args,
+      url,
+    )
+    expect(out?.source).toBe("page")
+  })
+
+  it("warns about a page it can't read, and falls back to the export", async () => {
+    const page = async () => standingsPage({ classes: false }).replace("Points", "Pts")
+    const args = parseArgs(["standings", "abc"])
+    const out = await resolveStandings(readerWhose(gone, page), scorable(), "abc", args, url)
+
+    expect(out?.source).toBe("export")
+    expect(out?.warned).toBe(true)
+    expect(captured).toContain("aren't laid out the way champctl expects")
   })
 
   it("says the cross-check couldn't run rather than staying quiet", async () => {
@@ -620,6 +742,7 @@ describe("what the command says when there is nothing to post", () => {
       exportChampionship: (id: string) => inner.exportChampionship(id),
       exportChampionshipRaw: (id: string) => inner.exportChampionshipRaw(id),
       standings: async () => ({ Classes: [{ Name: "RSS", Standings: [] }] }),
+      championshipPage: () => inner.championshipPage(),
       healthcheck: () => inner.healthcheck(),
       listContent: () => inner.listContent(),
     }
@@ -652,10 +775,13 @@ describe("the standings message", () => {
     expect(msg).toContain("Worked out from the championship export")
   })
 
-  it("says nothing extra when ACSM did the sums", () => {
-    const [msg] = standingsMessage("August 2026", { source: "endpoint", classes: [big(3)] })
-    expect(msg).not.toContain("Worked out from")
-  })
+  it.each(["endpoint", "page"] as const)(
+    "says nothing extra when ACSM did the sums (%s)",
+    (source) => {
+      const [msg] = standingsMessage("August 2026", { source, classes: [big(3)] })
+      expect(msg).not.toContain("Worked out from")
+    },
+  )
 
   it("splits a long table rather than posting nothing", () => {
     const messages = standingsMessage("August 2026", { source: "endpoint", classes: [big(60)] })

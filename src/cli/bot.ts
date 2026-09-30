@@ -31,8 +31,8 @@ import {
   computeStandings,
   isUnscorable,
   parseStandings,
+  parseStandingsPage,
   type Standings,
-  type StandingsClass,
 } from "../bot/standings.js"
 import { BotError, RecordingTransport, type DiscordTransport } from "../bot/transport.js"
 import type { Severity } from "../gridmom/finding.js"
@@ -62,6 +62,8 @@ Options:
   --suppress <codes>    comma-separated finding codes or prefixes  [report]
   --all                 include championships already fully raced   [report]
   --source <where>      endpoint | export | auto  (default: auto) [standings]
+                        endpoint is Server Manager's own standings: standings.json,
+                        else the championship page's standings tab
   --dry-run             print what would be posted; talk to nobody
   --store <path>        queue, claims and tokens, shared with champctl-liveries
                         (default: $CHAMPCTL_STORE, else data/liveries/liveries.db)
@@ -660,10 +662,11 @@ export async function resolveStandings(
   }
 
   let warned = false
-  let fromEndpoint: StandingsClass[] | undefined
+  let fromAcsm: Standings | undefined
   try {
-    fromEndpoint = parseStandings(await reader.standings(id))
-    if (!fromEndpoint) {
+    const parsed = parseStandings(await reader.standings(id))
+    if (parsed) fromAcsm = { source: "endpoint", classes: parsed }
+    else {
       warned = true
       // The endpoint answered with something champctl doesn't recognise. Worth
       // saying loudly: its shape has never been measured, and this is the only
@@ -674,16 +677,41 @@ export async function resolveStandings(
       )
     }
   } catch (e) {
-    // Premium-only, so a 404 here is an OSS build rather than a fault. What
-    // happens next depends on what this run is allowed to fall back to, and
-    // this said "using the export" even under `--source endpoint`, which
-    // forbids exactly that — describing the opposite of what it then did.
-    const next =
-      args.source === "endpoint" ? "and --source endpoint rules out the export" : "using the export"
-    process.stderr.write(`standings.json didn't answer (${asMessage(e)}); ${next}.\n`)
+    // A 404 is an OSS build, and on the Premium build a logged-out request is
+    // redirected to the home page — which the bot, holding no ACSM login by
+    // design, always is. Either way the championship page is next.
+    process.stderr.write(`standings.json didn't answer (${asMessage(e)}).\n`)
   }
 
-  if (fromEndpoint && computed) {
+  if (!fromAcsm) {
+    try {
+      const parsed = parseStandingsPage(await reader.championshipPage(id))
+      if (parsed === "unrecognised") {
+        warned = true
+        process.stderr.write(
+          `The standings on ${baseUrl}'s championship page aren't laid out the way champctl ` +
+            `expects, so they weren't used.\n`,
+        )
+      } else if (parsed !== "absent") {
+        fromAcsm = { source: "page", classes: parsed }
+      }
+    } catch (e) {
+      process.stderr.write(`The championship page didn't answer (${asMessage(e)}).\n`)
+    }
+  }
+
+  // What happens next depends on what this run is allowed to fall back to, and
+  // this once said "using the export" even under `--source endpoint`, which
+  // forbids exactly that — describing the opposite of what it then did.
+  if (!fromAcsm) {
+    process.stderr.write(
+      args.source === "endpoint"
+        ? "Server Manager's own standings weren't readable, and --source endpoint rules out the export.\n"
+        : "Server Manager's own standings weren't readable; using the export.\n",
+    )
+  }
+
+  if (fromAcsm && computed) {
     if (isUnscorable(computed)) {
       // Said out loud rather than passed over. The cross-check is the thing
       // keeping the fallback honest, so a run where it could not happen has to
@@ -691,14 +719,14 @@ export async function resolveStandings(
       // 2x20 is this case on every run.
       process.stderr.write(`not comparable: ${computed.reason}\n`)
     } else {
-      for (const line of compareStandings(fromEndpoint, computed)) {
+      for (const line of compareStandings(fromAcsm.classes, computed)) {
         process.stderr.write(`disagreement: ${line}\n`)
         warned = true
       }
     }
   }
 
-  if (fromEndpoint) return { source: "endpoint", classes: fromEndpoint, warned }
+  if (fromAcsm) return { ...fromAcsm, warned }
   if (!computed) return undefined
 
   if (isUnscorable(computed)) {

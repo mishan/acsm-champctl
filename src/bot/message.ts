@@ -140,7 +140,7 @@ export function standingsMessage(
   if (scored.length === 0) return []
 
   const footer =
-    standings.source === "endpoint"
+    standings.source !== "export"
       ? ""
       : "\n-# Worked out from the championship export, not read from Server Manager."
 

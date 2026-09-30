@@ -47,6 +47,8 @@
  * `npm run recon:standings` is what would close it.
  */
 
+import * as cheerio from "cheerio"
+
 import type { Championship, ChampionshipClass, ResultEntry } from "../acsm/types.js"
 import { classes, eventHasResults, events, eventSession, isZeroTime } from "../acsm/view.js"
 
@@ -62,7 +64,8 @@ export interface StandingsClass {
   rows: StandingsRow[]
 }
 
-export type StandingsSource = "endpoint" | "export"
+/** `endpoint` and `page` are both ACSM's own arithmetic; `export` is champctl's. */
+export type StandingsSource = "endpoint" | "page" | "export"
 
 export interface Standings {
   source: StandingsSource
@@ -194,6 +197,82 @@ function parseRows(raw: readonly unknown[]): StandingsRow[] | undefined {
   // has never been measured and a guessed position is worse than none.
   const positioned = rows.every((r) => Number.isInteger(r.position) && r.position >= 1)
   return positioned ? [...rows].sort((a, b) => a.position - b.position) : ranked(rows)
+}
+
+/**
+ * Standings off the championship page's "Driver Standings" tab.
+ *
+ * The fallback for `standings.json`, which the Premium build now sends to "/"
+ * without a login — and the bot holds no ACSM login by design. The page is the
+ * same arithmetic rendered for drivers, and Public Access serves it.
+ *
+ * Measured on BATL's manager across every championship on it: one table under
+ * `#drivers`, headed `#`, `Driver`, `Rating`, `Points`, and on a multi-class
+ * championship a leading `Class` column whose cell spans that class's rows.
+ * Columns are found by heading rather than by position because `Rating` comes
+ * from an optional integration.
+ *
+ * `absent` when there is no standings tab at all, which is a championship
+ * nobody has raced in yet (or a build that doesn't render one): nothing to
+ * say, and not a reason to warn. `unrecognised` when the tab is there and
+ * doesn't read as the shape above — a guessed table is worse than none.
+ */
+export function parseStandingsPage(html: string): StandingsClass[] | "absent" | "unrecognised" {
+  const $ = cheerio.load(html)
+  const pane = $("#drivers")
+  if (pane.length === 0) return "absent"
+  const tables = pane.find("table")
+  if (tables.length !== 1) return "unrecognised"
+
+  const headings = tables
+    .find("thead th")
+    .map((_, th) => $(th).text().trim())
+    .get()
+  const at = (name: string) => headings.indexOf(name)
+  const [pos, driver, points, cls] = [at("#"), at("Driver"), at("Points"), at("Class")]
+  if (pos < 0 || driver < 0 || points < 0) return "unrecognised"
+
+  const out: StandingsClass[] = []
+  // A cell with rowspan fills its column for the rows below it too, which is
+  // how the class name reaches every row of its class.
+  const carried: { text: string; left: number }[] = []
+  for (const tr of tables.find("tbody tr").toArray()) {
+    const tds = $(tr).children("td").toArray()
+    const cells: string[] = []
+    let next = 0
+    for (let col = 0; col < headings.length; col++) {
+      const held = carried[col]
+      if (held && held.left > 0) {
+        held.left--
+        cells.push(held.text)
+        continue
+      }
+      const td = tds[next++]
+      if (td === undefined || $(td).attr("colspan") !== undefined) return "unrecognised"
+      const span = Number($(td).attr("rowspan") ?? "1")
+      if (!Number.isInteger(span) || span < 1) return "unrecognised"
+      const text = $(td).text().trim()
+      carried[col] = { text, left: span - 1 }
+      cells.push(text)
+    }
+    if (next !== tds.length) return "unrecognised"
+
+    const position = cells[pos] ?? ""
+    const name = cells[driver] ?? ""
+    const scored = cells[points] ?? ""
+    if (!/^\d+$/.test(position) || !name || !/^-?\d+(\.\d+)?$/.test(scored)) return "unrecognised"
+
+    const className = cls < 0 ? "" : (cells[cls] ?? "")
+    let group = out.find((c) => c.name === className)
+    if (!group) {
+      group = { name: className, rows: [] }
+      out.push(group)
+    }
+    group.rows.push({ position: Number(position), driver: name, points: Number(scored) })
+  }
+
+  // An empty table is nobody having scored yet, as `asFlat` treats it.
+  return out.length > 0 ? out : [{ name: "", rows: [] }]
 }
 
 function firstArray(o: Record<string, unknown>, keys: readonly string[]): unknown[] | undefined {
