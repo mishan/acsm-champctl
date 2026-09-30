@@ -35,7 +35,7 @@ import {
 import { ScheduleError } from "../finalize/schedule.js"
 import { check } from "../gridmom/index.js"
 import { loadProfile } from "../profile/load.js"
-import { confirm, loadPits, reportUsageError, runCli, UsageError } from "./args.js"
+import { confirm, defaultProfile, loadPits, reportUsageError, runCli, UsageError } from "./args.js"
 
 // Re-exported so callers and tests have one obvious place to import it from,
 // while there is still only one class.
@@ -58,8 +58,9 @@ Options:
   --out <path>          write the championship JSON here
   --import              send it to ACSM. Without this, nothing is written.
   --yes                 skip the confirmation prompt
-  --profile <id|path>   league profile (default: batl)
-  --pits <path>         track pit table (default: data/track-pits.json)
+  --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
+  --pits <path>         track pit table
+                        (default: $CHAMPCTL_PITS, else data/track-pits.json)
   --base-url <url>      override the profile's ACSM base URL
   --json                machine-readable summary
   -h, --help            this
@@ -95,7 +96,7 @@ export function parseArgs(argv: readonly string[]): Args {
     command: "",
     doImport: false,
     yes: false,
-    profile: "batl",
+    profile: defaultProfile(),
     json: false,
     help: false,
   }

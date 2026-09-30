@@ -59,7 +59,7 @@ import {
   planLiveries,
   unreachableRounds,
 } from "../liveries/plan.js"
-import { confirm, reportUsageError, runCli, UsageError } from "./args.js"
+import { confirm, defaultProfile, reportUsageError, runCli, UsageError } from "./args.js"
 
 export { UsageError }
 
@@ -103,7 +103,7 @@ Options:
                         these, and nothing will say so later.
   --restart <round>     restart that round's looping practice server afterwards
   --base-url <url>      override the profile's ACSM base URL
-  --profile <id|path>   league profile (default: batl)
+  --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
   --push                actually write. Without it this only previews.
   --yes                 skip the confirmation prompt (for scripts)
   --json                machine-readable plan
@@ -155,7 +155,7 @@ interface Args {
 
 export function parseArgs(argv: readonly string[]): Args {
   const args: Args = {
-    profile: "batl",
+    profile: defaultProfile(),
     drain: false,
     watch: false,
     claims: false,

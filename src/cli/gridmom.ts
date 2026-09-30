@@ -15,7 +15,7 @@ import { SqliteCache } from "../acsm/cache.js"
 import { HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { loadProfile } from "../profile/load.js"
-import { loadPits, reportUsageError, runCli, UsageError } from "./args.js"
+import { defaultProfile, loadPits, reportUsageError, runCli, UsageError } from "./args.js"
 import { check } from "../gridmom/index.js"
 import type { Severity } from "../gridmom/finding.js"
 import { formatReport, type ReportFormat } from "../gridmom/report.js"
@@ -28,8 +28,9 @@ Usage:
   gridmom list                        list championships on the league's ACSM
 
 Options:
-  --profile <id|path>   league profile (default: batl)
-  --pits <path>         track pit table JSON (default: data/track-pits.json)
+  --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
+  --pits <path>         track pit table JSON
+                        (default: $CHAMPCTL_PITS, else data/track-pits.json)
   --format <fmt>        text | json | discord   (default: text)
   --min <severity>      ERROR | WARN | INFO     (default: INFO, discord: WARN)
   --suppress <codes>    comma-separated finding codes or prefixes to hide
@@ -63,7 +64,7 @@ interface Args {
 export function parseArgs(argv: readonly string[]): Args {
   const args: Args = {
     command: "",
-    profile: "batl",
+    profile: defaultProfile(),
     format: "text",
     suppress: [],
     cache: true,
