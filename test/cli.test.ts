@@ -17,6 +17,10 @@ import {
   UsageError as MonthUsageError,
 } from "../src/cli/championship.js"
 import { confirm, loadPits, UsageError } from "../src/cli/args.js"
+import { parseArgs as parseArchiveArgs } from "../src/cli/archive.js"
+import { parseArgs as parseBotArgs } from "../src/cli/bot.js"
+import { parseArgs as parseGridmomArgs } from "../src/cli/gridmom.js"
+import { parseArgs as parseLiveriesArgs } from "../src/cli/liveries.js"
 import { clientRootFor, parseArgs as parseServeArgs } from "../src/cli/serve.js"
 import type { RaceFormat } from "../src/finalize/format.js"
 import type { FinalizePlan } from "../src/finalize/plan.js"
@@ -553,6 +557,19 @@ describe("defaults from the environment", () => {
     vi.stubEnv("CHAMPCTL_PROFILE", "/etc/champctl/profile.json")
     expect(parseServeArgs([]).profile).toBe("/etc/champctl/profile.json")
     expect(parseServeArgs(["--profile", "batl"]).profile).toBe("batl")
+  })
+
+  it.each([
+    ["champctl-bot", () => parseBotArgs(["report"])],
+    ["champctl-archive", () => parseArchiveArgs(["run"])],
+    ["gridmom", () => parseGridmomArgs(["list"])],
+    ["champctl-finalize", () => parseFinalizeArgs(["abc", "1", "--laps", "10"])],
+    ["champctl-liveries", () => parseLiveriesArgs(["abc", "--claims"])],
+    ["champctl-championship", () => parseMonthArgs(["build", "x.json"])],
+  ])("reads CHAMPCTL_PROFILE in %s too", (_, parse) => {
+    // One missed CLI is a deployment where one job reads a different league.
+    vi.stubEnv("CHAMPCTL_PROFILE", "/etc/champctl/profile.json")
+    expect(parse().profile).toBe("/etc/champctl/profile.json")
   })
 
   it("falls back to batl without it", () => {

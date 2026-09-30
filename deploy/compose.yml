@@ -59,12 +59,15 @@ services:
     command: [champctl-bot, serve]
     env_file: bot.env
 
-  # Exits 3 when ACSM refuses the credentials, rather than retrying a bad
-  # password forever — so a restart loop here means acsm.env, not the network.
+  # Exits 3 when ACSM refuses the credentials, so as not to keep trying a bad
+  # password against the league's manager — and `unless-stopped` would undo
+  # that by restarting it forever. A handful of retries covers a manager that
+  # was briefly down; after that it stays stopped until someone looks. The
+  # same exit with no championship id set, which is the other usual cause.
   drain:
     <<: *champctl
     profiles: [discord]
-    restart: unless-stopped
+    restart: on-failure:5
     command:
       - champctl-liveries
       - ${CHAMPCTL_LIVERY_CHAMPIONSHIP:-}
@@ -72,8 +75,11 @@ services:
       - --push
       - --watch
     env_file: acsm.env
-    # Lets a pass that is mid-push finish before the container is killed.
-    stop_grace_period: 2m
+    # Lets a pass that is mid-push finish before the container is killed. A
+    # pass can be a batch of large uploads, each allowed minutes at a slow
+    # rate, and killing it between the skin upload and the championship save
+    # is the state the drain's own SIGTERM handling exists to avoid.
+    stop_grace_period: 15m
 
   upload:
     <<: *champctl

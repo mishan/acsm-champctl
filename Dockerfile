@@ -24,6 +24,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
+COPY LICENSE ./
 COPY bin bin
 COPY profiles profiles
 COPY --from=build /src/dist dist

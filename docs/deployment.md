@@ -75,11 +75,17 @@ Three things the proxy has to do:
 
 1. **Serve it over HTTPS.** The session cookie is `Secure`, so over plain HTTP a
    login won't stick.
-2. **Pass the original `Host` header through.** Every write is checked by
-   comparing the browser's `Origin` with `Host`, and a proxy that rewrites
-   `Host` makes every write fail with 403. Caddy keeps it by default; nginx
-   needs `proxy_set_header Host $host`.
-3. **Set `X-Forwarded-For`.**
+2. **Pass the original `Host` header through, port included.** Every write is
+   checked by comparing the browser's `Origin` with `Host`, and a proxy that
+   rewrites `Host` makes every write fail with 403. Caddy keeps it by default;
+   nginx needs `proxy_set_header Host $http_host` (not `$host`, which drops a
+   non-default port).
+3. **Set `X-Forwarded-For` to the client's address, replacing what the client
+   sent.** champctl takes the first address in that header as the client, so a
+   proxy that appends to a client-supplied one lets anyone pick a fresh address
+   per login attempt and step around the failed-login throttle. Caddy replaces
+   it by default; in nginx, use `$remote_addr` rather than
+   `$proxy_add_x_forwarded_for`.
 
 Caddy:
 
@@ -99,8 +105,8 @@ server {
 
     location / {
         proxy_pass http://127.0.0.1:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
@@ -140,8 +146,11 @@ and the bot refuses to hand out a link that isn't https. Set that name as
 
 Two settings the proxy needs for it, beyond the three above:
 
-- **A body limit of at least 128 MB**, and read timeouts long enough for a slow
-  upload. nginx defaults to 1 MB (`client_max_body_size 128m;`).
+- **A body limit a little over 128 MB**, and read timeouts long enough for a
+  slow upload. The largest upload champctl accepts is 128 MB of skin plus the
+  zip's own overhead, so nginx needs `client_max_body_size 129m;` (its default
+  is 1 MB). At exactly `128m` a maximum-size upload gets nginx's error page
+  rather than champctl's explanation.
 - **No access log for `/u/`**, since the path is the token. In nginx,
   `location /u/ { access_log off; proxy_pass ...; }`.
 
@@ -166,8 +175,9 @@ CHAMPCTL=/opt/acsm-champctl/deploy
 its command documents, after the service name: `docker compose run --rm
 report --dry-run` prints what it would post without posting it.
 
-The report exits 1 when it found warnings and 2 for errors. That is the report
-working, not failing; exit 3 is the job itself failing.
+The report exits 1 when it found warnings, and 2 for errors or a championship it
+couldn't read. That is the report working, not failing; exit 3 is the job
+itself failing.
 
 ## Running other commands
 
@@ -192,7 +202,8 @@ docker compose --profile discord up -d     # or without --profile, for the UI al
 ```
 
 Restarting `serve` signs everyone out, since sessions are held in memory. The
-drain finishes the pass it is on before stopping.
+drain finishes the pass it is on before stopping, which can take a few minutes
+if it is in the middle of a large batch.
 
 ## Backups
 
@@ -201,15 +212,18 @@ The volume holds two things worth keeping: the archive
 once a championship is deleted, and the livery queue
 (`data/liveries/liveries.db`). The cache under `.cache/` can be thrown away.
 
-Both are SQLite. Copy them while nothing is writing, for example from cron
-after the archive run:
+Both are SQLite. Copy them while nothing is writing — after the nightly archive
+run, and with the Discord services stopped if you run them. As a script for
+cron to call (not inline in the crontab, where `%` needs escaping):
 
 ```sh
+#!/bin/sh
+set -e
 cd /opt/acsm-champctl/deploy
-docker compose stop drain bot upload
+docker compose --profile discord stop     # skip both --profile lines without the bot
 docker run --rm -v champctl_champctl-data:/data:ro -v /srv/backups:/out busybox \
-  tar czf /out/champctl-$(date +%F).tgz -C /data data
-docker compose --profile discord up -d
+  tar czf "/out/champctl-$(date +%F).tgz" -C /data data
+docker compose --profile discord start
 ```
 
 The databases contain driver names and Steam GUIDs. Keep the backups as private
@@ -220,8 +234,10 @@ as the server.
 - **Logs:** `docker compose logs -f serve`, and the same for `bot`, `drain`,
   `upload`. A failed request to Server Manager is logged with the reason,
   which the browser deliberately isn't told.
-- **The drain keeps restarting:** it exits 3 when ACSM refuses its account.
-  Check `acsm.env`, and that the account can still sign in to ACSM directly.
+- **The drain has stopped, or keeps restarting:** it exits 3 when ACSM refuses
+  its account, and when `CHAMPCTL_LIVERY_CHAMPIONSHIP` isn't set in `.env`.
+  `docker compose logs drain` says which. After five failed starts it stays
+  stopped; fix the cause and run `docker compose --profile discord up -d`.
 - **A login in the UI doesn't stick:** it isn't being served over HTTPS.
 - **Every save fails with 403:** the proxy is rewriting `Host`.
 - **"Server Manager answered with a web page where champctl expected data":**

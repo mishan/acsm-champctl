@@ -3,6 +3,7 @@
 # covers what someone remembered to name.
 *
 !package.json
+!LICENSE
 !package-lock.json
 !tsconfig.json
 !tsconfig.build.json
