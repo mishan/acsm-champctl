@@ -176,8 +176,11 @@ export function buildServer(options: ServerOptions): FastifyInstance {
    * that reaches out to the league's manager turns every probe into traffic
    * against a rate-limited service, and turns "ACSM is down" into "champctl is
    * down and should be restarted", which helps nobody.
+   *
+   * Logged only if it fails. A container health check calls this every thirty
+   * seconds, and two info lines per probe buried everything else in the log.
    */
-  app.get("/healthz", async () => ({ ok: true }))
+  app.get("/healthz", { logLevel: "warn" }, async () => ({ ok: true }))
 
   // Annotated because Fastify 5 types the handler's first parameter as
   // `unknown` — correctly, since anything can be thrown. `describeError` takes
