@@ -53,8 +53,9 @@ cp ../data/track-pits.example.json config/track-pits.json
   checks grids against. It must exist: a configured pit table that can't be
   read stops champctl at start rather than letting every grid check pass
   without pit counts. See the README's Configuration section for the format.
-- **`.env`** is read by Compose only, for the listen addresses below. Nothing in
-  it reaches a container.
+- **`.env`** is read by Compose, for the listen addresses below and the
+  championship the livery drain works on. None of it is put in a container's
+  environment.
 
 Then:
 
@@ -86,6 +87,15 @@ Three things the proxy has to do:
    per login attempt and step around the failed-login throttle. Caddy replaces
    it by default; in nginx, use `$remote_addr` rather than
    `$proxy_add_x_forwarded_for`.
+
+   Behind a CDN such as Cloudflare, `$remote_addr` is the CDN's edge rather
+   than the person, and everyone behind one edge shares a throttle — five bad
+   logins lock out the admins behind it. Have the proxy recover the real
+   address first (nginx: `set_real_ip_from` for the CDN's published ranges and
+   `real_ip_header CF-Connecting-IP;`), so that `$remote_addr` is the client
+   again. Don't reach for Caddy's `trusted_proxies` or nginx's
+   `$proxy_add_x_forwarded_for` instead: both pass a client-supplied address
+   through, which is the bypass above.
 
 Caddy:
 
@@ -212,18 +222,21 @@ The volume holds two things worth keeping: the archive
 once a championship is deleted, and the livery queue
 (`data/liveries/liveries.db`). The cache under `.cache/` can be thrown away.
 
-Both are SQLite. Copy them while nothing is writing — after the nightly archive
-run, and with the Discord services stopped if you run them. As a script for
-cron to call (not inline in the crontab, where `%` needs escaping):
+Both are SQLite. Copy them while nothing is writing: after the nightly archive
+run, with the three Discord services stopped if you run them. `serve` can stay
+up; it writes only the cache, which isn't copied. As a script for cron to call
+(not inline in the crontab, where `%` needs escaping):
 
 ```sh
 #!/bin/sh
-set -e
-cd /opt/acsm-champctl/deploy
-docker compose --profile discord stop     # skip both --profile lines without the bot
+cd /opt/acsm-champctl/deploy || exit 1
+# Without the Discord services, drop the stop, the trap and the start.
+docker compose --profile discord stop bot drain upload
+# Started again however the copy ends, so a full disk doesn't also take the
+# bot down until someone notices.
+trap 'docker compose --profile discord start bot drain upload' EXIT
 docker run --rm -v champctl_champctl-data:/data:ro -v /srv/backups:/out busybox \
   tar czf "/out/champctl-$(date +%F).tgz" -C /data data
-docker compose --profile discord start
 ```
 
 The databases contain driver names and Steam GUIDs. Keep the backups as private
@@ -234,10 +247,11 @@ as the server.
 - **Logs:** `docker compose logs -f serve`, and the same for `bot`, `drain`,
   `upload`. A failed request to Server Manager is logged with the reason,
   which the browser deliberately isn't told.
-- **The drain has stopped, or keeps restarting:** it exits 3 when ACSM refuses
-  its account, and when `CHAMPCTL_LIVERY_CHAMPIONSHIP` isn't set in `.env`.
-  `docker compose logs drain` says which. After five failed starts it stays
-  stopped; fix the cause and run `docker compose --profile discord up -d`.
+- **The drain keeps restarting:** it exits when ACSM turns its account down,
+  and when `CHAMPCTL_LIVERY_CHAMPIONSHIP` isn't set in `.env` ("Needs a
+  championship id"). `docker compose logs drain` says which. Check `acsm.env`
+  and that the account can still sign in to ACSM directly. ACSM being down or
+  rate-limiting logins doesn't stop it; it backs off and tries again.
 - **A login in the UI doesn't stick:** it isn't being served over HTTPS.
 - **Every save fails with 403:** the proxy is rewriting `Host`.
 - **"Server Manager answered with a web page where champctl expected data":**
