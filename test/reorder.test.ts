@@ -90,6 +90,15 @@ interface HarnessOptions {
   movedListFor?: string[]
 }
 
+/**
+ * Where ACSM sends a save that went through, measured on 2.4.15 and 1.7.9:
+ * back to the championship for the event form, and to the event for the
+ * schedule. A session that has lapsed redirects too, but elsewhere.
+ */
+function savedLocation(url: string): string {
+  return new URL(url).pathname.replace(/\/event\/submit$/, "").replace(/\/schedule$/, "/")
+}
+
 async function harness(options: HarnessOptions = {}) {
   const posts: { url: string; body: URLSearchParams }[] = []
   /** GETs per event id, so a list can change between the plan and the write. */
@@ -108,7 +117,7 @@ async function harness(options: HarnessOptions = {}) {
       if ((options.failFor ?? []).some((id) => posts.at(-1)?.body.get("Editing") === id)) {
         return new Response("nope", { status: 500, statusText: "Internal Server Error" })
       }
-      return new Response("", { status: 302, headers: { location: "/" } })
+      return new Response("", { status: 302, headers: { location: savedLocation(url) } })
     }
 
     // Which round's form is being asked for, so each answers with its own

@@ -1,7 +1,7 @@
 import { DateTime } from "luxon"
 import { describe, expect, it } from "vitest"
 
-import { AcsmSession } from "../src/acsm/session.js"
+import { AcsmSession, AcsmWriteError } from "../src/acsm/session.js"
 import type { ChampionshipEvent } from "../src/acsm/types.js"
 import { AcsmError } from "../src/acsm/client.js"
 import { applyFinalize, EntryListChangedError, PartialWriteError } from "../src/finalize/apply.js"
@@ -538,6 +538,19 @@ interface HarnessOptions {
   eventPages?: string[]
   scheduleHtml?: string
   submitStatus?: number
+  /** Answer every save the way ACSM answers one from an expired session. */
+  sessionLapsed?: "premium" | "oss"
+  /** The same, for the schedule save only, after the event save went through. */
+  scheduleLapsed?: boolean
+}
+
+/**
+ * Where ACSM sends a save that went through, measured on 2.4.15 and 1.7.9:
+ * back to the championship for the event form, and to the event for the
+ * schedule. A session that has lapsed redirects too, but elsewhere.
+ */
+function savedLocation(url: string): string {
+  return new URL(url).pathname.replace(/\/event\/submit$/, "").replace(/\/schedule$/, "/")
 }
 
 async function harness(options: HarnessOptions = {}) {
@@ -560,7 +573,13 @@ async function harness(options: HarnessOptions = {}) {
       if (options.failSchedulePost && url.includes("/schedule")) {
         return new Response("nope", { status: 500, statusText: "Internal Server Error" })
       }
-      return new Response("", { status: options.submitStatus ?? 302, headers: { location: "/" } })
+      const location =
+        options.sessionLapsed === "premium" || (options.scheduleLapsed && url.includes("/schedule"))
+          ? "/"
+          : options.sessionLapsed === "oss"
+            ? "/login"
+            : savedLocation(url)
+      return new Response("", { status: options.submitStatus ?? 302, headers: { location } })
     }
     // The schedule form is rendered on the *championship* page, not at its own
     // action — that route is POST-only and a GET of it is a 405 on 2.4.x. This
@@ -951,6 +970,33 @@ describe("applying a finalize", () => {
 
     // Both writes were attempted, in order: the event one did go through.
     expect(h.posts.map((p) => p.url.includes("/schedule"))).toEqual([false, true])
+  })
+
+  /**
+   * A session that lapses between reading the form and posting it still gets a
+   * redirect — to "/" on 2.4.15 and to "/login" on 1.7.9, both measured — and
+   * any redirect used to count as saved. The CLI printed "Pushed" and the web
+   * UI said done, with nothing written.
+   */
+  it.each(["premium", "oss"] as const)(
+    "refuses a save that redirected away from the championship (%s)",
+    async (build) => {
+      const h = await harness({ sessionLapsed: build })
+      const plan = await planFor(h)
+      const err = await applyFinalize(h.session, plan).catch((e: unknown) => e)
+      expect(err).toBeInstanceOf(AcsmWriteError)
+      expect((err as Error).message).toMatch(/Nothing was saved/)
+    },
+  )
+
+  it("reports a schedule save that lapsed as a partial write", async () => {
+    const h = await harness({ scheduleLapsed: true })
+    const plan = await planFor(h, { qualiStart: { date: "2026-09-09", time: "20:00" } })
+    const err = await applyFinalize(h.session, plan, { acknowledgeWarnings: true }).catch(
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(PartialWriteError)
+    expect((err as PartialWriteError).cause).toBeInstanceOf(AcsmWriteError)
   })
 
   it("lets a failure before the event save through unchanged", async () => {

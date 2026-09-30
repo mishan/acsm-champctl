@@ -133,6 +133,15 @@ afterEach(async () => {
   await Promise.all(open.splice(0).map((a) => a.close()))
 })
 
+/**
+ * Where ACSM sends a save that went through, measured on 2.4.15 and 1.7.9:
+ * back to the championship for the event form, and to the event for the
+ * schedule. A session that has lapsed redirects too, but elsewhere.
+ */
+function savedLocation(url: string): string {
+  return new URL(url).pathname.replace(/\/event\/submit$/, "").replace(/\/schedule$/, "/")
+}
+
 function harness(options: HarnessOptions = {}): Harness {
   const posts: { url: string; body: string }[] = []
   const pages = options.eventPages ?? [
@@ -161,8 +170,8 @@ function harness(options: HarnessOptions = {}): Harness {
       posts.push({ url, body: String(init.body) })
       if (options.postGate) await options.postGate
       // An import redirects to the championship it made, and that redirect is
-      // the only thing that tells champctl the id. Anything else redirects to
-      // "/", as ACSM does for an event save.
+      // the only thing that tells champctl the id. A save redirects back to
+      // the championship it saved.
       if (url.endsWith(IMPORT_PATH)) {
         if (options.importOutcome === "no-redirect") {
           return new Response("<html>ok</html>", { status: 200 })
@@ -172,7 +181,7 @@ function harness(options: HarnessOptions = {}): Harness {
           headers: { location: `/championship/${IMPORTED_ID}` },
         })
       }
-      return new Response("", { status: 302, headers: { location: "/" } })
+      return new Response("", { status: 302, headers: { location: savedLocation(url) } })
     }
     if (url.endsWith(IMPORT_PATH)) {
       // 1.7.9 renders a textarea here and 2.4.x a file input; either drives

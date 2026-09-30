@@ -134,7 +134,7 @@ export async function saveEventForm(session: AcsmSession, write: EventWrite): Pr
 
   // postForm re-checks the EntryList.* arity before sending.
   const res = await session.postForm(eventSubmitPath(write.championshipId), fields)
-  assertAccepted(res, "event", eventSubmitPath(write.championshipId))
+  assertAccepted(res, "event", eventSubmitPath(write.championshipId), write.championshipId)
 }
 
 export interface ApplyOptions {
@@ -257,7 +257,7 @@ async function saveSchedule(session: AcsmSession, plan: FinalizePlan): Promise<v
   }
 
   const res = await session.postForm(path, fields)
-  assertAccepted(res, "schedule", path)
+  assertAccepted(res, "schedule", path, plan.championshipId)
 }
 
 /**
@@ -281,10 +281,25 @@ function findScheduleForm(html: string, pageUrl: string, action: string): Parsed
 
 /**
  * ACSM reports a rejected form by re-rendering the page with a flash message
- * and a 200, so a redirect is the only success signal there is.
+ * and a 200, so a redirect is the only success signal there is — and only a
+ * redirect back to this championship. Any redirect used to count, and a session
+ * that lapsed between the form GET and the POST redirects too: to "/" on the
+ * Premium build and to "/login" on OSS, measured on 2.4.15 and 1.7.9. Both were
+ * reported as saved with nothing written. A save that went through lands on
+ * `/championship/{id}` (the event) or `/championship/{id}/event/{eventId}/`
+ * (the schedule), on both builds.
  */
-function assertAccepted(res: Response, what: string, path: string): void {
-  if (isRedirectStatus(res.status)) return
+function assertAccepted(res: Response, what: string, path: string, championshipId: string): void {
+  if (isRedirectStatus(res.status)) {
+    if (redirectsToChampionship(res, championshipId)) return
+    throw new AcsmWriteError(
+      `ACSM answered the ${what} save by redirecting to "${res.headers.get("location") ?? ""}" ` +
+        `rather than back to the championship, which is what it does when the session has ` +
+        `expired. Nothing was saved. Sign in again and retry.`,
+      res.status,
+      path,
+    )
+  }
   throw new AcsmWriteError(
     `ACSM didn't accept the ${what} save (HTTP ${res.status}, no redirect). It reports form ` +
       `errors by re-rendering the page rather than in the response, so check the event in ACSM ` +
@@ -292,4 +307,21 @@ function assertAccepted(res: Response, what: string, path: string): void {
     res.status,
     path,
   )
+}
+
+/** True when a redirect lands on this championship's page or one below it. */
+function redirectsToChampionship(res: Response, championshipId: string): boolean {
+  const location = res.headers.get("location")
+  if (!location) return false
+  let pathname: string
+  try {
+    // Only the path: the host is ACSM's to choose, and a relative Location is
+    // what both builds send.
+    pathname = new URL(location, "http://acsm.invalid").pathname
+  } catch {
+    return false
+  }
+  const own = championshipPath(championshipId).toLowerCase()
+  const at = pathname.toLowerCase()
+  return at === own || at.startsWith(`${own}/`)
 }
