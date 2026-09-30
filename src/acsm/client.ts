@@ -59,6 +59,20 @@ export class AcsmError extends Error {
   }
 }
 
+/**
+ * ACSM answered, with a page where champctl asked for data.
+ *
+ * Its own type because it has no status to go on — the redirect was followed
+ * and the page came back 200 — and without one the web layer read it as the
+ * manager being unreachable, which sent someone checking a server that was up.
+ */
+export class AcsmNotJsonError extends AcsmError {
+  constructor(message: string, url?: string) {
+    super(message, undefined, url)
+    this.name = "AcsmNotJsonError"
+  }
+}
+
 export interface HttpReaderOptions {
   baseUrl: string
   fetch?: typeof globalThis.fetch
@@ -112,6 +126,9 @@ export class HttpAcsmReader implements AcsmReader {
    * single championship on the version BATL runs, and nothing noticed because
    * no test had ever run a CLI against a real manager.
    *
+   * Since the Premium upgrade the same manager redirects it to "/" instead,
+   * which is handled below.
+   *
    * So: try the endpoint, and fall back to scraping the championships page,
    * which Public Access serves without credentials. The scrape yields ids and
    * no names; callers already read this defensively.
@@ -128,6 +145,18 @@ export class HttpAcsmReader implements AcsmReader {
       // archive would exit 0 having archived nothing, which is the failure it
       // exists to prevent, reported as success.
       if (e instanceof AcsmError && e.status === 404) return await this.#scrapeChampionships()
+      // Premium builds since the 2.4.15 line send a logged-out request for the
+      // endpoint to "/" with a 302, and fetch follows it to the home page — so
+      // the endpoint is missing again, only now it arrives as HTML. Scraping
+      // is right then, but it is also what Public Access being off looks like,
+      // and there the scrape reads a login page and finds nothing. So an empty
+      // scrape is not believed: the original error stands. A manager with
+      // Public Access on and no championships at all fails here too, which is
+      // a refusal someone can read rather than an archive that records nothing.
+      if (e instanceof AcsmNotJsonError) {
+        const scraped = await this.#scrapeChampionships()
+        if (scraped.length > 0) return scraped
+      }
       throw e
     }
     if (Array.isArray(body)) return summaries(body)
@@ -289,7 +318,7 @@ function assertJson(bytes: Buffer, path: string, url: string): unknown {
     const hint = text.trimStart().startsWith("<")
       ? " (got HTML — is Public Access still enabled?)"
       : ""
-    throw new AcsmError(`Response from ${path} was not JSON${hint}`, undefined, url)
+    throw new AcsmNotJsonError(`Response from ${path} was not JSON${hint}`, url)
   }
 }
 

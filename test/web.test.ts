@@ -21,7 +21,7 @@ import { join } from "node:path"
 import type { FastifyInstance } from "fastify"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { StaticAcsmReader } from "../src/acsm/client.js"
+import { AcsmError, type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import { IMPORT_PATH } from "../src/acsm/paths.js"
 import { AcsmSession } from "../src/acsm/session.js"
 import type { Championship, ChampionshipEvent } from "../src/acsm/types.js"
@@ -114,6 +114,10 @@ interface HarnessOptions {
    * awaits that would pass against the racy version too.
    */
   postGate?: Promise<void>
+  /** Replaces the static reader, for a read that has to fail. */
+  reader?: AcsmReader
+  /** Collects the server's log lines at warn and above; silent otherwise. */
+  log?: string[]
 }
 
 interface Harness {
@@ -207,7 +211,7 @@ function harness(options: HarnessOptions = {}): Harness {
   const app = buildServer({
     profile: testProfile(),
     baseUrl: BASE_URL,
-    reader: new StaticAcsmReader([options.championship ?? champ()]),
+    reader: options.reader ?? new StaticAcsmReader([options.championship ?? champ()]),
     pits: pitTable([suzukaPits]),
     // A real session over a scripted socket: the cookie jar, the redirect
     // rules and the entry-list arity check are all the production ones.
@@ -221,7 +225,9 @@ function harness(options: HarnessOptions = {}): Harness {
     // rather than about a flag every test would have to opt out of anyway.
     secureCookies: false,
     now: () => NOW,
-    logger: false,
+    logger: options.log
+      ? { level: "warn", stream: { write: (line: string) => options.log?.push(line) } }
+      : false,
   })
   open.push(app)
 
@@ -354,6 +360,28 @@ describe("authentication", () => {
     expect(res.statusCode).toBe(401)
     expect(res.json().error.code).toBe("session-expired")
     expect(String(res.headers["set-cookie"])).toContain("Max-Age=0")
+  })
+
+  it("logs what went wrong behind a 502, since the browser is not told", async () => {
+    // The response leaves out the transport detail on purpose, and nothing
+    // else recorded it: a manager upgrade that broke the championship list
+    // showed up in the log as a bare 502.
+    const reader = new StaticAcsmReader([champ()])
+    reader.listChampionships = async () => {
+      throw new AcsmError("Request to /championships failed: connect ECONNREFUSED 10.0.0.5:8772")
+    }
+    const log: string[] = []
+    const h = harness({ reader, log })
+    await h.login()
+
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/api/championships",
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.statusCode).toBe(502)
+    expect(res.body).not.toContain("ECONNREFUSED")
+    expect(log.join("")).toContain("ECONNREFUSED 10.0.0.5:8772")
   })
 
   it("stops forwarding guesses to ACSM after enough failures", async () => {

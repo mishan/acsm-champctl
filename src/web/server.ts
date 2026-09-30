@@ -240,6 +240,11 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     if (id && described.status === 401) clearSessionCookie(ctx, reply)
 
     if (described.unexpected) req.log.error({ err: error }, "unhandled error")
+    // The browser gets a rebuilt sentence without the path or the transport
+    // detail, so this is the only place that detail survives. A 502 used to
+    // leave nothing but its status in the log, and "couldn't reach Server
+    // Manager" then had to be debugged from the outside.
+    else if (described.status === 502) req.log.warn({ err: error }, "Server Manager request failed")
     return reply.code(described.status).send(described.body)
   })
 

@@ -15,7 +15,7 @@
  * an unexpected message can carry a path, a query, or part of a form.
  */
 
-import { AcsmError } from "../acsm/client.js"
+import { AcsmError, AcsmNotJsonError } from "../acsm/client.js"
 import { AcsmAuthError, AcsmWriteError, PasswordChangeRequiredError } from "../acsm/session.js"
 import { EntryListChangedError, PartialWriteError } from "../finalize/apply.js"
 import { FinalizeError } from "../finalize/plan.js"
@@ -190,15 +190,21 @@ export function describeError(e: unknown): DescribedError {
    *
    * The status is kept, because that is the part that tells someone what to do:
    * a 503 from the manager is "it is up and unhappy, wait", and no status at
-   * all is "champctl could not reach it", which is a different afternoon.
+   * all is "champctl could not reach it", which is a different afternoon. A
+   * page where JSON was expected also has no status, and is neither — the
+   * manager answered fine — so it gets its own sentence.
    */
   if (e instanceof AcsmError) {
     const message =
-      e.status === undefined
-        ? "champctl couldn't reach Server Manager. Check that it's running and that champctl is " +
-          "pointed at the right address."
-        : `Server Manager answered with ${e.status}. That's the manager refusing or failing, ` +
-          `not champctl — nothing was written.`
+      e instanceof AcsmNotJsonError
+        ? "Server Manager answered with a web page where champctl expected data. Check that " +
+          "Public Access is still on in its settings; if it is, this build of Server Manager " +
+          "serves that page differently and the server log has which one."
+        : e.status === undefined
+          ? "champctl couldn't reach Server Manager. Check that it's running and that champctl is " +
+            "pointed at the right address."
+          : `Server Manager answered with ${e.status}. That's the manager refusing or failing, ` +
+            `not champctl — nothing was written.`
     return { status: 502, body: { error: { code: "acsm", message } }, ...OK }
   }
 
