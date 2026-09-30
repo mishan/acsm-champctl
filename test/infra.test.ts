@@ -193,6 +193,18 @@ describe("HTTP reader", () => {
     await expect(r.listChampionships()).rejects.toThrow(/Public Access/)
   })
 
+  it("doesn't follow a championship page that redirects", async () => {
+    // Followed to "/" or "/login", a page with no standings tab read as a
+    // championship nobody had raced in: an answer, where it was a failure.
+    let seen: RequestInit | undefined
+    const r = reader(async (_url, init) => {
+      seen = init
+      return new Response("", { status: 302, headers: { location: "/" } })
+    })
+    await expect(r.championshipPage(A)).rejects.toBeInstanceOf(AcsmError)
+    expect(seen?.redirect).toBe("manual")
+  })
+
   it("treats a corrupt cache entry as a miss rather than failing forever", async () => {
     // One bad write must not leave the CLI permanently broken for that URL.
     let fetches = 0

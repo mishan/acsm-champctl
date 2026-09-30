@@ -18,7 +18,7 @@ import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { SqliteCache } from "../acsm/cache.js"
-import { asMessage, HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
+import { AcsmNotJsonError, asMessage, HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { announce, NothingToAnnounce, RoundRefused, type Announcement } from "../bot/announce.js"
 import { LIVERY_COMMANDS } from "../bot/commands.js"
@@ -680,7 +680,11 @@ export async function resolveStandings(
     // A 404 is an OSS build, and on the Premium build a logged-out request is
     // redirected to the home page — which the bot, holding no ACSM login by
     // design, always is. Either way the championship page is next.
-    process.stderr.write(`standings.json didn't answer (${asMessage(e)}).\n`)
+    process.stderr.write(
+      e instanceof AcsmNotJsonError
+        ? "standings.json wants a login on this build; reading the championship page instead.\n"
+        : `standings.json didn't answer (${asMessage(e)}).\n`,
+    )
   }
 
   if (!fromAcsm) {

@@ -558,6 +558,34 @@ describe("reading standings off the championship page", () => {
     ])
   })
 
+  it("reads a name past the penalty badge both builds put in its cell", () => {
+    // Read whole, the badge became part of the name: three lines of it in the
+    // table posted to the league, and a name the cross-check couldn't match.
+    const page = standingsPage({ classes: false }).replace(
+      "<td>bo</td>",
+      `<td>bo\n\n      <span class="badge badge-danger ml-2">Points Penalty: 50</span>\n    </td>`,
+    )
+    const parsed = parseStandingsPage(page)
+    expect(parsed).not.toBe("unrecognised")
+    expect((parsed as StandingsClass[])[0]?.rows[1]?.driver).toBe("bo")
+  })
+
+  it("keeps a name's own spacing", () => {
+    const page = standingsPage({ classes: false }).replace("<td>bo</td>", "<td>bo  jr</td>")
+    expect((parseStandingsPage(page) as StandingsClass[])[0]?.rows[1]?.driver).toBe("bo  jr")
+  })
+
+  it("reads 1.7.9's table, whose heading row has no <thead>", () => {
+    // The HTML parser puts a bare heading row in an implied <tbody>, so
+    // looking for "thead th" found nothing and every OSS run warned.
+    const page = standingsPage({ classes: false })
+      .replace("<thead>", "")
+      .replace("</thead>", "")
+      .replace("<tbody>", "")
+      .replace("</tbody>", "")
+    expect(parseStandingsPage(page)).toEqual(parseStandingsPage(standingsPage({ classes: false })))
+  })
+
   it("calls a page with no standings tab absent, which is not a warning", () => {
     // A championship nobody has raced in yet renders without the tab at all.
     expect(parseStandingsPage("<html><body><div id='entrants'></div></body></html>")).toBe("absent")
@@ -571,6 +599,10 @@ describe("reading standings off the championship page", () => {
       (h: string) => h.replace("<tbody>", '<tbody><tr><td colspan="4">No results</td></tr>'),
     ],
     ["a second table", (h: string) => h.replace("</table>", "</table><table></table>")],
+    [
+      "a name that still spans lines",
+      (h: string) => h.replace("<td>bo</td>", "<td>bo<br><div>\nsomething else</div></td>"),
+    ],
   ])("refuses %s rather than guessing", (_, alter) => {
     expect(parseStandingsPage(alter(standingsPage({ classes: false })))).toBe("unrecognised")
   })
@@ -773,6 +805,14 @@ describe("the standings message", () => {
   it("says where the numbers came from when champctl worked them out", () => {
     const [msg] = standingsMessage("August 2026", { source: "export", classes: [big(3)] })
     expect(msg).toContain("Worked out from the championship export")
+  })
+
+  it("keeps a name with a line break on one row of the table", () => {
+    const [msg] = standingsMessage("August 2026", {
+      source: "page",
+      classes: [{ name: "", rows: [{ position: 1, driver: "ada\nlovelace", points: 3 }] }],
+    })
+    expect(msg).toContain("ada lovelace")
   })
 
   it.each(["endpoint", "page"] as const)(

@@ -224,8 +224,14 @@ export function parseStandingsPage(html: string): StandingsClass[] | "absent" | 
   const tables = pane.find("table")
   if (tables.length !== 1) return "unrecognised"
 
-  const headings = tables
-    .find("thead th")
+  // The heading row is under <thead> on 2.4.15 and directly in the table on
+  // 1.7.9, where the parser puts it in an implied <tbody> — so it is found as
+  // the row of <th>, and the rows as the rows of <td>.
+  const rows = tables.find("tr").toArray()
+  const headingRow = rows.find((tr) => $(tr).children("th").length > 0)
+  if (headingRow === undefined) return "unrecognised"
+  const headings = $(headingRow)
+    .children("th")
     .map((_, th) => $(th).text().trim())
     .get()
   const at = (name: string) => headings.indexOf(name)
@@ -236,8 +242,9 @@ export function parseStandingsPage(html: string): StandingsClass[] | "absent" | 
   // A cell with rowspan fills its column for the rows below it too, which is
   // how the class name reaches every row of its class.
   const carried: { text: string; left: number }[] = []
-  for (const tr of tables.find("tbody tr").toArray()) {
+  for (const tr of rows) {
     const tds = $(tr).children("td").toArray()
+    if (tds.length === 0) continue
     const cells: string[] = []
     let next = 0
     for (let col = 0; col < headings.length; col++) {
@@ -251,7 +258,12 @@ export function parseStandingsPage(html: string): StandingsClass[] | "absent" | 
       if (td === undefined || $(td).attr("colspan") !== undefined) return "unrecognised"
       const span = Number($(td).attr("rowspan") ?? "1")
       if (!Number.isInteger(span) || span < 1) return "unrecognised"
-      const text = $(td).text().trim()
+      // Without the badges. Both builds put a penalty in the driver's cell as
+      // `<span class="badge">Points Penalty: 50</span>` after the name, and read
+      // whole it became part of the name — three lines of it, in a code block
+      // posted to the league. A newline left after that is some other markup
+      // champctl doesn't know, so it is refused below rather than posted.
+      const text = $(td).clone().find(".badge").remove().end().text().trim()
       carried[col] = { text, left: span - 1 }
       cells.push(text)
     }
@@ -260,7 +272,8 @@ export function parseStandingsPage(html: string): StandingsClass[] | "absent" | 
     const position = cells[pos] ?? ""
     const name = cells[driver] ?? ""
     const scored = cells[points] ?? ""
-    if (!/^\d+$/.test(position) || !name || !/^-?\d+(\.\d+)?$/.test(scored)) return "unrecognised"
+    if (!/^\d+$/.test(position) || !name || /[\r\n]/.test(name)) return "unrecognised"
+    if (!/^-?\d+(\.\d+)?$/.test(scored)) return "unrecognised"
 
     const className = cls < 0 ? "" : (cells[cls] ?? "")
     let group = out.find((c) => c.name === className)

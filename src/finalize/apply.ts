@@ -23,7 +23,12 @@
  */
 
 import { findFormByAction, setOne, type ParsedForm } from "../acsm/form.js"
-import { AcsmWriteError, isRedirectStatus, type AcsmSession } from "../acsm/session.js"
+import {
+  AcsmSessionLapsedError,
+  AcsmWriteError,
+  isRedirectStatus,
+  type AcsmSession,
+} from "../acsm/session.js"
 import {
   championshipPath,
   eventEditPath,
@@ -292,12 +297,15 @@ function findScheduleForm(html: string, pageUrl: string, action: string): Parsed
 function assertAccepted(res: Response, what: string, path: string, championshipId: string): void {
   if (isRedirectStatus(res.status)) {
     if (redirectsToChampionship(res, championshipId)) return
-    throw new AcsmWriteError(
+    // No remedy in the sentence, and no full stop: PartialWriteError and
+    // PartialReorderError quote it mid-sentence and say what to do themselves,
+    // and "sign in again and retry" inside "do not re-run this" contradicted
+    // the one instruction that mattered.
+    throw new AcsmSessionLapsedError(
       `ACSM answered the ${what} save by redirecting to "${res.headers.get("location") ?? ""}" ` +
-        `rather than back to the championship, which is what it does when the session has ` +
-        `expired. Nothing was saved. Sign in again and retry.`,
+        `rather than back to the championship, which it does for a session that has expired or ` +
+        `an account that can't make changes, so the ${what} save was not applied`,
       res.status,
-      path,
     )
   }
   throw new AcsmWriteError(
@@ -309,19 +317,23 @@ function assertAccepted(res: Response, what: string, path: string, championshipI
   )
 }
 
-/** True when a redirect lands on this championship's page or one below it. */
-function redirectsToChampionship(res: Response, championshipId: string): boolean {
+/**
+ * True when a redirect lands on this championship's page or one below it, on
+ * the server the request went to. Both builds send a relative `Location`; an
+ * absolute one has to name the same origin, as the login check requires.
+ */
+export function redirectsToChampionship(res: Response, championshipId: string): boolean {
   const location = res.headers.get("location")
   if (!location) return false
-  let pathname: string
+  const base = res.url || "http://acsm.invalid/"
+  let target: URL
   try {
-    // Only the path: the host is ACSM's to choose, and a relative Location is
-    // what both builds send.
-    pathname = new URL(location, "http://acsm.invalid").pathname
+    target = new URL(location, base)
   } catch {
     return false
   }
+  if (target.origin !== new URL(base).origin) return false
   const own = championshipPath(championshipId).toLowerCase()
-  const at = pathname.toLowerCase()
+  const at = target.pathname.toLowerCase()
   return at === own || at.startsWith(`${own}/`)
 }

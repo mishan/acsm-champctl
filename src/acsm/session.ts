@@ -37,6 +37,23 @@ export class AcsmAuthError extends Error {
 }
 
 /**
+ * A write ACSM answered by sending the browser away from the championship.
+ *
+ * What it does with a session that has expired between reading a form and
+ * posting it — to "/" on 2.4.15, "/login" on 1.7.9 — and plausibly with an
+ * account that may not write. An auth error rather than a write error so the
+ * web UI ends the champctl session and offers the login screen: as a 502 it
+ * said "sign in again" and left a dead session in place, and the retry then
+ * failed on the form page instead.
+ */
+export class AcsmSessionLapsedError extends AcsmAuthError {
+  constructor(message: string, status: number) {
+    super(message, status)
+    this.name = "AcsmSessionLapsedError"
+  }
+}
+
+/**
  * ACSM wants a new password before this account can do anything.
  *
  * Its own type because it is the one login failure a caller can *act* on rather

@@ -16,7 +16,12 @@
  */
 
 import { AcsmError, AcsmNotJsonError } from "../acsm/client.js"
-import { AcsmAuthError, AcsmWriteError, PasswordChangeRequiredError } from "../acsm/session.js"
+import {
+  AcsmAuthError,
+  AcsmSessionLapsedError,
+  AcsmWriteError,
+  PasswordChangeRequiredError,
+} from "../acsm/session.js"
 import { EntryListChangedError, PartialWriteError } from "../finalize/apply.js"
 import { FinalizeError } from "../finalize/plan.js"
 import { ScheduleError } from "../finalize/schedule.js"
@@ -123,6 +128,30 @@ export function describeError(e: unknown): DescribedError {
             "Server Manager is asking for this account's password to be changed before it can " +
             "do anything. champctl can't do that on your behalf — sign in to Server Manager " +
             "directly, set the new password, then come back.",
+        },
+      },
+      ...OK,
+    }
+  }
+
+  /**
+   * A save ACSM bounced away from the championship: nothing written, and the
+   * ACSM session behind this champctl one is no good. 401, so the server ends
+   * the champctl session and the UI offers the login screen, with words that
+   * don't send someone off to check a password they typed correctly an hour
+   * ago. Before the `AcsmAuthError` branch, which it extends.
+   */
+  if (e instanceof AcsmSessionLapsedError) {
+    return {
+      status: 401,
+      body: {
+        error: {
+          code: "session-expired",
+          message:
+            "Server Manager didn't take that save as coming from a signed-in account, so nothing " +
+            "was written. Your session with it has most likely expired — sign in again and redo " +
+            "it. If it happens straight after signing in, this account can't make changes in " +
+            "Server Manager.",
         },
       },
       ...OK,

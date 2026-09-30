@@ -1,10 +1,15 @@
 import { DateTime } from "luxon"
 import { describe, expect, it } from "vitest"
 
-import { AcsmSession, AcsmWriteError } from "../src/acsm/session.js"
+import { AcsmSession, AcsmSessionLapsedError } from "../src/acsm/session.js"
 import type { ChampionshipEvent } from "../src/acsm/types.js"
 import { AcsmError } from "../src/acsm/client.js"
-import { applyFinalize, EntryListChangedError, PartialWriteError } from "../src/finalize/apply.js"
+import {
+  applyFinalize,
+  EntryListChangedError,
+  PartialWriteError,
+  redirectsToChampionship,
+} from "../src/finalize/apply.js"
 import {
   applyFormat,
   describeLength,
@@ -984,8 +989,8 @@ describe("applying a finalize", () => {
       const h = await harness({ sessionLapsed: build })
       const plan = await planFor(h)
       const err = await applyFinalize(h.session, plan).catch((e: unknown) => e)
-      expect(err).toBeInstanceOf(AcsmWriteError)
-      expect((err as Error).message).toMatch(/Nothing was saved/)
+      expect(err).toBeInstanceOf(AcsmSessionLapsedError)
+      expect((err as Error).message).toMatch(/was not applied/)
     },
   )
 
@@ -996,7 +1001,9 @@ describe("applying a finalize", () => {
       (e: unknown) => e,
     )
     expect(err).toBeInstanceOf(PartialWriteError)
-    expect((err as PartialWriteError).cause).toBeInstanceOf(AcsmWriteError)
+    expect((err as PartialWriteError).cause).toBeInstanceOf(AcsmSessionLapsedError)
+    // The wrapper says what to do; the cause must not contradict it.
+    expect((err as Error).message).not.toMatch(/retry|\.\./)
   })
 
   it("lets a failure before the event save through unchanged", async () => {
@@ -1464,5 +1471,34 @@ describe("laying overrides over the current format", () => {
   it("switches a lap race to a timed one", () => {
     const laps: RaceFormat = { ...current, length: { kind: "laps", laps: 18 } }
     expect(withOverrides(laps, { minutes: 40 }).length).toEqual({ kind: "minutes", minutes: 40 })
+  })
+})
+
+describe("which redirect counts as a save", () => {
+  const ID = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
+  const redirect = (location: string, url = "https://acsm.example/championship/x/event/submit") => {
+    const res = new Response("", { status: 302, headers: { location } })
+    Object.defineProperty(res, "url", { value: url })
+    return res
+  }
+
+  it.each([
+    ["the championship", `/championship/${ID}`],
+    ["an event below it, with a trailing slash", `/championship/${ID}/event/e1/`],
+    ["the id in upper case", `/championship/${ID.toUpperCase()}`],
+    ["an absolute URL on the same server", `https://acsm.example/championship/${ID}`],
+  ])("accepts %s", (_, location) => {
+    expect(redirectsToChampionship(redirect(location), ID)).toBe(true)
+  })
+
+  it.each([
+    ["the home page", "/"],
+    ["the login page", "/login"],
+    ["another championship", "/championship/11111111-2222-3333-4444-555555555555"],
+    ["an id that only starts the same", `/championship/${ID}0`],
+    ["the same path on another server", `https://elsewhere.example/championship/${ID}`],
+    ["no Location at all", ""],
+  ])("refuses %s", (_, location) => {
+    expect(redirectsToChampionship(redirect(location), ID)).toBe(false)
   })
 })
