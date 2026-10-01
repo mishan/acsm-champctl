@@ -194,7 +194,47 @@ additions is how a real one goes unnoticed.
 | Checkbox submitted as | `on` | `1`/`0`, via a submit handler (§5) |
 | `GET` on the schedule action | form | **405** — the form is on the championship page (§5) |
 | Duplicate pit boxes delete entrants on import | — | no; all entrants survive |
-| `/api/championships/list.json` | absent | **absent** — also on ac.batlracing.com |
+| `/api/championships/list.json` | absent | **absent** logged out on the harness; on ac.batlracing.com, 404 until its September 2026 update and a 302 to `/` since (§8) |
+| `standings.json` logged out | absent | 302 to `/` on ac.batlracing.com since that update (§8) |
 | Listing championships | HTML | HTML, server-rendered; needs Public Access |
 | CSRF token on login or forms | none | none |
 | Forced password change path | `/accounts/new-password` | `/account/new-password` |
+
+## 8. Re-checked after BATL's September 2026 update
+
+BATL's manager was updated in late September 2026, and two read endpoints that
+used to answer a logged-out request started redirecting it to `/` instead:
+`/api/championships/list.json` (404 before) and `standings.json`. champctl now
+falls back for both — to scraping `/championships`, and to the standings tab of
+the championship page. The write path was re-checked, since plan §3.2 asks for
+that after any upgrade and a form change would break writes silently.
+
+**It is the same build as the harness.** Both report `v2.4.15` on `go1.26.2`,
+and `/static/js/server-manager.js` is byte-identical on the two, so the
+harness's answers stand for BATL's manager without a capture from production.
+
+**The forms champctl writes are unchanged.** `npm run recon:forms` on the
+harness, committed as `fixtures/recon/forms-v2.4.15.json`:
+
+- No CSRF token on any form, so plain POSTs still work.
+- The event form still renders `EntryList.EntrantID` (§5 still applies to
+  what it carries). Against 1.7.9 it adds 95 field names and drops only
+  `ChampionshipPracticeWeather`, with the same action and encoding.
+- The schedule form is the same four fields at the same action.
+- Import is still a multipart file part named `ChampionshipFile`.
+
+**The championship form differs only by what BATL has switched on.**
+`champ-form-v2.4.15.json` stays the read-only capture from BATL's own manager.
+A fresh capture from the harness has the same action, method and encoding, and
+every field it has is also in BATL's. BATL's adds 22 that the harness doesn't
+render: its ACSR, Discord and loading-screen settings, and eight
+`EntryList.CarFlags.*` fields. Those were already in the September 3 capture
+and come once per entrant, matching `EntryList.Name`, so `checkEntryListShape`
+accepts them. No harness renders them, though, so a championship save that
+echoes them back has never been round-tripped. That is the livery write, which
+is a whole-championship save.
+
+**A lapsed session redirects too**, on both builds: an event or schedule save
+without a valid session is a 302 to `/` on 2.4.15 and to `/login` on 1.7.9.
+A save that went through redirects back to the championship. champctl counts
+only the latter as saved; see `assertAccepted` in `src/finalize/apply.ts`.
