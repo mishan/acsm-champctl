@@ -28,7 +28,7 @@ import { readFormat, withOverrides } from "../finalize/format.js"
 import { FinalizeError, planFinalize, type FinalizePlan } from "../finalize/plan.js"
 import { ScheduleError } from "../finalize/schedule.js"
 import { loadProfile } from "../profile/load.js"
-import { confirm, loadPits, reportUsageError, runCli, UsageError } from "./args.js"
+import { confirm, defaultProfile, loadPits, reportUsageError, runCli, UsageError } from "./args.js"
 
 // Re-exported so callers and tests have one obvious place to import it from,
 // while there is still only one class.
@@ -50,8 +50,9 @@ Format:
   --quali <date> <time> move quali, league-local, e.g. 2026-09-09 20:00
 
 Options:
-  --profile <id|path>   league profile (default: batl)
-  --pits <path>         track pit table (default: data/track-pits.json)
+  --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
+  --pits <path>         track pit table
+                        (default: $CHAMPCTL_PITS, else data/track-pits.json)
   --base-url <url>      override the profile's ACSM base URL
   --push                actually write. Without it this only previews.
   --yes                 skip the confirmation prompt (for scripts)
@@ -93,7 +94,7 @@ interface Args {
 
 export function parseArgs(argv: readonly string[]): Args {
   const args: Args = {
-    profile: "batl",
+    profile: defaultProfile(),
     push: false,
     yes: false,
     acceptWarnings: false,

@@ -28,7 +28,7 @@ import { dirname, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { AcsmError, HttpAcsmReader } from "../acsm/client.js"
-import { AcsmAuthError, AcsmSession } from "../acsm/session.js"
+import { AcsmAuthError, AcsmSession, PasswordChangeRequiredError } from "../acsm/session.js"
 import { events } from "../acsm/view.js"
 import {
   LiveryApplyError,
@@ -59,7 +59,7 @@ import {
   planLiveries,
   unreachableRounds,
 } from "../liveries/plan.js"
-import { confirm, reportUsageError, runCli, UsageError } from "./args.js"
+import { confirm, defaultProfile, reportUsageError, runCli, UsageError } from "./args.js"
 
 export { UsageError }
 
@@ -103,7 +103,7 @@ Options:
                         these, and nothing will say so later.
   --restart <round>     restart that round's looping practice server afterwards
   --base-url <url>      override the profile's ACSM base URL
-  --profile <id|path>   league profile (default: batl)
+  --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
   --push                actually write. Without it this only previews.
   --yes                 skip the confirmation prompt (for scripts)
   --json                machine-readable plan
@@ -155,7 +155,7 @@ interface Args {
 
 export function parseArgs(argv: readonly string[]): Args {
   const args: Args = {
-    profile: "batl",
+    profile: defaultProfile(),
     drain: false,
     watch: false,
     claims: false,
@@ -851,7 +851,7 @@ function fillBatch<T extends { livery: Livery }>(
  * timeout is a watcher an operator finds out about on race night. Bad
  * credentials are the exception: they will not fix themselves, and retrying a
  * login every two minutes for ever is a worse thing to do to a server than
- * stopping.
+ * stopping. `wontComeRight` draws that line.
  */
 async function watchDrain(args: Args, championshipId: string): Promise<number> {
   if (!args.push) {
@@ -892,7 +892,7 @@ async function watchDrain(args: Args, championshipId: string): Promise<number> {
       await drain({ ...args, yes: true }, championshipId, { quiet: true })
       consecutiveFailures = 0
     } catch (e) {
-      if (e instanceof AcsmAuthError) {
+      if (wontComeRight(e)) {
         process.stderr.write(
           `Stopping: ${e.message}\nBad credentials don't come right on their own, and retrying ` +
             `a login every ${intervalSeconds}s is worse for the server than stopping.\n`,
@@ -911,6 +911,24 @@ async function watchDrain(args: Args, championshipId: string): Promise<number> {
   }
 
   return 0
+}
+
+/**
+ * A failure the watcher should stop on rather than retry.
+ *
+ * Only ACSM turning down the account: the login page re-rendered (200), a 401
+ * or 403, or a demand for a new password. Every AcsmAuthError used to count,
+ * and login() raises one for any answer that isn't a redirect — a 429 from
+ * ACSM's login limiter, a 500 while it restarts, a 502 from a proxy in front of
+ * it, and a session that expired mid-pass. Each of those stopped the watcher
+ * for good over something that would have cleared on the next pass; under
+ * Docker's restart policy each also became a burst of immediate re-logins,
+ * which is the one thing the limiter answers with more 429s.
+ */
+export function wontComeRight(e: unknown): e is AcsmAuthError {
+  if (e instanceof PasswordChangeRequiredError) return true
+  if (!(e instanceof AcsmAuthError)) return false
+  return e.status === 200 || e.status === 401 || e.status === 403
 }
 
 /** Waits, but wakes early when asked to stop, so Ctrl-C isn't a two-minute wait. */

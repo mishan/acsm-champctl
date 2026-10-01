@@ -1,0 +1,14 @@
+# An allow-list. The repo root collects league data, release zips and unpacked
+# game content that must never end up in an image layer, and a deny-list only
+# covers what someone remembered to name.
+*
+!package.json
+!LICENSE
+!package-lock.json
+!tsconfig.json
+!tsconfig.build.json
+!vite.config.ts
+!bin/
+!src/
+!client/
+!profiles/

@@ -8,7 +8,16 @@ import { join } from "node:path"
 import { unzipSync } from "fflate"
 
 import { AcsmError } from "../src/acsm/client.js"
-import { USAGE, UsageError, exitFor, main, parseArgs, renderPlan } from "../src/cli/liveries.js"
+import { AcsmAuthError, PasswordChangeRequiredError } from "../src/acsm/session.js"
+import {
+  USAGE,
+  UsageError,
+  exitFor,
+  main,
+  parseArgs,
+  renderPlan,
+  wontComeRight,
+} from "../src/cli/liveries.js"
 import { SqliteClaimStore } from "../src/liveries/claims.js"
 import { SqliteLiveryStore } from "../src/liveries/store.js"
 import type { Entrant } from "../src/acsm/types.js"
@@ -508,5 +517,40 @@ describe("champctl-liveries --watch", () => {
 
   it("refuses --watch on its own", async () => {
     expect(await main(["abc", "--watch"])).toBe(3)
+  })
+})
+
+describe("what stops the drain watcher", () => {
+  /**
+   * Any AcsmAuthError used to stop it, and login() raises one for every answer
+   * that isn't a redirect. A 429 from ACSM's login limiter or a 500 while it
+   * restarted then stopped the watcher for good, and under a container restart
+   * policy turned into a burst of immediate re-logins.
+   */
+  it.each([
+    ["the login limiter's 429", 429],
+    ["a manager restarting", 500],
+    ["a proxy in front of it", 502],
+    ["a session that expired mid-pass", undefined],
+  ])("keeps going through %s", (_, status) => {
+    expect(wontComeRight(new AcsmAuthError("login failed", status))).toBe(false)
+  })
+
+  it.each([
+    ["the login page re-rendered", 200],
+    ["a 401", 401],
+    ["a 403", 403],
+  ])("stops on %s, which is ACSM turning the account down", (_, status) => {
+    expect(wontComeRight(new AcsmAuthError("login failed", status))).toBe(true)
+  })
+
+  it("stops when the account needs a new password", () => {
+    expect(wontComeRight(new PasswordChangeRequiredError("set one", "/account/new-password"))).toBe(
+      true,
+    )
+  })
+
+  it("leaves every other failure to the backoff", () => {
+    expect(wontComeRight(new Error("fetch failed"))).toBe(false)
   })
 })

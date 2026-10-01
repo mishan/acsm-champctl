@@ -30,7 +30,7 @@ import { loadProfile } from "../profile/load.js"
 import { ContentCache } from "../web/content-cache.js"
 import { contentStore } from "../web/content-store.js"
 import { buildServer } from "../web/server.js"
-import { loadPits, runCli, UsageError } from "./args.js"
+import { defaultProfile, loadPits, runCli, UsageError } from "./args.js"
 
 export { UsageError }
 
@@ -42,8 +42,9 @@ Usage:
 Options:
   --port <n>            port to listen on (default: 3000, or $PORT)
   --host <addr>         address to bind (default: 127.0.0.1)
-  --profile <id|path>   league profile (default: batl)
-  --pits <path>         track pit table (default: data/track-pits.json)
+  --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
+  --pits <path>         track pit table
+                        (default: $CHAMPCTL_PITS, else data/track-pits.json)
   --base-url <url>      override the profile's ACSM base URL
   --client <dir>        built client to serve (default: dist/client)
   --no-cache            bypass the on-disk response cache
@@ -93,7 +94,7 @@ export function parseArgs(argv: readonly string[]): Args {
   const args: Args = {
     port: DEFAULT_PORT,
     host: "127.0.0.1",
-    profile: "batl",
+    profile: defaultProfile(),
     cache: true,
     trustProxy: false,
     insecureCookies: false,

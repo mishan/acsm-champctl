@@ -116,7 +116,7 @@ interface HarnessOptions {
   postGate?: Promise<void>
   /** Replaces the static reader, for a read that has to fail. */
   reader?: AcsmReader
-  /** Collects the server's log lines at warn and above; silent otherwise. */
+  /** Collects the server's log lines; silent otherwise. */
   log?: string[]
 }
 
@@ -226,7 +226,7 @@ function harness(options: HarnessOptions = {}): Harness {
     secureCookies: false,
     now: () => NOW,
     logger: options.log
-      ? { level: "warn", stream: { write: (line: string) => options.log?.push(line) } }
+      ? { level: "info", stream: { write: (line: string) => options.log?.push(line) } }
       : false,
   })
   open.push(app)
@@ -382,6 +382,17 @@ describe("authentication", () => {
     expect(res.statusCode).toBe(502)
     expect(res.body).not.toContain("ECONNREFUSED")
     expect(log.join("")).toContain("ECONNREFUSED 10.0.0.5:8772")
+  })
+
+  it("keeps health probes out of the request log", async () => {
+    // A container health check hits this every thirty seconds, which is
+    // thousands of lines a day burying the requests anyone reads the log for.
+    const log: string[] = []
+    const h = harness({ log })
+    await h.app.inject({ method: "GET", url: "/healthz" })
+    await h.app.inject({ method: "GET", url: "/api/config" })
+    expect(log.join("")).toContain("/api/config")
+    expect(log.join("")).not.toContain("/healthz")
   })
 
   it("stops forwarding guesses to ACSM after enough failures", async () => {

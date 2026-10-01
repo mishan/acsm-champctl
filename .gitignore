@@ -65,3 +65,8 @@ playwright-report/
 # git bundles made while moving a branch between machines. One got swept into a
 # commit by `git add -A`, which is the reason AGENTS.md says to stage explicitly.
 *.bundle
+
+# A deployment's own configuration and secrets. deploy/ ships the examples;
+# the copies an operator fills in hold an ACSM password and a bot token.
+/deploy/config/
+/deploy/*.env

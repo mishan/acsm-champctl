@@ -21,7 +21,7 @@ import { HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
 import { loadProfile } from "../profile/load.js"
 import { SqliteArchiveStore } from "../archive/store.js"
 import { ingest, IngestError, type IngestOutcome, type IngestReport } from "../archive/ingest.js"
-import { reportUsageError, runCli, UsageError } from "./args.js"
+import { defaultProfile, reportUsageError, runCli, UsageError } from "./args.js"
 
 const USAGE = `champctl-archive — keep a copy of every championship export
 
@@ -30,7 +30,7 @@ Usage:
   champctl-archive status           what is in the archive already
 
 Options:
-  --profile <id|path>   league profile (default: batl)
+  --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
   --base-url <url>      override the profile's ACSM base URL
   --db <path>           archive database (default: data/archive/archive.db)
   --since <iso>         skip championships already checked since this time
@@ -87,7 +87,7 @@ export function isoTimestampOrThrow(value: string): Date {
 }
 
 export function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { command: "", profile: "batl", json: false, help: false }
+  const args: Args = { command: "", profile: defaultProfile(), json: false, help: false }
   const rest: string[] = []
 
   for (let i = 0; i < argv.length; i++) {

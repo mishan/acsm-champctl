@@ -44,7 +44,7 @@ import { SqliteLiveryStore } from "../liveries/store.js"
 import { SqliteTokenStore } from "../liveries/upload-token.js"
 import { loadProfile } from "../profile/load.js"
 import type { LeagueProfile } from "../profile/types.js"
-import { loadPits, reportUsageError, runCli, UsageError } from "./args.js"
+import { defaultProfile, loadPits, reportUsageError, runCli, UsageError } from "./args.js"
 
 const USAGE = `champctl-bot — champctl's voice in Discord
 
@@ -55,9 +55,10 @@ Usage:
   champctl-bot serve                        answer /livery until stopped
 
 Options:
-  --profile <id|path>   league profile (default: batl)
+  --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
   --channel <id>        override the channel this command posts to
-  --pits <path>         track pit table JSON (default: data/track-pits.json)
+  --pits <path>         track pit table JSON
+                        (default: $CHAMPCTL_PITS, else data/track-pits.json)
   --min <severity>      ERROR | WARN | INFO     (default: WARN)   [report]
   --suppress <codes>    comma-separated finding codes or prefixes  [report]
   --all                 include championships already fully raced   [report]
@@ -164,7 +165,7 @@ function commandShape(name: string): CommandShape | undefined {
 export function parseArgs(argv: readonly string[]): Args {
   const args: Args = {
     command: "",
-    profile: "batl",
+    profile: defaultProfile(),
     suppress: [],
     registerOnly: false,
     all: false,

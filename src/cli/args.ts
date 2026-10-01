@@ -47,6 +47,17 @@ export function reportUsageError(e: UsageError, usage: string): number {
 }
 
 /**
+ * The league profile a CLI uses when `--profile` isn't given.
+ *
+ * From `CHAMPCTL_PROFILE` for the same reason `CHAMPCTL_STORE` exists: a
+ * deployment runs several of these programs, and repeating the same path on
+ * every command line is how one of them ends up reading a different league.
+ */
+export function defaultProfile(): string {
+  return process.env["CHAMPCTL_PROFILE"]?.trim() || "batl"
+}
+
+/**
  * The track pit table, falling back to an empty one when there isn't a default.
  *
  * An explicit `--pits` that won't load is a mistake worth reporting; the
@@ -55,11 +66,15 @@ export function reportUsageError(e: UsageError, usage: string): number {
  * count is unknown, which is the intended behaviour rather than a failure.
  */
 export async function loadPits(path: string | undefined): Promise<PitTable> {
-  const target = path ?? resolve(process.cwd(), "data/track-pits.json")
+  // `CHAMPCTL_PITS` counts as naming the file, so a container pointed at a
+  // table it can't read fails at start rather than running every grid check
+  // against no pit counts at all.
+  const named = path ?? (process.env["CHAMPCTL_PITS"]?.trim() || undefined)
+  const target = named ?? resolve(process.cwd(), "data/track-pits.json")
   try {
     return await loadPitTable(target)
   } catch (e) {
-    if (path) throw e
+    if (named) throw e
     void e
     return EMPTY_PIT_TABLE
   }

@@ -16,7 +16,11 @@ import {
   renderResult,
   UsageError as MonthUsageError,
 } from "../src/cli/championship.js"
-import { confirm, UsageError } from "../src/cli/args.js"
+import { confirm, loadPits, UsageError } from "../src/cli/args.js"
+import { parseArgs as parseArchiveArgs } from "../src/cli/archive.js"
+import { parseArgs as parseBotArgs } from "../src/cli/bot.js"
+import { parseArgs as parseGridmomArgs } from "../src/cli/gridmom.js"
+import { parseArgs as parseLiveriesArgs } from "../src/cli/liveries.js"
 import { clientRootFor, parseArgs as parseServeArgs } from "../src/cli/serve.js"
 import type { RaceFormat } from "../src/finalize/format.js"
 import type { FinalizePlan } from "../src/finalize/plan.js"
@@ -539,6 +543,45 @@ describe("parsing champctl-serve's arguments", () => {
       expect(() => parseServeArgs(["--help"])).not.toThrow()
       expect(parseServeArgs(["--help"]).help).toBe(true)
     })
+  })
+})
+
+describe("defaults from the environment", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it("takes the profile from CHAMPCTL_PROFILE, and a flag still wins", () => {
+    // Every CLI shares the one default, so a deployment sets it once rather
+    // than repeating --profile on each command line it runs.
+    vi.stubEnv("CHAMPCTL_PROFILE", "/etc/champctl/profile.json")
+    expect(parseServeArgs([]).profile).toBe("/etc/champctl/profile.json")
+    expect(parseServeArgs(["--profile", "batl"]).profile).toBe("batl")
+  })
+
+  it.each([
+    ["champctl-bot", () => parseBotArgs(["report"])],
+    ["champctl-archive", () => parseArchiveArgs(["run"])],
+    ["gridmom", () => parseGridmomArgs(["list"])],
+    ["champctl-finalize", () => parseFinalizeArgs(["abc", "1", "--laps", "10"])],
+    ["champctl-liveries", () => parseLiveriesArgs(["abc", "--claims"])],
+    ["champctl-championship", () => parseMonthArgs(["build", "x.json"])],
+  ])("reads CHAMPCTL_PROFILE in %s too", (_, parse) => {
+    // One missed CLI is a deployment where one job reads a different league.
+    vi.stubEnv("CHAMPCTL_PROFILE", "/etc/champctl/profile.json")
+    expect(parse().profile).toBe("/etc/champctl/profile.json")
+  })
+
+  it("falls back to batl without it", () => {
+    vi.stubEnv("CHAMPCTL_PROFILE", "")
+    expect(parseServeArgs([]).profile).toBe("batl")
+  })
+
+  it("treats CHAMPCTL_PITS as naming the file, so a missing one is an error", async () => {
+    // The default path may not exist yet and quietly means "no pit counts";
+    // a path someone configured and got wrong must not mean the same thing.
+    vi.stubEnv("CHAMPCTL_PITS", join(tmpdir(), "champctl-no-such-pits.json"))
+    await expect(loadPits(undefined)).rejects.toThrow()
   })
 })
 

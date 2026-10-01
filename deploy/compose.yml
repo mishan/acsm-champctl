@@ -1,0 +1,134 @@
+# champctl in production. docs/deployment.md walks through it.
+#
+#   docker compose up -d                        the web UI
+#   docker compose --profile discord up -d      plus the bot, the livery drain
+#                                               and the upload server
+#   docker compose run --rm report              one-shot jobs, from cron
+#
+# Every process gets only the secret it needs: the web UI holds none (each
+# admin logs in with their own ACSM account), the bot holds the Discord token,
+# the drain holds the ACSM account, and the upload server holds neither. Keep
+# it that way when adding a service — the split is the reason there are four.
+
+name: champctl
+
+x-champctl: &champctl
+  image: ${CHAMPCTL_IMAGE:-champctl:local}
+  build:
+    context: ..
+  init: true
+  environment:
+    CHAMPCTL_PROFILE: /etc/champctl/profile.json
+    CHAMPCTL_PITS: /etc/champctl/track-pits.json
+    # The bot, the drain and the upload server must open the same file.
+    CHAMPCTL_STORE: /var/lib/champctl/data/liveries/liveries.db
+  volumes:
+    - champctl-data:/var/lib/champctl
+    - ./config:/etc/champctl:ro
+
+# One-shot jobs never restart; cron runs them again tomorrow.
+x-job: &job
+  <<: *champctl
+  profiles: [jobs]
+  restart: "no"
+
+services:
+  serve:
+    <<: *champctl
+    restart: unless-stopped
+    command: [champctl-serve, --host, 0.0.0.0, --trust-proxy]
+    # Loopback by default: the reverse proxy is what faces people. Setting this
+    # to a LAN address is for a proxy on another machine, and --trust-proxy
+    # means whatever can reach this port can claim any client address.
+    ports:
+      - ${CHAMPCTL_SERVE_LISTEN:-127.0.0.1:3000}:3000
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+
+  bot:
+    <<: *champctl
+    profiles: [discord]
+    restart: unless-stopped
+    command: [champctl-bot, serve]
+    env_file: bot.env
+
+  # Backs off on its own when ACSM is down or rate-limiting, and exits 3 only
+  # when ACSM turns the account down — or when no championship id is set. Both
+  # are fixed in .env or acsm.env, and the restart after either is a burst of
+  # the same failure in the log until someone does.
+  #
+  # unless-stopped rather than a bounded on-failure: Docker never restarts an
+  # on-failure container when the daemon restarts, so a reboot left the drain
+  # down while autoApply went on telling drivers their uploads apply by
+  # themselves.
+  drain:
+    <<: *champctl
+    profiles: [discord]
+    restart: unless-stopped
+    command:
+      - champctl-liveries
+      - ${CHAMPCTL_LIVERY_CHAMPIONSHIP:-}
+      - --drain
+      - --push
+      - --watch
+    env_file: acsm.env
+    # Lets a pass that is mid-push finish before the container is killed. A
+    # pass can be a batch of large uploads, each allowed minutes at a slow
+    # rate, and killing it between the skin upload and the championship save
+    # is the state the drain's own SIGTERM handling exists to avoid. Enough
+    # for a typical pass; a very large batch on a slow link can outlast it.
+    stop_grace_period: 15m
+
+  upload:
+    <<: *champctl
+    profiles: [discord]
+    restart: unless-stopped
+    command:
+      - champctl-upload
+      - --host
+      - 0.0.0.0
+      - --cache-dir
+      - /var/lib/champctl/carsets
+    ports:
+      - ${CHAMPCTL_UPLOAD_LISTEN:-127.0.0.1:8477}:8477
+
+  # Each job's command is fixed in its entrypoint, so options given to
+  # `docker compose run` are added to it rather than replacing it.
+  report:
+    <<: *job
+    entrypoint: [champctl-bot, report]
+    env_file: bot.env
+
+  announce:
+    <<: *job
+    entrypoint: [champctl-bot, announce]
+    env_file: bot.env
+
+  standings:
+    <<: *job
+    entrypoint: [champctl-bot, standings]
+    env_file: bot.env
+
+  archive:
+    <<: *job
+    entrypoint: [champctl-archive, run]
+
+  # Anything else, holding no secrets: `docker compose run --rm cli gridmom list`.
+  cli:
+    <<: *job
+
+  # The same with the ACSM account, for finalize, championship --import and
+  # the livery admin commands. Prompts need a terminal, which `run` gives.
+  admin:
+    <<: *job
+    env_file: acsm.env
+
+volumes:
+  champctl-data:
