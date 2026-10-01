@@ -38,7 +38,9 @@ export const CHAMPIONSHIPS_PATH = "/championships"
 /**
  * Championship standings, as ACSM works them out.
  *
- * **Premium only.** It appears nowhere in the public `router.go`
+ * **Premium only**, and since the Premium upgrade on BATL's manager, logged-in
+ * only: a logged-out request is sent to "/" with a 302. It appears nowhere in
+ * the public `router.go`
  * (docs/acsm-write-path.md §6), so the Docker harness cannot serve it and no
  * fixture of its response exists — `AcsmReader.standings` returns `unknown` for
  * that reason and not by oversight. Anything reading it has to cope with not

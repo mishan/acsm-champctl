@@ -23,7 +23,12 @@
  */
 
 import { findFormByAction, setOne, type ParsedForm } from "../acsm/form.js"
-import { AcsmWriteError, isRedirectStatus, type AcsmSession } from "../acsm/session.js"
+import {
+  AcsmSessionLapsedError,
+  AcsmWriteError,
+  isRedirectStatus,
+  type AcsmSession,
+} from "../acsm/session.js"
 import {
   championshipPath,
   eventEditPath,
@@ -134,7 +139,7 @@ export async function saveEventForm(session: AcsmSession, write: EventWrite): Pr
 
   // postForm re-checks the EntryList.* arity before sending.
   const res = await session.postForm(eventSubmitPath(write.championshipId), fields)
-  assertAccepted(res, "event", eventSubmitPath(write.championshipId))
+  assertAccepted(res, "event", eventSubmitPath(write.championshipId), write.championshipId)
 }
 
 export interface ApplyOptions {
@@ -257,7 +262,7 @@ async function saveSchedule(session: AcsmSession, plan: FinalizePlan): Promise<v
   }
 
   const res = await session.postForm(path, fields)
-  assertAccepted(res, "schedule", path)
+  assertAccepted(res, "schedule", path, plan.championshipId)
 }
 
 /**
@@ -281,10 +286,28 @@ function findScheduleForm(html: string, pageUrl: string, action: string): Parsed
 
 /**
  * ACSM reports a rejected form by re-rendering the page with a flash message
- * and a 200, so a redirect is the only success signal there is.
+ * and a 200, so a redirect is the only success signal there is — and only a
+ * redirect back to this championship. Any redirect used to count, and a session
+ * that lapsed between the form GET and the POST redirects too: to "/" on the
+ * Premium build and to "/login" on OSS, measured on 2.4.15 and 1.7.9. Both were
+ * reported as saved with nothing written. A save that went through lands on
+ * `/championship/{id}` (the event) or `/championship/{id}/event/{eventId}/`
+ * (the schedule), on both builds.
  */
-function assertAccepted(res: Response, what: string, path: string): void {
-  if (isRedirectStatus(res.status)) return
+function assertAccepted(res: Response, what: string, path: string, championshipId: string): void {
+  if (isRedirectStatus(res.status)) {
+    if (redirectsToChampionship(res, championshipId)) return
+    // No remedy in the sentence, and no full stop: PartialWriteError and
+    // PartialReorderError quote it mid-sentence and say what to do themselves,
+    // and "sign in again and retry" inside "do not re-run this" contradicted
+    // the one instruction that mattered.
+    throw new AcsmSessionLapsedError(
+      `ACSM answered the ${what} save by redirecting to "${res.headers.get("location") ?? ""}" ` +
+        `rather than back to the championship, which it does for a session that has expired or ` +
+        `an account that can't make changes, so the ${what} save was not applied`,
+      res.status,
+    )
+  }
   throw new AcsmWriteError(
     `ACSM didn't accept the ${what} save (HTTP ${res.status}, no redirect). It reports form ` +
       `errors by re-rendering the page rather than in the response, so check the event in ACSM ` +
@@ -292,4 +315,25 @@ function assertAccepted(res: Response, what: string, path: string): void {
     res.status,
     path,
   )
+}
+
+/**
+ * True when a redirect lands on this championship's page or one below it, on
+ * the server the request went to. Both builds send a relative `Location`; an
+ * absolute one has to name the same origin, as the login check requires.
+ */
+export function redirectsToChampionship(res: Response, championshipId: string): boolean {
+  const location = res.headers.get("location")
+  if (!location) return false
+  const base = res.url || "http://acsm.invalid/"
+  let target: URL
+  try {
+    target = new URL(location, base)
+  } catch {
+    return false
+  }
+  if (target.origin !== new URL(base).origin) return false
+  const own = championshipPath(championshipId).toLowerCase()
+  const at = target.pathname.toLowerCase()
+  return at === own || at.startsWith(`${own}/`)
 }

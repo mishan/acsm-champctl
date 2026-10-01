@@ -646,6 +646,8 @@ champctl-bot standings <champ-id>         post the championship standings
   --suppress <codes>    comma-separated finding codes or prefixes  [report]
   --all                 include championships already fully raced   [report]
   --source <where>      endpoint | export | auto  (default: auto) [standings]
+                        endpoint is Server Manager's own standings: standings.json,
+                        else the championship page's standings tab
   --dry-run             print what would be posted; talk to nobody
   --pits <path>         track pit table
                         (default: $CHAMPCTL_PITS, else data/track-pits.json)
@@ -772,9 +774,12 @@ $ champctl-bot standings 1111… --dry-run
 
 **Two sources, and the difference matters.** `standings.json` is ACSM's own
 arithmetic, so it can never disagree with the page drivers look at — but it is
-premium-only, absent from the public build entirely. The export carries results
-inline on every build, so champctl can do the sums itself. `--source` picks;
-`auto` prefers the endpoint.
+premium-only, absent from the public build entirely, and on current Premium
+builds it wants a login, which the bot never has. When it won't answer, champctl
+reads the same numbers off the championship page's standings tab, which Public
+Access serves. The export carries results inline on every build, so champctl
+can also do the sums itself. `--source` picks: `endpoint` means ACSM's own
+standings from either place, and `auto` prefers them to the export.
 
 Under `auto` champctl computes the export standings *as well*, purely to compare
 them, and reports any disagreement to stderr — never to the channel — and in the

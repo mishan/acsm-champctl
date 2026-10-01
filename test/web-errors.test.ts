@@ -12,7 +12,11 @@
 import { describe, expect, it } from "vitest"
 
 import { AcsmError, AcsmNotJsonError } from "../src/acsm/client.js"
-import { AcsmAuthError, PasswordChangeRequiredError } from "../src/acsm/session.js"
+import {
+  AcsmAuthError,
+  AcsmSessionLapsedError,
+  PasswordChangeRequiredError,
+} from "../src/acsm/session.js"
 import { EntryListChangedError, PartialWriteError } from "../src/finalize/apply.js"
 import { FinalizeError, type FinalizePlan } from "../src/finalize/plan.js"
 import { PartialReorderError } from "../src/reorder/apply.js"
@@ -173,6 +177,17 @@ describe("failures that came from ACSM", () => {
     expect(d.status).toBe(502)
     expect(d.body.error.message).not.toMatch(/ECONNREFUSED|10\.0\.0\.5|acsm\.internal/)
     expect(d.body.error.message).toMatch(/couldn't reach Server Manager/)
+  })
+})
+
+describe("a save ACSM bounced to its home page", () => {
+  it("is a session to end, not a gateway failure", () => {
+    // As a 502 the UI said "sign in again" and never offered the login
+    // screen, and the dead session it kept failed the retry on the form page.
+    const d = describeError(new AcsmSessionLapsedError("redirected to /", 302))
+    expect(d.status).toBe(401)
+    expect(d.body.error.code).toBe("session-expired")
+    expect(d.body.error.message).toMatch(/nothing was written/)
   })
 })
 

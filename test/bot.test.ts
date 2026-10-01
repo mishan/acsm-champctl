@@ -111,6 +111,7 @@ describe("a championship that can't be read", () => {
       },
       exportChampionshipRaw: (id: string) => inner.exportChampionshipRaw(id),
       standings: () => inner.standings(),
+      championshipPage: () => inner.championshipPage(),
       healthcheck: () => inner.healthcheck(),
       listContent: () => inner.listContent(),
     }
@@ -140,6 +141,7 @@ describe("a championship that can't be read", () => {
       exportChampionship: (id: string) => inner.exportChampionship(id),
       exportChampionshipRaw: (id: string) => inner.exportChampionshipRaw(id),
       standings: () => inner.standings(),
+      championshipPage: () => inner.championshipPage(),
       healthcheck: () => inner.healthcheck(),
       listContent: () => inner.listContent(),
     }

@@ -63,6 +63,7 @@ function reader(champ: Championship | "gone", standings: () => Promise<unknown>)
     exportChampionship: champ === "gone" ? gone : (id: string) => inner.exportChampionship(id),
     exportChampionshipRaw: (id: string) => inner.exportChampionshipRaw(id),
     standings,
+    championshipPage: () => inner.championshipPage(),
     healthcheck: () => inner.healthcheck(),
     listContent: () => inner.listContent(),
   }

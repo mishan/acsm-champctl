@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from "vitest"
 
-import { AcsmSession } from "../src/acsm/session.js"
+import { AcsmSession, AcsmSessionLapsedError } from "../src/acsm/session.js"
 import type { Championship, ChampionshipEvent } from "../src/acsm/types.js"
 import { EntryListChangedError } from "../src/finalize/apply.js"
 import { readFormat } from "../src/finalize/format.js"
@@ -86,8 +86,19 @@ function threeRounds(over: Partial<ChampionshipEvent>[] = []): Championship {
 interface HarnessOptions {
   /** Fail the POST for these event ids, so a partial write can be produced. */
   failFor?: string[]
+  /** Rounds whose save ACSM answers as it does an expired session's. */
+  lapseFor?: string[]
   /** Serve a different entry list for these event ids, to trip the guard. */
   movedListFor?: string[]
+}
+
+/**
+ * Where ACSM sends a save that went through, measured on 2.4.15 and 1.7.9:
+ * back to the championship for the event form, and to the event for the
+ * schedule. A session that has lapsed redirects too, but elsewhere.
+ */
+function savedLocation(url: string): string {
+  return new URL(url).pathname.replace(/\/event\/submit$/, "").replace(/\/schedule$/, "/")
 }
 
 async function harness(options: HarnessOptions = {}) {
@@ -108,7 +119,11 @@ async function harness(options: HarnessOptions = {}) {
       if ((options.failFor ?? []).some((id) => posts.at(-1)?.body.get("Editing") === id)) {
         return new Response("nope", { status: 500, statusText: "Internal Server Error" })
       }
-      return new Response("", { status: 302, headers: { location: "/" } })
+      const lapsed = (options.lapseFor ?? []).some((id) => posts.at(-1)?.body.get("Editing") === id)
+      return new Response("", {
+        status: 302,
+        headers: { location: lapsed ? "/" : savedLocation(url) },
+      })
     }
 
     // Which round's form is being asked for, so each answers with its own
@@ -416,6 +431,20 @@ describe("applying a reorder", () => {
     expect(partial.written).toEqual([1, 2])
     expect(partial.pending).toEqual([3])
     expect(partial.message).toMatch(/Do not re-run/)
+  })
+
+  it("reports a save that lapsed part way as a partial reorder", async () => {
+    // A lapse used to count as saved here too, and reorder would have reported
+    // a calendar it hadn't finished writing as done.
+    const { session } = await harness({ lapseFor: ["event-3"] })
+    const plan = await planReorder(session, planOptions(threeRounds(), [3, 1, 2]))
+    const err = await applyReorder(session, plan, { acknowledgeWarnings: true }).catch(
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(PartialReorderError)
+    expect((err as PartialReorderError).pending).toEqual([3])
+    expect((err as PartialReorderError).cause).toBeInstanceOf(AcsmSessionLapsedError)
+    expect((err as Error).message).not.toMatch(/retry|\.\./)
   })
 
   it("lets the first round's failure through as itself", async () => {

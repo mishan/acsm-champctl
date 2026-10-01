@@ -12,7 +12,7 @@
 
 import { readInstalledContent, type InstalledContent } from "./content.js"
 import { walkChampionships } from "./listing.js"
-import { exportPath, standingsPath } from "./paths.js"
+import { championshipPath, exportPath, standingsPath } from "./paths.js"
 import type { AcsmHealthcheck, Championship, ChampionshipSummary } from "./types.js"
 import { RateLimiter, type RateLimiterOptions } from "./rate-limit.js"
 
@@ -40,6 +40,11 @@ export interface AcsmReader {
    */
   exportChampionshipRaw(id: string): Promise<Buffer>
   standings(id: string): Promise<unknown>
+  /**
+   * The championship's public page, as HTML. Its standings tab is the fallback
+   * for a `standings.json` that wants a login — see `parseStandingsPage`.
+   */
+  championshipPage(id: string): Promise<string>
   healthcheck(): Promise<AcsmHealthcheck>
   /**
    * Cars and tracks installed on the server, with the names people know them
@@ -222,6 +227,14 @@ export class HttpAcsmReader implements AcsmReader {
     return this.#getJson(standingsPath(id))
   }
 
+  async championshipPage(id: string): Promise<string> {
+    // Not cached, like the other scrapes: the cache holds decoded JSON. Not
+    // following redirects, because a page that sends this to "/" or "/login"
+    // has no standings tab either, and followed, that read as a championship
+    // nobody had raced in yet — an answer rather than a failure.
+    return (await this.#request(championshipPath(id), "manual")).toString("utf8")
+  }
+
   async healthcheck(): Promise<AcsmHealthcheck> {
     return this.#getJson<AcsmHealthcheck>("/healthcheck.json")
   }
@@ -239,7 +252,7 @@ export class HttpAcsmReader implements AcsmReader {
    * by the time `text()` has run, a BOM and any invalid sequence are already
    * gone and cannot be recovered.
    */
-  async #request(path: string): Promise<Buffer> {
+  async #request(path: string, redirect: "follow" | "manual" = "follow"): Promise<Buffer> {
     const url = `${this.#baseUrl}${path}`
     await this.#limiter?.acquire()
 
@@ -248,7 +261,7 @@ export class HttpAcsmReader implements AcsmReader {
     try {
       const res = await this.#fetch(url, {
         headers: { Accept: "application/json", "User-Agent": this.#userAgent },
-        redirect: "follow",
+        redirect,
         signal: controller.signal,
       })
       if (!res.ok) {
@@ -428,6 +441,10 @@ export class StaticAcsmReader implements AcsmReader {
 
   async standings(): Promise<unknown> {
     throw new AcsmError("Standings are not available from a static reader")
+  }
+
+  async championshipPage(): Promise<string> {
+    throw new AcsmError("Championship pages are not available from a static reader")
   }
 
   async healthcheck(): Promise<AcsmHealthcheck> {

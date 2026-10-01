@@ -1,10 +1,15 @@
 import { DateTime } from "luxon"
 import { describe, expect, it } from "vitest"
 
-import { AcsmSession } from "../src/acsm/session.js"
+import { AcsmSession, AcsmSessionLapsedError } from "../src/acsm/session.js"
 import type { ChampionshipEvent } from "../src/acsm/types.js"
 import { AcsmError } from "../src/acsm/client.js"
-import { applyFinalize, EntryListChangedError, PartialWriteError } from "../src/finalize/apply.js"
+import {
+  applyFinalize,
+  EntryListChangedError,
+  PartialWriteError,
+  redirectsToChampionship,
+} from "../src/finalize/apply.js"
 import {
   applyFormat,
   describeLength,
@@ -538,6 +543,19 @@ interface HarnessOptions {
   eventPages?: string[]
   scheduleHtml?: string
   submitStatus?: number
+  /** Answer every save the way ACSM answers one from an expired session. */
+  sessionLapsed?: "premium" | "oss"
+  /** The same, for the schedule save only, after the event save went through. */
+  scheduleLapsed?: boolean
+}
+
+/**
+ * Where ACSM sends a save that went through, measured on 2.4.15 and 1.7.9:
+ * back to the championship for the event form, and to the event for the
+ * schedule. A session that has lapsed redirects too, but elsewhere.
+ */
+function savedLocation(url: string): string {
+  return new URL(url).pathname.replace(/\/event\/submit$/, "").replace(/\/schedule$/, "/")
 }
 
 async function harness(options: HarnessOptions = {}) {
@@ -560,7 +578,13 @@ async function harness(options: HarnessOptions = {}) {
       if (options.failSchedulePost && url.includes("/schedule")) {
         return new Response("nope", { status: 500, statusText: "Internal Server Error" })
       }
-      return new Response("", { status: options.submitStatus ?? 302, headers: { location: "/" } })
+      const location =
+        options.sessionLapsed === "premium" || (options.scheduleLapsed && url.includes("/schedule"))
+          ? "/"
+          : options.sessionLapsed === "oss"
+            ? "/login"
+            : savedLocation(url)
+      return new Response("", { status: options.submitStatus ?? 302, headers: { location } })
     }
     // The schedule form is rendered on the *championship* page, not at its own
     // action — that route is POST-only and a GET of it is a 405 on 2.4.x. This
@@ -951,6 +975,35 @@ describe("applying a finalize", () => {
 
     // Both writes were attempted, in order: the event one did go through.
     expect(h.posts.map((p) => p.url.includes("/schedule"))).toEqual([false, true])
+  })
+
+  /**
+   * A session that lapses between reading the form and posting it still gets a
+   * redirect — to "/" on 2.4.15 and to "/login" on 1.7.9, both measured — and
+   * any redirect used to count as saved. The CLI printed "Pushed" and the web
+   * UI said done, with nothing written.
+   */
+  it.each(["premium", "oss"] as const)(
+    "refuses a save that redirected away from the championship (%s)",
+    async (build) => {
+      const h = await harness({ sessionLapsed: build })
+      const plan = await planFor(h)
+      const err = await applyFinalize(h.session, plan).catch((e: unknown) => e)
+      expect(err).toBeInstanceOf(AcsmSessionLapsedError)
+      expect((err as Error).message).toMatch(/was not applied/)
+    },
+  )
+
+  it("reports a schedule save that lapsed as a partial write", async () => {
+    const h = await harness({ scheduleLapsed: true })
+    const plan = await planFor(h, { qualiStart: { date: "2026-09-09", time: "20:00" } })
+    const err = await applyFinalize(h.session, plan, { acknowledgeWarnings: true }).catch(
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(PartialWriteError)
+    expect((err as PartialWriteError).cause).toBeInstanceOf(AcsmSessionLapsedError)
+    // The wrapper says what to do; the cause must not contradict it.
+    expect((err as Error).message).not.toMatch(/retry|\.\./)
   })
 
   it("lets a failure before the event save through unchanged", async () => {
@@ -1418,5 +1471,34 @@ describe("laying overrides over the current format", () => {
   it("switches a lap race to a timed one", () => {
     const laps: RaceFormat = { ...current, length: { kind: "laps", laps: 18 } }
     expect(withOverrides(laps, { minutes: 40 }).length).toEqual({ kind: "minutes", minutes: 40 })
+  })
+})
+
+describe("which redirect counts as a save", () => {
+  const ID = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
+  const redirect = (location: string, url = "https://acsm.example/championship/x/event/submit") => {
+    const res = new Response("", { status: 302, headers: { location } })
+    Object.defineProperty(res, "url", { value: url })
+    return res
+  }
+
+  it.each([
+    ["the championship", `/championship/${ID}`],
+    ["an event below it, with a trailing slash", `/championship/${ID}/event/e1/`],
+    ["the id in upper case", `/championship/${ID.toUpperCase()}`],
+    ["an absolute URL on the same server", `https://acsm.example/championship/${ID}`],
+  ])("accepts %s", (_, location) => {
+    expect(redirectsToChampionship(redirect(location), ID)).toBe(true)
+  })
+
+  it.each([
+    ["the home page", "/"],
+    ["the login page", "/login"],
+    ["another championship", "/championship/11111111-2222-3333-4444-555555555555"],
+    ["an id that only starts the same", `/championship/${ID}0`],
+    ["the same path on another server", `https://elsewhere.example/championship/${ID}`],
+    ["no Location at all", ""],
+  ])("refuses %s", (_, location) => {
+    expect(redirectsToChampionship(redirect(location), ID)).toBe(false)
   })
 })

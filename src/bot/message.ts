@@ -140,7 +140,7 @@ export function standingsMessage(
   if (scored.length === 0) return []
 
   const footer =
-    standings.source === "endpoint"
+    standings.source !== "export"
       ? ""
       : "\n-# Worked out from the championship export, not read from Server Manager."
 
@@ -215,7 +215,8 @@ const HEADING_PART = 100
  * backtick goes, since counting runs of them is more code than it is worth.
  */
 function nameCell(name: string): string {
-  const safe = name.replaceAll("`", "'")
+  // Line breaks too: one in a name splits its row across lines of the table.
+  const safe = name.replaceAll("`", "'").replace(/[\r\n]+/g, " ")
   return safe.length > NAME_CELL ? `${safe.slice(0, NAME_CELL - 1)}…` : safe
 }
 
