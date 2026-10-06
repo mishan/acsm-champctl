@@ -11,11 +11,10 @@
  * `GatewayTransport.wrapping` exists for this: a fake client is enough to drive
  * `post` and the interaction handler, without a token or a socket.
  */
-import { Events, MessageFlags } from "discord.js"
-import type { Client } from "discord.js"
+import { ChatInputCommandInteraction, Client, Events, MessageFlags } from "discord.js"
 import { describe, expect, it } from "vitest"
 
-import { GatewayTransport } from "../src/bot/discord.js"
+import { GatewayTransport, toSlashCommand } from "../src/bot/discord.js"
 import type { CommandRouter } from "../src/bot/transport.js"
 
 interface Sent {
@@ -177,5 +176,74 @@ describe("GatewayTransport.listen", () => {
     await new Promise((r) => setImmediate(r))
 
     expect(calls.edited).toMatchObject({ content: "done" })
+  })
+})
+
+/**
+ * The interaction exactly as discord.js builds it from the gateway, rather than
+ * a fake: the bug lived in how discord.js caches, so a fake that says
+ * `inCachedGuild: () => false` — as the one above does — could not see it.
+ */
+describe("reading the member's roles", () => {
+  const GUILD = "338186558282924032"
+  const ROLE = "832679478579953666"
+
+  const interactionIn = (cacheGuild: boolean) => {
+    const client = new Client({ intents: [] })
+    // What READY does with the guild list, intents or not.
+    if (cacheGuild) {
+      ;(client.guilds as unknown as { _add: (g: unknown) => unknown })._add({
+        id: GUILD,
+        unavailable: true,
+      })
+    }
+    const raw = {
+      id: "1",
+      application_id: "2",
+      type: 2,
+      token: "t",
+      version: 1,
+      guild_id: GUILD,
+      channel_id: "902235625225330758",
+      data: {
+        id: "3",
+        name: "livery",
+        type: 1,
+        options: [{ type: 1, name: "claim", options: [] }],
+      },
+      member: {
+        user: { id: "4", username: "driver", discriminator: "0" },
+        roles: [ROLE],
+        joined_at: "2020-01-01T00:00:00Z",
+        deaf: false,
+        mute: false,
+        flags: 0,
+      },
+      locale: "en-US",
+      app_permissions: "0",
+      entitlements: [],
+      authorizing_integration_owners: {},
+      context: 0,
+    }
+    const Interaction = ChatInputCommandInteraction as unknown as new (
+      client: Client,
+      data: unknown,
+    ) => ChatInputCommandInteraction
+    return { client, interaction: new Interaction(client, raw) }
+  }
+
+  it("reads them in a guild discord.js cached from READY without its roles", async () => {
+    // The production case: no intents, so the guild is an unavailable stub
+    // with no roles, and member.roles.cache came back as @everyone alone.
+    const { client, interaction } = interactionIn(true)
+    expect(interaction.inCachedGuild()).toBe(true)
+    expect(toSlashCommand(interaction).roleIds).toEqual([ROLE])
+    await client.destroy()
+  })
+
+  it("reads them in a guild discord.js hasn't cached at all", async () => {
+    const { client, interaction } = interactionIn(false)
+    expect(toSlashCommand(interaction).roleIds).toEqual([ROLE])
+    await client.destroy()
   })
 })

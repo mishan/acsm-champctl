@@ -388,7 +388,11 @@ describe("toSlashCommand", () => {
       user: { id: MISHA, username: "misha" },
       guildId: GUILD,
       channelId: LIVERY_CHANNEL,
-      member: { roles: { cache: new Map([[RACER_ROLE, {}]]) } },
+      // A GuildMember as discord.js builds one: the payload's ids in `_roles`,
+      // and a role cache that is empty because the bot never receives the
+      // guild's roles. Reading the cache was the bug; the real interaction in
+      // bot-gateway.test.ts is what pins it.
+      member: { _roles: [RACER_ROLE], roles: { cache: new Map() } },
       inCachedGuild: () => true,
       ...over,
     }) as unknown as Parameters<typeof toSlashCommand>[0]

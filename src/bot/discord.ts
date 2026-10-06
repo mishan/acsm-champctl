@@ -288,15 +288,7 @@ export function toSlashCommand(interaction: ChatInputCommandInteraction): SlashC
       }
     : undefined
 
-  // `member.roles` arrives in the payload, so no GuildMembers intent and no
-  // fetch. In a DM there is no member at all, which is the case the clamp
-  // reports as "a DM has no roles in it".
-  const roleIds =
-    interaction.inCachedGuild() && interaction.member
-      ? [...interaction.member.roles.cache.keys()]
-      : Array.isArray((interaction.member as { roles?: unknown } | null)?.roles)
-        ? ((interaction.member as unknown as { roles: string[] }).roles ?? [])
-        : []
+  const roleIds = memberRoleIds(interaction.member)
 
   return {
     name: interaction.commandName,
@@ -311,6 +303,29 @@ export function toSlashCommand(interaction: ChatInputCommandInteraction): SlashC
     channelId: interaction.channelId,
     roleIds,
   }
+}
+
+/**
+ * The member's role ids, as the interaction payload carried them.
+ *
+ * Never `member.roles.cache`. With no intents the bot never receives a guild's
+ * roles, but discord.js still caches every guild from READY as an unavailable
+ * stub — so the interaction counts as "in a cached guild", the member is built
+ * as a GuildMember, and its role cache is the payload's ids filtered through
+ * that empty role list. Every member came out holding @everyone and nothing
+ * else, and a role clamp turned everyone away. The ids themselves survive as
+ * `_roles` on the GuildMember, and as `roles` on the raw member discord.js
+ * hands over for a guild it hasn't cached at all.
+ *
+ * Neither shape recognised means no roles, which a role clamp refuses. In a DM
+ * there is no member at all — the case the clamp reports as "a DM has no roles
+ * in it".
+ */
+function memberRoleIds(member: unknown): string[] {
+  if (member === null || typeof member !== "object") return []
+  const m = member as { _roles?: unknown; roles?: unknown }
+  const ids = Array.isArray(m._roles) ? m._roles : Array.isArray(m.roles) ? m.roles : []
+  return ids.filter((id): id is string => typeof id === "string")
 }
 
 function message(e: unknown): string {
