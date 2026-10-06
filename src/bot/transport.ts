@@ -28,6 +28,11 @@ export interface DiscordMessage {
 export interface DiscordFile {
   name: string
   data: Uint8Array
+  /**
+   * Alt text: what the image says, for anyone who can't see it. The trophy
+   * image's results are only in its pixels otherwise.
+   */
+  description?: string
 }
 
 export interface DiscordTransport {

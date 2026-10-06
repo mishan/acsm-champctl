@@ -15,7 +15,7 @@ import {
   type TrophyDeps,
   type TrophyPost,
 } from "../src/bot/trophies.js"
-import { renderPodium } from "../src/bot/trophy-image.js"
+import { cardColor, NO_PREVIEW_COLOR, renderPodium, textColor } from "../src/bot/trophy-image.js"
 import { SqliteTrophyStore } from "../src/bot/trophy-store.js"
 import { championship, raceEvent } from "./support/build.js"
 
@@ -107,11 +107,54 @@ describe("drawing the podium", () => {
     expect(png.subarray(1, 4).toString()).toBe("PNG")
   })
 
+  /** The color at the middle of a panel's preview area, as #rrggbb. */
+  const pixel = async (png: Buffer, panel: number): Promise<string> => {
+    const image = await loadImage(png)
+    const c = createCanvas(image.width, image.height)
+    const g = c.getContext("2d")
+    g.drawImage(image, 0, 0)
+    // Three panels with two gaps between them; the preview fills each panel's top.
+    const panelWidth = (image.width * 250) / (3 * 250 + 2 * 12)
+    const x = Math.round(panel * (panelWidth * (1 + 12 / 250)) + panelWidth / 2)
+    const [r, gr, b] = g.getImageData(x, Math.round(panelWidth * 0.28), 1, 1).data
+    return `#${[r!, gr!, b!].map((v) => v.toString(16).padStart(2, "0")).join("")}`
+  }
+
   it("still draws the others when one driver's preview couldn't be fetched", async () => {
+    // Asserted on the pixels: a renderer that drew nothing would pass a check
+    // that only decodes the PNG.
     const podium = (parsePodium(single) as Exclude<ReturnType<typeof parsePodium>, string>)[0]!
     const png = await renderPodium(podium, [await jpeg(), undefined, await jpeg()])
-    expect((await loadImage(png)).width).toBeGreaterThan(0)
+    const red = (hex: string) => Number.parseInt(hex.slice(1, 3), 16) > 180
+    expect(red(await pixel(png, 0))).toBe(true)
+    expect(await pixel(png, 1)).toBe(NO_PREVIEW_COLOR)
+    expect(red(await pixel(png, 2))).toBe(true)
   })
+
+  it("gives a class named for a metal that metal's color, whatever ACSM picked", () => {
+    // BATL's Platinum, Gold and Silver are green, yellow and red in ACSM.
+    const of = (name: string, color = "#00cc00") => cardColor({ name, color, places: [] })
+    expect(of("Platinum")).not.toBe("#00cc00")
+    expect(new Set([of("Platinum"), of("Gold"), of("Silver"), of("Bronze")]).size).toBe(4)
+    expect(of("GT3")).toBe("#00cc00")
+    expect(cardColor({ name: "", places: [] })).toBe("#343a40")
+  })
+
+  it.each(["#00cc00", "#c4c400", "#b70000", "#343a40", "#d6dae1", "#d4a72c", "#b3b8c0", "#b4783f"])(
+    "keeps the text readable on %s",
+    (bg) => {
+      // WCAG AA for large text: 3:1. Always-white text was 1.9:1 on ACSM's Gold.
+      const lum = (hex: string) => {
+        const [r, g, b] = [1, 3, 5].map((i) => {
+          const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255
+          return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+        })
+        return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!
+      }
+      const [a, b] = [lum(bg), lum(textColor(bg))]
+      expect((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)).toBeGreaterThanOrEqual(3)
+    },
+  )
 })
 
 const NOW = new Date("2026-10-20T12:00:00Z")
@@ -182,6 +225,10 @@ describe("posting podiums", () => {
     expect(posts).toHaveLength(1)
     expect(posts[0]!.content).toBe("**October**")
     expect(posts[0]!.files[0]!.name).toBe("October-podium.png")
+    // The results are in the image's pixels; the alt text says them too.
+    expect(posts[0]!.files[0]!.description).toBe(
+      "October: 1st place ada, 2nd place bo, 3rd place cy",
+    )
   })
 
   it("leaves seasons that finished before this week alone", async () => {

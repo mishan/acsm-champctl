@@ -86,10 +86,13 @@ describe("GatewayTransport.post", () => {
     await transport.post({
       channelId: "444444444444444444",
       content: "**October**",
-      files: [{ name: "October-podium.png", data }],
+      files: [{ name: "October-podium.png", data, description: "October: 1st place ada" }],
     })
 
-    const payload = sent[0]?.payload as { files: { attachment: Buffer; name: string }[] }
+    const payload = sent[0]?.payload as {
+      files: { attachment: Buffer; name: string; description?: string }[]
+    }
+    expect(payload.files[0]?.description).toBe("October: 1st place ada")
     expect(payload).toMatchObject({ content: "**October**", allowedMentions: { parse: [] } })
     expect(payload.files[0]?.name).toBe("October-podium.png")
     expect([...payload.files[0]!.attachment]).toEqual([...data])

@@ -25,8 +25,64 @@ const RADIUS = 4 * SCALE
 
 /** ACSM's dark card, and the text on it. */
 const CARD_COLOR = "#343a40"
-const TEXT_COLOR = "#ffffff"
-const NO_PREVIEW_COLOR = "#1c1f23"
+const LIGHT_TEXT = "#ffffff"
+const DARK_TEXT = "#1b1d21"
+export const NO_PREVIEW_COLOR = "#1c1f23"
+
+/**
+ * Leagues name classes after metals, and ACSM colors them whatever an admin
+ * picked — BATL's Platinum, Gold and Silver are a traffic-light green, yellow
+ * and red. A class named for a metal gets that metal's color; any other keeps
+ * ACSM's.
+ */
+const METALS: readonly [RegExp, string][] = [
+  [/platinum/i, "#d6dae1"],
+  [/gold/i, "#d4a72c"],
+  [/silver/i, "#b3b8c0"],
+  [/bronze/i, "#b4783f"],
+]
+
+/** The card's color for a class: its metal, else ACSM's, else ACSM's dark card. */
+export function cardColor(podium: PodiumClass): string {
+  for (const [name, color] of METALS) if (name.test(podium.name)) return color
+  return podium.color ?? CARD_COLOR
+}
+
+/** WCAG relative luminance of a `#rgb` or `#rrggbb` color. */
+function luminance(hex: string): number {
+  const h = hex.replace("#", "")
+  const full = h.length === 3 ? [...h].map((c) => c + c).join("") : h.slice(0, 6)
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const c = Number.parseInt(full.slice(i, i + 2), 16) / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!
+}
+
+/**
+ * Whichever of white and near-black reads better on the card. Always white
+ * made ACSM's yellow Gold card 1.9:1 — the driver's name barely there.
+ */
+export function textColor(background: string): string {
+  const bg = luminance(background)
+  const contrast = (fg: number) => (Math.max(bg, fg) + 0.05) / (Math.min(bg, fg) + 0.05)
+  return contrast(luminance(LIGHT_TEXT)) >= contrast(luminance(DARK_TEXT)) ? LIGHT_TEXT : DARK_TEXT
+}
+
+/** A shade of `hex`, lighter for positive `amount` and darker for negative, as `#rrggbb`. */
+function shade(hex: string, amount: number): string {
+  const h = hex.replace("#", "")
+  const full = h.length === 3 ? [...h].map((c) => c + c).join("") : h.slice(0, 6)
+  return `#${[0, 2, 4]
+    .map((i) => {
+      const c = Number.parseInt(full.slice(i, i + 2), 16)
+      const v = amount >= 0 ? c + (255 - c) * amount : c * (1 + amount)
+      return Math.round(Math.min(255, Math.max(0, v)))
+        .toString(16)
+        .padStart(2, "0")
+    })
+    .join("")}`
+}
 
 let fontsLoaded = false
 
@@ -47,7 +103,7 @@ function loadFonts(): void {
   fontsLoaded = true
 }
 
-function ordinal(n: number): string {
+export function ordinal(n: number): string {
   const tens = n % 100
   if (tens >= 11 && tens <= 13) return `${n}th`
   return `${n}${["th", "st", "nd", "rd"][n % 10] ?? "th"}`
@@ -97,7 +153,18 @@ export async function renderPodium(
     g.save()
     roundedRect(g, x, 0, CARD_WIDTH, cardHeight, RADIUS)
     g.clip()
-    g.fillStyle = podium.color ?? CARD_COLOR
+    // A metal card gets a little sheen, top to bottom; any other stays flat.
+    const color = cardColor(podium)
+    const metal = METALS.some(([name]) => name.test(podium.name))
+    if (metal) {
+      const sheen = g.createLinearGradient(0, IMAGE_HEIGHT, 0, cardHeight)
+      sheen.addColorStop(0, shade(color, 0.25))
+      sheen.addColorStop(0.55, color)
+      sheen.addColorStop(1, shade(color, -0.18))
+      g.fillStyle = sheen
+    } else {
+      g.fillStyle = color
+    }
     g.fillRect(x, 0, CARD_WIDTH, cardHeight)
 
     const bytes = previews[i]
@@ -110,7 +177,7 @@ export async function renderPodium(
     }
     g.restore()
 
-    g.fillStyle = TEXT_COLOR
+    g.fillStyle = textColor(color)
     g.textAlign = "center"
     g.textBaseline = "middle"
     const centre = x + CARD_WIDTH / 2

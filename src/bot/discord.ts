@@ -152,7 +152,14 @@ export class GatewayTransport implements DiscordTransport {
       content: message.content,
       allowedMentions: { parse: [] },
       ...(message.files?.length
-        ? { files: message.files.map((f) => ({ attachment: Buffer.from(f.data), name: f.name })) }
+        ? {
+            files: message.files.map((f) => ({
+              attachment: Buffer.from(f.data),
+              name: f.name,
+              // Discord caps alt text at 1024 characters.
+              ...(f.description ? { description: f.description.slice(0, 1024) } : {}),
+            })),
+          }
         : {}),
     })
   }

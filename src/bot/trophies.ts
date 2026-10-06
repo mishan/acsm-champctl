@@ -16,7 +16,7 @@ import { eventHasResults, events, eventSession, isZeroTime } from "../acsm/view.
 import { headingText } from "./message.js"
 import { type PodiumClass, parsePodium } from "./podium.js"
 import type { DiscordFile } from "./transport.js"
-import { renderPodium } from "./trophy-image.js"
+import { ordinal, renderPodium } from "./trophy-image.js"
 
 /** A post with an image, as the caller's transport will send it. */
 export interface TrophyPost {
@@ -115,9 +115,17 @@ async function podiumPost(deps: TrophyDeps, name: string, cls: PodiumClass): Pro
     .trim()
     .replace(/[^A-Za-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
+  const heading = cls.name ? `${name}, ${cls.name}` : name
+  const results = cls.places.map((p) => `${ordinal(p.place)} place ${p.driver}`).join(", ")
   return {
     content: `**${title}**`,
-    files: [{ name: `${slug || "podium"}-podium.png`, data: png }],
+    files: [
+      {
+        name: `${slug || "podium"}-podium.png`,
+        data: png,
+        description: `${heading}: ${results}`,
+      },
+    ],
   }
 }
 
