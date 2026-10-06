@@ -408,27 +408,51 @@ diffing it with champctl's payload:
 | `BoPModel` etc. | one row per car | one more: the hidden `.class-bop` that `handleGlobalBoP` clones and removes |
 
 ACSM now reads `EntryList.Spectator` to tell the spectator car from the drivers;
-without it, row 0 is a driver. champctl sends all three as a browser does,
-taking the description from the export rather than the holder so it is stored
-byte for byte.
+without it, row 0 is a driver. champctl sends all three as a browser does.
+
+**The description comes from the page, not the export.** ACSM stores images in
+it as `/content/server-manager/images/…` URLs; the holder carries that form, and
+it is exactly what a browser posts. The *export* turns each image back into a
+base64 `data:` URL, so it can't be the source: posted, a 12 KB description was
+stored as 2 MB inline, and one with a few large images went over Go's 10 MB form
+limit and failed every save (`http: POST too large`). The export can't show the
+difference either — it inlines whatever is stored — so after a save the
+description is compared on the edit page.
+
+**The registration deadline's timezone is filled by the page's script too.**
+Posted blank, a 19:00 Los Angeles deadline came back as 19:00 UTC. champctl sends
+the deadline from the export in the offset it was stored in, as the fixed-offset
+zone Go can load (`-07:00` is `Etc/GMT+7`), so it comes back byte for byte; a
+deadline in an offset that isn't a whole hour is refused rather than moved.
 
 **`ClassID` resets on any save of this form.** A browser saving it unchanged
 does the same, so it is ACSM's behavior rather than the payload's, and the
 check below allows it.
 
-**What a save now proves.** Before writing, the livery save reads the
-championship *logged in* and keeps it beside the queue database
-(`data/liveries/backups/`, 0600) — the public export leaves out the sign-up
-responses and the server password, and a restore from it would erase both.
-After writing, it reads it again and compares: anything other than the skins it
-set, `Updated` and `ClassID` is a `ChampionshipDriftError` naming the fields and
-the backup. On the harness copy, the remaining differences were `ACSR` and
+**What a save now proves.** Before anything is written — before any skin is
+uploaded — the livery save reads the championship *logged in*, keeps it beside
+the queue database (`data/liveries/backups/`, 0600, the last 20 per
+championship), and makes every refusal it can. The public export leaves out the
+sign-up responses and the server password, and a restore from it would erase
+both. Just before posting, it checks the championship hasn't changed since.
+
+After posting — whatever ACSM answered, since a 500 or a timeout doesn't prove
+nothing was written — it reads the championship and the edit page back.
+Anything other than the skins it set, `Updated`, and an entrant's `ClassID`
+becoming the nil UUID or its class's id is a `ChampionshipDriftError` naming the
+fields and the backup; a read-back that fails is a `ChampionshipUnverifiedError`.
+Either one halts liveries for that championship in the queue database: every
+later drain, the watcher's included, refuses before it logs in, and writes no
+heartbeat, so the bot stops promising drivers their uploads apply themselves.
+`champctl-liveries <id> --clear-halt` lifts it once the championship is
+restored. The first halt keeps its backup; a later one would name a backup of
+the damage. On the harness copy, the remaining differences were `ACSR` and
 `AvailableCars`, which a browser's save changes there too because the harness has
 neither BATL's cars nor its ACSR integration; on BATL's manager both rendered
 and round-tripped in the incident's own diff.
 
-The form is also read and checked before any skin is uploaded, so a refusal
-leaves nothing behind on the server.
+On the harness copy, the description (12,013 characters, one image URL) and a
+`-07:00` registration deadline both came back byte for byte.
 
 ## 5. Restart: the practice endpoint, not the process one
 

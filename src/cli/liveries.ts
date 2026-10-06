@@ -31,6 +31,8 @@ import { AcsmError, HttpAcsmReader } from "../acsm/client.js"
 import { AcsmAuthError, AcsmSession, PasswordChangeRequiredError } from "../acsm/session.js"
 import { events } from "../acsm/view.js"
 import {
+  ChampionshipDriftError,
+  ChampionshipUnverifiedError,
   LiveryApplyError,
   MultiClassError,
   PracticeRestartError,
@@ -50,7 +52,7 @@ import {
   readLiveryPack,
   readSingleLivery,
 } from "../liveries/pack.js"
-import { SqliteSubmissionQueue } from "../liveries/queue.js"
+import { type DrainHalt, SqliteSubmissionQueue } from "../liveries/queue.js"
 import { SqliteLiveryStore } from "../liveries/store.js"
 import { loadProfile } from "../profile/load.js"
 import {
@@ -71,6 +73,7 @@ Usage:
   champctl-liveries <championship-id> --claims [--release <discord-user-id>]
   champctl-liveries <championship-id> --drain [--push]
   champctl-liveries <championship-id> --drain --push --watch [--interval <s>]
+  champctl-liveries <championship-id> --clear-halt
 
 The pack is a zip of zips, one folder per car model:
 
@@ -94,6 +97,9 @@ Options:
                         self-serve, and it is this process — the one with the
                         credentials — that does it, never the bot.
   --interval <s>        seconds between drains under --watch (default: 120)
+  --clear-halt          let liveries be applied to this championship again after
+                        a save that changed more than the liveries. Restore the
+                        championship from the backup the error named first.
   --claims              list which Discord account is claimed as which driver
   --release <id>        drop that Discord account's claim, freeing the name.
                         Needs --push, like every other write here.
@@ -125,11 +131,18 @@ Everything pushed is also recorded locally, so --carset can hand drivers the
 whole set later. That is the only copy champctl has: a livery uploaded through
 ACSM's own web UI is invisible to it and will not be in the carset.
 
+A championship save is checked after it lands: champctl reads the championship
+back and compares it with a backup it took first, logged in, beside the store.
+If anything besides the liveries changed — or the check itself couldn't run —
+every write of liveries to that championship stops, the watcher included, until
+someone restores it and runs --clear-halt.
+
 Exit codes:
   0  previewed cleanly, pushed, drained, or wrote a carset
   1  nothing there — an empty queue, no recorded liveries, no claims
   2  the pack or the entry list wouldn't allow it
   3  a usage mistake, or champctl itself failed
+  4  stopped: a save changed more than the liveries, or couldn't be checked
 `
 
 interface Args {
@@ -142,6 +155,7 @@ interface Args {
   intervalSeconds?: number
   claims: boolean
   release?: string
+  clearHalt: boolean
   store?: string
   noStore: boolean
   restart?: number
@@ -159,6 +173,7 @@ export function parseArgs(argv: readonly string[]): Args {
     drain: false,
     watch: false,
     claims: false,
+    clearHalt: false,
     noStore: false,
     push: false,
     yes: false,
@@ -212,6 +227,9 @@ export function parseArgs(argv: readonly string[]): Args {
       }
       case "--claims":
         args.claims = true
+        break
+      case "--clear-halt":
+        args.clearHalt = true
         break
       case "--release":
         args.release = next()
@@ -340,6 +358,12 @@ export function exitFor(e: unknown): { code: number; message: string } | undefin
   if (e instanceof LiveryPackError || e instanceof LiveryPlanError) {
     return { code: 2, message: e.message }
   }
+  // Before AcsmError, which both extend: a damaged or unchecked championship is
+  // not "champctl failed", it is "stop and look", and 4 is what says so.
+  if (e instanceof ChampionshipDriftError || e instanceof ChampionshipUnverifiedError) {
+    return { code: EXIT_HALTED, message: e.message }
+  }
+  if (e instanceof DrainHaltedError) return { code: EXIT_HALTED, message: e.message }
   if (e instanceof RosterChangedError) return { code: 2, message: e.message }
   // A 2 rather than a 3: champctl works exactly as intended here, and the
   // championship is the thing that won't allow it — the same class of answer as
@@ -374,6 +398,13 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     return 0
   }
   if (!args.championshipId) throw new UsageError("Needs a championship id.")
+
+  if (args.clearHalt) {
+    if (args.zip || args.carset !== undefined || args.drain || args.claims) {
+      throw new UsageError("--clear-halt is a job on its own.")
+    }
+    return await clearHalt(args, args.championshipId)
+  }
 
   if (args.claims || args.release !== undefined) {
     if (args.zip || args.carset !== undefined || args.drain) {
@@ -473,6 +504,9 @@ async function runCommand(argv: readonly string[]): Promise<number> {
   const session = new AcsmSession({ baseUrl })
   await login(session)
 
+  const halt = await haltFor(args, args.championshipId!)
+  if (halt) throw new DrainHaltedError(args.championshipId!, halt)
+
   if (!args.yes && !(await confirm("\nUpload and assign these?"))) {
     say("Nothing sent.\n")
     return 0
@@ -485,7 +519,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
       eventIds,
       backupDir: backupDirFor(args),
       ...(store ? { record: store, source: "zip" as const } : {}),
-    })
+    }).catch((e: unknown) => haltOnDamage(args, args.championshipId!, e))
     say(
       `Uploaded ${result.uploaded.length} ${result.uploaded.length === 1 ? "livery" : "liveries"}` +
         `${result.championshipSaved ? ", championship saved" : ", championship unchanged"}` +
@@ -551,6 +585,18 @@ async function drain(
   const queue = await SqliteSubmissionQueue.open(storePath(args))
   const holder = `${hostname()}:${process.pid}`
   let renewal: NodeJS.Timeout | undefined
+
+  // Before the lease, the queue and the network: a halted championship gets no
+  // login, no export read, and no heartbeat — so the bot stops telling drivers
+  // their uploads apply by themselves.
+  const halt = await queue.drainHalt(championshipId)
+  if (halt) {
+    queue.close()
+    if (!options.quiet) say(`${new DrainHaltedError(championshipId, halt).message}\n`)
+    emit({ championshipId, halted: true, reason: halt.reason, backup: halt.backup ?? null })
+    return EXIT_HALTED
+  }
+
   try {
     const lease = await queue.acquireDrainLease(championshipId, holder, new Date(), DRAIN_LEASE_MS)
     if (!lease.ok) {
@@ -750,6 +796,11 @@ async function drain(
       const result = await applyLiveries(session, plan, {
         ...(store ? { record: store, source: "discord" as const } : {}),
         backupDir: backupDirFor(args),
+      }).catch(async (e: unknown) => {
+        if (e instanceof ChampionshipDriftError || e instanceof ChampionshipUnverifiedError) {
+          await queue.haltDrain(championshipId, e.message, e.backup, new Date())
+        }
+        throw e
       })
       const now = new Date()
       await queue.markApplied(
@@ -887,13 +938,36 @@ async function watchDrain(args: Args, championshipId: string): Promise<number> {
       `Uploads apply by themselves while this is running.\n`,
   )
 
+  let haltLogged = false
   while (!stopping) {
     try {
       // `--yes` for the duration: a timer cannot answer a prompt, and a watcher
       // blocked on one would sit there looking healthy.
-      await drain({ ...args, yes: true }, championshipId, { quiet: true })
+      const code = await drain({ ...args, yes: true }, championshipId, { quiet: true })
+      // Halted: stay up, write nothing, say so once. Exiting would only have
+      // the container restarted into the same refusal, over and over.
+      if (code === EXIT_HALTED) {
+        if (!haltLogged) {
+          process.stderr.write(
+            `Stopped applying liveries to ${championshipId}: a save changed more than the ` +
+              `liveries, or couldn't be checked. Nothing will be written until someone restores ` +
+              `it and runs champctl-liveries ${championshipId} --clear-halt.\n`,
+          )
+          haltLogged = true
+        }
+      } else {
+        haltLogged = false
+      }
       consecutiveFailures = 0
     } catch (e) {
+      if (e instanceof ChampionshipDriftError || e instanceof ChampionshipUnverifiedError) {
+        // Already recorded as a halt by drain(); the next pass finds it.
+        process.stderr.write(`${e.message}\n`)
+        haltLogged = true
+        if (stopping) break
+        await sleep(intervalMs, () => stopping)
+        continue
+      }
       if (wontComeRight(e)) {
         process.stderr.write(
           `Stopping: ${e.message}\nBad credentials don't come right on their own, and retrying ` +
@@ -931,6 +1005,63 @@ export function wontComeRight(e: unknown): e is AcsmAuthError {
   if (e instanceof PasswordChangeRequiredError) return true
   if (!(e instanceof AcsmAuthError)) return false
   return e.status === 200 || e.status === 401 || e.status === 403
+}
+
+/** "Stop and look": a championship save changed more than the liveries. */
+const EXIT_HALTED = 4
+
+/** A write refused because an earlier save to this championship went wrong. */
+export class DrainHaltedError extends Error {
+  constructor(championshipId: string, halt: DrainHalt) {
+    super(
+      `Not applying liveries to ${championshipId}: a save on ${halt.haltedAt.toISOString()} ` +
+        `changed more than the liveries, or couldn't be checked. ${halt.reason}` +
+        `${halt.backup ? ` The championship as it was is in ${halt.backup}.` : ""} Once it is ` +
+        `restored, run champctl-liveries ${championshipId} --clear-halt.`,
+    )
+    this.name = "DrainHaltedError"
+  }
+}
+
+async function haltFor(args: Args, championshipId: string): Promise<DrainHalt | undefined> {
+  const queue = await SqliteSubmissionQueue.open(storePath(args))
+  try {
+    return await queue.drainHalt(championshipId)
+  } finally {
+    queue.close()
+  }
+}
+
+/** Records the halt for a save that damaged or couldn't check the championship, and rethrows. */
+async function haltOnDamage(args: Args, championshipId: string, e: unknown): Promise<never> {
+  if (e instanceof ChampionshipDriftError || e instanceof ChampionshipUnverifiedError) {
+    const queue = await SqliteSubmissionQueue.open(storePath(args))
+    try {
+      await queue.haltDrain(championshipId, e.message, e.backup, new Date())
+    } finally {
+      queue.close()
+    }
+  }
+  throw e
+}
+
+async function clearHalt(args: Args, championshipId: string): Promise<number> {
+  const queue = await SqliteSubmissionQueue.open(storePath(args))
+  try {
+    const halt = await queue.drainHalt(championshipId)
+    if (!halt) {
+      process.stdout.write(`Nothing to clear: liveries aren't stopped for ${championshipId}.\n`)
+      return 1
+    }
+    await queue.clearDrainHalt(championshipId)
+    process.stdout.write(
+      `Cleared. Liveries will apply to ${championshipId} again. It was stopped on ` +
+        `${halt.haltedAt.toISOString()}: ${halt.reason}\n`,
+    )
+    return 0
+  } finally {
+    queue.close()
+  }
 }
 
 /**

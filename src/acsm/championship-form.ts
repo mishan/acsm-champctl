@@ -224,9 +224,9 @@ export interface ChampionshipForm {
    * The championship description as the page holds it, for the editor to load:
    * `#ChampionshipInfoHolder`. The `ChampionshipInfo` textarea itself renders
    * empty and is filled by the page's script, so posting the form as parsed
-   * erased the description. `fields` carries this in its place; a caller that
-   * can read the stored value exactly should set that instead (see
-   * `setDescription`), because this has been through an HTML parser.
+   * erased the description. `fields` carries this in its place, which is what
+   * a browser posts: images as `/content/...` URLs, where the export inlines
+   * them as base64 (docs/acsm-champ-form.md §4.6).
    */
   description: string
 }
@@ -424,17 +424,6 @@ export function findEntrantRow(form: ChampionshipForm, driverName: string): numb
  * `setAt` rather than `setOne`: these are positional arrays, and replacing "the"
  * value of a repeated key is how an entry list gets scrambled.
  */
-/**
- * Sets the description to send, from the stored value.
- *
- * `findChampionshipForm` fills it from the page's holder, which keeps the save
- * from erasing it but has been re-serialised by an HTML parser on the way. The
- * championship export carries the value ACSM stored, byte for byte.
- */
-export function setDescription(fields: FormField[], info: string): void {
-  setOne(fields, "ChampionshipInfo", info)
-}
-
 export function setEntrantSkin(fields: FormField[], rowIndex: number, skin: string): void {
   setAt(fields, "EntryList.Skin", rowIndex, skin)
 }

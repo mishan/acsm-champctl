@@ -9,12 +9,14 @@ import { join } from "node:path"
 
 import {
   ChampionshipDriftError,
+  ChampionshipUnverifiedError,
   LiveryRecordError,
   MultiClassError,
   RosterChangedError,
   applyLiveries,
   championshipDrift,
   uploadTimeoutMs,
+  writeBackup,
 } from "../src/liveries/apply.js"
 import { AcsmWriteError } from "../src/acsm/session.js"
 import type { Livery, LiveryPack } from "../src/liveries/pack.js"
@@ -64,8 +66,23 @@ const champ = (names: string[] = ["Misha", "postaL"]) =>
  */
 function editPage(
   names: string[],
-  options: { classTemplate?: boolean; secondClass?: string[]; info?: string } = {},
+  options: {
+    classTemplate?: boolean
+    secondClass?: string[]
+    info?: string
+    deadline?: string | undefined
+  } = {},
 ): string {
+  // The deadline's wall clock in the league's zone, as ACSM renders it, with
+  // the timezone left for the page's script to fill in.
+  const set = options.deadline && !options.deadline.startsWith("0001-01-01")
+  const wall = set
+    ? new Date(new Date(options.deadline!).getTime() - 7 * 3600_000).toISOString()
+    : ""
+  const deadline = `
+    <input type="date" name="Championship.SignUpForm.RegistrationDeadlineDate" value="${wall.slice(0, 10)}">
+    <input type="time" name="Championship.SignUpForm.RegistrationDeadlineTime" value="${wall.slice(11, 16)}">
+    <input type="hidden" name="Championship.SignUpForm.RegistrationDeadlineTimezone" class="event-schedule-timezone">`
   // The skin select carries the current skin only, as ACSM renders it.
   const row = (name: string, spectator = false, skin = "") => `
     <div class="entrant">
@@ -105,6 +122,7 @@ function editPage(
   return `<html><body><form action="${CHAMPIONSHIP_SUBMIT_PATH}" method="post">
     <input type="text" name="ChampionshipName" value="September 2026">
     <textarea id="summernote" name="ChampionshipInfo"></textarea>
+    ${deadline}
     <div class="d-none" id="ChampionshipInfoHolder">${options.info ?? ""}</div>
     <div class="visible-spectator-enabled">
       <div id="spectatorTemplate" class="entrant">${row("", true)}</div>
@@ -148,7 +166,8 @@ function delayed(ms: number, signal: AbortSignal | null | undefined, res: () => 
   })
 }
 
-const INFO = '<h1 style="margin:0">Rules</h1><p>Be nice.</p>'
+const INFO =
+  '<h1 style="margin:0">Rules</h1><p><img src="/content/server-manager/images/rules.jfif"> Be nice.</p>'
 
 async function fakeSession(
   options: {
@@ -171,6 +190,14 @@ async function fakeSession(
      * that left the marker out: every row lands one entrant early.
      */
     misreadSpectator?: boolean
+    /** A registration deadline, as the export carries it (an RFC 3339 instant). */
+    deadline?: string
+    /** The export says there is a description and the page shows none. */
+    descriptionMismatch?: boolean
+    /** Somebody edits the championship between champctl's checks and its save. */
+    editedAfterChecks?: boolean
+    /** Reading the championship back after the save fails. */
+    exportFailsAfterSave?: boolean
   } = {},
 ) {
   const requests: Recorded[] = []
@@ -183,7 +210,23 @@ async function fakeSession(
     ...champ(names),
     Info: INFO,
     SpectatorCars: [{ Name: "Stream Van", Model: CAR, Skin: "van" }],
+    ...(options.deadline
+      ? { SignUpForm: { ...champ(names).SignUpForm, RegistrationDeadline: options.deadline } }
+      : {}),
   } as Partial<ReturnType<typeof champ>>) as ReturnType<typeof champ> & Record<string, unknown>
+  let exportsServed = 0
+  let saved = false
+
+  // ACSM keeps images in the description as file URLs and the export inlines
+  // them as base64, so the two never match byte for byte — which is why the
+  // description has to be posted from the page, not the export.
+  const inline = (info: string) =>
+    info.replaceAll("/content/server-manager/images/rules.jfif", "data:image/jpeg;base64,AAAA")
+  const exported = () => {
+    const out = { ...state, Info: inline(String(state["Info"] ?? "")) }
+    if (options.editedAfterChecks && exportsServed > 0) out.Name = "Renamed by an admin"
+    return out
+  }
 
   const applySave = (body: string) => {
     const form = new URLSearchParams(body)
@@ -209,6 +252,23 @@ async function fakeSession(
       .slice(0, spectators)
       .map((Name, i) => ({ Name, Model: cars[i] ?? "", Skin: skins[i] ?? "" }))
     state["Info"] = form.get("ChampionshipInfo") ?? ""
+    // The deadline's wall clock in the posted timezone — read as UTC when the
+    // timezone is blank, which is what moved a set deadline on every save.
+    const date = form.get("Championship.SignUpForm.RegistrationDeadlineDate") ?? ""
+    const time = form.get("Championship.SignUpForm.RegistrationDeadlineTime") ?? ""
+    const tz = form.get("Championship.SignUpForm.RegistrationDeadlineTimezone") ?? ""
+    const etc = /^Etc\/GMT([+-])(\d+)$/.exec(tz)
+    if (date && time && (tz === "" || tz === "UTC")) {
+      ;(state.SignUpForm as Record<string, unknown>).RegistrationDeadline = `${date}T${time}:00Z`
+    } else if (date && time && etc) {
+      // Stored in the posted zone's offset, as Go writes it. POSIX sign: GMT+7 is -07:00.
+      const off = `${etc[1] === "+" ? "-" : "+"}${etc[2]!.padStart(2, "0")}:00`
+      ;(state.SignUpForm as Record<string, unknown>).RegistrationDeadline =
+        `${date}T${time}:00${off}`
+    } else if (date && time) {
+      throw new Error(`the fake doesn't model timezone ${tz}`)
+    }
+    saved = true
   }
 
   const fetchImpl: typeof globalThis.fetch = async (input, init) => {
@@ -252,13 +312,20 @@ async function fakeSession(
         headers: { location: `/championship/${CHAMP_ID}` },
       })
     }
-    if (url.endsWith("/export")) return new Response(JSON.stringify(state), { status: 200 })
+    if (url.endsWith("/export")) {
+      if (options.exportFailsAfterSave && saved) return new Response("", { status: 503 })
+      const body = JSON.stringify(exported())
+      exportsServed++
+      return new Response(body, { status: 200 })
+    }
     if (url.includes("/edit")) {
       return new Response(
         editPage(names, {
           ...(options.classTemplate ? { classTemplate: true } : {}),
           ...(options.secondClass ? { secondClass: options.secondClass } : {}),
-          info: String(state["Info"] ?? ""),
+          info: options.descriptionMismatch ? "" : String(state["Info"] ?? ""),
+          deadline: (state.SignUpForm as { RegistrationDeadline?: string } | undefined)
+            ?.RegistrationDeadline,
         }),
         { status: 200 },
       )
@@ -292,14 +359,18 @@ describe("applyLiveries", () => {
 
     const paths = requests.filter((r) => !r.url.includes("/login")).map((r) => r.url)
     expect(paths).toEqual([
-      // The form is checked before anything is written.
+      // Every check before anything is written: the championship as it is
+      // (backed up), then the form.
+      `https://acsm.example/championship/${CHAMP_ID}/export`,
       `https://acsm.example/championship/${CHAMP_ID}/edit`,
       `https://acsm.example/car/${CAR}/skin`,
-      // The championship as it was, then the form, the save, and the check.
+      // Unchanged since the checks, then the form, the save, and what it did:
+      // the export for the championship, the page for the description.
       `https://acsm.example/championship/${CHAMP_ID}/export`,
       `https://acsm.example/championship/${CHAMP_ID}/edit`,
       `https://acsm.example${CHAMPIONSHIP_SUBMIT_PATH}`,
       `https://acsm.example/championship/${CHAMP_ID}/export`,
+      `https://acsm.example/championship/${CHAMP_ID}/edit`,
       `https://acsm.example/championship/${CHAMP_ID}/event/${EVENT_ID}/practice`,
     ])
     expect(result).toMatchObject({ championshipSaved: true, practiceRestarted: true })
@@ -521,6 +592,57 @@ describe("what a championship save leaves behind", () => {
     expect((state as { Info?: string }).Info).toBe(INFO)
   })
 
+  it("posts the description as the page holds it, not as the export inlines it", async () => {
+    // ACSM stores images as /content URLs; the export turns them into base64.
+    // Posted from the export, a 12 KB description was stored as 2 MB inline —
+    // and one with a few large images went over Go's 10 MB form limit.
+    const { session, requests } = await fakeSession()
+    await applyLiveries(session, plan())
+    const save = requests.find((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))!
+    const posted = new URLSearchParams(save.body).get("ChampionshipInfo")
+    expect(posted).toContain("/content/server-manager/images/rules.jfif")
+    expect(posted).not.toContain("data:image")
+  })
+
+  it("keeps a registration deadline where it was", async () => {
+    // The timezone is filled in by the page's script; posted blank, ACSM read
+    // a 19:00 Los Angeles deadline as 19:00 UTC — seven hours earlier.
+    // Sent as UTC it kept the instant but came back written as Z — a different
+    // stored value, which the drift check rightly refused.
+    const { session, state } = await fakeSession({ deadline: "2026-10-20T19:00:00-07:00" })
+    await applyLiveries(session, plan())
+    expect((state.SignUpForm as { RegistrationDeadline: string }).RegistrationDeadline).toBe(
+      "2026-10-20T19:00:00-07:00",
+    )
+  })
+
+  it("refuses a deadline in an offset it can't send back, before any upload", async () => {
+    const { session, requests } = await fakeSession({ deadline: "2026-10-20T19:00:00+05:30" })
+    await expect(applyLiveries(session, plan())).rejects.toThrow(/deadline/)
+    expect(requests.filter((r) => r.url.includes("/skin"))).toEqual([])
+  })
+
+  it("refuses before any upload when the page and the export disagree about a description", async () => {
+    const { session, requests } = await fakeSession({ descriptionMismatch: true })
+    await expect(applyLiveries(session, plan())).rejects.toThrow(/description/)
+    expect(requests.filter((r) => r.url.includes("/skin") || r.method === "POST")).toEqual(
+      requests.filter((r) => r.url.includes("/login")),
+    )
+  })
+
+  it("refuses the save, writing nothing, when the championship changed after the checks", async () => {
+    // Otherwise someone's edit in the meantime reads, afterwards, as drift
+    // champctl caused, and the backup doesn't have it.
+    const { session, requests } = await fakeSession({ editedAfterChecks: true })
+    await expect(applyLiveries(session, plan())).rejects.toBeInstanceOf(RosterChangedError)
+    expect(requests.filter((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))).toEqual([])
+  })
+
+  it("treats a save it can't read back as one to stop on", async () => {
+    const { session } = await fakeSession({ exportFailsAfterSave: true })
+    await expect(applyLiveries(session, plan())).rejects.toBeInstanceOf(ChampionshipUnverifiedError)
+  })
+
   it("leaves the hidden balance-of-performance template out", async () => {
     const { session, requests } = await fakeSession()
     await applyLiveries(session, plan())
@@ -543,6 +665,25 @@ describe("what a championship save leaves behind", () => {
       const backup = JSON.parse(await readFile(join(dir, file!), "utf8"))
       expect(backup.SpectatorCars).toHaveLength(1)
       expect((await stat(join(dir, file!))).mode & 0o777).toBe(0o600)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("the backups a save keeps", () => {
+  it("keeps the last twenty per championship, never overwriting one", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-backup-"))
+    try {
+      const written: string[] = []
+      for (let i = 0; i < 23; i++) written.push(await writeBackup(dir, CHAMP_ID, `{"n":${i}}`))
+      await writeBackup(dir, "other-championship", "{}")
+      const left = await readdir(dir)
+      expect(new Set(written).size).toBe(23)
+      expect(left.filter((f) => f.startsWith(CHAMP_ID))).toHaveLength(20)
+      expect(left.filter((f) => f.startsWith("other-championship"))).toHaveLength(1)
+      // The newest survive.
+      expect(JSON.parse(await readFile(written.at(-1)!, "utf8"))).toEqual({ n: 22 })
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -583,6 +724,20 @@ describe("championshipDrift", () => {
       CAR_0: { ...entrant("Ann", "a"), ClassID: "00000000-0000-0000-0000-000000000000" },
     })
     expect(championshipDrift(before, after, new Map())).toEqual([])
+  })
+
+  it("but not to some other class", () => {
+    const before = of({ CAR_0: { ...entrant("Ann", "a"), ClassID: "c1" } })
+    const after = of({ CAR_0: { ...entrant("Ann", "a"), ClassID: "c2" } })
+    expect(championshipDrift(before, after, new Map())).toEqual([
+      ".Classes.0.Entrants.CAR_0.ClassID changed",
+    ])
+  })
+
+  it("names a list that became an object", () => {
+    expect(championshipDrift({ Events: [] }, { Events: {} }, new Map())).toEqual([
+      ".Events changed",
+    ])
   })
 
   it("names a description that changed", () => {
@@ -785,9 +940,12 @@ describe("applyLiveries refusals", () => {
           abort.name = "AbortError"
           throw abort
         }
-        // The form is read before the upload now, so it has to be there.
+        // The championship and its form are read before the upload now.
         if (String(input).includes("/edit")) {
           return new Response(editPage(["Misha", "postaL"]), { status: 200 })
+        }
+        if (String(input).endsWith("/export")) {
+          return new Response(JSON.stringify(champ()), { status: 200 })
         }
         return new Response("", { status: 302, headers: { location: "/" } })
       },

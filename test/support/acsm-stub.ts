@@ -11,6 +11,18 @@ import type { AddressInfo } from "node:net"
 
 import type { Championship } from "../../src/acsm/types.js"
 
+export interface StubRequest {
+  method: string
+  path: string
+  body: string
+}
+
+export interface StubResponse {
+  status: number
+  headers?: Record<string, string>
+  body?: string
+}
+
 export interface AcsmStub {
   baseUrl: string
   /** Every path the stub was asked for, in order. */
@@ -27,16 +39,38 @@ export interface AcsmStub {
 export async function acsmStub(
   championshipId: string,
   championship: Championship,
-  options: { onRequest?: (path: string) => void } = {},
+  options: {
+    onRequest?: (path: string) => void
+    /**
+     * Answers anything else — the login, the edit form, an upload, a save —
+     * for a test that drives a whole write over the socket. Undefined falls
+     * through to the export, then to a 404.
+     */
+    handle?: (req: StubRequest) => StubResponse | undefined
+  } = {},
 ): Promise<AcsmStub> {
   const requests: string[] = []
-  const server: Server = createServer((req, res) => {
+  const server: Server = createServer(async (req, res) => {
     const path = req.url ?? ""
     requests.push(path)
     // The seam a test needs to act *during* a drain. The export fetch is the
     // one point where the drain is provably past acquiring its lease and not
     // yet writing, which is the window the lease has to survive.
     options.onRequest?.(path)
+    if (options.handle) {
+      const chunks: Buffer[] = []
+      for await (const c of req) chunks.push(c as Buffer)
+      const answer = options.handle({
+        method: req.method ?? "GET",
+        path,
+        body: Buffer.concat(chunks).toString("utf8"),
+      })
+      if (answer) {
+        res.writeHead(answer.status, answer.headers ?? {})
+        res.end(answer.body ?? "")
+        return
+      }
+    }
     if (path === `/championship/${encodeURIComponent(championshipId)}/export`) {
       const body = JSON.stringify(championship)
       res.writeHead(200, { "content-type": "application/json" })
