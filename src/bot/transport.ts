@@ -21,6 +21,13 @@ export interface DiscordMessage {
    * the caller knows; the transport guessed, and guessed the admin channel.
    */
   source?: string
+  /** Files to attach — the trophy-room image. */
+  files?: readonly DiscordFile[]
+}
+
+export interface DiscordFile {
+  name: string
+  data: Uint8Array
 }
 
 export interface DiscordTransport {

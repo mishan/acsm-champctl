@@ -225,7 +225,7 @@ function nameCell(name: string): string {
  * and is rendered as markdown: bounded, and with markdown's characters escaped
  * so a "*" or "_" in a name doesn't restyle the rest of the line.
  */
-function headingText(text: string): string {
+export function headingText(text: string): string {
   const bounded = text.length > HEADING_PART ? `${text.slice(0, HEADING_PART - 1)}…` : text
   return bounded.replace(/[\\`*_~|>]/g, "\\$&")
 }

@@ -77,6 +77,24 @@ function fakeInteraction(name = "livery") {
 }
 
 describe("GatewayTransport.post", () => {
+  it("attaches a file when the message carries one", async () => {
+    // The trophy-room image. Sent with the same no-pings rule as everything else.
+    const { client, sent } = fakeClient()
+    const transport = GatewayTransport.wrapping(client)
+    const data = new Uint8Array([137, 80, 78, 71])
+
+    await transport.post({
+      channelId: "444444444444444444",
+      content: "**October**",
+      files: [{ name: "October-podium.png", data }],
+    })
+
+    const payload = sent[0]?.payload as { files: { attachment: Buffer; name: string }[] }
+    expect(payload).toMatchObject({ content: "**October**", allowedMentions: { parse: [] } })
+    expect(payload.files[0]?.name).toBe("October-podium.png")
+    expect([...payload.files[0]!.attachment]).toEqual([...data])
+  })
+
   it("suppresses every mention in an admin announcement", async () => {
     // The claim announcement is the only non-ephemeral message the livery path
     // produces, and its text carries an entry list name. On a league with open

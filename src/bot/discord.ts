@@ -148,7 +148,13 @@ export class GatewayTransport implements DiscordTransport {
     // text carries an entry list name — which is attacker-supplied on a league
     // with open sign-ups, and `@` passes SAFE_COMPONENT. Signing up as
     // "@everyone" and running /livery claim was a guild-wide ping on demand.
-    await channel.send({ content: message.content, allowedMentions: { parse: [] } })
+    await channel.send({
+      content: message.content,
+      allowedMentions: { parse: [] },
+      ...(message.files?.length
+        ? { files: message.files.map((f) => ({ attachment: Buffer.from(f.data), name: f.name })) }
+        : {}),
+    })
   }
 
   /**

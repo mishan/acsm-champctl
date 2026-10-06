@@ -176,6 +176,14 @@ needed even for a preview.** The preview reads the event *edit form*, which ACSM
 only serves to a logged-in session, and that form is what makes the preview
 honest about the fields it would post. For a credential-free look, use gridmom.
 
+**The trophy room.** `trophies` posts each finished championship's top three
+once, as an image of ACSM's own podium cards — the car in its skin, the place,
+the driver — read off the championship's public page, with one image per class
+on a multi-class championship. It runs nightly and only counts championships
+that finished in the past week, so the first night doesn't post every season
+the league has run; what it has posted is recorded beside the livery queue.
+`trophy <champ-id>` posts one regardless.
+
 Three things worth knowing:
 
 - **The entry list is fingerprinted at preview time and re-checked immediately
@@ -639,6 +647,9 @@ applies what drivers send — is
 champctl-bot report                       check every championship, post what's wrong
 champctl-bot announce <champ-id> [round]  post the next round's details
 champctl-bot standings <champ-id>         post the championship standings
+champctl-bot trophies                     post the podium of each championship
+                                          that finished this week, once
+champctl-bot trophy <champ-id>            post one championship's podium now
 
   --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
   --channel <id>        override the channel this command posts to
@@ -649,6 +660,9 @@ champctl-bot standings <champ-id>         post the championship standings
                         endpoint is Server Manager's own standings: standings.json,
                         else the championship page's standings tab
   --dry-run             print what would be posted; talk to nobody
+  --out <dir>           with --dry-run, save the podium images here  [trophy, trophies]
+  --days <n>            how recently a championship must have finished
+                        (default: 7)                                  [trophies]
   --pits <path>         track pit table
                         (default: $CHAMPCTL_PITS, else data/track-pits.json)
   --base-url <url>      override the profile's ACSM base URL
@@ -658,7 +672,8 @@ champctl-bot standings <champ-id>         post the championship standings
 ```
 
 `report` posts to `discord.adminChannelId`; `announce` and `standings` post to
-`discord.announceChannelId`. **Neither falls back to the other**, and that is a
+`discord.announceChannelId`; `trophy` and `trophies` post to
+`discord.trophyChannelId`. **Neither falls back to the other**, and that is a
 safety rule rather than tidiness: gridmom quotes the entry list, so a report
 that fell back to the announce channel would tell the whole league which three
 drivers are about to be dropped from the grid.
@@ -880,6 +895,7 @@ without either, since a committed channel id is a channel every fork posts into.
 "discord": {
   "adminChannelId": "1234567890123456789",
   "announceChannelId": "9876543210987654321",
+  "trophyChannelId": "1122334455667788990",
   "announce": { "format": false, "signUp": false },
   "guildId": "1234567890123456789",
   "livery": {

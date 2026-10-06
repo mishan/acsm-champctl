@@ -116,6 +116,17 @@ services:
     entrypoint: [champctl-bot, standings]
     env_file: bot.env
 
+  # Posts each finished championship's podium to discord.trophyChannelId once.
+  trophies:
+    <<: *job
+    entrypoint: [champctl-bot, trophies]
+    env_file: bot.env
+
+  trophy:
+    <<: *job
+    entrypoint: [champctl-bot, trophy]
+    env_file: bot.env
+
   archive:
     <<: *job
     entrypoint: [champctl-archive, run]

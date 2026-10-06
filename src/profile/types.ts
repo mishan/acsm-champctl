@@ -122,6 +122,12 @@ export interface DiscordSettings {
    */
   announceChannelId?: string
   /**
+   * Channel a finished championship's podium image goes to — BATL's
+   * #trophy-room. Its own rather than the announcement channel, because a
+   * trophy room is a gallery: one post per finished championship, nothing else.
+   */
+  trophyChannelId?: string
+  /**
    * Which parts of an announcement champctl says.
    *
    * Configurable because ACSM has its own Discord integration and BATL already
