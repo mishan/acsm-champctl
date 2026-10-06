@@ -388,6 +388,23 @@ describe("applyLiveries", () => {
     expect(upload?.parts?.map((p) => p.name)).toEqual(["Misha/livery.dds", "Misha/ui_skin.json"])
   })
 
+  it("splits a skin across requests that each fit under the proxy's limit", async () => {
+    // BATL's manager is behind Cloudflare, which refused a 128 MB skin with 413.
+    const big = (name: string, size: number) => ({ name, bytes: new Uint8Array(size) })
+    const skin = {
+      ...livery("Misha"),
+      files: [big("skinbase.dds", 9), big("glass.dds", 4), big("rim.dds", 4), big("x.json", 1)],
+    }
+    const { session, requests } = await fakeSession()
+    await applyLiveries(session, plan(undefined, skin), { maxRequestBytes: 9 })
+
+    const uploads = requests.filter((r) => r.url.includes("/skin"))
+    expect(uploads.map((r) => r.parts?.map((p) => p.name))).toEqual([
+      ["Misha/skinbase.dds"],
+      ["Misha/glass.dds", "Misha/rim.dds", "Misha/x.json"],
+    ])
+  })
+
   it("sends a Referer so ACSM's redirect-to-referer has somewhere to go", async () => {
     const { session, requests } = await fakeSession()
     await applyLiveries(session, plan())

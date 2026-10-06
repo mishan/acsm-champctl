@@ -106,6 +106,17 @@ export interface PackLimits {
 }
 
 /**
+ * The most one skin upload request carries.
+ *
+ * BATL's manager sits behind Cloudflare, which answers a request body over
+ * 100 MB with 413 before ACSM sees it. A skin bigger than this goes up in
+ * several requests — ACSM's upload adds to the folder rather than replacing
+ * it — but one file can't be split, so it is also the per-file limit. The
+ * margin under 100 MB is for the multipart framing.
+ */
+export const MAX_UPLOAD_REQUEST_BYTES = 90 * 1024 * 1024
+
+/**
  * Sized from what BATL's drivers actually submit, not from what a livery needs.
  *
  * The first numbers here were the second: 24 MB a file and 64 MB a skin, which
@@ -136,7 +147,7 @@ export interface PackLimits {
  * scales with size so a large livery doesn't die on the request timeout.
  */
 export const DEFAULT_LIMITS: PackLimits = {
-  maxFileBytes: 96 * 1024 * 1024,
+  maxFileBytes: MAX_UPLOAD_REQUEST_BYTES,
   maxSkinBytes: 256 * 1024 * 1024,
   maxTotalBytes: 1024 * 1024 * 1024,
   maxFilesPerSkin: 40,

@@ -330,7 +330,7 @@ Discord's own limit is far below champctl's, and drivers will hit Discord's
 first. As of August 2026 a free account may attach 20 MB per file — doubled
 from the 10 MB cap imposed two years earlier — while Nitro Basic is 50 MB and
 Nitro 500 MB, and server boosting raises the floor for everyone in the guild.
-`DEFAULT_LIMITS` in `pack.ts` allows 96 MB a file and 256 MB a skin. Confirm the
+`DEFAULT_LIMITS` in `pack.ts` allows 90 MB a file and 256 MB a skin. Confirm the
 current numbers before putting any of them in help text; this one has moved
 three times in three years.
 

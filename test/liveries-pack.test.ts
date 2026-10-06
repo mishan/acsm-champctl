@@ -216,7 +216,7 @@ describe("readLiveryPack refusals", () => {
 
   it("doesn't hold a left-out file to the size limits it was never going to be uploaded under", () => {
     // Never unpacked, so a large leftover can't trip the per-file cap.
-    const livery = only({ "work.psd": new Uint8Array(97 * 1024 * 1024) })
+    const livery = only({ "work.psd": new Uint8Array(91 * 1024 * 1024) })
     expect(livery.dropped?.map((d) => d.name)).toEqual(["work.psd"])
   })
 
@@ -418,7 +418,7 @@ describe("readLiveryPack and a zip that lies about its size", () => {
   it("refuses a file claiming four gigabytes without unpacking it", () => {
     const p = pack({ [`${CAR}/Misha.zip`]: claimSize(skin(), FOUR_GB) })
     expect(() => readLiveryPack(p)).toThrowError(LiveryPackError)
-    expect(() => readLiveryPack(p)).toThrowError(/over the 96.0 MB limit for one file/)
+    expect(() => readLiveryPack(p)).toThrowError(/over the 90.0 MB limit for one file/)
   })
 
   it("refuses a driver's zip claiming four gigabytes", () => {
@@ -615,9 +615,9 @@ describe("readLiveryPack limits", () => {
     // Doubling is not removing. The cap still has a job: stopping one
     // submission filling the game server's disk.
     const p = pack({
-      [`${CAR}/Misha.zip`]: zipSync({ "livery.dds": big(97 * 1024 * 1024) }),
+      [`${CAR}/Misha.zip`]: zipSync({ "livery.dds": big(91 * 1024 * 1024) }),
     })
-    expect(() => readLiveryPack(p)).toThrowError(/over the 96.0 MB limit for one file/)
+    expect(() => readLiveryPack(p)).toThrowError(/over the 90.0 MB limit for one file/)
   })
 
   it("still refuses a skin past the doubled folder limit", () => {
@@ -700,8 +700,8 @@ describe("readSingleLivery", () => {
   })
 
   it("refuses a file over the per-file cap", () => {
-    const huge = zipSync({ "livery.dds": new Uint8Array(97 * 1024 * 1024) })
-    expect(() => readSingleLivery(huge, identity)).toThrowError(/over the 96.0 MB limit/)
+    const huge = zipSync({ "livery.dds": new Uint8Array(91 * 1024 * 1024) })
+    expect(() => readSingleLivery(huge, identity)).toThrowError(/over the 90.0 MB limit/)
   })
 
   it("refuses something that isn't a zip, without leaking the exception", () => {
