@@ -44,7 +44,17 @@ export class LiveryPackError extends Error {
  * An allowlist rather than a blocklist of `.psd` and friends: the interesting
  * case is not the file type someone forgot to delete, it is the one nobody
  * thought of. `.dds` is the livery, `.png`/`.jpg` the preview, `.json` the
- * `ui_skin.json`, `.ini` a `skin.ini`, `.txt` a readme nobody reads.
+ * `ui_skin.json`, `.ini` a `skin.ini` or CSP's per-skin `ext_config.ini`,
+ * `.txt` a readme nobody reads.
+ *
+ * `.kn5` is a 3D model, which vanilla Assetto Corsa never reads from a skin
+ * folder — but Custom Shaders Patch does: a skin's `ext_config.ini` can insert
+ * a `.kn5` that sits next to it (`[MODEL_REPLACEMENT_…] INSERT = rims.kn5`),
+ * which is how a livery swaps in its own rims or driver model. BATL runs CSP,
+ * and a driver's livery was refused for exactly that.
+ *
+ * Anything else is left out of the upload rather than refused — see
+ * `readOneLivery` — so a working file nobody deleted costs the driver nothing.
  */
 export const ALLOWED_SKIN_EXTENSIONS: ReadonlySet<string> = new Set([
   ".dds",
@@ -54,14 +64,18 @@ export const ALLOWED_SKIN_EXTENSIONS: ReadonlySet<string> = new Set([
   ".json",
   ".ini",
   ".txt",
+  ".kn5",
 ])
 
 /**
- * Extensions worth naming in the refusal rather than lumping in with "not
- * allowed", because they are the ones people actually leave behind and the
- * message may be read by a driver rather than by an admin.
+ * Extensions worth naming when they are left out, rather than lumping them in
+ * with "not something a skin needs", because they are the ones people actually
+ * leave behind and the message is read by a driver rather than by an admin.
  */
 const EXPLAINED_EXTENSIONS: Record<string, string> = {
+  // CSP will run a skin's ext_script.lua on every machine that installs the
+  // carset, so a driver can't put one there; an admin adds it by hand.
+  ".lua": "a script, which an admin has to add by hand",
   ".psd": "a Photoshop source file",
   ".xcf": "a GIMP source file",
   ".ai": "an Illustrator source file",
@@ -179,6 +193,8 @@ export interface Livery {
   skinFolder: string
   files: SkinFile[]
   totalBytes: number
+  /** Files in the zip a skin doesn't use, left out of the upload. */
+  dropped?: { name: string; why: string }[]
 }
 
 export interface LiveryPack {
@@ -341,6 +357,14 @@ export function forMessage(name: string): string {
  * the pack and one naming a driver's zip are read by different people.
  */
 interface UnzipBudget {
+  /**
+   * Entries to leave packed: never decompressed, never counted against the
+   * limits, and listed in `skipped`. A model or a source file a driver left in
+   * is not a zip bomb, but it can be large, and unpacking it only to throw it
+   * away would let it trip the size limits it was never going to be held to.
+   */
+  skip?: (name: string) => boolean
+  skipped?: string[]
   maxEntries: number
   maxEntryBytes: number
   maxTotalBytes: number
@@ -435,6 +459,10 @@ function unzip(bytes: Uint8Array, what: string, budget: UnzipBudget): Record<str
         if (refusal !== undefined) return false
         if (file.name.endsWith("/")) return false
         if (isArchiverJunk(file.name)) return false
+        if (budget.skip?.(file.name)) {
+          budget.skipped?.push(file.name)
+          return false
+        }
 
         entries += 1
         if (entries > budget.maxEntries) return refuse(budget.tooManyEntries())
@@ -674,7 +702,16 @@ function readOneLivery(
   limits: PackLimits,
   where: string,
 ): Livery {
+  // Files a skin folder doesn't use are left out rather than refused: a driver
+  // who zipped their working folder gets a livery on the server and a list of
+  // what was left behind, instead of a round trip through Discord to delete a
+  // .psd. They are never unpacked, never uploaded, and not counted against the
+  // limits. Wherever they are in the zip — a subfolder of leftovers is still
+  // only leftovers.
+  const skipped: string[] = []
   const inner = unzip(innerBytes, `"${where}"`, {
+    skip: (path) => !ALLOWED_SKIN_EXTENSIONS.has(extensionOf(path.split(/[/\\]/).pop() ?? "")),
+    skipped,
     maxEntries: limits.maxFilesPerSkin,
     maxEntryBytes: limits.maxFileBytes,
     maxTotalBytes: limits.maxSkinBytes,
@@ -719,16 +756,6 @@ function readOneLivery(
     const name = normalise(parts[0]!)
     assertSafeName("file name", name, `in ${carModel}/${driverName}`)
 
-    const ext = extensionOf(name)
-    if (!ALLOWED_SKIN_EXTENSIONS.has(ext)) {
-      const explained = EXPLAINED_EXTENSIONS[ext]
-      throw new LiveryPackError(
-        `Refusing ${carModel}/${driverName}: "${name}" is ${explained ?? `not something a skin needs`}. ` +
-          `A skin folder holds ${[...ALLOWED_SKIN_EXTENSIONS].join(", ")} files — delete the rest ` +
-          `and zip it again.`,
-      )
-    }
-
     if (entry.bytes.length > limits.maxFileBytes) {
       throw new LiveryPackError(
         `Refusing ${carModel}/${driverName}: "${name}" is ${mb(entry.bytes.length)}, over the ` +
@@ -758,7 +785,21 @@ function readOneLivery(
     )
   }
 
-  return { carModel, driverName, skinFolder: driverName, files, totalBytes }
+  const dropped = skipped.map((path) => {
+    const base = path.split(/[/\\]/).pop() ?? path
+    return {
+      name: forMessage(base),
+      why: EXPLAINED_EXTENSIONS[extensionOf(base)] ?? "not something a skin uses",
+    }
+  })
+  return {
+    carModel,
+    driverName,
+    skinFolder: driverName,
+    files,
+    totalBytes,
+    ...(dropped.length > 0 ? { dropped } : {}),
+  }
 }
 
 function firstDuplicate(values: readonly string[]): string | undefined {
