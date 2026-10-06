@@ -73,7 +73,7 @@
     "@napi-rs/canvas": "^1.0.10",
     "cheerio": "^1.2.0",
     "discord.js": "^14.27.0",
-    "fastify": "^5.12.1",
+    "fastify": "^5.12.5",
     "fflate": "0.8.3",
     "ipaddr.js": "^2.5.0",
     "luxon": "^3.5.0",
