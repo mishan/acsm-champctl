@@ -14,7 +14,8 @@
  * page anyone without parsing a word of the output.
  */
 
-import { resolve } from "node:path"
+import { mkdir, writeFile } from "node:fs/promises"
+import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { SqliteCache } from "../acsm/cache.js"
@@ -35,6 +36,8 @@ import {
   type Standings,
 } from "../bot/standings.js"
 import { BotError, RecordingTransport, type DiscordTransport } from "../bot/transport.js"
+import { postPodium, postRecentPodiums, type TrophyDeps, type TrophyPost } from "../bot/trophies.js"
+import { SqliteTrophyStore } from "../bot/trophy-store.js"
 import type { Severity } from "../gridmom/finding.js"
 import { DEFAULT_MIN_SEVERITY } from "../gridmom/report.js"
 import { SqliteClaimStore } from "../liveries/claims.js"
@@ -52,6 +55,9 @@ Usage:
   champctl-bot report                       check every championship, post what's wrong
   champctl-bot announce <champ-id> [round]  post the next round's details
   champctl-bot standings <champ-id>         post the championship standings
+  champctl-bot trophies                     post the podium of each championship
+                                            that finished this week, once
+  champctl-bot trophy <champ-id>            post one championship's podium now
   champctl-bot serve                        answer /livery until stopped
 
 Options:
@@ -66,6 +72,9 @@ Options:
                         endpoint is Server Manager's own standings: standings.json,
                         else the championship page's standings tab
   --dry-run             print what would be posted; talk to nobody
+  --out <dir>           with --dry-run, save the podium images here  [trophy, trophies]
+  --days <n>            how recently a championship must have finished
+                        (default: 7)                                  [trophies]
   --store <path>        queue, claims and tokens, shared with champctl-liveries
                         (default: $CHAMPCTL_STORE, else data/liveries/liveries.db)
   --register-only       publish the slash commands and exit, without serving
@@ -82,7 +91,12 @@ Exit codes:
   3  the run itself failed
 
 report posts to discord.adminChannelId; announce and standings post to
-discord.announceChannelId, which is the channel drivers read.
+discord.announceChannelId, which is the channel drivers read; trophy and
+trophies post to discord.trophyChannelId.
+
+trophies remembers what it posted, in the database --store names, so it posts
+each championship's podium once however often it runs. trophy <champ-id> posts
+whether or not it has before.
 
 announce and standings are one-shot: they post once and exit, so cron decides
 when a round gets announced and champctl keeps no record of having done it.
@@ -120,6 +134,8 @@ interface Args {
   all: boolean
   source: StandingsSourceOption
   dryRun: boolean
+  out?: string
+  days?: number
   baseUrl?: string
   cache: boolean
   now?: Date
@@ -127,7 +143,7 @@ interface Args {
 }
 
 /** Channel keys a command may post to. Named so neither can be typed as a string. */
-type ChannelKey = "adminChannelId" | "announceChannelId"
+type ChannelKey = "adminChannelId" | "announceChannelId" | "trophyChannelId"
 
 interface CommandShape {
   /** Positionals it must be given. */
@@ -150,6 +166,8 @@ const COMMANDS: Record<string, CommandShape> = {
   report: { required: 0, positionals: 0, channel: "adminChannelId" },
   announce: { required: 1, positionals: 2, channel: "announceChannelId" },
   standings: { required: 1, positionals: 1, channel: "announceChannelId" },
+  trophy: { required: 1, positionals: 1, channel: "trophyChannelId" },
+  trophies: { required: 0, positionals: 0, channel: "trophyChannelId" },
   serve: { required: 0, positionals: 0 },
 }
 
@@ -216,6 +234,17 @@ export function parseArgs(argv: readonly string[]): Args {
       case "--source":
         args.source = parseSource(next())
         break
+      case "--out":
+        args.out = next()
+        break
+      case "--days": {
+        const v = next()
+        const n = Number(v)
+        if (!Number.isInteger(n) || n < 1)
+          throw new UsageError(`--days must be a whole number of days, not ${v}`)
+        args.days = n
+        break
+      }
       case "--dry-run":
         args.dryRun = true
         break
@@ -458,11 +487,118 @@ async function runCommand(argv: readonly string[]): Promise<number> {
           return await runAnnounce(reader, profile, args, post)
         case "standings":
           return await runStandings(reader, args, baseUrl, post)
+        case "trophy":
+        case "trophies":
+          return await runTrophies(reader, args, baseUrl, async (message) => {
+            await transport.post({ channelId: channelId ?? "(dry run)", source, ...message })
+          })
         default:
           throw new UsageError(`Unknown command ${args.command}`)
       }
     },
   )
+}
+
+/**
+ * The trophy-room commands.
+ *
+ * A dry run posts nothing and records nothing — it prints what it would say,
+ * and saves the images under --out to look at — so it can be run against a
+ * league's real manager as often as anyone likes.
+ */
+export async function runTrophies(
+  reader: AcsmReader,
+  args: Args,
+  baseUrl: string,
+  send: (message: TrophyPost) => Promise<void>,
+): Promise<number> {
+  const store = await SqliteTrophyStore.open(args.store ?? defaultStorePath())
+  try {
+    const deps: TrophyDeps = {
+      reader,
+      fetchAsset: (path) => fetchAsset(baseUrl, path),
+      post: async (message) => {
+        await send(message)
+        if (args.dryRun) {
+          process.stdout.write(`${message.content}\n`)
+          for (const f of message.files) {
+            if (args.out) {
+              await mkdir(args.out, { recursive: true })
+              await writeFile(join(args.out, f.name), f.data)
+              process.stdout.write(`  ${join(args.out, f.name)}\n`)
+            } else {
+              process.stdout.write(`  ${f.name} (${f.data.length} bytes; --out to save it)\n`)
+            }
+          }
+        }
+      },
+      posted: (id) => store.posted(id),
+      record: (id, cls) => {
+        if (!args.dryRun) store.record(id, cls, new Date())
+      },
+    }
+
+    const outcomes =
+      args.command === "trophy"
+        ? [
+            await (async () => {
+              const id = requireChampionshipId(args, "trophy")
+              return postPodium(deps, id, await nameOf(reader, id), true)
+            })(),
+          ]
+        : await postRecentPodiums(deps, args.now ?? new Date(), args.days)
+
+    for (const o of outcomes) {
+      const who =
+        o.name && o.name !== o.championshipId ? `${o.name} (${o.championshipId})` : o.championshipId
+      switch (o.kind) {
+        case "posted":
+          process.stdout.write(
+            `${args.dryRun ? "would post" : "posted    "} ${who}${o.classes.some(Boolean) ? ` — ${o.classes.join(", ")}` : ""}\n`,
+          )
+          break
+        case "already":
+          process.stdout.write(`already    ${who}\n`)
+          break
+        case "no-podium":
+          process.stdout.write(`no podium  ${who} — ACSM shows no finishers for it yet\n`)
+          break
+        case "failed":
+          process.stderr.write(`FAILED     ${who} — ${o.error}\n`)
+          break
+      }
+    }
+    if (outcomes.length === 0) process.stdout.write("No championship finished in that time.\n")
+    return outcomes.some((o) => o.kind === "failed") ? 2 : 0
+  } finally {
+    store.close()
+  }
+}
+
+async function nameOf(reader: AcsmReader, id: string): Promise<string> {
+  try {
+    return (await reader.exportChampionship(id)).Name?.trim() || id
+  } catch {
+    return id
+  }
+}
+
+/**
+ * A public file on the manager — a skin preview — or undefined.
+ *
+ * Undefined rather than an error: one driver's missing preview draws as an
+ * empty panel, and shouldn't cost the other two their trophy.
+ */
+async function fetchAsset(baseUrl: string, path: string): Promise<Uint8Array | undefined> {
+  try {
+    const res = await fetch(new URL(path, baseUrl), {
+      headers: { "User-Agent": BOT_USER_AGENT },
+      signal: AbortSignal.timeout(30_000),
+    })
+    return res.ok ? new Uint8Array(await res.arrayBuffer()) : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**

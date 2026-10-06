@@ -665,6 +665,16 @@ describe("which channel each command posts to", () => {
     expect(channelFor("standings", p).id).toBe("2".repeat(18))
   })
 
+  it("sends the trophy commands to the trophy room, and nowhere else", () => {
+    // A podium is not an announcement: a trophy room is a gallery of them.
+    const p = {
+      ...testProfile(),
+      discord: { announceChannelId: "2".repeat(18), trophyChannelId: "3".repeat(18) },
+    }
+    expect(channelFor("trophies", p)).toEqual({ id: "3".repeat(18), key: "trophyChannelId" })
+    expect(channelFor("trophy", p)).toEqual({ id: "3".repeat(18), key: "trophyChannelId" })
+  })
+
   it("never falls back from one to the other", () => {
     // The safety property. gridmom quotes the entry list, so a report falling
     // back to the announce channel would tell the whole league which three
@@ -722,6 +732,10 @@ describe("the profile's Discord settings", () => {
 
   it("rejects a channel name, which is what people paste instead", () => {
     expect(() => withDiscord({ adminChannelId: "#admin" })).toThrow(/17 to 20 digits/)
+  })
+
+  it("checks the trophy room's id like the others", () => {
+    expect(() => withDiscord({ trophyChannelId: "#trophy-room" })).toThrow(/trophyChannelId/)
   })
 
   it("rejects a channel link", () => {

@@ -137,7 +137,7 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
   if (discord !== undefined) {
     if (typeof discord !== "object" || discord === null) bad("`discord` must be an object")
     const d = discord as Record<string, unknown>
-    for (const key of ["adminChannelId", "announceChannelId"] as const) {
+    for (const key of ["adminChannelId", "announceChannelId", "trophyChannelId"] as const) {
       const channel = d[key]
       if (channel !== undefined && (typeof channel !== "string" || !/^\d{17,20}$/.test(channel))) {
         bad(

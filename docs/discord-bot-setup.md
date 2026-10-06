@@ -114,6 +114,7 @@ In your league profile (`profiles/batl.json`, or your own):
 "discord": {
   "adminChannelId": "1234567890123456789",
   "announceChannelId": "9876543210987654321",
+  "trophyChannelId": "1122334455667788990",
   "guildId": "1234567890123456789",
   "livery": {
     "channelIds": ["1234567890123456789"],
@@ -305,6 +306,24 @@ scored yet, `1` when it posted but ACSM's numbers and champctl's disagree —
 worth a look, since one of them is wrong — and `2` when there is nothing it can
 honestly post. The export fallback refuses the parts of ACSM's scoring nobody
 has measured; the README lists which, and why.
+
+`champctl-bot trophies` posts a finished championship's top three into
+`trophyChannelId` — BATL's #trophy-room — as an image of ACSM's own podium
+cards: each driver's car in their skin, "1st Place", their name. A
+multi-class championship gets one image per class. Run it nightly; it posts a
+championship once, the night after its last round, and remembers that it has
+in the database `--store` names. Only championships that finished in the past
+week count (`--days` changes that), so the first night doesn't post every
+season the league has run. `champctl-bot trophy <championship-id>` posts one
+on demand, whether or not it has been posted before.
+
+```sh
+champctl-bot trophy <championship-id> --dry-run --out podiums/
+```
+
+draws it without posting, and saves the image to look at first.
+
+The bot needs **Attach Files** in that channel as well as Send Messages.
 
 ## When it doesn't work
 
