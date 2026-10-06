@@ -115,14 +115,15 @@ export interface PackLimits {
  * not a working file — and ACSM 2.4.15 took 90 MB and 125 MB files intact on the
  * harness: its `ParseMultipartForm(32 << 20)` is the memory it uses before
  * spilling to disk, not a cap. The skin limit, which bounds a whole submission,
- * stays where it was.
+ * went from 128 MB to 256 MB straight after, for the same driver: the skin
+ * folder carried several more 8K maps beside that one.
  *
  * Big files need time to upload: see `uploadTimeoutMs` in `apply.ts`, which
  * scales with size so a large livery doesn't die on the request timeout.
  */
 export const DEFAULT_LIMITS: PackLimits = {
   maxFileBytes: 96 * 1024 * 1024,
-  maxSkinBytes: 128 * 1024 * 1024,
+  maxSkinBytes: 256 * 1024 * 1024,
   maxTotalBytes: 1024 * 1024 * 1024,
   maxFilesPerSkin: 40,
   maxSkins: 100,

@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { unzipSync, zipSync } from "fflate"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 
 import { parseArgs, UsageError } from "../src/cli/upload.js"
 import { DEFAULT_ACCEPT_LIMITS } from "../src/liveries/accept.js"
@@ -350,6 +350,49 @@ describe("the upload endpoint", () => {
     const res = await fetch(`${base}/u/${second}`, { method: "POST", body: skin() })
     expect(res.status).toBe(400)
     expect(await res.text()).toMatch(/try again in/)
+  })
+
+  /** What the server wrote to stdout while `run` ran. */
+  const logged = async (run: () => Promise<void>): Promise<string> => {
+    let out = ""
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      out += String(chunk)
+      return true
+    })
+    try {
+      await run()
+    } finally {
+      spy.mockRestore()
+    }
+    return out
+  }
+
+  it("logs each upload's outcome, so an operator can see what a driver was told", async () => {
+    const token = await mint({ discordUserId: "300000000000000090", driverName: "Logan" })
+    const out = await logged(async () => {
+      await fetch(`${base}/u/${token}`, { method: "POST", body: skin() })
+    })
+    expect(out).toMatch(/upload: Logan \(.+\), [\d.]+ MB: accepted/)
+    // The token is the link's password.
+    expect(out).not.toContain(token)
+  })
+
+  it("logs a link that was no good, without the link", async () => {
+    const token = "b".repeat(43)
+    const out = await logged(async () => {
+      await fetch(`${base}/u/${token}`, { method: "POST", body: skin() })
+    })
+    expect(out).toMatch(/upload: .* on a link that is unknown/)
+    expect(out).not.toContain(token)
+  })
+
+  it("logs a zip turned away for its size", async () => {
+    const oversized = new Uint8Array(maxSubmissionBytes(DEFAULT_ACCEPT_LIMITS.pack) + 1024)
+    const out = await logged(async () => {
+      const res = await fetch(`${base}/u/${"c".repeat(43)}`, { method: "POST", body: oversized })
+      await res.text()
+    })
+    expect(out).toMatch(/upload: refused before reading the link: over 256.0 MB/)
   })
 
   it("refuses a body larger than one skin before looking at the token", async () => {

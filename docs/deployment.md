@@ -156,10 +156,10 @@ and the bot refuses to hand out a link that isn't https. Set that name as
 
 Two settings the proxy needs for it, beyond the three above:
 
-- **A body limit a little over 128 MB**, and read timeouts long enough for a
-  slow upload. The largest upload champctl accepts is 128 MB of skin plus the
-  zip's own overhead, so nginx needs `client_max_body_size 129m;` (its default
-  is 1 MB). At exactly `128m` a maximum-size upload gets nginx's error page
+- **A body limit a little over 256 MB**, and read timeouts long enough for a
+  slow upload. The largest upload champctl accepts is 256 MB of skin plus the
+  zip's own overhead, so nginx needs `client_max_body_size 257m;` (its default
+  is 1 MB). At exactly `256m` a maximum-size upload gets nginx's error page
   rather than champctl's explanation.
 - **No access log for `/u/`**, since the path is the token. In nginx,
   `location /u/ { access_log off; proxy_pass ...; }`.

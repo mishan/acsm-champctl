@@ -428,12 +428,14 @@ export function uploadRequestHandler(
         `That's larger than ${(maxSubmissionBytes(limits.pack) / (1024 * 1024)).toFixed(0)} MB, which is more than a livery should be. The link still works — try again with a smaller zip.\n`,
         () => req.destroy(),
       )
+      log(`refused before reading the link: over ${mb(maxSubmissionBytes(limits.pack))}`)
       return
     }
 
     const consumed = await options.tokens.consume(token, now())
     if (!consumed.ok) {
       send(res, 410, "text/plain; charset=utf-8", `${tokenProblem(consumed.reason)}\n`)
+      log(`${mb(body.length)} on a link that is ${consumed.reason}`)
       return
     }
 
@@ -455,6 +457,10 @@ export function uploadRequestHandler(
     // alive would turn one link into an unlimited upload endpoint for as long
     // as the driver kept sending things that failed validation. The message
     // says to ask for another.
+    log(
+      `${grant.driverName} (${grant.carModel}), ${mb(body.length)}: ` +
+        `${accepted.ok ? "accepted" : "refused"} — ${firstLine(accepted.reply)}`,
+    )
     send(
       res,
       accepted.ok ? 200 : 400,
@@ -464,6 +470,25 @@ export function uploadRequestHandler(
         : `${accepted.reply}\n\nThat link is spent now — ask for another with /livery upload-url once you've fixed it.\n`,
     )
   }
+}
+
+/**
+ * One line per upload, for the operator.
+ *
+ * What a driver is told goes only to their browser, and a driver who says "it
+ * failed" usually can't say how. Never the token: it is the link's password.
+ */
+function log(line: string): void {
+  process.stdout.write(`${new Date().toISOString()} upload: ${line}\n`)
+}
+
+function mb(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function firstLine(text: string): string {
+  const line = text.split("\n").find((l) => l.trim()) ?? ""
+  return line.length > 160 ? `${line.slice(0, 159)}…` : line
 }
 
 export function createUploadServer(options: UploadServerOptions): Server {
