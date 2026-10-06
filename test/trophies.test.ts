@@ -12,6 +12,7 @@ import {
   finishedAt,
   postPodium,
   postRecentPodiums,
+  seasonMonth,
   type TrophyDeps,
   type TrophyPost,
 } from "../src/bot/trophies.js"
@@ -178,6 +179,16 @@ describe("when a championship finished", () => {
   })
 })
 
+describe("the month a championship is named by", () => {
+  it("is the league's month when the last round finished, not UTC's", () => {
+    // BATL's September championship ended at 21:16 on the 30th in Los Angeles,
+    // which was already 1 October in UTC.
+    expect(seasonMonth(new Date("2026-10-01T04:16:00Z"), "America/Los_Angeles")).toBe(
+      "September 2026",
+    )
+  })
+})
+
 describe("posting podiums", () => {
   let dir = ""
   afterEach(async () => {
@@ -202,6 +213,7 @@ describe("posting podiums", () => {
     const posts: TrophyPost[] = []
     const deps: TrophyDeps = {
       reader,
+      timezone: "America/Los_Angeles",
       fetchAsset: async () => undefined,
       post: async (m) => {
         posts.push(m)
@@ -223,7 +235,8 @@ describe("posting podiums", () => {
     await postRecentPodiums(deps, NOW)
 
     expect(posts).toHaveLength(1)
-    expect(posts[0]!.content).toBe("**October**")
+    // As the league posts them by hand: "August 2026 - <name>".
+    expect(posts[0]!.content).toBe("October 2026 - October")
     expect(posts[0]!.files[0]!.name).toBe("October-podium.png")
     // The results are in the image's pixels; the alt text says them too.
     expect(posts[0]!.files[0]!.description).toBe(
@@ -256,7 +269,10 @@ describe("posting podiums", () => {
       m: multi,
     })
     await postRecentPodiums(deps, NOW)
-    expect(posts.map((p) => p.content)).toEqual(["**Radicals — Platinum**", "**Radicals — Gold**"])
+    expect(posts.map((p) => p.content)).toEqual([
+      "October 2026 - Radicals - Platinum",
+      "October 2026 - Radicals - Gold",
+    ])
   })
 
   it("finishes a multi-class post that stopped part way, without repeating a class", async () => {
@@ -266,7 +282,7 @@ describe("posting podiums", () => {
     )
     store.record("m", "Platinum", NOW)
     await postRecentPodiums(deps, NOW)
-    expect(posts.map((p) => p.content)).toEqual(["**Radicals — Gold**"])
+    expect(posts.map((p) => p.content)).toEqual(["October 2026 - Radicals - Gold"])
   })
 
   it("says so, and posts nothing, when the podium isn't laid out as expected", async () => {

@@ -36,7 +36,13 @@ import {
   type Standings,
 } from "../bot/standings.js"
 import { BotError, RecordingTransport, type DiscordTransport } from "../bot/transport.js"
-import { postPodium, postRecentPodiums, type TrophyDeps, type TrophyPost } from "../bot/trophies.js"
+import {
+  finishedAt,
+  postPodium,
+  postRecentPodiums,
+  type TrophyDeps,
+  type TrophyPost,
+} from "../bot/trophies.js"
 import { SqliteTrophyStore } from "../bot/trophy-store.js"
 import type { Severity } from "../gridmom/finding.js"
 import { DEFAULT_MIN_SEVERITY } from "../gridmom/report.js"
@@ -489,7 +495,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
           return await runStandings(reader, args, baseUrl, post)
         case "trophy":
         case "trophies":
-          return await runTrophies(reader, args, baseUrl, async (message) => {
+          return await runTrophies(reader, profile, args, baseUrl, async (message) => {
             await transport.post({ channelId: channelId ?? "(dry run)", source, ...message })
           })
         default:
@@ -508,6 +514,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
  */
 export async function runTrophies(
   reader: AcsmReader,
+  profile: LeagueProfile,
   args: Args,
   baseUrl: string,
   send: (message: TrophyPost) => Promise<void>,
@@ -516,6 +523,7 @@ export async function runTrophies(
   try {
     const deps: TrophyDeps = {
       reader,
+      timezone: profile.schedule.timezone,
       fetchAsset: (path) => fetchAsset(baseUrl, path),
       post: async (message) => {
         await send(message)
@@ -543,7 +551,9 @@ export async function runTrophies(
         ? [
             await (async () => {
               const id = requireChampionshipId(args, "trophy")
-              return postPodium(deps, id, await nameOf(reader, id), true)
+              const c = await reader.exportChampionship(id).catch(() => undefined)
+              const at = c ? finishedAt(c) : undefined
+              return postPodium(deps, id, c?.Name?.trim() || id, true, at)
             })(),
           ]
         : await postRecentPodiums(deps, args.now ?? new Date(), args.days)
@@ -572,14 +582,6 @@ export async function runTrophies(
     return outcomes.some((o) => o.kind === "failed") ? 2 : 0
   } finally {
     store.close()
-  }
-}
-
-async function nameOf(reader: AcsmReader, id: string): Promise<string> {
-  try {
-    return (await reader.exportChampionship(id)).Name?.trim() || id
-  } catch {
-    return id
   }
 }
 

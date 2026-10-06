@@ -29,6 +29,8 @@ export interface TrophyDeps {
   /** Fetches a path on the manager — the skin previews — or undefined if it can't. */
   fetchAsset: (path: string) => Promise<Uint8Array | undefined>
   post: (message: TrophyPost) => Promise<void>
+  /** The league's timezone, for the month a championship is named by. */
+  timezone: string
   posted: (championshipId: string) => Set<string>
   record: (championshipId: string, className: string) => void
 }
@@ -81,6 +83,7 @@ export async function postPodium(
   championshipId: string,
   name: string,
   force = false,
+  finished?: Date,
 ): Promise<TrophyOutcome> {
   const parsed = parsePodium(await deps.reader.championshipPage(championshipId))
   if (parsed === "absent") return { kind: "no-podium", championshipId, name }
@@ -100,17 +103,42 @@ export async function postPodium(
 
   const posted: string[] = []
   for (const cls of todo) {
-    await deps.post(await podiumPost(deps, name, cls))
+    await deps.post(await podiumPost(deps, name, cls, finished))
     deps.record(championshipId, cls.name)
     posted.push(cls.name)
   }
   return { kind: "posted", championshipId, name, classes: posted }
 }
 
-async function podiumPost(deps: TrophyDeps, name: string, cls: PodiumClass): Promise<TrophyPost> {
+/**
+ * The month a championship ran, as the league names it: "September 2026".
+ *
+ * Taken from when the last round finished, in the league's timezone — BATL's
+ * September championship ended on the evening of the 30th in Los Angeles,
+ * which is already October in UTC.
+ */
+export function seasonMonth(finished: Date, timezone: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: timezone,
+  }).format(finished)
+}
+
+async function podiumPost(
+  deps: TrophyDeps,
+  name: string,
+  cls: PodiumClass,
+  finished: Date | undefined,
+): Promise<TrophyPost> {
   const previews = await Promise.all(cls.places.map((p) => deps.fetchAsset(p.preview)))
   const png = await renderPodium(cls, previews)
-  const title = cls.name ? `${headingText(name)} — ${headingText(cls.name)}` : headingText(name)
+  // As the league has been posting them by hand: "August 2026 - <name>".
+  const title = [
+    ...(finished ? [seasonMonth(finished, deps.timezone)] : []),
+    headingText(name),
+    ...(cls.name ? [headingText(cls.name)] : []),
+  ].join(" - ")
   const slug = `${name} ${cls.name}`
     .trim()
     .replace(/[^A-Za-z0-9]+/g, "-")
@@ -118,7 +146,7 @@ async function podiumPost(deps: TrophyDeps, name: string, cls: PodiumClass): Pro
   const heading = cls.name ? `${name}, ${cls.name}` : name
   const results = cls.places.map((p) => `${ordinal(p.place)} place ${p.driver}`).join(", ")
   return {
-    content: `**${title}**`,
+    content: title,
     files: [
       {
         name: `${slug || "podium"}-podium.png`,
@@ -152,7 +180,7 @@ export async function postRecentPodiums(
       name = c.Name?.trim() || name
       const at = finishedAt(c)
       if (!at || at.getTime() < since || at.getTime() > now.getTime()) continue
-      out.push(await postPodium(deps, id, name))
+      out.push(await postPodium(deps, id, name, false, at))
     } catch (e) {
       out.push({
         kind: "failed",
