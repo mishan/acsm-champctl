@@ -175,6 +175,125 @@ describe("champctl-liveries --drain", () => {
     // in ACSM's logs at all.
     expect(stub.requests).toEqual([])
   })
+  it("does nothing at all for a championship whose last save went wrong", async () => {
+    // A drain after a drift would plan against the damaged championship, save
+    // over it again, and back up the damage over the good copy. Refused before
+    // the network, and without a heartbeat, so the bot stops promising drivers
+    // their uploads apply by themselves.
+    const { db, stub } = await seeded(["Ann"], oneClass(["Ann"]))
+    const q = await SqliteSubmissionQueue.open(db)
+    await q.haltDrain(CHAMP, "Classes moved.", "/backups/first.json", NOW)
+    // A later halt doesn't replace the first, whose backup is the good one.
+    await q.haltDrain(CHAMP, "Again.", "/backups/second.json", NOW)
+    q.close()
+
+    vi.stubEnv("CHAMPCTL_USERNAME", "operator")
+    vi.stubEnv("CHAMPCTL_PASSWORD", "secret")
+    const code = await main([
+      CHAMP,
+      "--drain",
+      "--push",
+      "--yes",
+      "--base-url",
+      stub.baseUrl,
+      "--store",
+      db,
+    ])
+
+    expect(code).toBe(4)
+    expect(stub.requests).toEqual([])
+    expect(await queueState(db)).toMatchObject({ queued: 1 })
+    const after = await SqliteSubmissionQueue.open(db)
+    expect(await after.lastDrainRun(CHAMP)).toBeUndefined()
+    expect((await after.drainHalt(CHAMP))?.backup).toBe("/backups/first.json")
+    after.close()
+  })
+
+  it("stops for good when a save changes more than the liveries", async () => {
+    // The whole drain over the socket, against an ACSM whose save drops the
+    // spectator car. The first pass has to record the halt with its backup;
+    // the second has to do nothing — no login, no save over the damage.
+    const dir = await mkdtemp(join(tmpdir(), "champctl-drain-"))
+    const db = join(dir, "liveries.db")
+    const queue = await SqliteSubmissionQueue.open(db)
+    await queue.submit({
+      discordUserId: "100000000000000000",
+      championshipId: CHAMP,
+      driverName: "Ann",
+      carModel: CAR,
+      skinFolder: "Ann",
+      body: skinZip(),
+      at: NOW,
+    })
+    queue.close()
+
+    const champ = { ...oneClass(["Ann"]), SpectatorCars: [{ Name: "Van", Model: CAR, Skin: "v" }] }
+    let saved = false
+    const exportNow = () => JSON.stringify(saved ? { ...champ, SpectatorCars: [] } : champ)
+    const row = (name: string, spectator = false) => `
+      <input type="hidden" name="EntryList.InternalUUID" value="">
+      <select name="EntryList.Car"><option value="${CAR}" selected>c</option></select>
+      <select name="EntryList.Skin"></select>
+      <input name="EntryList.Name" value="${name}">
+      <input name="EntryList.Team" value=""><input name="EntryList.GUID" value="">
+      <input name="EntryList.Ballast" value="0"><input name="EntryList.Restrictor" value="0">
+      <select name="EntryList.FixedSetup"><option value="" selected></option></select>
+      ${spectator ? '<input type="hidden" name="EntryList.Spectator" value="true">' : ""}`
+    const page = `<form action="/championships/new/submit" method="post">
+      <textarea name="ChampionshipInfo"></textarea><div id="ChampionshipInfoHolder"></div>
+      <div class="entrant">${row("Van", true)}</div>
+      <input name="ClassName" value="RSS"><div class="entrant">${row("Ann")}</div>
+      <input type="hidden" name="EntryList.NumEntrants" value="1"></form>`
+    const stub = await acsmStub(CHAMP, champ, {
+      handle: ({ method, path }) => {
+        if (path === "/login") {
+          return { status: 302, headers: { location: "/", "set-cookie": "_acsm_data=x; Path=/" } }
+        }
+        if (path.endsWith("/export")) return { status: 200, body: exportNow() }
+        if (path.endsWith("/edit")) return { status: 200, body: page }
+        if (path.includes("/skin")) return { status: 302, headers: { location: "/cars" } }
+        if (method === "POST" && path === "/championships/new/submit") {
+          saved = true
+          return { status: 302, headers: { location: `/championship/${CHAMP}` } }
+        }
+        return undefined
+      },
+    })
+    open.push({ dir, stub })
+
+    vi.stubEnv("CHAMPCTL_USERNAME", "operator")
+    vi.stubEnv("CHAMPCTL_PASSWORD", "secret")
+    const args = [CHAMP, "--drain", "--push", "--yes", "--base-url", stub.baseUrl, "--store", db]
+
+    expect(await main(args)).toBe(4)
+    const halted = await SqliteSubmissionQueue.open(db)
+    const halt = await halted.drainHalt(CHAMP)
+    halted.close()
+    expect(halt?.reason).toMatch(/SpectatorCars/)
+    expect(halt?.backup).toMatch(/backups/)
+    // Not marked applied: the championship isn't in the state the queue says.
+    expect(await queueState(db)).toMatchObject({ queued: 1 })
+
+    const before = stub.requests.length
+    expect(await main(args)).toBe(4)
+    expect(stub.requests.length).toBe(before)
+    // Slow on purpose: the drain's session keeps to ACSM's documented 5
+    // requests per 20 seconds, and a whole save is about nine of them.
+  }, 120_000)
+
+  it("lets liveries apply again once the halt is cleared, and says when there was none", async () => {
+    const { db } = await seeded([], oneClass(["Ann"]))
+    const q = await SqliteSubmissionQueue.open(db)
+    await q.haltDrain(CHAMP, "Classes moved.", undefined, NOW)
+    q.close()
+
+    expect(await main([CHAMP, "--clear-halt", "--store", db])).toBe(0)
+    expect(await main([CHAMP, "--clear-halt", "--store", db])).toBe(1)
+    const after = await SqliteSubmissionQueue.open(db)
+    expect(await after.drainHalt(CHAMP)).toBeUndefined()
+    after.close()
+  })
+
   it("won't start while another drain holds the championship", async () => {
     // The watcher in one process and an impatient operator in another both
     // reach saveChampionshipSkins, which is GET the form, mutate, POST the

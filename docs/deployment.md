@@ -252,6 +252,12 @@ as the server.
   championship id"). `docker compose logs drain` says which. Check `acsm.env`
   and that the account can still sign in to ACSM directly. ACSM being down or
   rate-limiting logins doesn't stop it; it backs off and tries again.
+- **The drain says it has stopped applying liveries:** a championship save
+  changed more than the liveries, or couldn't be checked afterwards. The log
+  names what changed and a backup of the championship from just before, in the
+  volume under `data/liveries/backups/`. Restore it (an import of that file over
+  the same championship id does it exactly), then
+  `docker compose run --rm admin champctl-liveries <championship-id> --clear-halt`.
 - **A login in the UI doesn't stick:** it isn't being served over HTTPS.
 - **Every save fails with 403:** the proxy is rewriting `Host`.
 - **"Server Manager answered with a web page where champctl expected data":**

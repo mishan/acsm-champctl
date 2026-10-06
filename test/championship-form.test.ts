@@ -9,6 +9,7 @@ import {
   findChampionshipForm,
   setEntrantSkin,
   findEntrantRow,
+  SPECTATOR_MARKER,
   stripClonedTemplates,
 } from "../src/acsm/championship-form.js"
 import { checkEntryListShape, getAll } from "../src/acsm/form.js"
@@ -35,7 +36,7 @@ function entrantRow(opts: { name?: string; skin?: string; spectator?: boolean } 
       <input type="number" name="EntryList.Restrictor" value="0">
       <select name="EntryList.FixedSetup"><option value="" selected></option></select>
       <input type="checkbox" name="EntryList.OverwriteAllEvents">
-      ${spectator ? `<input type="checkbox" name="EntryList.Spectator">` : `<input type="checkbox" name="EntryList.TransferTeamPoints">`}
+      ${spectator ? `<input type="hidden" name="EntryList.Spectator" value="true">` : `<input type="checkbox" name="EntryList.TransferTeamPoints">`}
     </div>`
 }
 
@@ -292,12 +293,20 @@ describe("findChampionshipForm", () => {
     })
   })
 
-  it("strips EntryList.Spectator, which ACSM renders and never reads", () => {
-    // Two occurrences against four rows. checkEntryListShape is right to refuse
-    // that, and the field means nothing — the line reading it in BuildEntryList
-    // is commented out.
+  it("keeps EntryList.Spectator, which marks the spectator car's row", () => {
+    // It used to be stripped as rendered-and-never-read. BATL's September 2026
+    // build reads it: without it the spectator car became the first class
+    // entrant, every driver moved down a row, and the last was dropped.
     const form = findChampionshipForm(championshipPage([{ entrants: roster }]), PAGE_URL)
-    expect(getAll(form.fields, "EntryList.Spectator")).toEqual([])
+    expect(getAll(form.fields, "EntryList.Spectator")).toEqual(["true"])
+  })
+
+  it("refuses a form that marks no row as the spectator car when there is one", () => {
+    const page = championshipPage([{ entrants: roster }]).replace(
+      '<input type="hidden" name="EntryList.Spectator" value="true">',
+      "",
+    )
+    expect(() => findChampionshipForm(page, PAGE_URL)).toThrowError(/EntryList.Spectator nowhere/)
   })
 
   it("refuses a form whose ClassName and NumEntrants counts disagree", () => {
@@ -371,7 +380,10 @@ describe("findChampionshipForm", () => {
       expect.objectContaining({ key: "EntryList.EntrantID", count: 0 }),
     )
     expect(
-      checkEntryListShape(form.fields, { required: CHAMPIONSHIP_REQUIRED_ENTRY_LIST_FIELDS }),
+      checkEntryListShape(form.fields, {
+        required: CHAMPIONSHIP_REQUIRED_ENTRY_LIST_FIELDS,
+        markers: [SPECTATOR_MARKER],
+      }),
     ).toEqual([])
   })
 })
@@ -481,7 +493,10 @@ describe("placing an entrant on the form", () => {
     const f = form()
     setEntrantSkin(f.fields, entrantRowIndex(f, 0, 1), "postaL")
     expect(
-      checkEntryListShape(f.fields, { required: CHAMPIONSHIP_REQUIRED_ENTRY_LIST_FIELDS }),
+      checkEntryListShape(f.fields, {
+        required: CHAMPIONSHIP_REQUIRED_ENTRY_LIST_FIELDS,
+        markers: [SPECTATOR_MARKER],
+      }),
     ).toEqual([])
   })
 })

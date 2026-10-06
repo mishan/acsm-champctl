@@ -448,6 +448,13 @@ export interface EntryListShapeOptions {
    * reason is next to the code.
    */
   required?: readonly string[]
+  /**
+   * `EntryList.*` keys that mark particular rows rather than describe every
+   * one, so their count is not the entrant count. The championship form's
+   * `EntryList.Spectator` is the one: rendered once, on the spectator car. The
+   * caller that names a marker checks its count itself.
+   */
+  markers?: readonly string[]
 }
 
 export function checkEntryListShape(
@@ -456,7 +463,7 @@ export function checkEntryListShape(
 ): EntryListShapeProblem[] {
   const required = options.required ?? REQUIRED_ENTRY_LIST_FIELDS
   const counts = shape(fields)
-  const excluded = new Set<string>(NON_ARRAY_ENTRY_LIST_FIELDS)
+  const excluded = new Set<string>([...NON_ARRAY_ENTRY_LIST_FIELDS, ...(options.markers ?? [])])
   const entries = Object.entries(counts).filter(
     ([k]) => k.startsWith("EntryList.") && !excluded.has(k),
   )

@@ -46,7 +46,7 @@ import {
   count,
   findFormByAction,
   getAll,
-  removeAll,
+  setOne,
   setAt,
 } from "./form.js"
 import { CHAMPIONSHIP_SUBMIT_PATH } from "./paths.js"
@@ -62,19 +62,17 @@ export class ChampionshipFormError extends Error {
 export const ENTRANT_TEMPLATE_ID = "entrantTemplate"
 
 /**
- * Rendered on the spectator rows and never read.
+ * The hidden input that marks the spectator car's row: `value="true"`, once.
  *
- * `BuildEntryList` has the line that would read it commented out:
- *
- *     // Despite having the option for SpectatorMode, the server does not
- *     // support it, and panics if set to 1
- *     // SpectatorMode: formValueAsInt(r.Form["EntryList.Spectator"][i]),
- *
- * It is stripped rather than echoed because it is the wrong length — two
- * occurrences against thirty rows — and `checkEntryListShape` is right to
- * refuse that. Sending nothing is exactly as meaningful as sending it.
+ * Older ACSM source never read it — the line in `BuildEntryList` was commented
+ * out — so champctl stripped it as noise. BATL's September 2026 build reads it:
+ * a livery push that left it out had ACSM take the spectator car as the first
+ * class entrant, move every driver down a row and drop the last one off the
+ * end. A browser sends it, so champctl sends it, exactly as rendered. It marks
+ * one row rather than describing every row, so it is exempt from the arity
+ * check and counted here instead.
  */
-export const RENDERED_BUT_UNREAD_ENTRY_LIST_FIELDS = ["EntryList.Spectator"] as const
+export const SPECTATOR_MARKER = "EntryList.Spectator"
 
 /**
  * What a POST to this form must carry, which is the event form's list minus
@@ -132,6 +130,10 @@ export interface StrippedTemplates {
   entrantTemplates: number
   /** `#spectatorTemplate` rows removed. */
   spectatorTemplates: number
+  /** The hidden balance-of-performance row removed: 0 or 1. */
+  bopTemplates: number
+  /** True when the last `.class-bop` wasn't the hidden template ACSM expects. */
+  unexpectedBop: boolean
 }
 
 /**
@@ -176,11 +178,31 @@ export function stripClonedTemplates(html: string): StrippedTemplates {
   const spectatorCount = spectatorTemplates.length
   spectatorTemplates.remove()
 
+  // `handleGlobalBoP` clones the *last* `.class-bop` on the page as the row it
+  // stamps out per car, and removes it. That row is a hidden one outside any
+  // class; posted, it adds a balance-of-performance entry for no car. Anything
+  // else in last place is a layout champctl hasn't seen, and the caller refuses
+  // it rather than removing a real row the way ACSM's own script would.
+  const bops = $(".class-bop")
+  const lastBop = bops.last()
+  let bopCount = 0
+  let unexpectedBop = false
+  if (bops.length > 0) {
+    if (lastBop.hasClass("d-none") && lastBop.closest(".class-bop-wrapper").length === 0) {
+      lastBop.remove()
+      bopCount = 1
+    } else {
+      unexpectedBop = true
+    }
+  }
+
   return {
     html: $.html(),
     classTemplates: classCount,
     entrantTemplates: entrantCount,
     spectatorTemplates: spectatorCount,
+    bopTemplates: bopCount,
+    unexpectedBop,
   }
 }
 
@@ -198,6 +220,15 @@ export interface ChampionshipForm {
   hasSpectatorRow: boolean
   /** Total entrant rows in the payload, spectator included. */
   rows: number
+  /**
+   * The championship description as the page holds it, for the editor to load:
+   * `#ChampionshipInfoHolder`. The `ChampionshipInfo` textarea itself renders
+   * empty and is filled by the page's script, so posting the form as parsed
+   * erased the description. `fields` carries this in its place, which is what
+   * a browser posts: images as `/content/...` URLs, where the export inlines
+   * them as base64 (docs/acsm-champ-form.md §4.6).
+   */
+  description: string
 }
 
 /**
@@ -219,8 +250,25 @@ export function findChampionshipForm(html: string, pageUrl: string): Championshi
     )
   }
 
+  if (stripped.unexpectedBop) {
+    throw new ChampionshipFormError(
+      `Refusing to write the championship form: the last balance-of-performance row on the ` +
+        `page isn't the hidden template ACSM's script removes. Posting it as parsed could add or ` +
+        `drop a BoP entry. Run \`npm run recon:champ-form -- <championship-id>\` against this ` +
+        `manager and compare with docs/acsm-champ-form.md §4.2.`,
+    )
+  }
+
   const fields = [...form.fields]
-  for (const key of RENDERED_BUT_UNREAD_ENTRY_LIST_FIELDS) removeAll(fields, key)
+  const description = cheerio.load(stripped.html)("#ChampionshipInfoHolder").html()?.trim() ?? ""
+  if (getAll(fields, "ChampionshipInfo").length > 1) {
+    throw new ChampionshipFormError(
+      "The championship form renders more than one ChampionshipInfo field, which champctl doesn't know how to fill.",
+    )
+  }
+  if (description && !(getAll(fields, "ChampionshipInfo")[0] ?? "").trim()) {
+    setOne(fields, "ChampionshipInfo", description)
+  }
 
   const entrantsPerClass = getAll(fields, "EntryList.NumEntrants").map((v) =>
     Number.parseInt(v, 10),
@@ -283,9 +331,23 @@ export function findChampionshipForm(html: string, pageUrl: string): Championshi
     )
   }
 
+  const markers = getAll(fields, SPECTATOR_MARKER)
+  const expectedMarkers = hasSpectatorRow ? 1 : 0
+  if (markers.length !== expectedMarkers || markers.some((v) => v !== "true")) {
+    throw new ChampionshipFormError(
+      `Refusing to write the championship form: it carries ${SPECTATOR_MARKER} ` +
+        `${markers.length === 0 ? "nowhere" : `as ${markers.map((v) => JSON.stringify(v)).join(", ")}`}, ` +
+        `where the row count says ${expectedMarkers === 1 ? 'one row, marked "true"' : "none"}. ACSM reads that marker to tell the ` +
+        `spectator car from the drivers, and getting it wrong moves every driver a row. Run ` +
+        `\`npm run recon:champ-form -- <championship-id>\` against this manager and compare with ` +
+        `docs/acsm-champ-form.md §4.2.`,
+    )
+  }
+
   return {
     fields,
     action: form.action,
+    description,
     droppedClassTemplates: stripped.classTemplates,
     droppedTemplateRows: stripped.entrantTemplates,
     entrantsPerClass,

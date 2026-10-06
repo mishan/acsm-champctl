@@ -161,7 +161,32 @@ const MIGRATIONS: Migration[] = [
       `)
     },
   },
+  {
+    name: "queue: halt a championship's drain after a save that went wrong",
+    up: (db) => {
+      db.exec(`
+        -- A championship save that changed more than the liveries, or that
+        -- couldn't be checked. Every drain of the championship refuses while a
+        -- row is here: the next pass would plan against the damaged
+        -- championship and save over it again, and each pass would back up the
+        -- damaged state over the good one. Cleared by an operator, once they
+        -- have looked; the first backup stays named until then.
+        CREATE TABLE IF NOT EXISTS drain_halt (
+          championship_id  TEXT PRIMARY KEY,
+          reason           TEXT NOT NULL,
+          backup           TEXT,
+          halted_at        TEXT NOT NULL
+        ) STRICT;
+      `)
+    },
+  },
 ]
+
+export interface DrainHalt {
+  reason: string
+  backup?: string
+  haltedAt: Date
+}
 
 interface Row {
   id: number
@@ -483,6 +508,48 @@ export class SqliteSubmissionQueue {
          ON CONFLICT(championship_id) DO UPDATE SET ran_at = excluded.ran_at`,
       )
       .run(championshipId, at.toISOString())
+  }
+
+  /**
+   * Stops every drain of this championship until `clearDrainHalt`.
+   *
+   * The first halt wins: a later one would name a backup taken of the
+   * championship after it was damaged.
+   */
+  async haltDrain(
+    championshipId: string,
+    reason: string,
+    backup: string | undefined,
+    at: Date,
+  ): Promise<void> {
+    this.#db
+      .prepare(
+        `INSERT INTO drain_halt (championship_id, reason, backup, halted_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(championship_id) DO NOTHING`,
+      )
+      .run(championshipId, reason, backup ?? null, at.toISOString())
+  }
+
+  async drainHalt(championshipId: string): Promise<DrainHalt | undefined> {
+    const row = this.#db
+      .prepare("SELECT reason, backup, halted_at FROM drain_halt WHERE championship_id = ?")
+      .get(championshipId) as unknown as
+      | { reason: string; backup: string | null; halted_at: string }
+      | undefined
+    if (!row) return undefined
+    return {
+      reason: row.reason,
+      ...(row.backup ? { backup: row.backup } : {}),
+      haltedAt: new Date(row.halted_at),
+    }
+  }
+
+  /** True when there was a halt to clear. */
+  async clearDrainHalt(championshipId: string): Promise<boolean> {
+    const r = this.#db
+      .prepare("DELETE FROM drain_halt WHERE championship_id = ?")
+      .run(championshipId)
+    return Number(r.changes) > 0
   }
 
   async lastDrainRun(championshipId: string): Promise<Date | undefined> {

@@ -205,6 +205,13 @@ Liveries appear at the next practice start. The drain never restarts a practice
 session — a driver uploading at 8pm must not be able to disconnect everyone in
 practice over a cosmetic change — and the bot's reply tells them so.
 
+Every championship save is checked after it lands. champctl backs the
+championship up first (logged in, beside the queue database) and compares it
+afterwards; if anything besides the liveries changed, or the check couldn't run,
+liveries stop for that championship — the watcher stays up and writes nothing —
+until someone restores it from the backup the error names and runs
+`champctl-liveries <championship-id> --clear-halt`.
+
 **Now turn on `autoApply`** in the profile and restart the bot. The setting is
 only ever a promise about this drain, and the bot checks rather than trusts it:
 it looks for a heartbeat the drain writes on every pass, including empty ones,
