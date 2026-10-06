@@ -311,7 +311,9 @@ So on premium **index 0 is the spectator car**, not an entrant, and each class
 takes the next `EntryList.NumEntrants` rows. A writer has to drop the two
 template rows and keep that ordering, or the spectator van becomes a driver.
 
-`EntryList.Spectator` is **rendered and never read** — the line that would read
+**Superseded on BATL's September 2026 build — see §4.6.** On the build this
+section was measured against, `EntryList.Spectator` was **rendered and never
+read** — the line that would read
 it is commented out in `BuildEntryList`:
 
 ```go
@@ -381,6 +383,52 @@ and edit, and an edit is a create carrying an existing ID. So a POST here
 replaces the entire championship — classes, points, sign-up form, the lot — and
 the entry-list fingerprint guard from `src/finalize/apply.ts` applies at least as
 strongly as it does to an event save.
+
+### 4.6 What the first save on the updated build got wrong, and what a save now proves
+
+**2026-10-06, BATL's manager, first livery push after its update.** The save
+redirected back to the championship like a good one, and replaced it with:
+
+- the spectator car as the first class entrant, every driver one slot down, and
+  the last driver dropped off the end;
+- an empty description (`Info`, about 2 MB);
+- every entrant's `ClassID` reset.
+
+It was restored the same day from a logged-in export by an import of the same
+id, which on 2.4.15 overwrites in place (rehearsed on the harness first).
+
+**Measured afterwards** by capturing what a real browser posts from the same
+page (Playwright against the harness holding a copy of that championship) and
+diffing it with champctl's payload:
+
+| | browser | champctl was sending |
+|---|---|---|
+| `EntryList.Spectator` | `true`, once, on the spectator row — a hidden input | nothing (stripped as unread, §4.2) |
+| `ChampionshipInfo` | the description, from `#ChampionshipInfoHolder` | empty — the textarea renders empty and the page's script fills it |
+| `BoPModel` etc. | one row per car | one more: the hidden `.class-bop` that `handleGlobalBoP` clones and removes |
+
+ACSM now reads `EntryList.Spectator` to tell the spectator car from the drivers;
+without it, row 0 is a driver. champctl sends all three as a browser does,
+taking the description from the export rather than the holder so it is stored
+byte for byte.
+
+**`ClassID` resets on any save of this form.** A browser saving it unchanged
+does the same, so it is ACSM's behavior rather than the payload's, and the
+check below allows it.
+
+**What a save now proves.** Before writing, the livery save reads the
+championship *logged in* and keeps it beside the queue database
+(`data/liveries/backups/`, 0600) — the public export leaves out the sign-up
+responses and the server password, and a restore from it would erase both.
+After writing, it reads it again and compares: anything other than the skins it
+set, `Updated` and `ClassID` is a `ChampionshipDriftError` naming the fields and
+the backup. On the harness copy, the remaining differences were `ACSR` and
+`AvailableCars`, which a browser's save changes there too because the harness has
+neither BATL's cars nor its ACSR integration; on BATL's manager both rendered
+and round-tripped in the incident's own diff.
+
+The form is also read and checked before any skin is uploaded, so a refusal
+leaves nothing behind on the server.
 
 ## 5. Restart: the practice endpoint, not the process one
 

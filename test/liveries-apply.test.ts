@@ -3,11 +3,17 @@ import { describe, expect, it } from "vitest"
 import { CHAMPIONSHIP_SUBMIT_PATH } from "../src/acsm/paths.js"
 import { AcsmSession } from "../src/acsm/session.js"
 import type { Entrant } from "../src/acsm/types.js"
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+
 import {
+  ChampionshipDriftError,
   LiveryRecordError,
   MultiClassError,
   RosterChangedError,
   applyLiveries,
+  championshipDrift,
   uploadTimeoutMs,
 } from "../src/liveries/apply.js"
 import { AcsmWriteError } from "../src/acsm/session.js"
@@ -42,34 +48,37 @@ const champ = (names: string[] = ["Misha", "postaL"]) =>
   })
 
 /**
- * The championship edit page, shaped like 2.4.15's.
+ * The championship edit page, shaped like BATL's updated 2.4.15 build.
  *
- * `classTemplate` renders the `#class-template` block ACSM puts before the real
- * classes — its own ClassName, its own NumEntrants of 0 and its own
- * #entrantTemplate inside. `manager.js` removes it in a browser and champctl
- * has to remove it by hand, and leaving it in is what makes every driver
- * inherit the previous one's car. It belongs in a test of the *write*, not only
- * of the parser, because the write is where the damage would land.
+ * Every template a browser's script removes is here, because each one left in
+ * moves somebody: `#spectatorTemplate` ahead of the spectator car,
+ * `#entrantTemplate` per class, the `#class-template` block when asked for,
+ * and the hidden balance-of-performance row at the end of the form. The
+ * spectator car's row carries the hidden `EntryList.Spectator` marker ACSM now
+ * reads, and the description is in `#ChampionshipInfoHolder` while the
+ * textarea that is posted renders empty — the two details the first
+ * production save got wrong.
  *
  * `secondClass` renders a second real class, which is the shape champctl
  * refuses outright.
  */
 function editPage(
   names: string[],
-  options: { classTemplate?: boolean; secondClass?: string[] } = {},
+  options: { classTemplate?: boolean; secondClass?: string[]; info?: string } = {},
 ): string {
-  const row = (name: string, spectator = false) => `
+  // The skin select carries the current skin only, as ACSM renders it.
+  const row = (name: string, spectator = false, skin = "") => `
     <div class="entrant">
       <input type="hidden" name="EntryList.InternalUUID" value="00000000-0000-0000-0000-000000000000">
       <select name="EntryList.Car"><option value="${CAR}" selected>c</option></select>
-      <select name="EntryList.Skin"></select>
+      <select name="EntryList.Skin">${skin ? `<option value="${skin}" selected>${skin}</option>` : ""}</select>
       <input type="text" name="EntryList.Name" value="${name}">
       <input type="text" name="EntryList.Team" value="">
       <input type="text" name="EntryList.GUID" value="">
       <input type="number" name="EntryList.Ballast" value="0">
       <input type="number" name="EntryList.Restrictor" value="0">
       <select name="EntryList.FixedSetup"><option value="" selected></option></select>
-      ${spectator ? '<input type="checkbox" name="EntryList.Spectator">' : ""}
+      ${spectator ? '<input type="hidden" name="EntryList.Spectator" value="true">' : ""}
     </div>`
 
   const classTemplate = options.classTemplate
@@ -87,16 +96,28 @@ function editPage(
        <input type="hidden" name="EntryList.NumEntrants" value="${options.secondClass.length}">`
     : ""
 
+  const bop = (model: string) => `<div class="class-bop${model ? "" : " d-none"}">
+      <input type="hidden" name="BoPModel" value="${model}">
+      <input type="number" name="BoPBallast" value="0">
+      <input type="number" name="BoPRestrictor" value="0">
+    </div>`
+
   return `<html><body><form action="${CHAMPIONSHIP_SUBMIT_PATH}" method="post">
     <input type="text" name="ChampionshipName" value="September 2026">
-    <div id="entrantTemplate">${row("", true)}</div>
-    ${row("Stream Van", true)}
+    <textarea id="summernote" name="ChampionshipInfo"></textarea>
+    <div class="d-none" id="ChampionshipInfoHolder">${options.info ?? ""}</div>
+    <div class="visible-spectator-enabled">
+      <div id="spectatorTemplate" class="entrant">${row("", true)}</div>
+      ${row("Stream Van", true, "van")}
+    </div>
     ${classTemplate}
     <input type="text" name="ClassName" value="RSS">
+    <div class="class-bop-wrapper">${bop(CAR)}</div>
     <div id="entrantTemplate">${row("")}</div>
     ${names.map((n) => row(n)).join("")}
     <input type="hidden" name="EntryList.NumEntrants" value="${names.length}">
     ${second}
+    ${bop("")}
   </form></body></html>`
 }
 
@@ -127,6 +148,8 @@ function delayed(ms: number, signal: AbortSignal | null | undefined, res: () => 
   })
 }
 
+const INFO = '<h1 style="margin:0">Rules</h1><p>Be nice.</p>'
+
 async function fakeSession(
   options: {
     formNames?: string[]
@@ -143,10 +166,50 @@ async function fakeSession(
     sessionTimeoutMs?: number
     /** How long the skin upload takes to answer. */
     skinDelayMs?: number
+    /**
+     * Have ACSM read no spectator car off the save, as it did with the payload
+     * that left the marker out: every row lands one entrant early.
+     */
+    misreadSpectator?: boolean
   } = {},
 ) {
   const requests: Recorded[] = []
   const names = options.formNames ?? ["Misha", "postaL"]
+
+  // What ACSM holds, served as a logged-in export and replaced by a save the
+  // way the updated build read the payload: one leading spectator car per
+  // `EntryList.Spectator`, then the class's rows, the description as posted.
+  const state = championship({
+    ...champ(names),
+    Info: INFO,
+    SpectatorCars: [{ Name: "Stream Van", Model: CAR, Skin: "van" }],
+  } as Partial<ReturnType<typeof champ>>) as ReturnType<typeof champ> & Record<string, unknown>
+
+  const applySave = (body: string) => {
+    const form = new URLSearchParams(body)
+    const rowNames = form.getAll("EntryList.Name")
+    const skins = form.getAll("EntryList.Skin")
+    const cars = form.getAll("EntryList.Car")
+    const spectators = options.misreadSpectator ? 0 : form.getAll("EntryList.Spectator").length
+    const inClass = Number(form.get("EntryList.NumEntrants") ?? 0)
+    const cls = state.Classes![0]!
+    const previous = Object.values(cls.Entrants ?? {})
+    cls.Entrants = {}
+    for (let i = 0; i < inClass; i++) {
+      const r = spectators + i
+      const was = previous.find((e) => e.Name === rowNames[r]) ?? previous[i]
+      cls.Entrants[`CAR_${i}`] = {
+        ...was!,
+        Name: rowNames[r] ?? "",
+        Skin: skins[r] ?? "",
+        Model: cars[r] ?? "",
+      }
+    }
+    state["SpectatorCars"] = rowNames
+      .slice(0, spectators)
+      .map((Name, i) => ({ Name, Model: cars[i] ?? "", Skin: skins[i] ?? "" }))
+    state["Info"] = form.get("ChampionshipInfo") ?? ""
+  }
 
   const fetchImpl: typeof globalThis.fetch = async (input, init) => {
     const url = String(input)
@@ -178,10 +241,10 @@ async function fakeSession(
       return options.skinDelayMs ? delayed(options.skinDelayMs, init?.signal, respond) : respond()
     }
     if (url.includes(CHAMPIONSHIP_SUBMIT_PATH)) {
-      return new Response("", {
-        status: options.submitStatus ?? 302,
-        headers: { location: options.submitLocation ?? `/championship/${CHAMP_ID}` },
-      })
+      const status = options.submitStatus ?? 302
+      const location = options.submitLocation ?? `/championship/${CHAMP_ID}`
+      if (status === 302 && location === `/championship/${CHAMP_ID}`) applySave(record.body ?? "")
+      return new Response("", { status, headers: { location } })
     }
     if (url.includes("/practice")) {
       return new Response("", {
@@ -189,11 +252,13 @@ async function fakeSession(
         headers: { location: `/championship/${CHAMP_ID}` },
       })
     }
+    if (url.endsWith("/export")) return new Response(JSON.stringify(state), { status: 200 })
     if (url.includes("/edit")) {
       return new Response(
         editPage(names, {
           ...(options.classTemplate ? { classTemplate: true } : {}),
           ...(options.secondClass ? { secondClass: options.secondClass } : {}),
+          info: String(state["Info"] ?? ""),
         }),
         { status: 200 },
       )
@@ -208,7 +273,7 @@ async function fakeSession(
     ...(options.sessionTimeoutMs !== undefined ? { timeoutMs: options.sessionTimeoutMs } : {}),
   })
   await session.login({ username: "admin", password: "x" })
-  return { session, requests }
+  return { session, requests, state }
 }
 
 const plan = (names?: string[], ...l: Livery[]) =>
@@ -227,9 +292,14 @@ describe("applyLiveries", () => {
 
     const paths = requests.filter((r) => !r.url.includes("/login")).map((r) => r.url)
     expect(paths).toEqual([
+      // The form is checked before anything is written.
+      `https://acsm.example/championship/${CHAMP_ID}/edit`,
       `https://acsm.example/car/${CAR}/skin`,
+      // The championship as it was, then the form, the save, and the check.
+      `https://acsm.example/championship/${CHAMP_ID}/export`,
       `https://acsm.example/championship/${CHAMP_ID}/edit`,
       `https://acsm.example${CHAMPIONSHIP_SUBMIT_PATH}`,
+      `https://acsm.example/championship/${CHAMP_ID}/export`,
       `https://acsm.example/championship/${CHAMP_ID}/event/${EVENT_ID}/practice`,
     ])
     expect(result).toMatchObject({ championshipSaved: true, practiceRestarted: true })
@@ -273,7 +343,7 @@ describe("applyLiveries", () => {
       requests.find((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))?.body ?? "",
     )
     expect(body.getAll("EntryList.Name")).toEqual(["Stream Van", "Misha", "postaL"])
-    expect(body.getAll("EntryList.Skin")).toEqual(["", "", "postaL"])
+    expect(body.getAll("EntryList.Skin")).toEqual(["van", "", "postaL"])
   })
 
   it("drops the template rows from what it posts", async () => {
@@ -337,7 +407,7 @@ describe("applyLiveries", () => {
     expect(body.getAll("EntryList.Name")).toEqual(["Stream Van", "Misha", "postaL"])
     expect(body.getAll("EntryList.NumEntrants")).toEqual(["2"])
     expect(body.getAll("ClassName")).toEqual(["RSS"])
-    expect(body.getAll("EntryList.Skin")).toEqual(["", "Misha", ""])
+    expect(body.getAll("EntryList.Skin")).toEqual(["van", "Misha", ""])
   })
 
   it("refuses to write a championship whose form renders two classes", async () => {
@@ -353,9 +423,9 @@ describe("applyLiveries", () => {
 
     await expect(applyLiveries(session, plan())).rejects.toThrowError(MultiClassError)
     expect(requests.filter((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))).toEqual([])
-    // The refusal promises the uploads are harmless, which is only true if they
-    // happened: this refuses at the write, after the skins are on the server.
-    expect(requests.filter((r) => r.url.includes("/skin"))).toHaveLength(1)
+    // Refused before anything is written: the form is read and checked ahead of
+    // the uploads, so a save champctl won't make leaves no skin behind either.
+    expect(requests.filter((r) => r.url.includes("/skin"))).toEqual([])
   })
 
   it("refuses a save that redirected to the login page", async () => {
@@ -417,6 +487,111 @@ describe("applyLiveries", () => {
  * server write did not land, and a recording failure that does not read as an
  * apply failure.
  */
+/**
+ * The first livery push on BATL's updated build replaced the championship with
+ * the spectator car as a driver, every driver one slot down, the last one gone
+ * and the description empty. These hold the save to leaving all of that as it
+ * found it, against a fake that reads the payload the way that build did.
+ */
+describe("what a championship save leaves behind", () => {
+  it("keeps the spectator car and every driver where they were", async () => {
+    const { session, state } = await fakeSession()
+    await applyLiveries(session, plan())
+
+    expect(
+      (state as { SpectatorCars?: { Name: string }[] }).SpectatorCars?.map((c) => c.Name),
+    ).toEqual(["Stream Van"])
+    const entrants = state.Classes![0]!.Entrants!
+    expect([entrants["CAR_0"]?.Name, entrants["CAR_1"]?.Name]).toEqual(["Misha", "postaL"])
+    expect(entrants["CAR_0"]?.Skin).toBe("Misha")
+  })
+
+  it("posts the spectator car's marker, once", async () => {
+    const { session, requests } = await fakeSession()
+    await applyLiveries(session, plan())
+    const save = requests.find((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))!
+    expect(new URLSearchParams(save.body).getAll("EntryList.Spectator")).toEqual(["true"])
+  })
+
+  it("keeps the description exactly as it was stored", async () => {
+    // The textarea renders empty and the page's script fills it, so a payload
+    // built from the form alone erased it.
+    const { session, state } = await fakeSession()
+    await applyLiveries(session, plan())
+    expect((state as { Info?: string }).Info).toBe(INFO)
+  })
+
+  it("leaves the hidden balance-of-performance template out", async () => {
+    const { session, requests } = await fakeSession()
+    await applyLiveries(session, plan())
+    const save = requests.find((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))!
+    expect(new URLSearchParams(save.body).getAll("BoPModel")).toEqual([CAR])
+  })
+
+  it("says so, with the backup, when ACSM made more of the save than the skins", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-backup-"))
+    try {
+      const { session } = await fakeSession({ misreadSpectator: true })
+      const err = await applyLiveries(session, plan(), { backupDir: dir }).catch((e: unknown) => e)
+
+      expect(err).toBeInstanceOf(ChampionshipDriftError)
+      expect((err as ChampionshipDriftError).drift.join(" ")).toMatch(/SpectatorCars/)
+      const [file] = await readdir(dir)
+      expect((err as Error).message).toContain(file!)
+      // The championship as it was, readable only by its owner: a logged-in
+      // export carries the sign-up responses and the server password.
+      const backup = JSON.parse(await readFile(join(dir, file!), "utf8"))
+      expect(backup.SpectatorCars).toHaveLength(1)
+      expect((await stat(join(dir, file!))).mode & 0o777).toBe(0o600)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("championshipDrift", () => {
+  const entrant = (Name: string, Skin: string) => ({ Name, Skin, Model: CAR, GUID: Name })
+  const of = (entrants: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+    Updated: "then",
+    Classes: [{ Entrants: entrants }],
+    ...extra,
+  })
+
+  it("allows the asked-for skin and the timestamp, nothing else", () => {
+    const before = of({ CAR_0: entrant("Ann", "old") })
+    const after = { ...of({ CAR_0: entrant("Ann", "new") }), Updated: "now" }
+    expect(championshipDrift(before, after, new Map([["Ann", "new"]]))).toEqual([])
+  })
+
+  it("names a skin changed for someone else", () => {
+    const before = of({ CAR_0: entrant("Ann", "old"), CAR_1: entrant("Bo", "b") })
+    const after = of({ CAR_0: entrant("Ann", "new"), CAR_1: entrant("Bo", "x") })
+    expect(championshipDrift(before, after, new Map([["Ann", "new"]]))).toEqual([
+      ".Classes.0.Entrants.CAR_1.Skin changed",
+    ])
+  })
+
+  it("catches a driver moving a slot even though their own skin is the one asked for", () => {
+    const before = of({ CAR_0: entrant("Ann", "old"), CAR_1: entrant("Bo", "b") })
+    const after = of({ CAR_0: entrant("Van", "v"), CAR_1: entrant("Ann", "new") })
+    expect(championshipDrift(before, after, new Map([["Ann", "new"]])).length).toBeGreaterThan(0)
+  })
+
+  it("lets an entrant's ClassID reset, which every save of this form does", () => {
+    const before = of({ CAR_0: { ...entrant("Ann", "a"), ClassID: "c1" } })
+    const after = of({
+      CAR_0: { ...entrant("Ann", "a"), ClassID: "00000000-0000-0000-0000-000000000000" },
+    })
+    expect(championshipDrift(before, after, new Map())).toEqual([])
+  })
+
+  it("names a description that changed", () => {
+    expect(
+      championshipDrift(of({}, { Info: "<p>x</p>" }), of({}, { Info: "" }), new Map()),
+    ).toEqual([".Info changed"])
+  })
+})
+
 describe("recording what was applied", () => {
   const recorder = (fail?: Error) => {
     const calls: { championshipId: string; drivers: string[]; source: string }[] = []
@@ -577,7 +752,7 @@ describe("applyLiveries refusals", () => {
     )
     expect(body.getAll("EntryList.Name")).toEqual(["Stream Van", "Newcomer", "Misha", "postaL"])
     // Misha is at row 2 now, not row 1. Newcomer keeps their own empty skin.
-    expect(body.getAll("EntryList.Skin")).toEqual(["", "", "Misha", ""])
+    expect(body.getAll("EntryList.Skin")).toEqual(["van", "", "Misha", ""])
   })
 
   it("refuses when the driver has left the entry list entirely", async () => {
@@ -609,6 +784,10 @@ describe("applyLiveries refusals", () => {
           const abort = new Error("This operation was aborted")
           abort.name = "AbortError"
           throw abort
+        }
+        // The form is read before the upload now, so it has to be there.
+        if (String(input).includes("/edit")) {
+          return new Response(editPage(["Misha", "postaL"]), { status: 200 })
         }
         return new Response("", { status: 302, headers: { location: "/" } })
       },

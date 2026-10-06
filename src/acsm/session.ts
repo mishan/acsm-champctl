@@ -326,6 +326,8 @@ export interface PostFormOptions {
    * the default is the one that fails closed.
    */
   requiredEntryListFields?: readonly string[]
+  /** Row-marker keys exempt from the arity check; see `EntryListShapeOptions.markers`. */
+  entryListMarkers?: readonly string[]
 }
 
 export class AcsmSession {
@@ -559,6 +561,7 @@ export class AcsmSession {
 
     const problems = checkEntryListShape(sent, {
       ...(options.requiredEntryListFields ? { required: options.requiredEntryListFields } : {}),
+      ...(options.entryListMarkers ? { markers: options.entryListMarkers } : {}),
     })
     if (problems.length > 0) {
       const detail = problems

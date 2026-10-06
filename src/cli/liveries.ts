@@ -24,7 +24,7 @@
 import { createWriteStream } from "node:fs"
 import { mkdir, readFile } from "node:fs/promises"
 import { hostname } from "node:os"
-import { dirname, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { AcsmError, HttpAcsmReader } from "../acsm/client.js"
@@ -483,6 +483,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     const result = await applyLiveries(session, plan, {
       ...(args.restart !== undefined ? { restartPracticeRound: args.restart } : {}),
       eventIds,
+      backupDir: backupDirFor(args),
       ...(store ? { record: store, source: "zip" as const } : {}),
     })
     say(
@@ -748,6 +749,7 @@ async function drain(
       // the bot's reply told them.
       const result = await applyLiveries(session, plan, {
         ...(store ? { record: store, source: "discord" as const } : {}),
+        backupDir: backupDirFor(args),
       })
       const now = new Date()
       await queue.markApplied(
@@ -929,6 +931,14 @@ export function wontComeRight(e: unknown): e is AcsmAuthError {
   if (e instanceof PasswordChangeRequiredError) return true
   if (!(e instanceof AcsmAuthError)) return false
   return e.status === 200 || e.status === 401 || e.status === 403
+}
+
+/**
+ * Where a championship save keeps the championship as it was, beside the queue
+ * database: a deployment already keeps that directory and backs it up.
+ */
+function backupDirFor(args: Args): string {
+  return join(dirname(storePath(args)), "backups")
 }
 
 /** Waits, but wakes early when asked to stop, so Ctrl-C isn't a two-minute wait. */
