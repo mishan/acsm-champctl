@@ -385,7 +385,32 @@ describe("applyLiveries", () => {
     const { session, requests } = await fakeSession()
     await applyLiveries(session, plan())
     const upload = requests.find((r) => r.url.includes("/skin"))
-    expect(upload?.parts?.map((p) => p.name)).toEqual(["Misha/livery.dds", "Misha/ui_skin.json"])
+    expect(upload?.parts?.map((p) => p.name)).toEqual(["Misha/ui_skin.json"])
+  })
+
+  it("sends the server only the files ACSM shows, and records the whole livery", async () => {
+    const file = (name: string) => ({ name, bytes: new Uint8Array(1) })
+    const skin = {
+      ...livery("Misha"),
+      files: ["livery.dds", "preview.jpg", "mrbean.kn5", "livery.png", "ui_skin.json"].map(file),
+    }
+    const recorded: string[][] = []
+    const record = {
+      record: async (_id: string, liveries: readonly Livery[]) => {
+        recorded.push(...liveries.map((l) => l.files.map((f) => f.name)))
+        return { stored: liveries.length, unchanged: 0 }
+      },
+    }
+    const { session, requests } = await fakeSession()
+    await applyLiveries(session, plan(undefined, skin), { record })
+
+    const uploads = requests.filter((r) => r.url.includes("/skin"))
+    expect(uploads.flatMap((r) => r.parts?.map((p) => p.name))).toEqual([
+      "Misha/preview.jpg",
+      "Misha/livery.png",
+      "Misha/ui_skin.json",
+    ])
+    expect(recorded).toEqual([skin.files.map((f) => f.name)])
   })
 
   it("splits a skin across requests that each fit under the proxy's limit", async () => {
@@ -393,15 +418,15 @@ describe("applyLiveries", () => {
     const big = (name: string, size: number) => ({ name, bytes: new Uint8Array(size) })
     const skin = {
       ...livery("Misha"),
-      files: [big("skinbase.dds", 9), big("glass.dds", 4), big("rim.dds", 4), big("x.json", 1)],
+      files: [big("preview.jpg", 9), big("livery.png", 4), big("ui_skin.json", 4)],
     }
     const { session, requests } = await fakeSession()
     await applyLiveries(session, plan(undefined, skin), { maxRequestBytes: 9 })
 
     const uploads = requests.filter((r) => r.url.includes("/skin"))
     expect(uploads.map((r) => r.parts?.map((p) => p.name))).toEqual([
-      ["Misha/skinbase.dds"],
-      ["Misha/glass.dds", "Misha/rim.dds", "Misha/x.json"],
+      ["Misha/preview.jpg"],
+      ["Misha/livery.png", "Misha/ui_skin.json"],
     ])
   })
 

@@ -323,7 +323,9 @@ The car folder is what ACSM's upload endpoint needs. Each inner zip is one
 driver's skin folder — a `.dds` livery, its preview, a `ui_skin.json`. **The
 inner zip's name is matched against the entrant's name exactly**, and becomes
 the skin folder on the server, so a re-upload lands on the same folder rather
-than accumulating one per week.
+than accumulating one per week. Only its `preview.jpg`, `livery.png` and
+`ui_skin.json` go to the server, since that is all ACSM shows; drivers get the
+textures from the carset. A skin with none of the three is refused.
 
 That is also why re-running with the same pack uploads everything again. There
 is no way to ask ACSM what is already sitting in a skin folder, so a driver who
@@ -419,7 +421,9 @@ hash per file — Content Manager is not guaranteed to overwrite a skin that is
 already installed, and that failure looks like nothing at all.
 
 Recording is the only copy champctl has: a livery uploaded through ACSM's own
-web UI is invisible to it and won't be in the carset.
+web UI is invisible to it and won't be in the carset. It is also the only full
+copy anywhere, since the server gets three files of each skin, so back up
+`data/liveries/`.
 
 **Drivers send their own with `/livery`.** `champctl-bot serve` registers four
 subcommands in one guild — `claim`, `upload`, `upload-url` and `carset` — and
