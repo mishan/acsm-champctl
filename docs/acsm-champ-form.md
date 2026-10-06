@@ -264,6 +264,16 @@ makes it useful in the refusal message.
 Both are found by ACSM's own ids rather than by looking hidden — on this form
 the entrant template is not hidden at all.
 
+**A third template, since BATL's September 2026 update.** The first livery
+push on the updated build was refused: 32 rows for 30 entrants. The spectator
+car's clone-me row now has its own id, `#spectatorTemplate`, and
+`manager.js` removes it in `initSpectatorCarTemplate` exactly as it removes
+`#entrantTemplate`. champctl stripped only the two ids it knew, so the blank
+spectator row stayed in, ahead of the real one. Posted, ACSM would have read
+that blank row as the spectator car and every driver as the one before them;
+the arithmetic refused it instead. `stripClonedTemplates` now removes all
+three.
+
 ### 4.2b Place by name, not by arithmetic
 
 The row arithmetic above is a good *check* and was a bad *address*. It assumes a
