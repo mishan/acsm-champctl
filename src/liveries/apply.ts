@@ -44,7 +44,7 @@ import { randomBytes } from "node:crypto"
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import type { Livery } from "./pack.js"
+import { MAX_UPLOAD_REQUEST_BYTES, type Livery } from "./pack.js"
 import type { Championship } from "../acsm/types.js"
 import type { LiveryPlan } from "./plan.js"
 import type { LiverySource, RecordResult, LiveryRecorder } from "./store.js"
@@ -189,6 +189,8 @@ export interface ApplyLiveriesOptions {
    * there is nothing to lose, as in tests.
    */
   backupDir?: string
+  /** The most one skin upload request carries; `MAX_UPLOAD_REQUEST_BYTES` unless set. */
+  maxRequestBytes?: number
 }
 
 export interface ApplyLiveriesResult {
@@ -221,7 +223,12 @@ export async function applyLiveries(
       : undefined
 
   for (const assignment of plan.assignments) {
-    await uploadSkin(session, assignment.carModel, assignment.livery)
+    await uploadSkin(
+      session,
+      assignment.carModel,
+      assignment.livery,
+      options.maxRequestBytes ?? MAX_UPLOAD_REQUEST_BYTES,
+    )
     result.uploaded.push({
       driverName: assignment.driverName,
       carModel: assignment.carModel,
@@ -290,15 +297,41 @@ export async function applyLiveries(
  * filenames are built here, and `pack.ts` is what guarantees neither component
  * can climb out of the skins directory.
  *
- * One request per skin rather than one for the lot, so a failure names the
- * driver it failed for. It also keeps each request near ACSM's
- * `ParseMultipartForm(32 << 20)`, where a combined upload of thirty 4K liveries
- * would be several hundred megabytes in one POST.
+ * Requests per skin rather than one for the lot, so a failure names the
+ * driver it failed for, and as many per skin as keep each under
+ * `maxRequestBytes`. A skin that half-arrived is harmless: nothing points at it
+ * until the championship save, and a re-run uploads every file again.
  */
-async function uploadSkin(session: AcsmSession, carModel: string, livery: Livery): Promise<void> {
+async function uploadSkin(
+  session: AcsmSession,
+  carModel: string,
+  livery: Livery,
+  maxRequestBytes: number,
+): Promise<void> {
+  const batches: Livery["files"][] = []
+  let size = 0
+  for (const file of livery.files) {
+    const last = batches.at(-1)
+    if (last && size + file.bytes.length <= maxRequestBytes) {
+      last.push(file)
+      size += file.bytes.length
+    } else {
+      batches.push([file])
+      size = file.bytes.length
+    }
+  }
+  for (const files of batches) await uploadSkinFiles(session, carModel, livery, files)
+}
+
+async function uploadSkinFiles(
+  session: AcsmSession,
+  carModel: string,
+  livery: Livery,
+  files: Livery["files"],
+): Promise<void> {
   const path = carSkinUploadPath(carModel)
-  const bytes = livery.files.reduce((total, f) => total + f.bytes.length, 0)
-  const parts = livery.files.map((f) => ({
+  const bytes = files.reduce((total, f) => total + f.bytes.length, 0)
+  const parts = files.map((f) => ({
     // The field name is arbitrary — ACSM iterates r.MultipartForm.File and
     // ignores the keys. `files` is what the page's own uploader calls it.
     field: "files",
@@ -322,8 +355,8 @@ async function uploadSkin(session: AcsmSession, carModel: string, livery: Livery
     const why = e instanceof Error ? e.message : String(e)
     if (/timed out/i.test(why)) {
       throw new LiveryApplyError(
-        `Uploading ${livery.driverName}'s livery for ${carModel} timed out. It is ` +
-          `${mb(bytes)} across ${livery.files.length} files, and champctl allowed ` +
+        `Uploading ${livery.driverName}'s livery for ${carModel} timed out. That request ` +
+          `was ${mb(bytes)} across ${files.length} files, and champctl allowed ` +
           `${Math.round(uploadTimeoutMs(bytes) / 1000)}s for it — so either the connection to the ` +
           `server is slower than ${mb(SLOWEST_ASSUMED_UPLOAD_BYTES_PER_SECOND)}/s or the server ` +
           `stopped answering. Nothing was assigned; re-running re-uploads only what is missing.`,
@@ -370,7 +403,7 @@ const SLOWEST_ASSUMED_UPLOAD_BYTES_PER_SECOND = 256 * 1024
  * How long to allow one skin upload.
  *
  * `AcsmSession`'s default is 30 seconds, which is right for a page of HTML and
- * wrong for this: the per-file limit alone is 96 MB, so the default aborts a
+ * wrong for this: one request can carry 90 MB, so the default aborts a
  * legitimate upload of a large livery and reports it as a request failure. That
  * became reachable when the pack limits were doubled to fit real submissions —
  * see `DEFAULT_LIMITS` in `pack.ts`.

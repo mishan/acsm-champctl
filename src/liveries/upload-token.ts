@@ -2,7 +2,7 @@
  * One-time upload links, for the drivers Discord's own ceiling shuts out
  * (docs/discord-livery-upload.md §3).
  *
- * A free Discord account can attach around 10 MB and champctl will take 96 MB a
+ * A free Discord account can attach around 10 MB and champctl will take 90 MB a
  * file, so the tighter limit is Discord's and the driver who hits it has no way
  * to tell champctl anything at all — the rejection happens on their client,
  * before the bot exists. The link is the way round: champctl hosts the upload

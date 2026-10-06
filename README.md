@@ -387,11 +387,13 @@ isn't in the entry list, or whose livery is filed under a car they don't drive,
 refuses the run too. Half a livery drop is worse to unpick than none, and the
 cost of the other answer is re-zipping a file.
 
-The size caps are 96 MB a file, 256 MB a skin and 1 GB a pack, which are there
+The size caps are 90 MB a file, 256 MB a skin and 1 GB a pack, which are there
 to stop one submission filling the game server's disk rather than to enforce
 tidiness — real submissions carry working files nobody trimmed. `DEFAULT_LIMITS`
 in [`src/liveries/pack.ts`](src/liveries/pack.ts) is the place to raise them;
-they were doubled once already for exactly that reason. Uploads get a timeout
+they were doubled once already for exactly that reason. The per-file cap is the
+exception: it stays under the 100 MB request limit of a Cloudflare proxy in
+front of the manager. Uploads get a timeout
 scaled to their size rather than the session's usual 30 seconds, which is sized
 for a page of HTML and would abort a large livery.
 
