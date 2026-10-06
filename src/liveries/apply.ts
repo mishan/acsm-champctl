@@ -370,7 +370,7 @@ const SLOWEST_ASSUMED_UPLOAD_BYTES_PER_SECOND = 256 * 1024
  * How long to allow one skin upload.
  *
  * `AcsmSession`'s default is 30 seconds, which is right for a page of HTML and
- * wrong for this: the per-file limit alone is 48 MB, so the default aborts a
+ * wrong for this: the per-file limit alone is 96 MB, so the default aborts a
  * legitimate upload of a large livery and reports it as a request failure. That
  * became reachable when the pack limits were doubled to fit real submissions —
  * see `DEFAULT_LIMITS` in `pack.ts`.

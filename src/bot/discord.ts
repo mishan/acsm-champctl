@@ -230,16 +230,23 @@ export class GatewayTransport implements DiscordTransport {
   ): Promise<void> {
     try {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral })
-    } catch {
+    } catch (e) {
       // Nothing can be said to a driver whose interaction we failed to
       // acknowledge, and running the command anyway would queue an upload they
-      // were told nothing about.
+      // were told nothing about. Logged, though: the driver sees only Discord's
+      // "the application did not respond", and this line was all an operator
+      // could have had to go on — and there wasn't one.
+      process.stderr.write(`${commandLine(interaction)}: couldn't acknowledge it (${message(e)})\n`)
       return
     }
 
     try {
       const reply = await router.handle(toSlashCommand(interaction))
       await interaction.editReply({ content: reply.content })
+      // One line per command, with the start of what the driver was told. The
+      // replies are ephemeral, so without this an operator asked "why didn't
+      // my upload work" has nothing to look at.
+      process.stdout.write(`${commandLine(interaction)}: ${firstLine(reply.content)}\n`)
 
       if (reply.announcement && adminChannelId) {
         // After the driver's own reply, and separately: a failure to post the
@@ -254,7 +261,7 @@ export class GatewayTransport implements DiscordTransport {
       // The exception itself never reaches the driver — it is champctl being
       // broken rather than anything they did, and a stack trace gives them
       // nothing to act on.
-      process.stderr.write(`/${interaction.commandName} failed: ${message(e)}\n`)
+      process.stderr.write(`${commandLine(interaction)} failed: ${message(e)}\n`)
       await interaction
         .editReply({
           content: "Something went wrong at my end rather than with your file. Tell an admin.",
@@ -339,6 +346,18 @@ function memberRoleIds(member: unknown): string[] {
   const m = member as { _roles?: unknown; roles?: unknown }
   const ids = Array.isArray(m._roles) ? m._roles : Array.isArray(m.roles) ? m.roles : []
   return ids.filter((id): id is string => typeof id === "string")
+}
+
+/** "/livery upload from someone", for the log. */
+function commandLine(interaction: ChatInputCommandInteraction): string {
+  const sub = interaction.options.getSubcommand(false)
+  return `${new Date().toISOString()} /${interaction.commandName}${sub ? ` ${sub}` : ""} from ${interaction.user.username}`
+}
+
+/** The first line of a reply, short enough for a log line. */
+function firstLine(text: string): string {
+  const line = text.split("\n").find((l) => l.trim()) ?? ""
+  return line.length > 160 ? `${line.slice(0, 159)}…` : line
 }
 
 function message(e: unknown): string {
