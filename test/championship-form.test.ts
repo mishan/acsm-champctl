@@ -67,12 +67,22 @@ function classBlock(
  */
 function championshipPage(
   classes: { entrants: { name: string; skin: string }[] }[],
-  options: { spectator?: boolean; templates?: boolean; classTemplate?: boolean } = {},
+  options: {
+    spectator?: boolean
+    templates?: boolean
+    classTemplate?: boolean
+    spectatorTemplate?: boolean
+  } = {},
 ): string {
   const { spectator = true, templates = true, classTemplate = true } = options
+  const { spectatorTemplate = false } = options
 
+  // BATL's manager since its September 2026 update renders a blank
+  // #spectatorTemplate row ahead of the spectator car, which manager.js removes
+  // on load. Before that update there was no such row.
   const spectatorBlock = spectator
     ? `<div class="visible-spectator-enabled" style="display: none">
+         ${spectatorTemplate ? `<div id="spectatorTemplate" class="entrant">${entrantRow({ spectator: true })}</div>` : ""}
          ${entrantRow({ name: "Stream Van", skin: "van", spectator: true })}
        </div>`
     : ""
@@ -111,6 +121,32 @@ const roster = [
   { name: "postaL", skin: "postal_01" },
   { name: "", skin: "" },
 ]
+
+describe("the spectator car's template", () => {
+  /**
+   * The first livery push on BATL's updated build was refused: 32 rows for 30
+   * entrants. The extra was the blank #spectatorTemplate row, which a browser
+   * never submits. Posted, ACSM would have read it as the spectator car and
+   * every driver as the one before them.
+   */
+  it("is stripped, so the rows add up with the spectator car first", () => {
+    const form = findChampionshipForm(
+      championshipPage([{ entrants: roster }], { spectatorTemplate: true }),
+      PAGE_URL,
+    )
+    expect(form.rows).toBe(roster.length + 1)
+    expect(form.hasSpectatorRow).toBe(true)
+    expect(getAll(form.fields, "EntryList.Name")[0]).toBe("Stream Van")
+  })
+
+  it("is counted, so a refusal says what was removed", () => {
+    const { spectatorTemplates, html } = stripClonedTemplates(
+      championshipPage([{ entrants: roster }], { spectatorTemplate: true }),
+    )
+    expect(spectatorTemplates).toBe(1)
+    expect(html).not.toContain("spectatorTemplate")
+  })
+})
 
 describe("stripClonedTemplates", () => {
   it("removes both templates the browser removes", () => {

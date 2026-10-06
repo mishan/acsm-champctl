@@ -112,12 +112,26 @@ export const CHAMPIONSHIP_REQUIRED_ENTRY_LIST_FIELDS = REQUIRED_ENTRY_LIST_FIELD
  */
 export const CLASS_TEMPLATE_ID = "class-template"
 
+/**
+ * The spectator car's clone-me row, which `initSpectatorCarTemplate` removes on
+ * load exactly as `initEntrantTemplate` removes `#entrantTemplate`.
+ *
+ * New with BATL's September 2026 update: before it, the spectator template was
+ * an `#entrantTemplate` like the class one, and was stripped as one. After it,
+ * the blank row stayed in the payload ahead of the real spectator car — 32
+ * rows for 30 entrants — and the first livery push on the new build was
+ * refused by the row arithmetic below rather than written one row out.
+ */
+export const SPECTATOR_TEMPLATE_ID = "spectatorTemplate"
+
 export interface StrippedTemplates {
   html: string
   /** `#class-template` blocks removed. */
   classTemplates: number
   /** `#entrantTemplate` rows removed, after the class templates went. */
   entrantTemplates: number
+  /** `#spectatorTemplate` rows removed. */
+  spectatorTemplates: number
 }
 
 /**
@@ -130,9 +144,10 @@ export interface StrippedTemplates {
  *     championships.$classTemplate = $tmpl.clone();
  *     $tmpl.remove();
  *
- * and `RaceSetup` removes an `#entrantTemplate` per class block. A browser
- * therefore submits neither, and champctl — which runs no JavaScript — has to
- * do both by hand.
+ * and `RaceSetup` removes an `#entrantTemplate` per class block, and — since
+ * BATL's September 2026 update — `initSpectatorCarTemplate` a
+ * `#spectatorTemplate`. A browser therefore submits none of them, and champctl —
+ * which runs no JavaScript — has to remove each by hand.
  *
  * **Missing the class one is not a cosmetic error.** Measured against a real
  * BATL championship: the form rendered 32 entrant rows, `ClassName` twice and
@@ -157,7 +172,16 @@ export function stripClonedTemplates(html: string): StrippedTemplates {
   const entrantCount = entrantTemplates.length
   entrantTemplates.remove()
 
-  return { html: $.html(), classTemplates: classCount, entrantTemplates: entrantCount }
+  const spectatorTemplates = $(`#${SPECTATOR_TEMPLATE_ID}`)
+  const spectatorCount = spectatorTemplates.length
+  spectatorTemplates.remove()
+
+  return {
+    html: $.html(),
+    classTemplates: classCount,
+    entrantTemplates: entrantCount,
+    spectatorTemplates: spectatorCount,
+  }
 }
 
 export interface ChampionshipForm {
@@ -225,8 +249,9 @@ export function findChampionshipForm(html: string, pageUrl: string): Championshi
         `EntryList.NumEntrants (${entrantsPerClass.join(", ")}). ACSM builds one class per ` +
         `ClassName and takes the entrant count from the same position, so a payload where those ` +
         `two disagree drops whichever classes the shorter list doesn't reach — without an error, ` +
-        `and after the save. champctl dropped ${stripped.classTemplates} #${CLASS_TEMPLATE_ID} ` +
-        `and ${stripped.entrantTemplates} #${ENTRANT_TEMPLATE_ID} already. Run ` +
+        `and after the save. champctl dropped ${stripped.classTemplates} #${CLASS_TEMPLATE_ID}, ` +
+        `${stripped.entrantTemplates} #${ENTRANT_TEMPLATE_ID} and ` +
+        `${stripped.spectatorTemplates} #${SPECTATOR_TEMPLATE_ID} already. Run ` +
         `\`npm run recon:champ-form -- <championship-id>\` against this manager — it only ` +
         `reads — and compare with docs/acsm-champ-form.md §4.2.`,
     )
@@ -247,8 +272,9 @@ export function findChampionshipForm(html: string, pageUrl: string): Championshi
       `Refusing to write the championship form: it has ${rows} entrant rows, and the classes ` +
         `account for ${classTotal} (${entrantsPerClass.join(" + ")}) — with or without a leading ` +
         `spectator-car row, that doesn't add up. champctl dropped ` +
-        `${stripped.classTemplates} #${CLASS_TEMPLATE_ID} and ` +
-        `${stripped.entrantTemplates} #${ENTRANT_TEMPLATE_ID} already, and found ` +
+        `${stripped.classTemplates} #${CLASS_TEMPLATE_ID}, ` +
+        `${stripped.entrantTemplates} #${ENTRANT_TEMPLATE_ID} and ` +
+        `${stripped.spectatorTemplates} #${SPECTATOR_TEMPLATE_ID} already, and found ` +
         `${count(fields, "ClassName")} ClassName ${count(fields, "ClassName") === 1 ? "field" : "fields"}. ` +
         `ACSM reads these as parallel positional arrays, so writing a payload champctl can't ` +
         `account for would give entrants each other's cars. Run \`npm run recon:champ-form -- ` +
