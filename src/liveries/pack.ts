@@ -110,11 +110,18 @@ export interface PackLimits {
  * it again; the number that would actually be worth defending is a disk-usage
  * budget for the server's skins directories, and nobody has one.
  *
- * The per-file limit is not free above about 48 MB: see `uploadTimeoutMs` in
- * `apply.ts`, which is what stops a big upload dying on the request timeout.
+ * The per-file limit has been doubled twice. The second time (October 2026) was
+ * an 85 MB `skinbase.dds` — an 8K texture with mipmaps that the car mod reads,
+ * not a working file — and ACSM 2.4.15 took 90 MB and 125 MB files intact on the
+ * harness: its `ParseMultipartForm(32 << 20)` is the memory it uses before
+ * spilling to disk, not a cap. The skin limit, which bounds a whole submission,
+ * stays where it was.
+ *
+ * Big files need time to upload: see `uploadTimeoutMs` in `apply.ts`, which
+ * scales with size so a large livery doesn't die on the request timeout.
  */
 export const DEFAULT_LIMITS: PackLimits = {
-  maxFileBytes: 48 * 1024 * 1024,
+  maxFileBytes: 96 * 1024 * 1024,
   maxSkinBytes: 128 * 1024 * 1024,
   maxTotalBytes: 1024 * 1024 * 1024,
   maxFilesPerSkin: 40,

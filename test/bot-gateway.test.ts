@@ -12,7 +12,7 @@
  * `post` and the interaction handler, without a token or a socket.
  */
 import { ChatInputCommandInteraction, Client, Events, MessageFlags } from "discord.js"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import { GatewayTransport, toSlashCommand } from "../src/bot/discord.js"
 import type { CommandRouter } from "../src/bot/transport.js"
@@ -197,6 +197,54 @@ describe("GatewayTransport.listen", () => {
     await new Promise((r) => setImmediate(r))
 
     expect(calls.edited).toMatchObject({ content: "done" })
+  })
+
+  /** Everything the bot wrote to stdout and stderr while `run` ran. */
+  const logged = async (run: () => Promise<void>): Promise<string> => {
+    let out = ""
+    const capture = (chunk: unknown) => {
+      out += String(chunk)
+      return true
+    }
+    const a = vi.spyOn(process.stdout, "write").mockImplementation(capture)
+    const b = vi.spyOn(process.stderr, "write").mockImplementation(capture)
+    try {
+      await run()
+      await new Promise((r) => setImmediate(r))
+    } finally {
+      a.mockRestore()
+      b.mockRestore()
+    }
+    return out
+  }
+
+  it("logs each command with the start of what the driver was told", async () => {
+    // Replies are ephemeral: without this an operator asked why an upload
+    // didn't work had nothing to look at.
+    const { client, handlers } = fakeClient()
+    GatewayTransport.wrapping(client).listen(router("Refusing Misha's livery: too big.\nMore."))
+    const { interaction } = fakeInteraction()
+
+    const out = await logged(async () => {
+      await handlers.get(Events.InteractionCreate)?.(interaction)
+    })
+    expect(out).toMatch(/\/livery claim from misha: Refusing Misha's livery: too big\.\n/)
+  })
+
+  it("logs a command it couldn't acknowledge, which the driver sees as no response", async () => {
+    const { client, handlers } = fakeClient()
+    GatewayTransport.wrapping(client).listen(router("never sent"))
+    const { interaction } = fakeInteraction()
+    ;(interaction as unknown as { deferReply: () => Promise<void> }).deferReply = async () => {
+      throw new Error("Unknown interaction")
+    }
+
+    const out = await logged(async () => {
+      await handlers.get(Events.InteractionCreate)?.(interaction)
+    })
+    expect(out).toMatch(
+      /\/livery claim from misha: couldn't acknowledge it \(Unknown interaction\)/,
+    )
   })
 })
 

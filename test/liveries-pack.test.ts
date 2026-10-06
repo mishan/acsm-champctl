@@ -380,7 +380,7 @@ describe("readLiveryPack and a zip that lies about its size", () => {
   it("refuses a file claiming four gigabytes without unpacking it", () => {
     const p = pack({ [`${CAR}/Misha.zip`]: claimSize(skin(), FOUR_GB) })
     expect(() => readLiveryPack(p)).toThrowError(LiveryPackError)
-    expect(() => readLiveryPack(p)).toThrowError(/over the 48.0 MB limit for one file/)
+    expect(() => readLiveryPack(p)).toThrowError(/over the 96.0 MB limit for one file/)
   })
 
   it("refuses a driver's zip claiming four gigabytes", () => {
@@ -577,9 +577,9 @@ describe("readLiveryPack limits", () => {
     // Doubling is not removing. The cap still has a job: stopping one
     // submission filling the game server's disk.
     const p = pack({
-      [`${CAR}/Misha.zip`]: zipSync({ "livery.dds": big(49 * 1024 * 1024) }),
+      [`${CAR}/Misha.zip`]: zipSync({ "livery.dds": big(97 * 1024 * 1024) }),
     })
-    expect(() => readLiveryPack(p)).toThrowError(/over the 48.0 MB limit for one file/)
+    expect(() => readLiveryPack(p)).toThrowError(/over the 96.0 MB limit for one file/)
   })
 
   it("still refuses a skin past the doubled folder limit", () => {
@@ -637,14 +637,23 @@ describe("readSingleLivery", () => {
     )
   })
 
+  it("takes an 85 MB texture, which is what an 8K skin with mipmaps weighs", () => {
+    // A real submission: Buckmark's skinbase.dds, refused at the old 48 MB.
+    const eightK = zipSync({
+      "skinbase.dds": new Uint8Array(85 * 1024 * 1024),
+      "preview.jpg": bytes("jpg"),
+    })
+    expect(readSingleLivery(eightK, identity).files.map((f) => f.name)).toContain("skinbase.dds")
+  })
+
   it("refuses a zip with no .dds in it, so it isn't a livery", () => {
     const notALivery = zipSync({ "readme.txt": bytes("hi") })
     expect(() => readSingleLivery(notALivery, identity)).toThrowError(/no .dds file/)
   })
 
   it("refuses a file over the per-file cap", () => {
-    const huge = zipSync({ "livery.dds": new Uint8Array(49 * 1024 * 1024) })
-    expect(() => readSingleLivery(huge, identity)).toThrowError(/over the 48.0 MB limit/)
+    const huge = zipSync({ "livery.dds": new Uint8Array(97 * 1024 * 1024) })
+    expect(() => readSingleLivery(huge, identity)).toThrowError(/over the 96.0 MB limit/)
   })
 
   it("refuses something that isn't a zip, without leaking the exception", () => {
