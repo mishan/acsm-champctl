@@ -171,20 +171,58 @@ describe("readLiveryPack refusals", () => {
     refuses(() => pack({ "/etc/passwd": skin() }), /absolute paths/)
   })
 
-  it("refuses a Photoshop source file by name", () => {
-    // The one people actually leave in, and the message is likely to be read by
-    // the driver who did it.
-    refuses(() => onePack({ "livery.psd": bytes("huge") }), /Photoshop source file/)
+  /** The one livery in a pack, read. */
+  const only = (extra: Record<string, Uint8Array>) => readLiveryPack(onePack(extra)).liveries[0]!
+
+  it("leaves a Photoshop source file out, and names it", () => {
+    // The one people actually leave in. Refusing it cost a round trip through
+    // Discord to delete a file nobody was ever going to upload.
+    const livery = only({ "livery.psd": bytes("huge") })
+    expect(livery.files.map((f) => f.name)).not.toContain("livery.psd")
+    expect(livery.dropped).toEqual([{ name: "livery.psd", why: "a Photoshop source file" }])
   })
 
-  it("refuses an executable", () => {
-    refuses(() => onePack({ "readme.exe": bytes("MZ") }), /an executable/)
+  it("leaves an executable out", () => {
+    expect(only({ "readme.exe": bytes("MZ") }).dropped).toEqual([
+      { name: "readme.exe", why: "an executable" },
+    ])
   })
 
-  it("refuses an extension nobody has thought about", () => {
-    // The allowlist is the point: the dangerous file type is the one that isn't
-    // on anybody's list of dangerous file types.
-    refuses(() => onePack({ "skin.wasm": bytes("\0asm") }), /not something a skin needs/)
+  it("leaves out an extension nobody has thought about", () => {
+    // Still an allowlist: what isn't on it never reaches the server. It just
+    // no longer costs the driver their upload.
+    expect(only({ "skin.wasm": bytes("\0asm") }).dropped).toEqual([
+      { name: "skin.wasm", why: "not something a skin uses" },
+    ])
+  })
+
+  it("keeps a CSP model, which a skin inserts for its own rims or driver", () => {
+    // ext_config.ini's [MODEL_REPLACEMENT_…] INSERT reads a .kn5 next to it.
+    const livery = only({
+      "ext_config.ini": bytes("[MODEL_REPLACEMENT_0]"),
+      "rims.kn5": bytes("kn5"),
+    })
+    expect(livery.files.map((f) => f.name)).toEqual(
+      expect.arrayContaining(["ext_config.ini", "rims.kn5"]),
+    )
+    expect(livery.dropped).toBeUndefined()
+  })
+
+  it("leaves a Lua script out, because it would run on every driver's machine", () => {
+    expect(only({ "ext_script.lua": bytes("ac.log()") }).dropped).toEqual([
+      { name: "ext_script.lua", why: "a script, which an admin has to add by hand" },
+    ])
+  })
+
+  it("doesn't hold a left-out file to the size limits it was never going to be uploaded under", () => {
+    // Never unpacked, so a large leftover can't trip the per-file cap.
+    const livery = only({ "work.psd": new Uint8Array(97 * 1024 * 1024) })
+    expect(livery.dropped?.map((d) => d.name)).toEqual(["work.psd"])
+  })
+
+  it("leaves out leftovers in a subfolder too", () => {
+    const livery = only({ "src/layers.psd": bytes("x") })
+    expect(livery.dropped?.map((d) => d.name)).toEqual(["layers.psd"])
   })
 
   it("refuses a zip with no .dds, which is not a livery", () => {
@@ -631,10 +669,10 @@ describe("readSingleLivery", () => {
     expect(() => readSingleLivery(evil, identity)).toThrowError(/climbs out/)
   })
 
-  it("refuses a leftover source file", () => {
-    expect(() => readSingleLivery(skin({ "work.psd": bytes("x") }), identity)).toThrowError(
-      /Photoshop source file/,
-    )
+  it("leaves out a leftover source file", () => {
+    expect(readSingleLivery(skin({ "work.psd": bytes("x") }), identity).dropped).toEqual([
+      { name: "work.psd", why: "a Photoshop source file" },
+    ])
   })
 
   it("takes an 85 MB texture, which is what an 8K skin with mipmaps weighs", () => {

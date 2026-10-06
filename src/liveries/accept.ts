@@ -190,6 +190,7 @@ async function acceptOne(input: AcceptInput): Promise<AcceptOutcome> {
       carModel: input.carModel,
       fileCount: livery.files.length,
       hasPreview: livery.files.some((f) => f.name.toLowerCase() === "preview.jpg"),
+      dropped: livery.dropped ?? [],
       replaced: submission.superseded !== undefined,
       autoApply: input.autoApply ?? false,
       unreachableRounds: input.unreachableRounds ?? [],
@@ -240,6 +241,8 @@ export interface ReplyFacts {
   autoApply: boolean
   /** Rounds the class-level skin will not reach. Usually empty. */
   unreachableRounds?: number[]
+  /** Files left out of the upload because a skin doesn't use them. */
+  dropped?: { name: string; why: string }[]
 }
 
 /**
@@ -280,6 +283,18 @@ export function uploadReply(facts: ReplyFacts): string {
       `Heads up: round${many ? "s" : ""} ${unreachable.join(", ")} ${many ? "have" : "has"} ` +
         `its own entry list, which overrides this — your livery won't show there. An admin ` +
         `has to fix that round in ACSM.`,
+    )
+  }
+
+  const dropped = facts.dropped ?? []
+  if (dropped.length > 0) {
+    // Said, so a driver who expected one of these on the server knows it isn't
+    // — and so nobody re-zips to get rid of them, since there's no need.
+    const shown = dropped.slice(0, 5).map((d) => `${d.name} (${d.why})`)
+    const more = dropped.length > 5 ? `, and ${dropped.length - 5} more` : ""
+    lines.push(
+      `Left out ${dropped.length} file${dropped.length === 1 ? "" : "s"} a skin doesn't use: ` +
+        `${shown.join(", ")}${more}. Nothing to fix — the rest went through.`,
     )
   }
 

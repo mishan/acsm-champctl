@@ -328,10 +328,10 @@ describe("the upload endpoint", () => {
     const before = (await queue.queued(CHAMP)).length
     const res = await fetch(`${base}/u/${token}`, {
       method: "POST",
-      body: skin({ "work.psd": bytes("x") }),
+      body: skin({ "extra/livery2.dds": bytes("x") }),
     })
     expect(res.status).toBe(400)
-    expect(await res.text()).toMatch(/Photoshop source file/)
+    expect(await res.text()).toMatch(/in a subfolder/)
     // Asserted, not assumed. A refusal that still enqueued would look identical
     // from here and would put a rejected zip in front of the drain.
     expect((await queue.queued(CHAMP)).length).toBe(before)

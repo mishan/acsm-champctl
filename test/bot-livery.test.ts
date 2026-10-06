@@ -274,9 +274,17 @@ describe("handleUpload", () => {
   it("passes the pack refusal through in the driver's own terms", async () => {
     // LiveryPackError messages were written for a driver to read; this is where
     // that pays off, while they are still looking at Discord.
-    const result = await upload({ body: skin({ "work.psd": bytes("x") }) })
+    const result = await upload({ body: skin({ "extra/livery2.dds": bytes("x") }) })
     expect(result).toMatchObject({ ok: false, reason: "pack" })
-    expect(result.reply).toMatch(/Photoshop source file/)
+    expect(result.reply).toMatch(/in a subfolder/)
+  })
+
+  it("accepts a zip with leftovers in it, and says what it left out", async () => {
+    const result = await upload({ body: skin({ "work.psd": bytes("x") }) })
+    expect(result).toMatchObject({ ok: true })
+    expect(result.reply).toMatch(
+      /Left out 1 file a skin doesn't use: work\.psd \(a Photoshop source file\)\. Nothing to fix/,
+    )
   })
 
   it("refuses a zip with no .dds, so it isn't a livery", async () => {
