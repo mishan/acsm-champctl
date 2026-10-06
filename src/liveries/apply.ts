@@ -44,7 +44,7 @@ import { randomBytes } from "node:crypto"
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import { MAX_UPLOAD_REQUEST_BYTES, type Livery } from "./pack.js"
+import { ACSM_SKIN_FILES, MAX_UPLOAD_REQUEST_BYTES, type Livery } from "./pack.js"
 import type { Championship } from "../acsm/types.js"
 import type { LiveryPlan } from "./plan.js"
 import type { LiverySource, RecordResult, LiveryRecorder } from "./store.js"
@@ -310,7 +310,7 @@ async function uploadSkin(
 ): Promise<void> {
   const batches: Livery["files"][] = []
   let size = 0
-  for (const file of livery.files) {
+  for (const file of livery.files.filter((f) => ACSM_SKIN_FILES.has(f.name))) {
     const last = batches.at(-1)
     if (last && size + file.bytes.length <= maxRequestBytes) {
       last.push(file)

@@ -106,6 +106,20 @@ export interface PackLimits {
 }
 
 /**
+ * The files of a skin the server is sent; the rest stay in champctl's store.
+ *
+ * ACSM shows the preview and the livery swatch and reads the name and number
+ * from ui_skin.json; the game server only needs the folder. The textures and
+ * models are for drivers, and they get them from the carset, which is built
+ * from the store. These are the three the league's earlier rsync kept.
+ */
+export const ACSM_SKIN_FILES: ReadonlySet<string> = new Set([
+  "preview.jpg",
+  "livery.png",
+  "ui_skin.json",
+])
+
+/**
  * The most one skin upload request carries.
  *
  * BATL's manager sits behind Cloudflare, which answers a request body over
@@ -793,6 +807,15 @@ function readOneLivery(
     throw new LiveryPackError(
       `Refusing ${carModel}/${driverName}: there is no .dds file in it, so it isn't a livery. ` +
         `Assetto Corsa reads the car's texture from a .dds — usually livery.dds.`,
+    )
+  }
+
+  // The server gets these alone (see ACSM_SKIN_FILES), and without one of them
+  // there would be no folder on it for the entry list to name.
+  if (!files.some((f) => ACSM_SKIN_FILES.has(f.name))) {
+    throw new LiveryPackError(
+      `Refusing ${carModel}/${driverName}: it has no preview.jpg, livery.png or ui_skin.json. ` +
+        `Content Manager writes all three when it saves a skin.`,
     )
   }
 

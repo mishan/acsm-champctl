@@ -131,9 +131,14 @@ describe("names from an actual entry list", () => {
 
   it("normalises file names inside the skin too", () => {
     const result = readLiveryPack(
-      pack({ [`${CAR}/Misha.zip`]: zipSync({ "he\u0301llo.dds": bytes("x") }) }),
+      pack({
+        [`${CAR}/Misha.zip`]: zipSync({
+          "he\u0301llo.dds": bytes("x"),
+          "ui_skin.json": bytes("{}"),
+        }),
+      }),
     )
-    expect(result.liveries[0]?.files.map((f) => f.name)).toEqual(["h\u00e9llo.dds"])
+    expect(result.liveries[0]?.files.map((f) => f.name)).toEqual(["h\u00e9llo.dds", "ui_skin.json"])
   })
 })
 
@@ -223,6 +228,13 @@ describe("readLiveryPack refusals", () => {
   it("leaves out leftovers in a subfolder too", () => {
     const livery = only({ "src/layers.psd": bytes("x") })
     expect(livery.dropped?.map((d) => d.name)).toEqual(["layers.psd"])
+  })
+
+  it("refuses a skin with nothing the server is sent, which would leave it no folder", () => {
+    refuses(
+      () => pack({ [`${CAR}/Misha.zip`]: zipSync({ "livery.dds": bytes("DDS pixels") }) }),
+      /no preview\.jpg, livery\.png or ui_skin\.json/,
+    )
   })
 
   it("refuses a zip with no .dds, which is not a livery", () => {
@@ -534,8 +546,8 @@ describe("readLiveryPack limits", () => {
     // size — a limit on the file on disk would pass this happily.
     const bomb: PackLimits = { ...DEFAULT_LIMITS, maxTotalBytes: 1024 * 1024 }
     const p = pack({
-      [`${CAR}/A.zip`]: zipSync({ "a.dds": big(900 * 1024) }),
-      [`${CAR}/B.zip`]: zipSync({ "b.dds": big(900 * 1024) }),
+      [`${CAR}/A.zip`]: zipSync({ "a.dds": big(900 * 1024), "ui_skin.json": bytes("{}") }),
+      [`${CAR}/B.zip`]: zipSync({ "b.dds": big(900 * 1024), "ui_skin.json": bytes("{}") }),
     })
     expect(p.length).toBeLessThan(bomb.maxTotalBytes / 10)
     expect(() => readLiveryPack(p, bomb)).toThrowError(/zip bomb/)
@@ -601,11 +613,13 @@ describe("readLiveryPack limits", () => {
       [`${CAR}/Laplal.zip`]: zipSync({
         "livery.dds": big(20 * 1024 * 1024),
         "Alpha for carbon.png": big(33 * 1024 * 1024),
+        "ui_skin.json": bytes("{}"),
       }),
       [`${CAR}/ily.zip`]: zipSync({
         "livery.dds": big(40 * 1024 * 1024),
         "livery_map.dds": big(30 * 1024 * 1024),
         "livery_details.dds": big(20 * 1024 * 1024),
+        "ui_skin.json": bytes("{}"),
       }),
     })
     expect(readLiveryPack(p).liveries.map((l) => l.driverName)).toEqual(["Laplal", "ily"])
