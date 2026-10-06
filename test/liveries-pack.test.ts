@@ -386,7 +386,7 @@ describe("readLiveryPack and a zip that lies about its size", () => {
   it("refuses a driver's zip claiming four gigabytes", () => {
     const p = claimSize(pack({ [`${CAR}/Misha.zip`]: skin() }), FOUR_GB)
     expect(() => readLiveryPack(p)).toThrowError(
-      /which is more than a zip of a 128.0 MB skin folder can be/,
+      /which is more than a zip of a 256.0 MB skin folder can be/,
     )
   })
 
@@ -585,12 +585,12 @@ describe("readLiveryPack limits", () => {
   it("still refuses a skin past the doubled folder limit", () => {
     const p = pack({
       [`${CAR}/Misha.zip`]: zipSync({
-        "a.dds": big(45 * 1024 * 1024),
-        "b.dds": big(45 * 1024 * 1024),
-        "c.dds": big(45 * 1024 * 1024),
+        "a.dds": big(90 * 1024 * 1024),
+        "b.dds": big(90 * 1024 * 1024),
+        "c.dds": big(90 * 1024 * 1024),
       }),
     })
-    expect(() => readLiveryPack(p)).toThrowError(/unpacks to more than 128.0 MB/)
+    expect(() => readLiveryPack(p)).toThrowError(/unpacks to more than 256.0 MB/)
   })
 })
 
@@ -644,6 +644,16 @@ describe("readSingleLivery", () => {
       "preview.jpg": bytes("jpg"),
     })
     expect(readSingleLivery(eightK, identity).files.map((f) => f.name)).toContain("skinbase.dds")
+  })
+
+  it("takes a skin folder of several 8K maps, up to 256 MB in all", () => {
+    // The driver with the 85 MB skinbase.dds had more maps beside it.
+    const folder = zipSync({
+      "skinbase.dds": new Uint8Array(90 * 1024 * 1024),
+      "skin_details.dds": new Uint8Array(90 * 1024 * 1024),
+      "preview.jpg": bytes("jpg"),
+    })
+    expect(readSingleLivery(folder, identity).totalBytes).toBeGreaterThan(128 * 1024 * 1024)
   })
 
   it("refuses a zip with no .dds in it, so it isn't a livery", () => {

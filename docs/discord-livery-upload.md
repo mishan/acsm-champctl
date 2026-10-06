@@ -330,7 +330,7 @@ Discord's own limit is far below champctl's, and drivers will hit Discord's
 first. As of August 2026 a free account may attach 20 MB per file — doubled
 from the 10 MB cap imposed two years earlier — while Nitro Basic is 50 MB and
 Nitro 500 MB, and server boosting raises the floor for everyone in the guild.
-`DEFAULT_LIMITS` in `pack.ts` allows 48 MB a file and 128 MB a skin. Confirm the
+`DEFAULT_LIMITS` in `pack.ts` allows 96 MB a file and 256 MB a skin. Confirm the
 current numbers before putting any of them in help text; this one has moved
 three times in three years.
 
@@ -624,7 +624,7 @@ timestamp does not look like a new carset to everyone who already has it.
 ### Size, and not reusing the upload limits
 
 Thirty drivers is plausibly a few hundred megabytes. `DEFAULT_LIMITS` caps a
-*submission* at 128 MB and has no business here — a carset is meant to be large.
+*submission* at 256 MB and has no business here — a carset is meant to be large.
 Stream it rather than assembling it in memory, and cache the built artifact
 keyed on the content hash rather than rebuilding per request.
 
