@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import type { Livery, SkinFile } from "../src/liveries/pack.js"
-import { SqliteLiveryStore, liveryDigest } from "../src/liveries/store.js"
+import { LIBRARY, SqliteLiveryStore, liveryDigest } from "../src/liveries/store.js"
 
 const CAR = "rss_formula_hybrid_2021"
 const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -216,5 +216,68 @@ describe("SqliteLiveryStore", () => {
     await store.record(CHAMP, [livery("Misha")], MARCH, "future" as "zip")
     expect((await store.list(CHAMP))[0]?.source).toBe("unknown")
     store.close()
+  })
+})
+
+describe("a championship's carset", () => {
+  const folders = (list: { carModel: string; skinFolder: string; championshipId: string }[]) =>
+    list.map((l) => `${l.carModel}/${l.skinFolder}@${l.championshipId}`)
+
+  it("takes every season's and the library's skins for the cars it races, and no others", async () => {
+    const store = await open()
+    await store.record(OTHER, [livery("Old")], MARCH, "discord")
+    await store.record(
+      LIBRARY,
+      [livery("Collected"), livery("Elsewhere", undefined, "ks_other")],
+      MARCH,
+      "import",
+    )
+    await store.setCars(CHAMP, [CAR])
+
+    expect(folders(await store.carset(CHAMP))).toEqual([
+      `${CAR}/Collected@${LIBRARY}`,
+      `${CAR}/Old@${OTHER}`,
+    ])
+  })
+
+  it("keeps one skin per folder: this season's, then the newest, then an import", async () => {
+    const store = await open()
+    await store.record(LIBRARY, [livery("A"), livery("B"), livery("C")], APRIL, "import")
+    await store.record(OTHER, [livery("A"), livery("B")], MARCH, "discord")
+    await store.record(CHAMP, [livery("A")], MARCH, "discord")
+    await store.setCars(CHAMP, [CAR])
+
+    expect(folders(await store.carset(CHAMP))).toEqual([
+      `${CAR}/A@${CHAMP}`,
+      `${CAR}/B@${OTHER}`,
+      `${CAR}/C@${LIBRARY}`,
+    ])
+  })
+
+  it("falls back to its own liveries' cars when none are recorded", async () => {
+    const store = await open()
+    await store.record(CHAMP, [livery("Misha")], MARCH, "discord")
+    await store.record(
+      LIBRARY,
+      [livery("Collected"), livery("X", undefined, "ks_other")],
+      MARCH,
+      "import",
+    )
+    expect(folders(await store.carset(CHAMP))).toEqual([
+      `${CAR}/Collected@${LIBRARY}`,
+      `${CAR}/Misha@${CHAMP}`,
+    ])
+  })
+
+  it("leaves out an import of a skin that came with the car, but not a season's upload", async () => {
+    const store = await open()
+    await store.record(LIBRARY, [livery("21New"), livery("Custom")], MARCH, "import")
+    await store.record(CHAMP, [livery("44New")], MARCH, "discord")
+    await store.setStock(CAR, ["21New", "44New"])
+    await store.setCars(CHAMP, [CAR])
+    expect(folders(await store.carset(CHAMP))).toEqual([
+      `${CAR}/44New@${CHAMP}`,
+      `${CAR}/Custom@${LIBRARY}`,
+    ])
   })
 })

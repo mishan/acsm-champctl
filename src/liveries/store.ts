@@ -42,7 +42,16 @@ import { migrate, type Migration, restrictToOwner } from "../sqlite.js"
 import type { Livery, SkinFile } from "./pack.js"
 
 /** Where a livery came in by. Recorded for the audit trail, not branched on. */
-export type LiverySource = "zip" | "discord" | "unknown"
+export type LiverySource = "zip" | "discord" | "import" | "unknown"
+
+/**
+ * The championship id imported liveries are kept under.
+ *
+ * Skins from before champctl, collected by hand over past seasons. They belong
+ * to no championship, and every championship racing their car gets them; one
+ * a season uploaded wins over one imported into the same folder.
+ */
+export const LIBRARY = "library"
 
 /** A livery in the store, without its bytes. */
 export interface StoredLivery {
@@ -165,6 +174,28 @@ const MIGRATIONS: Migration[] = [
       `)
     },
   },
+  {
+    name: "liveries: the cars a championship races, and the skins that came with a car",
+    up: (db) => {
+      db.exec(`
+        -- Recorded wherever champctl reads the championship, so the carset can be
+        -- built by a process that never does.
+        CREATE TABLE IF NOT EXISTS championship_car (
+          championship_id  TEXT NOT NULL,
+          car_model        TEXT NOT NULL,
+          PRIMARY KEY (championship_id, car_model)
+        ) STRICT;
+
+        -- Every driver has these already, so they are never in a carset, and a
+        -- coverage report doesn't count them as missing.
+        CREATE TABLE IF NOT EXISTS stock_skin (
+          car_model    TEXT NOT NULL,
+          skin_folder  TEXT NOT NULL,
+          PRIMARY KEY (car_model, skin_folder)
+        ) STRICT;
+      `)
+    },
+  },
 ]
 
 interface LiveryRow {
@@ -189,7 +220,7 @@ interface FileRow {
 
 /** Anything not written by this version of champctl reads back as `unknown`. */
 function sourceOf(value: string): LiverySource {
-  return value === "zip" || value === "discord" ? value : "unknown"
+  return value === "zip" || value === "discord" || value === "import" ? value : "unknown"
 }
 
 function toStored(row: LiveryRow): StoredLivery {
@@ -348,6 +379,82 @@ export class SqliteLiveryStore implements LiveryRecorder {
          ORDER BY car_model, driver_name`,
       )
       .all(championshipId) as unknown as LiveryRow[]
+    return rows.map(toStored)
+  }
+
+  /** Replaces the cars recorded for a championship. */
+  async setCars(championshipId: string, cars: readonly string[]): Promise<void> {
+    this.#db.exec("BEGIN IMMEDIATE")
+    try {
+      this.#db.prepare("DELETE FROM championship_car WHERE championship_id = ?").run(championshipId)
+      const insert = this.#db.prepare(
+        "INSERT OR IGNORE INTO championship_car (championship_id, car_model) VALUES (?, ?)",
+      )
+      for (const car of cars) insert.run(championshipId, car)
+      this.#db.exec("COMMIT")
+    } catch (e) {
+      this.#db.exec("ROLLBACK")
+      throw e
+    }
+  }
+
+  /** Replaces what is recorded as having come with a car. */
+  async setStock(carModel: string, skinFolders: readonly string[]): Promise<void> {
+    this.#db.exec("BEGIN IMMEDIATE")
+    try {
+      this.#db.prepare("DELETE FROM stock_skin WHERE car_model = ?").run(carModel)
+      const insert = this.#db.prepare(
+        "INSERT OR IGNORE INTO stock_skin (car_model, skin_folder) VALUES (?, ?)",
+      )
+      for (const folder of skinFolders) insert.run(carModel, folder)
+      this.#db.exec("COMMIT")
+    } catch (e) {
+      this.#db.exec("ROLLBACK")
+      throw e
+    }
+  }
+
+  async stock(carModel: string): Promise<Set<string>> {
+    const rows = this.#db
+      .prepare("SELECT skin_folder FROM stock_skin WHERE car_model = ?")
+      .all(carModel) as unknown as { skin_folder: string }[]
+    return new Set(rows.map((r) => r.skin_folder))
+  }
+
+  /**
+   * Every livery a championship's carset holds: one per skin folder of each car
+   * it races, from any season or the imported library.
+   *
+   * The cars are the ones recorded for it, else the ones its own liveries are
+   * for. Where seasons disagree about a folder, this championship's wins, then
+   * the newest, then an import — the order ACSM's own folder would have been
+   * overwritten in. An import into a folder that came with the car is left
+   * out: drivers have that one.
+   */
+  async carset(championshipId: string): Promise<StoredLivery[]> {
+    const rows = this.#db
+      .prepare(
+        `WITH cars AS (
+           SELECT car_model FROM championship_car WHERE championship_id = :id
+           UNION
+           SELECT car_model FROM livery WHERE championship_id = :id
+             AND NOT EXISTS (SELECT 1 FROM championship_car WHERE championship_id = :id)
+         ),
+         ranked AS (
+           SELECT l.*, row_number() OVER (
+             PARTITION BY l.car_model, l.skin_folder
+             ORDER BY l.championship_id = :id DESC, l.championship_id = :library ASC,
+                      l.applied_at DESC
+           ) AS rank
+           FROM livery l JOIN cars c ON c.car_model = l.car_model
+           WHERE l.championship_id <> :library OR NOT EXISTS (
+             SELECT 1 FROM stock_skin s
+             WHERE s.car_model = l.car_model AND s.skin_folder = l.skin_folder
+           )
+         )
+         SELECT * FROM ranked WHERE rank = 1 ORDER BY car_model, skin_folder`,
+      )
+      .all({ id: championshipId, library: LIBRARY }) as unknown as LiveryRow[]
     return rows.map(toStored)
   }
 

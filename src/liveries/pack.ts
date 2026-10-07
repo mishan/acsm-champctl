@@ -329,7 +329,7 @@ function splitEntryPath(path: string): string[] {
  *
  * macOS's Archive Utility writes a parallel `__MACOSX/` tree of resource forks
  * beside the real files, and Finder leaves a `.DS_Store` in any folder it has
- * opened; Windows Explorer leaves `Thumbs.db`. None of the three are visible
+ * opened; Windows Explorer leaves `Thumbs.db` and `desktop.ini`. None of the three are visible
  * where the zip was made.
  *
  * They used to be refused, and the refusal was unanswerable: a driver who
@@ -340,11 +340,11 @@ function splitEntryPath(path: string): string[] {
  * earlier, as a name that "is not a usable file name" for its leading dot.
  *
  * Dropped rather than refused because they carry nothing to refuse: `__MACOSX`
- * holds resource forks for files that are already in the zip, and the other two
+ * holds resource forks for files that are already in the zip, and the others
  * are window state. Every unarchiver a driver would otherwise use drops them
  * silently, which is why nobody knows they are in there.
  *
- * Three names and not a pattern, deliberately. Anything else unexpected is
+ * Four names and not a pattern, deliberately. Anything else unexpected is
  * still refused by name and by extension — this is not a general "ignore what
  * we don't recognise" rule, which is how an allowlist quietly turns into a
  * blocklist.
@@ -353,7 +353,7 @@ function isArchiverJunk(path: string): boolean {
   const parts = path.split(/[/\\]/)
   if (parts.includes("__MACOSX")) return true
   const base = parts[parts.length - 1] ?? ""
-  return base === ".DS_Store" || base === "Thumbs.db"
+  return base === ".DS_Store" || base === "Thumbs.db" || base.toLowerCase() === "desktop.ini"
 }
 
 /**
@@ -636,6 +636,8 @@ export function readSingleLivery(
   zipBytes: Uint8Array,
   identity: { carModel: string; driverName: string },
   limits: PackLimits = DEFAULT_LIMITS,
+  /** Read only the entries under this folder of the zip, as the skin folder. */
+  within?: string,
 ): Livery {
   const carModel = normalise(identity.carModel)
   const driverName = normalise(identity.driverName)
@@ -643,7 +645,14 @@ export function readSingleLivery(
   assertUsableAsFolder("car model", carModel, identity.carModel)
   assertUsableAsFolder("driver name", driverName, identity.driverName)
 
-  const livery = readOneLivery(carModel, driverName, zipBytes, limits, `${carModel}/${driverName}`)
+  const livery = readOneLivery(
+    carModel,
+    driverName,
+    zipBytes,
+    limits,
+    `${carModel}/${driverName}`,
+    within,
+  )
   if (livery.totalBytes > limits.maxTotalBytes) {
     throw new LiveryPackError(
       `Refusing ${carModel}/${driverName}: it unpacks to more than ` +
@@ -726,6 +735,7 @@ function readOneLivery(
   innerBytes: Uint8Array,
   limits: PackLimits,
   where: string,
+  within = "",
 ): Livery {
   // Files a skin folder doesn't use are left out rather than refused: a driver
   // who zipped their working folder gets a livery on the server and a list of
@@ -734,8 +744,10 @@ function readOneLivery(
   // limits. Wherever they are in the zip — a subfolder of leftovers is still
   // only leftovers.
   const skipped: string[] = []
+  const elsewhere = (path: string) => !path.startsWith(within)
   const inner = unzip(innerBytes, `"${where}"`, {
-    skip: (path) => !ALLOWED_SKIN_EXTENSIONS.has(extensionOf(path.split(/[/\\]/).pop() ?? "")),
+    skip: (path) =>
+      elsewhere(path) || !ALLOWED_SKIN_EXTENSIONS.has(extensionOf(path.split(/[/\\]/).pop() ?? "")),
     skipped,
     maxEntries: limits.maxFilesPerSkin,
     maxEntryBytes: limits.maxFileBytes,
@@ -763,7 +775,7 @@ function readOneLivery(
   // the skin, and the answer to that is "ask, don't guess".
   const entries = Object.entries(inner)
     .filter(([path, bytes]) => !path.endsWith("/") && bytes.length >= 0)
-    .map(([path, bytes]) => ({ parts: splitEntryPath(path), bytes, path }))
+    .map(([path, bytes]) => ({ parts: splitEntryPath(path.slice(within.length)), bytes, path }))
     .filter((e) => e.parts.length > 0)
     .sort((a, b) => a.path.localeCompare(b.path))
 
@@ -819,13 +831,15 @@ function readOneLivery(
     )
   }
 
-  const dropped = skipped.map((path) => {
-    const base = path.split(/[/\\]/).pop() ?? path
-    return {
-      name: forMessage(base),
-      why: EXPLAINED_EXTENSIONS[extensionOf(base)] ?? "not something a skin uses",
-    }
-  })
+  const dropped = skipped
+    .filter((path) => !elsewhere(path))
+    .map((path) => {
+      const base = path.split(/[/\\]/).pop() ?? path
+      return {
+        name: forMessage(base),
+        why: EXPLAINED_EXTENSIONS[extensionOf(base)] ?? "not something a skin uses",
+      }
+    })
   return {
     carModel,
     driverName,

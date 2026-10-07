@@ -22,7 +22,7 @@
  */
 
 import { createWriteStream } from "node:fs"
-import { mkdir, readFile } from "node:fs/promises"
+import { mkdir, readFile, stat } from "node:fs/promises"
 import { hostname } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -41,6 +41,8 @@ import {
 } from "../liveries/apply.js"
 import { carsetFilename, carsetPlan, writeCarset } from "../liveries/carset.js"
 import { SqliteClaimStore } from "../liveries/claims.js"
+import { carCoverage, parseCarSkins, racedCars, renderCoverage } from "../liveries/coverage.js"
+import { dirSource, importSkins, stockFrom, zipSource } from "../liveries/library.js"
 import { defaultStorePath } from "../sqlite.js"
 import {
   DEFAULT_LIMITS,
@@ -53,7 +55,7 @@ import {
   readSingleLivery,
 } from "../liveries/pack.js"
 import { type DrainHalt, SqliteSubmissionQueue } from "../liveries/queue.js"
-import { SqliteLiveryStore } from "../liveries/store.js"
+import { LIBRARY, SqliteLiveryStore } from "../liveries/store.js"
 import { loadProfile } from "../profile/load.js"
 import {
   LiveryPlanError,
@@ -74,6 +76,8 @@ Usage:
   champctl-liveries <championship-id> --drain [--push]
   champctl-liveries <championship-id> --drain --push --watch [--interval <s>]
   champctl-liveries <championship-id> --clear-halt
+  champctl-liveries <championship-id> --coverage
+  champctl-liveries --import <zip-or-folder> [--stock <folder>] [--push]
 
 The pack is a zip of zips, one folder per car model:
 
@@ -100,6 +104,14 @@ Options:
   --clear-halt          let liveries be applied to this championship again after
                         a save that changed more than the liveries. Restore the
                         championship from the backup the error named first.
+  --coverage            list the custom skins the server has for this
+                        championship's cars that aren't in its carset
+  --import <path>       add skins collected before champctl to the library,
+                        from a zip or folder holding <car>/skins/<folder>/.
+                        Every championship racing that car gets them in its
+                        carset; one a season uploaded wins over an import.
+  --stock <folder>      the cars' original downloads. Their skins are left out,
+                        and so is any car not in here.
   --claims              list which Discord account is claimed as which driver
   --release <id>        drop that Discord account's claim, freeing the name.
                         Needs --push, like every other write here.
@@ -149,6 +161,9 @@ interface Args {
   championshipId?: string
   zip?: string
   carset?: string
+  import?: string
+  stock?: string
+  coverage: boolean
   drain: boolean
   watch: boolean
   /** Unset unless --interval was given: the guard below has to tell the two apart. */
@@ -171,6 +186,7 @@ export function parseArgs(argv: readonly string[]): Args {
   const args: Args = {
     profile: defaultProfile(),
     drain: false,
+    coverage: false,
     watch: false,
     claims: false,
     clearHalt: false,
@@ -209,6 +225,15 @@ export function parseArgs(argv: readonly string[]): Args {
         break
       case "--drain":
         args.drain = true
+        break
+      case "--import":
+        args.import = next()
+        break
+      case "--stock":
+        args.stock = next()
+        break
+      case "--coverage":
+        args.coverage = true
         break
       case "--watch":
         args.watch = true
@@ -397,7 +422,17 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     process.stdout.write(USAGE)
     return 0
   }
+  if (args.import !== undefined) {
+    if (args.championshipId) {
+      throw new UsageError(
+        "--import adds to the library every championship shares, so it takes no id.",
+      )
+    }
+    return await importLibrary(args, args.import)
+  }
+  if (args.stock !== undefined) throw new UsageError("--stock only means anything with --import.")
   if (!args.championshipId) throw new UsageError("Needs a championship id.")
+  if (args.coverage) return await reportCoverage(args, args.championshipId)
 
   if (args.clearHalt) {
     if (args.zip || args.carset !== undefined || args.drain || args.claims) {
@@ -1160,6 +1195,105 @@ async function manageClaims(args: Args, championshipId: string): Promise<number>
   }
 }
 
+/**
+ * Adds skins collected before champctl to the library. Writes only the local
+ * store, and only with --push.
+ */
+async function importLibrary(args: Args, from: string): Promise<number> {
+  const path = resolve(from)
+  const source = (await stat(path)).isDirectory()
+    ? await dirSource(path)
+    : zipSource(await readFile(path))
+  const stock = args.stock !== undefined ? await stockFrom(resolve(args.stock)) : undefined
+  if (stock?.size === 0) {
+    throw new UsageError(`--stock ${args.stock}: no <car>/skins/<folder> anywhere in it.`)
+  }
+
+  const store = args.push ? await SqliteLiveryStore.open(storePath(args)) : undefined
+  let added = 0
+  let bytes = 0
+  let stockSkins = 0
+  let refused = 0
+  const noOriginal = new Set<string>()
+  try {
+    for (const [car, folders] of stock ?? []) await store?.setStock(car, [...folders])
+    for await (const r of importSkins(source, stock)) {
+      if (r.kind === "livery") {
+        added += 1
+        bytes += r.livery.totalBytes
+        process.stdout.write(
+          `  ${forMessage(`${r.livery.carModel}/${r.livery.skinFolder}`)}   ` +
+            `${r.livery.files.length} files, ${(r.livery.totalBytes / 2 ** 20).toFixed(1)} MB\n`,
+        )
+        await store?.record(LIBRARY, [r.livery], new Date(), "import")
+      } else if (r.kind === "stock") {
+        stockSkins += 1
+      } else if (r.kind === "no original") {
+        noOriginal.add(r.skin.carModel)
+      } else {
+        refused += 1
+        process.stdout.write(`  ! ${forMessage(r.reason)}\n`)
+      }
+    }
+  } finally {
+    store?.close()
+  }
+
+  process.stdout.write(
+    `\n${added} skin${added === 1 ? "" : "s"}, ${(bytes / 2 ** 20).toFixed(0)} MB` +
+      `${stock ? `; ${stockSkins} left out as stock` : ""}` +
+      `${refused ? `; ${refused} refused` : ""}.\n`,
+  )
+  if (noOriginal.size > 0) {
+    const named = [...noOriginal].slice(0, 10).map(forMessage).join(", ")
+    const more = noOriginal.size > 10 ? `, and ${noOriginal.size - 10} more` : ""
+    process.stdout.write(
+      `Left out ${noOriginal.size} car${noOriginal.size === 1 ? "" : "s"} with no original in ` +
+        `--stock: ${named}${more}.\n`,
+    )
+  }
+  process.stdout.write(
+    args.push
+      ? `Added to the library in ${storePath(args)}.\n`
+      : `Preview only. Re-run with --push to add these to the library.\n`,
+  )
+  return added > 0 ? 0 : 1
+}
+
+/**
+ * The custom skins the server offers for this championship's cars that its
+ * carset lacks. Also records those cars, which is what lets the carset include
+ * the library's skins for a car nobody has uploaded for yet.
+ */
+async function reportCoverage(args: Args, championshipId: string): Promise<number> {
+  const profile = await loadProfile(args.profile)
+  const baseUrl = args.baseUrl ?? profile.acsmBaseUrl
+  if (!baseUrl) {
+    throw new UsageError(
+      `No ACSM base URL. Set acsmBaseUrl in the ${args.profile} profile, or pass --base-url.`,
+    )
+  }
+  const reader = new HttpAcsmReader({ baseUrl })
+  const cars = racedCars(await reader.exportChampionship(championshipId))
+
+  const store = await SqliteLiveryStore.open(storePath(args))
+  try {
+    await store.setCars(championshipId, cars)
+    const carset = await store.carset(championshipId)
+    const report = []
+    for (const car of cars) {
+      const onServer = parseCarSkins(await reader.carPage(car))
+      report.push(carCoverage(car, onServer, carset, await store.stock(car)))
+    }
+    process.stdout.write(
+      args.json ? `${JSON.stringify(report, null, 2)}\n` : `${renderCoverage(report)}\n`,
+    )
+    return 0
+  } finally {
+    store.close()
+  }
+}
+
 function storePath(args: Args): string {
   return args.store ?? defaultStorePath()
 }
@@ -1175,7 +1309,7 @@ function storePath(args: Args): string {
 async function buildCarsetFile(args: Args, championshipId: string): Promise<number> {
   const store = await SqliteLiveryStore.open(storePath(args))
   try {
-    const plan = carsetPlan(championshipId, await store.list(championshipId))
+    const plan = carsetPlan(championshipId, await store.carset(championshipId))
 
     if (plan.skins.length === 0) {
       // Exit 1, matching the no-op plan: there is nothing wrong, and there is
@@ -1196,7 +1330,7 @@ async function buildCarsetFile(args: Args, championshipId: string): Promise<numb
     // this used to hold all of it twice over.
     const handle = createWriteStream(path)
     const result = await writeCarset(handle, plan, (skin) =>
-      store.filesFor(championshipId, skin.carModel, skin.driverName),
+      store.filesFor(skin.storedUnder, skin.carModel, skin.driverName),
     )
 
     if (args.json) {

@@ -235,6 +235,11 @@ export class HttpAcsmReader implements AcsmReader {
     return (await this.#request(championshipPath(id), "manual")).toString("utf8")
   }
 
+  /** A car's page, which lists every skin the server has for it. Not followed, like the championship page. */
+  async carPage(car: string): Promise<string> {
+    return (await this.#request(`/car/${encodeURIComponent(car)}`, "manual")).toString("utf8")
+  }
+
   async healthcheck(): Promise<AcsmHealthcheck> {
     return this.#getJson<AcsmHealthcheck>("/healthcheck.json")
   }

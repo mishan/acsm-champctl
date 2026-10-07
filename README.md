@@ -421,7 +421,18 @@ hash per file — Content Manager is not guaranteed to overwrite a skin that is
 already installed, and that failure looks like nothing at all.
 
 Recording is the only copy champctl has: a livery uploaded through ACSM's own
-web UI is invisible to it and won't be in the carset. It is also the only full
+web UI is invisible to it and won't be in the carset.
+
+A championship's carset also takes in every other season's liveries for the
+cars it races, and the **library**: skins collected before champctl, added with
+`champctl-liveries --import <zip-or-folder> --stock <originals> --push`. The
+import reads any tree with `<car>/skins/<folder>/` in it, such as a player's
+`content/cars`. `--stock` points at the cars' original downloads, so the skins
+that came with a car are left out (every driver has them) and a car with no
+original isn't guessed at. Where two sources share a folder, this season's
+upload wins, then the newest season, then the library.
+`champctl-liveries <championship-id> --coverage` lists the custom skins the
+server has for the championship's cars that its carset still lacks. It is also the only full
 copy anywhere, since the server gets three files of each skin, so back up
 `data/liveries/`.
 

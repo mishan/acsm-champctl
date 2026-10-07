@@ -77,6 +77,8 @@ export interface CarsetSkinRef {
   carModel: string
   skinFolder: string
   driverName: string
+  /** The championship the store keeps it under: this one, an earlier season, or the library. */
+  storedUnder: string
   /** `content/cars/<model>/skins/<folder>`, the path inside the archive. */
   path: string
   /** The store's content digest for this livery. */
@@ -150,14 +152,15 @@ export interface BuildCarsetOptions {
 /**
  * What the carset would contain, from metadata only.
  *
- * Deliberately does no filtering. Everything the store holds for a championship
- * goes in, including liveries for drivers who have since left — someone
- * watching a replay or racing an old server still needs those cars to look
- * right, and a carset that quietly shed skins as the entry list churned would
- * be a support question every month.
+ * Deliberately does no filtering. Everything `store.carset` returns goes in,
+ * including liveries for drivers who have since left — someone watching a
+ * replay or racing an old server still needs those cars to look right, and a
+ * carset that quietly shed skins as the entry list churned would be a support
+ * question every month.
  *
- * Order is the store's: car, then driver. Both this and `writeCarset` walk it,
- * so the digest describes the archive that would be built from the same rows.
+ * Order is the store's: car, then skin folder. Both this and `writeCarset` walk
+ * it, so the digest describes the archive that would be built from the same
+ * rows.
  */
 export function carsetPlan(
   championshipId: string,
@@ -168,6 +171,7 @@ export function carsetPlan(
     carModel: livery.carModel,
     skinFolder: livery.skinFolder,
     driverName: livery.driverName,
+    storedUnder: livery.championshipId,
     path: skinPath(livery.carModel, livery.skinFolder),
     digest: livery.digest,
     bytes: livery.bytes,
