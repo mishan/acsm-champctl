@@ -861,12 +861,23 @@ describe("the carset cache under load", () => {
 
     expect((await readdir(cacheDir)).filter((f) => f.endsWith(".zip"))).toHaveLength(2)
   })
+
+  it("keeps a championship's full and season carsets side by side", async () => {
+    // The same eviction, one level down: sharing a cache key, each would prune
+    // the other, and a grid fetching both would rebuild on every request.
+    const mine = await store.carsetLink(CHAMP, NOW)
+    await fetch(`${base}/c/${mine}`).then((r) => r.arrayBuffer())
+    await fetch(`${base}/c/${mine}/season`).then((r) => r.arrayBuffer())
+    expect((await readdir(cacheDir)).filter((f) => f.endsWith(".zip"))).toHaveLength(3)
+  })
 })
 
 describe("isSeasonCarset", () => {
   it("is the /season link and nothing else", () => {
     expect(isSeasonCarset("/c/AbC-123_xyz9876543210/season")).toBe(true)
     expect(isSeasonCarset("/champctl/c/AbC-123_xyz9876543210/season")).toBe(true)
+    expect(isSeasonCarset("/c/AbC-123_xyz9876543210/season/")).toBe(true)
+    expect(carsetSlugFromPath("/c/AbC-123_xyz9876543210/season/")).toBe("AbC-123_xyz9876543210")
     expect(isSeasonCarset("/c/AbC-123_xyz9876543210")).toBe(false)
     expect(isSeasonCarset("/c/AbC-123_xyz9876543210/carset.zip")).toBe(false)
   })

@@ -65,7 +65,7 @@ export interface UploadServerOptions {
  * `https://host/champctl/` was handed links this refused to match.
  */
 export function carsetSlugFromPath(pathname: string): string | undefined {
-  const match = /(?:^|\/)c\/([A-Za-z0-9_-]{16,128})(?:\/[^/]*)?$/.exec(pathname)
+  const match = /(?:^|\/)c\/([A-Za-z0-9_-]{16,128})(?:\/[^/]*)?\/?$/.exec(pathname)
   return match?.[1]
 }
 
@@ -74,7 +74,7 @@ export function carsetSlugFromPath(pathname: string): string | undefined {
  * driver who already has every earlier season's.
  */
 export function isSeasonCarset(pathname: string): boolean {
-  return /(?:^|\/)c\/[A-Za-z0-9_-]{16,128}\/season$/.test(pathname)
+  return /(?:^|\/)c\/[A-Za-z0-9_-]{16,128}\/season\/?$/.test(pathname)
 }
 
 /** Text for a token that cannot be used, in the words a driver needs. */
