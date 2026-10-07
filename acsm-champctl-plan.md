@@ -438,22 +438,14 @@ re-fetch the form immediately before POST and compare its entry list against the
 one fetched when the screen opened. If it changed, refuse the write and reload.
 This is the most likely way champctl could destroy data while appearing to work.
 
-**Privacy note — unsettled, and two files here disagree.** This paragraph and
-the **PUBLIC DATA** annotation on `SignUpForm.Responses` in `src/acsm/types.ts`
-both say sign-up responses are in the public export. The OSS handler
-(`ChampionshipsHandler.export`) blanks `SignUpForm.Responses` for anything below
-`GroupAdmin`, "for data protection reasons", and `src/liveries/claims.ts` is
-written assuming that gate holds on premium.
+**Privacy note.** Sign-up responses are not in the public export. The OSS
+handler (`ChampionshipsHandler.export`) blanks `SignUpForm.Responses` for anything
+below `GroupAdmin`, "for data protection reasons", and premium does the same:
+BATL's 2.4.15 answers a logged-out export with `Responses: null` (October 2026,
+§10.3 of the livery doc). This note used to say the opposite, written from an
+export downloaded while logged in.
 
-One of the two is wrong and it takes one `curl` with no cookie jar against
-`/championship/{id}/export` to find out which — recon item §10.3 of the livery
-doc, which was not done before §2 of it was built. Whichever way it lands,
-something here gets corrected: if the gate holds, this paragraph and that
-annotation describe a leak that does not exist; if it does not, the leak is
-worse than written, because a Discord handle would be published beside a Steam
-GUID and that pair is what lets somebody find a driver off the server.
-
-Either way the archive should strip `SignUpForm.Responses` before anything
+An admin's export does carry them, so the archive should still strip `SignUpForm.Responses` before anything
 reaches a public dashboard, and `AskForEmail` should stay off.
 
 New recon item: capture the approve/reject POST.

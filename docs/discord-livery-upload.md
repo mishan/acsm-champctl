@@ -1,8 +1,7 @@
 # Self-serve livery upload via the Discord bot
 
-Status: built, and never run against a live Discord server. §2–§9 are
-implemented and tested against fixtures and a stub; four of the five
-measurements in §10 have not been taken. The design below is kept as written
+Status: built, and running in BATL since October 2026. Three of the five
+measurements in §10 were taken there; two are still open. The design below is kept as written
 except where the build disagreed with it — those places say so.
 
 `champctl-liveries` already does the hard half — read an untrusted zip, match it
@@ -157,15 +156,12 @@ if !account.HasGroupPrivilege(GroupAdmin) {
 That is deliberate and it is dated: the v1.7.0 changelog entry is "Admins can
 now export full Championship information, including Sign Up Form responses."
 
-This is worth being careful about because it contradicts two things already
-written down here. Plan §5.3 says the responses are in the export and the export
-is public; `src/acsm/types.ts` annotates `SignUpForm.Responses` **PUBLIC DATA**.
-The likely explanation is that both were written from an export downloaded
-through the UI while logged in as an admin, which is how anyone gets one. It
-should be settled by one unauthenticated `curl` against BATL's premium instance
-before either sentence is trusted further — see §10.
+The gate holds on premium too (§10.3): BATL's 2.4.15 answers a logged-out
+export with no responses, and a logged-in one with all of them. Plan §5.3 and
+`src/acsm/types.ts` had said otherwise, written from an export downloaded while
+logged in as an admin, which is how anyone gets one.
 
-If the gate holds on premium, the consequence for *this* feature is exact:
+So the consequence for *this* feature is exact:
 
 > The bot cannot read the sign-up answers. The drainer can.
 
@@ -755,17 +751,10 @@ now carry expiring signed parameters and a queued download will 403.
 ## 10. What has to be measured before building
 
 The repo's rule (plan §3.4) is that a request gets captured before code is
-written against it. **This was not followed.** All of §2–§9 was built and only
-item 3 has been looked at, and only the easy half of it — so this list is a
-record of what the build is resting on rather than a list of things done first.
-Everything here is still outstanding except where marked.
-
-Item 3 is the one to do before a live run: it decides whether §5.3 of the plan
-and the **PUBLIC DATA** annotation in `src/acsm/types.ts` are describing a leak
-that does not exist, and `src/liveries/claims.ts` already asserts the gate holds
-while `acsm-champctl-plan.md` §5.3 asserts the opposite. Two files in this repo
-contradict each other on a privacy claim, which is precisely what this item
-existed to prevent.
+written against it. **This was not followed.** All of §2–§9 was built before
+any of this was measured, so the list is a record of what the build rested on
+rather than of things done first. Items 2, 3 and 5 were measured on BATL's
+manager in October 2026; 1 and 4 are still outstanding.
 
 1. **`POST /car/{model}/skin` against a car with no `skins/` directory yet.**
    `apply.ts` reads ACSM's handler as `MkdirAll` on the derived path, but the
@@ -775,6 +764,11 @@ existed to prevent.
    what happens to a file present in the old skin and absent from the new one —
    a stale `livery.dds` left behind under a new `preview.jpg` is a car that
    renders the old livery for reasons nothing in champctl would explain.
+
+   **Measured:** a re-upload overwrites the files it carries, and a file it
+   doesn't carry stays. That no longer matters for the textures: the server is
+   only sent `preview.jpg`, `livery.png` and `ui_skin.json`, and drivers get the
+   rest from the carset.
 3. **Does BATL's premium instance return `SignUpForm.Responses` to an
    unauthenticated export?** One `curl` with no cookie jar against
    `/championship/{id}/export`, and look for `Responses`. OSS gates it on
@@ -791,6 +785,10 @@ existed to prevent.
 
    Do this before anything in §2 is built; it decides whether the hint sync
    exists at all.
+
+   **Measured:** the gate holds. A logged-out export of BATL's October 2026
+   championship has `Responses: null`; the logged-in export the same day had
+   19. The annotation and plan §5.3 are corrected.
 
    `ExtraFields` itself needs no recon: it is `[]string` in the OSS source, the
    question labels and nothing more. `src/acsm/types.ts` should be narrowed from
@@ -822,6 +820,10 @@ existed to prevent.
    guild — the payload shape, `interaction.member.roles` in a guild, and the
    deferral needed for a 20 MB download to finish inside Discord's 3-second
    initial-response window.
+
+   **Measured** in BATL's guild. Uploads by attachment and by link both work.
+   Roles needed reading from the raw interaction, because discord.js without
+   intents caches the guild with none.
 
 ---
 
