@@ -10,7 +10,7 @@ import type { SlashCommand } from "../src/bot/transport.js"
 import { SqliteClaimStore } from "../src/liveries/claims.js"
 import { DEFAULT_LIMITS } from "../src/liveries/pack.js"
 import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
-import { SqliteLiveryStore } from "../src/liveries/store.js"
+import { LIBRARY, SqliteLiveryStore } from "../src/liveries/store.js"
 import { SqliteTokenStore } from "../src/liveries/upload-token.js"
 import { championship, championshipClass, entryList, raceEvent } from "./support/build.js"
 
@@ -493,6 +493,40 @@ describe("/livery carset", () => {
     expect(reply.content).toMatch(/https:\/\/liveries\.example\.com\/c\//)
     expect(reply.content).toMatch(/1 livery for September 2026/)
     expect(reply.content).toMatch(/worth pinning/)
+    liveries.close()
+    r.close()
+  })
+
+  it("takes in the library's skins for the cars it races, before anyone has uploaded", async () => {
+    const r = await router()
+    const liveries = await SqliteLiveryStore.open(":memory:")
+    await liveries.record(
+      LIBRARY,
+      [
+        {
+          carModel: CAR,
+          driverName: "Collected",
+          skinFolder: "Collected",
+          files: [{ name: "livery.dds", bytes: bytes("d") }],
+          totalBytes: 1,
+        },
+      ],
+      NOW,
+      "import",
+    )
+    const withStore = new LiveryRouter({
+      reader: new StaticAcsmReader([champ()]),
+      claims: r.claims,
+      queue: r.queue,
+      tokens: r.tokens,
+      store: liveries,
+      clamp: {},
+      uploadBaseUrl: "https://liveries.example.com",
+      now: () => NOW,
+    })
+    expect((await withStore.handle(command({ subcommand: "carset" }))).content).toMatch(
+      /1 livery for September 2026/,
+    )
     liveries.close()
     r.close()
   })
