@@ -65,8 +65,16 @@ export interface UploadServerOptions {
  * `https://host/champctl/` was handed links this refused to match.
  */
 export function carsetSlugFromPath(pathname: string): string | undefined {
-  const match = /(?:^|\/)c\/([A-Za-z0-9_-]{16,128})(?:\/[^/]*)?$/.exec(pathname)
+  const match = /(?:^|\/)c\/([A-Za-z0-9_-]{16,128})(?:\/[^/]*)?\/?$/.exec(pathname)
   return match?.[1]
+}
+
+/**
+ * `/c/<slug>/season`: only the liveries uploaded for this championship, for a
+ * driver who already has every earlier season's.
+ */
+export function isSeasonCarset(pathname: string): boolean {
+  return /(?:^|\/)c\/[A-Za-z0-9_-]{16,128}\/season\/?$/.test(pathname)
 }
 
 /** Text for a token that cannot be used, in the words a driver needs. */
@@ -185,8 +193,12 @@ async function cachedCarset(
   store: SqliteLiveryStore,
   championshipId: string,
   cacheDir: string,
+  season: boolean,
 ): Promise<{ path: string; digest: string; filename: string; bytes: number } | undefined> {
-  const plan = carsetPlan(championshipId, await store.carset(championshipId))
+  const plan = carsetPlan(
+    championshipId,
+    season ? await store.list(championshipId) : await store.carset(championshipId),
+  )
   if (plan.skins.length === 0) return undefined
 
   await mkdir(cacheDir, { recursive: true, mode: 0o700 })
@@ -195,9 +207,12 @@ async function cachedCarset(
   // series read as each other's leftovers and evicted one another on every
   // alternating request. Hashed rather than used raw — the id reaches here from
   // a URL, and this is a path.
-  const key = createHash("sha256").update(championshipId).digest("hex").slice(0, 16)
+  const key = createHash("sha256")
+    .update(season ? `${championshipId}/season` : championshipId)
+    .digest("hex")
+    .slice(0, 16)
   const path = join(cacheDir, `${key}-${plan.digest}.zip`)
-  const filename = carsetFilename(plan)
+  const filename = carsetFilename(plan, season ? "season" : undefined)
 
   try {
     const existing = await stat(path)
@@ -294,6 +309,7 @@ export function uploadRequestHandler(
     req: IncomingMessage,
     res: ServerResponse,
     slug: string,
+    season: boolean,
   ): Promise<void> => {
     if (!options.store) {
       send(res, 404, "text/plain; charset=utf-8", "Not found.\n")
@@ -310,14 +326,13 @@ export function uploadRequestHandler(
       return
     }
 
-    const built = await cachedCarset(options.store, championshipId, cacheDir)
+    const built = await cachedCarset(options.store, championshipId, cacheDir, season)
     if (!built) {
       send(
         res,
         404,
         "text/plain; charset=utf-8",
-        "No liveries have been applied to this championship yet, so there's no carset to " +
-          "download.\n",
+        "There are no liveries in this carset yet, so there's nothing to download.\n",
       )
       return
     }
@@ -358,7 +373,7 @@ export function uploadRequestHandler(
 
     const carsetSlug = carsetSlugFromPath(pathname)
     if (carsetSlug) {
-      await serveCarset(req, res, carsetSlug)
+      await serveCarset(req, res, carsetSlug, isSeasonCarset(pathname))
       return
     }
 

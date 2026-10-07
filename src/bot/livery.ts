@@ -385,7 +385,10 @@ export interface CarsetLinkRequest {
 
 export interface CarsetLinkStore {
   carsetLink(championshipId: string, at?: Date): Promise<string>
+  /** Every livery for the championship's cars, from any season or the library. */
   carset(championshipId: string): Promise<readonly unknown[]>
+  /** Only the liveries applied to this championship. */
+  list(championshipId: string): Promise<readonly unknown[]>
   setCars(championshipId: string, cars: readonly string[]): Promise<void>
 }
 
@@ -432,13 +435,25 @@ export async function handleCarsetLink(
   const base = new URL(request.uploadBaseUrl)
   const path = base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`
   const url = new URL(`${path}c/${slug}`, base).toString()
+  const season = await store.list(request.championshipId)
+  const counted = (rows: readonly unknown[]) =>
+    `${rows.length} ${rows.length === 1 ? "livery" : "liveries"}`
 
-  return {
-    ok: true,
-    reply:
-      `${applied.length} ${applied.length === 1 ? "livery" : "liveries"} for ` +
-      `${request.championshipName ?? "this championship"}: ${url}\n` +
-      `Drop the zip on Content Manager, or extract it over your Assetto Corsa folder. The link ` +
-      `stays the same as people add liveries, so it's worth pinning.`,
+  // Two links because the full set grows every season and most of the grid has
+  // most of it already: the second is the download for someone who does.
+  const lines = [
+    `Liveries for ${request.championshipName ?? "this championship"}:`,
+    `• Every custom livery for this season's cars (${counted(applied)}): ${url}`,
+  ]
+  if (season.length > 0) {
+    lines.push(
+      `• Only the ones uploaded this season (${counted(season)}): ${url}/season — if you ` +
+        `already have every earlier season's liveries, this is all you need.`,
+    )
   }
+  lines.push(
+    `Drop the zip on Content Manager, or extract it over your Assetto Corsa folder. The links ` +
+      `stay the same as people add liveries, so they're worth pinning.`,
+  )
+  return { ok: true, reply: lines.join("\n") }
 }

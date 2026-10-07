@@ -22,7 +22,7 @@ import {
   uploadUrl,
 } from "../src/liveries/upload-token.js"
 import { LIBRARY, SqliteLiveryStore } from "../src/liveries/store.js"
-import { carsetSlugFromPath, createUploadServer } from "../src/upload/server.js"
+import { carsetSlugFromPath, createUploadServer, isSeasonCarset } from "../src/upload/server.js"
 import { importsOf, reachesAny, resolveSpecifier } from "./support/imports.js"
 
 const CAR = "rss_formula_hybrid_2021"
@@ -761,7 +761,22 @@ describe("downloading the carset", () => {
     const empty = await store.carsetLink("11111111-1111-1111-1111-111111111111", NOW)
     const res = await fetch(`${base}/c/${empty}`)
     expect(res.status).toBe(404)
-    expect(await res.text()).toMatch(/no carset to download/)
+    expect(await res.text()).toMatch(/nothing to download/)
+  })
+
+  it("serves only this season's uploads at /season, under a name of its own", async () => {
+    const res = await fetch(`${base}/c/${slug}/season`)
+    expect(res.headers.get("content-disposition")).toMatch(
+      /filename="carset-season-[0-9a-f]{8}\.zip"/,
+    )
+    const skins = Object.keys(unzipSync(new Uint8Array(await res.arrayBuffer())))
+    expect(skins).toContain(`content/cars/${CAR}/skins/Misha/livery.dds`)
+    expect(skins).not.toContain(`content/cars/${CAR}/skins/Collected/livery.dds`)
+
+    const all = Object.keys(
+      unzipSync(new Uint8Array(await (await fetch(`${base}/c/${slug}`)).arrayBuffer())),
+    )
+    expect(all).toContain(`content/cars/${CAR}/skins/Collected/livery.dds`)
   })
 })
 
@@ -845,6 +860,26 @@ describe("the carset cache under load", () => {
     await fetch(`${base}/c/${theirs}`).then((r) => r.arrayBuffer())
 
     expect((await readdir(cacheDir)).filter((f) => f.endsWith(".zip"))).toHaveLength(2)
+  })
+
+  it("keeps a championship's full and season carsets side by side", async () => {
+    // The same eviction, one level down: sharing a cache key, each would prune
+    // the other, and a grid fetching both would rebuild on every request.
+    const mine = await store.carsetLink(CHAMP, NOW)
+    await fetch(`${base}/c/${mine}`).then((r) => r.arrayBuffer())
+    await fetch(`${base}/c/${mine}/season`).then((r) => r.arrayBuffer())
+    expect((await readdir(cacheDir)).filter((f) => f.endsWith(".zip"))).toHaveLength(3)
+  })
+})
+
+describe("isSeasonCarset", () => {
+  it("is the /season link and nothing else", () => {
+    expect(isSeasonCarset("/c/AbC-123_xyz9876543210/season")).toBe(true)
+    expect(isSeasonCarset("/champctl/c/AbC-123_xyz9876543210/season")).toBe(true)
+    expect(isSeasonCarset("/c/AbC-123_xyz9876543210/season/")).toBe(true)
+    expect(carsetSlugFromPath("/c/AbC-123_xyz9876543210/season/")).toBe("AbC-123_xyz9876543210")
+    expect(isSeasonCarset("/c/AbC-123_xyz9876543210")).toBe(false)
+    expect(isSeasonCarset("/c/AbC-123_xyz9876543210/carset.zip")).toBe(false)
   })
 })
 
