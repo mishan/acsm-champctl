@@ -491,7 +491,11 @@ describe("/livery carset", () => {
 
     const reply = await withStore.handle(command({ subcommand: "carset" }))
     expect(reply.content).toMatch(/https:\/\/liveries\.example\.com\/c\//)
-    expect(reply.content).toMatch(/1 livery for September 2026/)
+    expect(reply.content).toMatch(/Liveries for September 2026/)
+    expect(reply.content).toMatch(
+      /\(1 livery, 1 MB\): https:\/\/liveries\.example\.com\/c\/[\w-]+\n/,
+    )
+    expect(reply.content).toMatch(/uploaded this season \(1 livery, 1 MB\): \S+\/c\/[\w-]+\/season/)
     expect(reply.content).toMatch(/worth pinning/)
     liveries.close()
     r.close()
@@ -524,9 +528,10 @@ describe("/livery carset", () => {
       uploadBaseUrl: "https://liveries.example.com",
       now: () => NOW,
     })
-    expect((await withStore.handle(command({ subcommand: "carset" }))).content).toMatch(
-      /1 livery for September 2026/,
-    )
+    const reply = (await withStore.handle(command({ subcommand: "carset" }))).content
+    expect(reply).toMatch(/this season's cars \(1 livery, 1 MB\)/)
+    // Nothing uploaded this season, so no second link to an empty download.
+    expect(reply).not.toMatch(/\/season/)
     liveries.close()
     r.close()
   })

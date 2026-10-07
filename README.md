@@ -432,7 +432,9 @@ import reads any tree with `<car>/skins/<folder>/` in it, such as a player's
 `content/cars`. `--stock` points at the cars' original downloads, so the skins
 that came with a car are left out (every driver has them) and a car with no
 original isn't guessed at. Where two sources share a folder, this season's
-upload wins, then the newest season, then the library.
+upload wins, then the newest season, then the library. `/livery carset` also
+hands out `<link>/season`, only this championship's uploads, for drivers who
+already have the rest.
 `champctl-liveries <championship-id> --coverage` lists the custom skins the
 server has for the championship's cars that its carset still lacks.
 

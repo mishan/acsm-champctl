@@ -385,7 +385,10 @@ export interface CarsetLinkRequest {
 
 export interface CarsetLinkStore {
   carsetLink(championshipId: string, at?: Date): Promise<string>
-  carset(championshipId: string): Promise<readonly unknown[]>
+  /** Every livery for the championship's cars, from any season or the library. */
+  carset(championshipId: string): Promise<readonly { bytes: number }[]>
+  /** Only the liveries applied to this championship. */
+  list(championshipId: string): Promise<readonly { bytes: number }[]>
   setCars(championshipId: string, cars: readonly string[]): Promise<void>
 }
 
@@ -432,13 +435,24 @@ export async function handleCarsetLink(
   const base = new URL(request.uploadBaseUrl)
   const path = base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`
   const url = new URL(`${path}c/${slug}`, base).toString()
+  const season = await store.list(request.championshipId)
+  const sized = (rows: readonly { bytes: number }[]) =>
+    `${rows.length} ${rows.length === 1 ? "livery" : "liveries"}, ` +
+    `${Math.max(1, Math.round(rows.reduce((n, r) => n + r.bytes, 0) / 2 ** 20))} MB`
 
-  return {
-    ok: true,
-    reply:
-      `${applied.length} ${applied.length === 1 ? "livery" : "liveries"} for ` +
-      `${request.championshipName ?? "this championship"}: ${url}\n` +
-      `Drop the zip on Content Manager, or extract it over your Assetto Corsa folder. The link ` +
-      `stays the same as people add liveries, so it's worth pinning.`,
+  // Two links because the full set grows every season and most of the grid has
+  // most of it already: the second is the download for someone who does.
+  const lines = [
+    `Liveries for ${request.championshipName ?? "this championship"}:`,
+    `• Every custom livery for this season's cars (${sized(applied)}): ${url}`,
+  ]
+  if (season.length > 0) {
+    lines.push(`• Only the ones uploaded this season (${sized(season)}): ${url}/season`)
   }
+  lines.push(
+    `Drop the zip on Content Manager, or extract it over your Assetto Corsa folder. If you ` +
+      `already have every earlier season's liveries, the second link is all you need. The ` +
+      `links stay the same as people add liveries, so they're worth pinning.`,
+  )
+  return { ok: true, reply: lines.join("\n") }
 }

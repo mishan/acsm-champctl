@@ -297,11 +297,11 @@ export async function writeCarset(
 }
 
 /** A filename a driver can tell apart from last month's. */
-export function carsetFilename(plan: CarsetPlan): string {
+export function carsetFilename(plan: CarsetPlan, variant?: string): string {
   const name = (plan.championshipName ?? "carset")
     .normalize("NFKD")
     .replace(/[^\p{L}\p{N}]+/gu, "-")
     .replace(/^-+|-+$/g, "")
     .toLowerCase()
-  return `${name || "carset"}-${plan.digest.slice(0, 8)}.zip`
+  return `${name || "carset"}-${variant ? `${variant}-` : ""}${plan.digest.slice(0, 8)}.zip`
 }
