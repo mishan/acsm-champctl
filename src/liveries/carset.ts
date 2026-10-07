@@ -54,7 +54,7 @@ import type { Writable } from "node:stream"
 import { PassThrough } from "node:stream"
 import { pipeline } from "node:stream/promises"
 
-import { Zip, ZipPassThrough } from "fflate"
+import { Zip, ZipDeflate, ZipPassThrough } from "fflate"
 
 import type { SkinFile } from "./pack.js"
 import type { StoredLivery } from "./store.js"
@@ -229,11 +229,11 @@ async function drained(stream: PassThrough): Promise<void> {
  * the heap per request is how a league's VPS dies on the evening everyone
  * downloads at once.
  *
- * Stored, not deflated. Every meaningful byte in here is a `.dds` or a `.jpg`,
- * both already compressed, so deflate would spend CPU on a rebuild of a few
- * hundred megabytes to save approximately nothing. The one exception is the
- * manifest, which is too small to matter — and which is written last, because
- * it lists digests only known once the files have been read.
+ * Deflated. It was stored, on the belief that a `.dds` is already compressed,
+ * and BATL's carset came to 851 MB. Block-compressed textures still deflate to
+ * about a fifth: 618 MB of real skins went to 133 MB at level 6, in 14 seconds,
+ * paid once per change since the server caches the archive. The manifest is
+ * written last, because it lists digests only known once the files are read.
  */
 export async function writeCarset(
   destination: Writable,
@@ -272,7 +272,7 @@ export async function writeCarset(
       }
       for (const file of files) {
         manifest.push(`${digestOf(file.bytes)}  ${skin.path}/${file.name}`)
-        const entry = new ZipPassThrough(`${skin.path}/${file.name}`)
+        const entry = new ZipDeflate(`${skin.path}/${file.name}`, { level: 6 })
         entry.mtime = CARSET_MTIME
         zip.add(entry)
         entry.push(file.bytes, true)
