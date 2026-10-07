@@ -186,7 +186,7 @@ async function cachedCarset(
   championshipId: string,
   cacheDir: string,
 ): Promise<{ path: string; digest: string; filename: string; bytes: number } | undefined> {
-  const plan = carsetPlan(championshipId, await store.list(championshipId))
+  const plan = carsetPlan(championshipId, await store.carset(championshipId))
   if (plan.skins.length === 0) return undefined
 
   await mkdir(cacheDir, { recursive: true, mode: 0o700 })
@@ -210,7 +210,7 @@ async function cachedCarset(
   const handle = createWriteStream(partial, { mode: 0o600 })
   try {
     await writeCarset(handle, plan, (skin) =>
-      store.filesFor(championshipId, skin.carModel, skin.driverName),
+      store.filesFor(skin.storedUnder, skin.carModel, skin.driverName),
     )
     await rename(partial, path)
   } catch (e) {

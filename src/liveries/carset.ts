@@ -77,6 +77,8 @@ export interface CarsetSkinRef {
   carModel: string
   skinFolder: string
   driverName: string
+  /** The championship the store keeps it under: this one, an earlier season, or the library. */
+  storedUnder: string
   /** `content/cars/<model>/skins/<folder>`, the path inside the archive. */
   path: string
   /** The store's content digest for this livery. */
@@ -88,7 +90,7 @@ export interface CarsetSkinRef {
 export interface CarsetPlan {
   championshipId: string
   championshipName?: string
-  /** Ordered by car then driver — the store's own order, and the archive's. */
+  /** Ordered by car then skin folder — the store's own order, and the archive's. */
   skins: CarsetSkinRef[]
   /** Distinct car models, in the order they appear. */
   cars: string[]
@@ -150,14 +152,15 @@ export interface BuildCarsetOptions {
 /**
  * What the carset would contain, from metadata only.
  *
- * Deliberately does no filtering. Everything the store holds for a championship
- * goes in, including liveries for drivers who have since left — someone
- * watching a replay or racing an old server still needs those cars to look
- * right, and a carset that quietly shed skins as the entry list churned would
- * be a support question every month.
+ * Deliberately does no filtering. Everything `store.carset` returns goes in,
+ * including liveries for drivers who have since left — someone watching a
+ * replay or racing an old server still needs those cars to look right, and a
+ * carset that quietly shed skins as the entry list churned would be a support
+ * question every month.
  *
- * Order is the store's: car, then driver. Both this and `writeCarset` walk it,
- * so the digest describes the archive that would be built from the same rows.
+ * Order is the store's: car, then skin folder. Both this and `writeCarset` walk
+ * it, so the digest describes the archive that would be built from the same
+ * rows.
  */
 export function carsetPlan(
   championshipId: string,
@@ -168,6 +171,7 @@ export function carsetPlan(
     carModel: livery.carModel,
     skinFolder: livery.skinFolder,
     driverName: livery.driverName,
+    storedUnder: livery.championshipId,
     path: skinPath(livery.carModel, livery.skinFolder),
     digest: livery.digest,
     bytes: livery.bytes,
@@ -256,6 +260,13 @@ export async function writeCarset(
   try {
     for (const skin of plan.skins) {
       const files = [...(await filesFor(skin))].sort(byName)
+      // Fewer files than planned is a skin read from the wrong championship, or
+      // replaced since the plan: the archive would claim it and ship nothing.
+      if (files.length !== skin.fileCount) {
+        throw new Error(
+          `${skin.path} has ${files.length} files where the carset expected ${skin.fileCount}.`,
+        )
+      }
       if (!files.some((f) => f.name.toLowerCase() === "preview.jpg")) {
         missingPreviews.push(skin.driverName)
       }
@@ -276,6 +287,8 @@ export async function writeCarset(
     zip.end()
   } catch (e) {
     out.destroy(e instanceof Error ? e : new Error(String(e)))
+    // The pipeline rejects with the same error; this throw is the one reported.
+    finished.catch(() => {})
     throw e
   }
 

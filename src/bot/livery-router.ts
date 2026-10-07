@@ -29,6 +29,7 @@ import {
 } from "./livery.js"
 import type { LiveryClamp, UploadContext, UploadLimits } from "./livery.js"
 import { isFinished } from "./nightly.js"
+import { racedCars } from "../liveries/coverage.js"
 import type { CommandReply, CommandRouter, SlashCommand } from "./transport.js"
 
 export interface LiveryRouterOptions {
@@ -167,6 +168,7 @@ export class LiveryRouter implements CommandRouter {
             clamp: this.#options.clamp,
             championshipId,
             ...(championship.Name ? { championshipName: championship.Name } : {}),
+            cars: racedCars(championship),
             ...(this.#options.uploadBaseUrl ? { uploadBaseUrl: this.#options.uploadBaseUrl } : {}),
           },
           this.#options.store,

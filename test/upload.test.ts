@@ -21,7 +21,7 @@ import {
   UploadTokenError,
   uploadUrl,
 } from "../src/liveries/upload-token.js"
-import { SqliteLiveryStore } from "../src/liveries/store.js"
+import { LIBRARY, SqliteLiveryStore } from "../src/liveries/store.js"
 import { carsetSlugFromPath, createUploadServer } from "../src/upload/server.js"
 import { importsOf, reachesAny, resolveSpecifier } from "./support/imports.js"
 
@@ -609,6 +609,28 @@ describe("downloading the carset", () => {
 
     const entries = unzipSync(new Uint8Array(await res.arrayBuffer()))
     expect(Object.keys(entries)).toContain(`content/cars/${CAR}/skins/Misha/livery.dds`)
+  })
+
+  it("includes a skin kept under another championship, files and all", async () => {
+    await store.record(
+      LIBRARY,
+      [
+        {
+          carModel: CAR,
+          driverName: "Collected",
+          skinFolder: "Collected",
+          files: skinFiles("collected-pixels"),
+          totalBytes: 19,
+        },
+      ],
+      NOW,
+      "import",
+    )
+    const res = await fetch(`${base}/c/${slug}`)
+    const entries = unzipSync(new Uint8Array(await res.arrayBuffer()))
+    expect(
+      new TextDecoder().decode(entries[`content/cars/${CAR}/skins/Collected/livery.dds`]),
+    ).toBe("collected-pixels")
   })
 
   it("names the file so two months' carsets are tellable apart", async () => {

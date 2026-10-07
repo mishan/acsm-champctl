@@ -377,13 +377,16 @@ export interface CarsetLinkRequest {
   clamp: LiveryClamp
   championshipId: string
   championshipName?: string
+  /** The cars it races, so its carset takes in the library's skins for them. */
+  cars?: readonly string[]
   /** From `discord.livery.uploadBaseUrl`; the carset is served by the same process. */
   uploadBaseUrl?: string
 }
 
 export interface CarsetLinkStore {
   carsetLink(championshipId: string, at?: Date): Promise<string>
-  list(championshipId: string): Promise<readonly { driverName: string }[]>
+  carset(championshipId: string): Promise<readonly unknown[]>
+  setCars(championshipId: string, cars: readonly string[]): Promise<void>
 }
 
 /**
@@ -416,11 +419,12 @@ export async function handleCarsetLink(
     }
   }
 
-  const applied = await store.list(request.championshipId)
+  if (request.cars) await store.setCars(request.championshipId, request.cars)
+  const applied = await store.carset(request.championshipId)
   if (applied.length === 0) {
     return {
       ok: false,
-      reply: `Nobody's liveries have been applied yet, so there's nothing in the carset to send.`,
+      reply: `There are no custom liveries for these cars yet, so there's nothing in the carset to send.`,
     }
   }
 

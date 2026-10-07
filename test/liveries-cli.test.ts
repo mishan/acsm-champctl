@@ -1,7 +1,7 @@
 import { zipSync } from "fflate"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -352,6 +352,67 @@ describe("champctl-liveries --carset", () => {
     await main([CHAMP, "--carset", out, "--store", db])
     captured.restore()
     expect(captured.written.join("")).toMatch(/No preview.jpg for Bob/)
+  })
+})
+
+describe("champctl-liveries --import", () => {
+  const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+  it("adds collected skins to the carset of every championship racing the car, only with --push", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-import-"))
+    const db = join(dir, "liveries.db")
+    const zip = join(dir, "skins.zip")
+    const out = join(dir, "carset.zip")
+    const stock = join(dir, "originals")
+    await mkdir(join(stock, CAR, "skins", "21New"), { recursive: true })
+    await writeFile(
+      zip,
+      zipSync({
+        [`skins/${CAR}/skins/Collected/livery.dds`]: bytes("pixels"),
+        [`skins/${CAR}/skins/Collected/ui_skin.json`]: bytes("{}"),
+      }),
+    )
+    const store = await SqliteLiveryStore.open(db)
+    await store.record(
+      CHAMP,
+      [
+        {
+          carModel: CAR,
+          driverName: "Misha",
+          skinFolder: "Misha",
+          files: [{ name: "livery.dds", bytes: bytes("x") }],
+          totalBytes: 1,
+        },
+      ],
+      new Date(),
+      "discord",
+    )
+    store.close()
+
+    const quiet = vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    try {
+      expect(await main(["--import", zip, "--stock", stock, "--store", db])).toBe(0)
+      expect(await main([CHAMP, "--carset", out, "--store", db])).toBe(0)
+      const before = Object.keys(unzipSync(new Uint8Array(await readFile(out))))
+      expect(before).not.toContain(`content/cars/${CAR}/skins/Collected/livery.dds`)
+
+      expect(await main(["--import", zip, "--stock", stock, "--store", db, "--push"])).toBe(0)
+      expect(await main([CHAMP, "--carset", out, "--store", db])).toBe(0)
+    } finally {
+      quiet.mockRestore()
+    }
+    const after = Object.keys(unzipSync(new Uint8Array(await readFile(out))))
+    expect(after).toContain(`content/cars/${CAR}/skins/Collected/livery.dds`)
+    expect(after).toContain(`content/cars/${CAR}/skins/Misha/livery.dds`)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it("takes no championship id, since every championship shares the library", async () => {
+    expect(await main(["abc", "--import", "skins.zip", "--stock", "o"])).toBe(3)
+  })
+
+  it("needs the cars' originals, or every skin that came with a car would go in", async () => {
+    expect(await main(["--import", "skins.zip"])).toBe(3)
   })
 })
 

@@ -425,6 +425,17 @@ web UI is invisible to it and won't be in the carset. It is also the only full
 copy anywhere, since the server gets three files of each skin, so back up
 `data/liveries/`.
 
+A championship's carset also takes in every other season's liveries for the
+cars it races, and the **library**: skins collected before champctl, added with
+`champctl-liveries --import <zip-or-folder> --stock <originals> --push`. The
+import reads any tree with `<car>/skins/<folder>/` in it, such as a player's
+`content/cars`. `--stock` points at the cars' original downloads, so the skins
+that came with a car are left out (every driver has them) and a car with no
+original isn't guessed at. Where two sources share a folder, this season's
+upload wins, then the newest season, then the library.
+`champctl-liveries <championship-id> --coverage` lists the custom skins the
+server has for the championship's cars that its carset still lacks.
+
 **Drivers send their own with `/livery`.** `champctl-bot serve` registers four
 subcommands in one guild — `claim`, `upload`, `upload-url` and `carset` — and
 answers them. It asks Discord for **no intents**: an attachment option puts the file in

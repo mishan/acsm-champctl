@@ -186,6 +186,13 @@ describe("carsetDigest", () => {
 })
 
 describe("writeCarset", () => {
+  it("refuses to ship a skin whose files didn't come back, rather than an empty folder", async () => {
+    // What reading a library skin from the wrong championship looks like.
+    const plan = planOf([stored("Misha")])
+    const sink = new Writable({ write: (_c, _e, done) => done() })
+    await expect(writeCarset(sink, plan, async () => [])).rejects.toThrow(/expected 2/)
+  })
+
   it("writes each file where Assetto Corsa expects it", async () => {
     const { entries } = await zipOf([stored("Misha", [file("livery.dds", "pixels")])])
     expect(text(entries[`content/cars/${CAR}/skins/Misha/livery.dds`] ?? new Uint8Array())).toBe(
