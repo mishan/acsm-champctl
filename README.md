@@ -980,12 +980,12 @@ have a web UI. What's left:
 - **The bot only talks.** The nightly report, announcements and standings are
   there; the format poll and the poll-to-proposal loop are not, and neither are
   the `/stats` lookups, which want archive projections that don't exist yet.
-- **Livery uploads have never run against a real Discord server.** Everything
-  is built and tested — `/livery claim`, `/livery upload`, `/livery upload-url`,
-  `/livery carset`, the queue, the drain, the carset — but only against fixtures
-  and a stub. The first run against a live guild is the one that will find
-  things, and four of the five measurements in §10 of the design have not been
-  taken. Design in
+- **Livery uploads are live in one league, and two questions are still open.**
+  `/livery claim`, `/livery upload`, `/livery upload-url`, `/livery carset`, the
+  queue, the drain and the carset have run end to end in BATL since October 2026.
+  Still unmeasured (§10 of the design): an upload for a car with no skins on the
+  server yet, and whether Content Manager overwrites a skin folder when a carset
+  is installed again. Design in
   [`docs/discord-livery-upload.md`](docs/discord-livery-upload.md).
 - **Standings from the export refuse more than they compute.** Drop-worst,
   penalty points and the second race of a reversed-grid round are all

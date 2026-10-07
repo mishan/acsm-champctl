@@ -251,7 +251,11 @@ export interface SignUpForm extends Unknowns {
   RegistrationOpen?: boolean
   RegistrationClosesAt?: string
   ExtraFields?: unknown[]
-  /** PUBLIC DATA. Strip before anything reaches a dashboard (plan §5.3). */
+  /**
+   * Admins only: ACSM leaves this out of an export read logged out (measured on
+   * BATL's 2.4.15 Premium). An admin's export carries it, so strip it before
+   * anything reaches a dashboard (plan §5.3).
+   */
   Responses?: SignUpResponse[]
 }
 
