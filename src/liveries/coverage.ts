@@ -16,6 +16,7 @@ import * as cheerio from "cheerio"
 
 import { ANY_CAR_MODEL, type Championship } from "../acsm/types.js"
 import { availableCars, classes, slots } from "../acsm/view.js"
+import { forMessage } from "./pack.js"
 import type { StoredLivery } from "./store.js"
 
 /** Every car a championship can be raced in: what its classes allow and what its entrants drive. */
@@ -68,18 +69,21 @@ export function carCoverage(
   }
 }
 
+/** Names here come off the server's disk, so they are made safe to print. */
 export function renderCoverage(cars: readonly CarCoverage[]): string {
   const lines: string[] = []
-  for (const car of cars) {
+  const list = (names: readonly string[]) => names.map(forMessage).join(", ")
+  for (const raw of cars) {
+    const car = { ...raw, carModel: forMessage(raw.carModel) }
     lines.push(
       `${car.carModel}: ${car.onServer} on the server, ${car.missing.length} missing from the carset`,
     )
     if (!car.stockKnown && car.missing.length > 0) {
       lines.push(`  (no record of which skins came with this car, so those are counted too)`)
     }
-    if (car.missing.length > 0) lines.push(`  missing: ${car.missing.join(", ")}`)
+    if (car.missing.length > 0) lines.push(`  missing: ${list(car.missing)}`)
     if (car.notOnServer.length > 0) {
-      lines.push(`  in the carset but not on the server: ${car.notOnServer.join(", ")}`)
+      lines.push(`  in the carset but not on the server: ${list(car.notOnServer)}`)
     }
   }
   const missing = cars.reduce((n, c) => n + c.missing.length, 0)

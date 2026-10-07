@@ -13,17 +13,19 @@
  * left out rather than guessed at.
  */
 
-import { readdir, readFile } from "node:fs/promises"
+import { readdir, readFile, stat } from "node:fs/promises"
 import { extname, join, relative, sep } from "node:path"
 import { unzipSync, zipSync, type Zippable } from "fflate"
 
 import {
   ALLOWED_SKIN_EXTENSIONS,
   DEFAULT_LIMITS,
+  forMessage,
   type Livery,
   LiveryPackError,
   type PackLimits,
   readSingleLivery,
+  usableAsFolder,
 } from "./pack.js"
 
 export interface FoundSkin {
@@ -34,6 +36,8 @@ export interface FoundSkin {
 export interface SkinSource {
   skins: FoundSkin[]
   read(skin: FoundSkin, limits: PackLimits): Promise<Livery>
+  /** Folders that couldn't be listed, so whatever skins they hold weren't seen. */
+  unreadable: string[]
 }
 
 /** `<car>/skins/<folder>` out of a path, wherever in it they are. */
@@ -45,9 +49,31 @@ function skinIn(parts: readonly string[]): (FoundSkin & { depth: number }) | und
 
 const key = (s: FoundSkin) => `${s.carModel}/${s.skinFolder}`
 
+/**
+ * Where a skin is, refusing one found in two places. A collection of several
+ * seasons' folders holds the same car and folder twice, and which copy is the
+ * right one isn't something to pick by listing order.
+ */
+function onlyPlace(skin: FoundSkin, places: ReadonlySet<string> | undefined): string {
+  const [first, second] = [...(places ?? [])]
+  if (second !== undefined) {
+    throw new LiveryPackError(
+      `Refusing ${forMessage(key(skin))}: it is in the source twice, at ` +
+        `${forMessage(first!)} and ${forMessage(second)}. Remove one and import again.`,
+    )
+  }
+  return first!
+}
+
+function addPlace(map: Map<string, Set<string>>, skin: FoundSkin, place: string): void {
+  const set = map.get(key(skin)) ?? new Set<string>()
+  set.add(place)
+  map.set(key(skin), set)
+}
+
 /** A zip of skins, read one skin at a time so the whole collection is never unpacked at once. */
 export function zipSource(bytes: Uint8Array): SkinSource {
-  const prefixes = new Map<string, string>()
+  const prefixes = new Map<string, Set<string>>()
   const found = new Map<string, FoundSkin>()
   unzipSync(bytes, {
     filter: (file) => {
@@ -57,7 +83,7 @@ export function zipSource(bytes: Uint8Array): SkinSource {
       if (skin && parts.length > skin.depth && parts[skin.depth] !== "") {
         const s = { carModel: skin.carModel, skinFolder: skin.skinFolder }
         found.set(key(s), s)
-        prefixes.set(key(s), `${parts.slice(0, skin.depth).join("/")}/`)
+        addPlace(prefixes, s, `${parts.slice(0, skin.depth).join("/")}/`)
       }
       return false
     },
@@ -69,24 +95,47 @@ export function zipSource(bytes: Uint8Array): SkinSource {
         bytes,
         { carModel: skin.carModel, driverName: skin.skinFolder },
         limits,
-        prefixes.get(key(skin)),
+        onlyPlace(skin, prefixes.get(key(skin))),
       ),
+    unreadable: [],
   }
 }
 
-/** Skin folders under a directory, and where each is, without reading any of their files. */
-export async function skinFolders(root: string): Promise<(FoundSkin & { path: string })[]> {
-  const found = new Map<string, FoundSkin & { path: string }>()
+/**
+ * Skin folders under a directory, and where each is, without reading any of
+ * their files.
+ *
+ * A folder that can't be listed is noted and passed over rather than ending
+ * the walk. Node can't even name one whose name isn't UTF-8, and a player's
+ * install collected over years has a few.
+ */
+export async function skinFolders(root: string): Promise<{
+  skins: FoundSkin[]
+  places: Map<string, Set<string>>
+  unreadable: string[]
+}> {
+  const found = new Map<string, FoundSkin>()
+  const places = new Map<string, Set<string>>()
+  const unreadable: string[] = []
+  const list = async (dir: string) => {
+    try {
+      return await readdir(dir, { withFileTypes: true })
+    } catch {
+      unreadable.push(dir)
+      return []
+    }
+  }
   const walk = async (dir: string, depth: number): Promise<void> => {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
+    for (const entry of await list(dir)) {
       if (!entry.isDirectory()) continue
       const path = join(dir, entry.name)
       if (entry.name === "skins" && depth > 0) {
         const carModel = dir.split(sep).pop()!
-        for (const folder of await readdir(path, { withFileTypes: true })) {
+        for (const folder of await list(path)) {
           if (!folder.isDirectory()) continue
-          const s = { carModel, skinFolder: folder.name, path: join(path, folder.name) }
+          const s = { carModel, skinFolder: folder.name }
           found.set(key(s), s)
+          addPlace(places, s, join(path, folder.name))
         }
       } else if (depth < 4) {
         await walk(path, depth + 1)
@@ -94,27 +143,43 @@ export async function skinFolders(root: string): Promise<(FoundSkin & { path: st
     }
   }
   await walk(root, 0)
-  return [...found.values()].sort((a, b) => key(a).localeCompare(key(b)))
+  const skins = [...found.values()].sort((a, b) => key(a).localeCompare(key(b)))
+  return { skins, places, unreadable }
 }
 
 /** A directory of skins, such as an install's `content/cars`. */
 export async function dirSource(root: string): Promise<SkinSource> {
-  const found = await skinFolders(root)
-  const where = new Map(found.map((s) => [key(s), s.path]))
+  const { skins, places, unreadable } = await skinFolders(root)
   return {
-    skins: found.map(({ carModel, skinFolder }) => ({ carModel, skinFolder })),
+    skins,
+    unreadable,
     read: async (skin, limits) => {
-      const folder = where.get(key(skin))!
+      const folder = onlyPlace(skin, places.get(key(skin)))
       // Zipped so the folder goes through exactly the checks an upload does.
       // Files a skin doesn't use are entered empty rather than read: they are
-      // left out either way, and some are hundreds of megabytes of .psd.
+      // left out either way, and some are hundreds of megabytes of .psd. A
+      // file over the limit is refused before it is read, for the same reason.
       const files: Zippable = {}
-      for (const entry of await readdir(folder, { recursive: true, withFileTypes: true })) {
-        if (!entry.isFile()) continue
-        const path = join(entry.parentPath, entry.name)
-        const name = relative(folder, path).split(sep).join("/")
-        const used = ALLOWED_SKIN_EXTENSIONS.has(extname(entry.name).toLowerCase())
-        files[name] = [used ? await readFile(path) : new Uint8Array(0), { level: 0 }]
+      try {
+        for (const entry of await readdir(folder, { recursive: true, withFileTypes: true })) {
+          if (!entry.isFile()) continue
+          const path = join(entry.parentPath, entry.name)
+          const name = relative(folder, path).split(sep).join("/")
+          const used = ALLOWED_SKIN_EXTENSIONS.has(extname(entry.name).toLowerCase())
+          if (used && (await stat(path)).size > limits.maxFileBytes) {
+            throw new LiveryPackError(
+              `Refusing ${forMessage(key(skin))}: "${forMessage(name)}" is over the ` +
+                `${Math.round(limits.maxFileBytes / 2 ** 20)} MB limit for one file.`,
+            )
+          }
+          files[name] = [used ? await readFile(path) : new Uint8Array(0), { level: 0 }]
+        }
+      } catch (e) {
+        if (e instanceof LiveryPackError) throw e
+        throw new LiveryPackError(
+          `Refusing ${forMessage(key(skin))}: couldn't read ${forMessage(folder)} ` +
+            `(${(e as NodeJS.ErrnoException).code ?? String(e)}).`,
+        )
       }
       return readSingleLivery(
         zipSync(files),
@@ -145,7 +210,16 @@ export async function* importSkins(
 ): AsyncGenerator<Imported> {
   for (const skin of source.skins) {
     const original = stock?.get(skin.carModel)
-    if (stock && !original) {
+    if (![skin.carModel, skin.skinFolder].every((n) => usableAsFolder(n.normalize("NFC")))) {
+      // Said here, because the upload path's refusal blames the entry list.
+      yield {
+        kind: "refused",
+        skin,
+        reason:
+          `Refusing ${forMessage(key(skin))}: champctl can't make that a folder on the server. ` +
+          `Rename it and import again.`,
+      }
+    } else if (stock && !original) {
       yield { kind: "no original", skin }
     } else if (original?.has(skin.skinFolder)) {
       yield { kind: "stock", skin }
@@ -163,7 +237,7 @@ export async function* importSkins(
 /** Each car's original skin folders, from a directory of original car downloads. */
 export async function stockFrom(root: string): Promise<Map<string, Set<string>>> {
   const stock = new Map<string, Set<string>>()
-  for (const skin of await skinFolders(root)) {
+  for (const skin of (await skinFolders(root)).skins) {
     const set = stock.get(skin.carModel) ?? new Set<string>()
     set.add(skin.skinFolder)
     stock.set(skin.carModel, set)

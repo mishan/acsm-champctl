@@ -90,7 +90,7 @@ export interface CarsetSkinRef {
 export interface CarsetPlan {
   championshipId: string
   championshipName?: string
-  /** Ordered by car then driver — the store's own order, and the archive's. */
+  /** Ordered by car then skin folder — the store's own order, and the archive's. */
   skins: CarsetSkinRef[]
   /** Distinct car models, in the order they appear. */
   cars: string[]
@@ -260,6 +260,13 @@ export async function writeCarset(
   try {
     for (const skin of plan.skins) {
       const files = [...(await filesFor(skin))].sort(byName)
+      // Fewer files than planned is a skin read from the wrong championship, or
+      // replaced since the plan: the archive would claim it and ship nothing.
+      if (files.length !== skin.fileCount) {
+        throw new Error(
+          `${skin.path} has ${files.length} files where the carset expected ${skin.fileCount}.`,
+        )
+      }
       if (!files.some((f) => f.name.toLowerCase() === "preview.jpg")) {
         missingPreviews.push(skin.driverName)
       }
@@ -280,6 +287,8 @@ export async function writeCarset(
     zip.end()
   } catch (e) {
     out.destroy(e instanceof Error ? e : new Error(String(e)))
+    // The pipeline rejects with the same error; this throw is the one reported.
+    finished.catch(() => {})
     throw e
   }
 

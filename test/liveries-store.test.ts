@@ -254,6 +254,16 @@ describe("a championship's carset", () => {
     ])
   })
 
+  it("keeps its own liveries for a car that has since left the entry list", async () => {
+    const store = await open()
+    await store.record(CHAMP, [livery("Alice"), livery("Bob", undefined, "ks_other")], MARCH, "zip")
+    await store.setCars(CHAMP, [CAR])
+    expect(folders(await store.carset(CHAMP))).toEqual([
+      `ks_other/Bob@${CHAMP}`,
+      `${CAR}/Alice@${CHAMP}`,
+    ])
+  })
+
   it("falls back to its own liveries' cars when none are recorded", async () => {
     const store = await open()
     await store.record(CHAMP, [livery("Misha")], MARCH, "discord")

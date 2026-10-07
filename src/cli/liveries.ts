@@ -77,7 +77,7 @@ Usage:
   champctl-liveries <championship-id> --drain --push --watch [--interval <s>]
   champctl-liveries <championship-id> --clear-halt
   champctl-liveries <championship-id> --coverage
-  champctl-liveries --import <zip-or-folder> [--stock <folder>] [--push]
+  champctl-liveries --import <zip-or-folder> --stock <folder> [--push]
 
 The pack is a zip of zips, one folder per car model:
 
@@ -105,13 +105,14 @@ Options:
                         a save that changed more than the liveries. Restore the
                         championship from the backup the error named first.
   --coverage            list the custom skins the server has for this
-                        championship's cars that aren't in its carset
+                        championship's cars that aren't in its carset. Also
+                        records those cars, so its carset includes them.
   --import <path>       add skins collected before champctl to the library,
                         from a zip or folder holding <car>/skins/<folder>/.
                         Every championship racing that car gets them in its
                         carset; one a season uploaded wins over an import.
-  --stock <folder>      the cars' original downloads. Their skins are left out,
-                        and so is any car not in here.
+  --stock <folder>      the cars' original downloads, required with --import.
+                        Their skins are left out, and so is any car not in here.
   --claims              list which Discord account is claimed as which driver
   --release <id>        drop that Discord account's claim, freeing the name.
                         Needs --push, like every other write here.
@@ -422,13 +423,33 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     process.stdout.write(USAGE)
     return 0
   }
+  const modes = [
+    args.import !== undefined,
+    args.coverage,
+    args.zip !== undefined,
+    args.carset !== undefined,
+    args.drain,
+    args.claims,
+    args.clearHalt,
+  ]
+  if ((args.import !== undefined || args.coverage) && modes.filter(Boolean).length > 1) {
+    throw new UsageError("--import and --coverage each run on their own.")
+  }
   if (args.import !== undefined) {
     if (args.championshipId) {
       throw new UsageError(
         "--import adds to the library every championship shares, so it takes no id.",
       )
     }
-    return await importLibrary(args, args.import)
+    if (args.stock === undefined) {
+      // Without it every skin that came with a car goes in, which is most of
+      // any install and multiplies every carset for nothing.
+      throw new UsageError(
+        "--import needs --stock <folder>: the cars' original downloads, so the skins that came " +
+          "with them are left out.",
+      )
+    }
+    return await importLibrary(args, args.import, args.stock)
   }
   if (args.stock !== undefined) throw new UsageError("--stock only means anything with --import.")
   if (!args.championshipId) throw new UsageError("Needs a championship id.")
@@ -1199,14 +1220,14 @@ async function manageClaims(args: Args, championshipId: string): Promise<number>
  * Adds skins collected before champctl to the library. Writes only the local
  * store, and only with --push.
  */
-async function importLibrary(args: Args, from: string): Promise<number> {
+async function importLibrary(args: Args, from: string, originals: string): Promise<number> {
   const path = resolve(from)
   const source = (await stat(path)).isDirectory()
     ? await dirSource(path)
     : zipSource(await readFile(path))
-  const stock = args.stock !== undefined ? await stockFrom(resolve(args.stock)) : undefined
-  if (stock?.size === 0) {
-    throw new UsageError(`--stock ${args.stock}: no <car>/skins/<folder> anywhere in it.`)
+  const stock = await stockFrom(resolve(originals))
+  if (stock.size === 0) {
+    throw new UsageError(`--stock ${originals}: no <car>/skins/<folder> anywhere in it.`)
   }
 
   const store = args.push ? await SqliteLiveryStore.open(storePath(args)) : undefined
@@ -1216,7 +1237,7 @@ async function importLibrary(args: Args, from: string): Promise<number> {
   let refused = 0
   const noOriginal = new Set<string>()
   try {
-    for (const [car, folders] of stock ?? []) await store?.setStock(car, [...folders])
+    for (const [car, folders] of stock) await store?.setStock(car, [...folders])
     for await (const r of importSkins(source, stock)) {
       if (r.kind === "livery") {
         added += 1
@@ -1241,9 +1262,12 @@ async function importLibrary(args: Args, from: string): Promise<number> {
 
   process.stdout.write(
     `\n${added} skin${added === 1 ? "" : "s"}, ${(bytes / 2 ** 20).toFixed(0)} MB` +
-      `${stock ? `; ${stockSkins} left out as stock` : ""}` +
+      `; ${stockSkins} left out as stock` +
       `${refused ? `; ${refused} refused` : ""}.\n`,
   )
+  for (const dir of source.unreadable) {
+    process.stdout.write(`Couldn't list ${forMessage(dir)}, so anything in it was skipped.\n`)
+  }
   if (noOriginal.size > 0) {
     const named = [...noOriginal].slice(0, 10).map(forMessage).join(", ")
     const more = noOriginal.size > 10 ? `, and ${noOriginal.size - 10} more` : ""

@@ -425,8 +425,8 @@ export class SqliteLiveryStore implements LiveryRecorder {
    * Every livery a championship's carset holds: one per skin folder of each car
    * it races, from any season or the imported library.
    *
-   * The cars are the ones recorded for it, else the ones its own liveries are
-   * for. Where seasons disagree about a folder, this championship's wins, then
+   * The cars are the ones recorded for it and the ones its own liveries are
+   * for, which outlast a car leaving the entry list. Where seasons disagree about a folder, this championship's wins, then
    * the newest, then an import — the order ACSM's own folder would have been
    * overwritten in. An import into a folder that came with the car is left
    * out: drivers have that one.
@@ -438,7 +438,6 @@ export class SqliteLiveryStore implements LiveryRecorder {
            SELECT car_model FROM championship_car WHERE championship_id = :id
            UNION
            SELECT car_model FROM livery WHERE championship_id = :id
-             AND NOT EXISTS (SELECT 1 FROM championship_car WHERE championship_id = :id)
          ),
          ranked AS (
            SELECT l.*, row_number() OVER (
@@ -573,6 +572,7 @@ export class SqliteLiveryStore implements LiveryRecorder {
       .prepare("SELECT count(*) AS n FROM livery WHERE championship_id = ?")
       .get(championshipId) as unknown as { n: number }
     this.#db.prepare("DELETE FROM livery WHERE championship_id = ?").run(championshipId)
+    this.#db.prepare("DELETE FROM championship_car WHERE championship_id = ?").run(championshipId)
     return before.n
   }
 

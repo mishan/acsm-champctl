@@ -329,7 +329,7 @@ function splitEntryPath(path: string): string[] {
  *
  * macOS's Archive Utility writes a parallel `__MACOSX/` tree of resource forks
  * beside the real files, and Finder leaves a `.DS_Store` in any folder it has
- * opened; Windows Explorer leaves `Thumbs.db` and `desktop.ini`. None of the three are visible
+ * opened; Windows Explorer leaves `Thumbs.db` and `desktop.ini`. None of them are visible
  * where the zip was made.
  *
  * They used to be refused, and the refusal was unanswerable: a driver who
@@ -344,7 +344,7 @@ function splitEntryPath(path: string): string[] {
  * are window state. Every unarchiver a driver would otherwise use drops them
  * silently, which is why nobody knows they are in there.
  *
- * Four names and not a pattern, deliberately. Anything else unexpected is
+ * Named files and not a pattern, deliberately. Anything else unexpected is
  * still refused by name and by extension — this is not a general "ignore what
  * we don't recognise" rule, which is how an allowlist quietly turns into a
  * blocklist.
@@ -353,7 +353,14 @@ function isArchiverJunk(path: string): boolean {
   const parts = path.split(/[/\\]/)
   if (parts.includes("__MACOSX")) return true
   const base = parts[parts.length - 1] ?? ""
-  return base === ".DS_Store" || base === "Thumbs.db" || base.toLowerCase() === "desktop.ini"
+  return (
+    base === ".DS_Store" ||
+    base === "Thumbs.db" ||
+    base.toLowerCase() === "desktop.ini" ||
+    // AppleDouble: the resource fork a Mac writes beside each file on a disk
+    // that can't hold one, which is the `__MACOSX` tree unzipped.
+    base.startsWith("._")
+  )
 }
 
 /**
@@ -390,6 +397,8 @@ interface UnzipBudget {
    */
   skip?: (name: string) => boolean
   skipped?: string[]
+  /** Entries that aren't this read's business at all: not decompressed, counted or listed. */
+  ignore?: (name: string) => boolean
   maxEntries: number
   maxEntryBytes: number
   maxTotalBytes: number
@@ -484,6 +493,7 @@ function unzip(bytes: Uint8Array, what: string, budget: UnzipBudget): Record<str
         if (refusal !== undefined) return false
         if (file.name.endsWith("/")) return false
         if (isArchiverJunk(file.name)) return false
+        if (budget.ignore?.(file.name)) return false
         if (budget.skip?.(file.name)) {
           budget.skipped?.push(file.name)
           return false
@@ -744,10 +754,9 @@ function readOneLivery(
   // limits. Wherever they are in the zip — a subfolder of leftovers is still
   // only leftovers.
   const skipped: string[] = []
-  const elsewhere = (path: string) => !path.startsWith(within)
   const inner = unzip(innerBytes, `"${where}"`, {
-    skip: (path) =>
-      elsewhere(path) || !ALLOWED_SKIN_EXTENSIONS.has(extensionOf(path.split(/[/\\]/).pop() ?? "")),
+    ignore: (path) => !path.startsWith(within),
+    skip: (path) => !ALLOWED_SKIN_EXTENSIONS.has(extensionOf(path.split(/[/\\]/).pop() ?? "")),
     skipped,
     maxEntries: limits.maxFilesPerSkin,
     maxEntryBytes: limits.maxFileBytes,
@@ -831,15 +840,13 @@ function readOneLivery(
     )
   }
 
-  const dropped = skipped
-    .filter((path) => !elsewhere(path))
-    .map((path) => {
-      const base = path.split(/[/\\]/).pop() ?? path
-      return {
-        name: forMessage(base),
-        why: EXPLAINED_EXTENSIONS[extensionOf(base)] ?? "not something a skin uses",
-      }
-    })
+  const dropped = skipped.map((path) => {
+    const base = path.split(/[/\\]/).pop() ?? path
+    return {
+      name: forMessage(base),
+      why: EXPLAINED_EXTENSIONS[extensionOf(base)] ?? "not something a skin uses",
+    }
+  })
   return {
     carModel,
     driverName,

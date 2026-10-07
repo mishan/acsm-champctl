@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { carCoverage, parseCarSkins, racedCars } from "../src/liveries/coverage.js"
+import { carCoverage, parseCarSkins, racedCars, renderCoverage } from "../src/liveries/coverage.js"
 import type { StoredLivery } from "../src/liveries/store.js"
 import { championship, championshipClass, entryList } from "./support/build.js"
 
@@ -49,6 +49,16 @@ describe("carCoverage", () => {
       notOnServer: ["Gone"],
       stockKnown: true,
     })
+  })
+})
+
+describe("renderCoverage", () => {
+  it("prints names off the server's disk without their control characters", () => {
+    const out = renderCoverage([
+      { carModel: CAR, onServer: 1, missing: ["\u001b[2Jevil"], notOnServer: [], stockKnown: true },
+    ])
+    expect(out).toContain("evil")
+    expect(out).not.toContain("\u001b")
   })
 })
 
