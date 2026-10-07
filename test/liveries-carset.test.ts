@@ -186,6 +186,17 @@ describe("carsetDigest", () => {
 })
 
 describe("writeCarset", () => {
+  it("compresses the skins, which a .dds still lets it do", async () => {
+    // Real block-compressed textures deflate to about a fifth; a megabyte of a
+    // repeated texel stands in for one here.
+    const texture = new Uint8Array(1024 * 1024).fill(0x5a)
+    const { archive, entries } = await zipOf([
+      stored("Misha", [file("livery.dds"), { name: "skin.dds", bytes: texture }]),
+    ])
+    expect(archive.length).toBeLessThan(texture.length / 10)
+    expect(entries[`content/cars/${CAR}/skins/Misha/skin.dds`]).toEqual(texture)
+  })
+
   it("refuses to ship a skin whose files didn't come back, rather than an empty folder", async () => {
     // What reading a library skin from the wrong championship looks like.
     const plan = planOf([stored("Misha")])
