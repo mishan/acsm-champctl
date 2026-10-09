@@ -153,6 +153,17 @@ export interface DiscordSettings {
    * absent meaning no bot.
    */
   livery?: LiveryUploadSettings
+  /**
+   * Voice channels to empty and fill when a round's qualifying starts — BATL's
+   * Pit Lane into Race Control. `champctl-bot serve` does it. Absent means it
+   * leaves voice alone, and asks Discord for no voice events at all.
+   */
+  qualiVoiceMove?: QualiVoiceMove
+}
+
+export interface QualiVoiceMove {
+  fromChannelId: string
+  toChannelId: string
 }
 
 /**

@@ -41,6 +41,16 @@ export interface DiscordTransport {
   close(): Promise<void>
 }
 
+/** Who was moved between voice channels, and who couldn't be and why. */
+export interface VoiceMove {
+  moved: string[]
+  failed: { who: string; why: string }[]
+}
+
+export interface VoiceMover {
+  move(fromChannelId: string, toChannelId: string): Promise<VoiceMove>
+}
+
 /**
  * An attachment on an incoming command, not yet fetched.
  *

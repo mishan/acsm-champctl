@@ -170,6 +170,19 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
       )
     }
 
+    const voice = d["qualiVoiceMove"]
+    if (voice !== undefined) {
+      const v = voice as Record<string, unknown> | null
+      for (const key of ["fromChannelId", "toChannelId"] as const) {
+        if (typeof v?.[key] !== "string" || !/^\d{17,20}$/.test(v[key] as string)) {
+          bad(
+            `\`discord.qualiVoiceMove.${key}\` must be a voice channel id — 17 to 20 digits, ` +
+              'the way "Copy Channel ID" gives it',
+          )
+        }
+      }
+    }
+
     // Same check, same reason: a channel *name* and a role *mention* both reach
     // Discord as an id it cannot find. Here the failure is worse than a missing
     // report — a clamp built from ids that match nothing refuses every driver,

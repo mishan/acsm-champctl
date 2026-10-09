@@ -54,8 +54,9 @@ line is in your shell history and in every `ps` listing on the box. `champctl-bo
 errors if you try.
 
 You do not need to enable any Privileged Gateway Intents, and you should not.
-champctl requests none: intents are a subscription to events, and interactions
-arrive without one. The roles and channel an upload clamp checks come in the
+champctl requests none unless you set `qualiVoiceMove` (step 11), and then only
+`Guilds` and `GuildVoiceStates`, which aren't privileged: intents are a
+subscription to events, and interactions arrive without one. The roles and channel an upload clamp checks come in the
 interaction payload rather than from `GuildMembers`.
 
 This is why `/livery upload` takes an attachment rather than a zip posted as an
@@ -325,6 +326,27 @@ draws it without posting, and saves the image to look at first.
 
 The bot needs **Attach Files** in that channel as well as Send Messages.
 
+## 11. Optional: Pit Lane to Race Control at qualifying
+
+With this in the profile, `serve` moves everyone in one voice channel to
+another when a round's qualifying starts:
+
+```json
+"qualiVoiceMove": {
+  "fromChannelId": "1234567890123456789",
+  "toChannelId": "9876543210987654321"
+}
+```
+
+It goes by the session actually starting rather than the clock. From 15
+minutes before the scheduled quali, it reads the round's export once a minute
+until ACSM records that qualifying has started, which is usually a few minutes
+late. If the bot comes up more than 10 minutes into a quali, it leaves people
+where they are.
+
+The bot needs **Move Members**, and **Connect** on both channels. A move that
+fails is reported in `adminChannelId`.
+
 ## When it doesn't work
 
 | What you see | What it is |
@@ -346,6 +368,6 @@ The bot needs **Attach Files** in that channel as well as Send Messages.
 Worth knowing before you give it a permission it does not need. `champctl-bot`
 holds no ACSM credentials on any code path, and `src/bot/` importing anything
 from the write path is a failing test rather than a code review note. Everything
-it can do to a league is say something in a channel and write a driver's zip to
-a local queue. Applying that queue is a separate process, run by you, holding
+it can do to a league is say something in a channel, write a driver's zip to
+a local queue, and move people between voice channels at quali. Applying that queue is a separate process, run by you, holding
 credentials you gave it.

@@ -9,7 +9,8 @@
  * two places to notice that a token expired. Logging in costs a couple of
  * seconds on a job that runs once a night.
  *
- * No intents are requested, and `/livery` did not change that. Intents are a
+ * No intents are requested unless the profile sets `discord.qualiVoiceMove`,
+ * and `/livery` did not change that. Intents are a
  * subscription to events; interactions arrive without one, and the roles and
  * channel a clamp needs are in the interaction payload rather than behind
  * `GuildMembers`. The alternative — taking a driver's zip off an ordinary
@@ -17,6 +18,11 @@
  * let this token read every message in every channel it can see. Asking for
  * nothing still means the token this job runs under can do nothing but talk and
  * answer.
+ *
+ * Moving people out of a voice channel needs to know who is in it, and that
+ * only reaches a bot as voice-state events: `GuildVoiceStates`, plus `Guilds`
+ * for the guild those states hang off. Neither is privileged, and neither lets
+ * the bot read a message.
  */
 
 import {
@@ -24,6 +30,7 @@ import {
   type ChatInputCommandInteraction,
   Client,
   Events,
+  GatewayIntentBits,
   MessageFlags,
   type Interaction,
 } from "discord.js"
@@ -36,12 +43,15 @@ import {
   type DiscordTransport,
   type IncomingAttachment,
   type SlashCommand,
+  type VoiceMove,
 } from "./transport.js"
 
 export interface GatewayOptions {
   token: string
   /** How long to wait for the gateway handshake. */
   readyTimeoutMs?: number
+  /** Subscribe to voice states, which `moveVoiceMembers` reads. */
+  voice?: boolean
 }
 
 export class GatewayTransport implements DiscordTransport {
@@ -73,7 +83,9 @@ export class GatewayTransport implements DiscordTransport {
    * possible way to describe a race.
    */
   static async login(options: GatewayOptions): Promise<GatewayTransport> {
-    const client = new Client({ intents: [] })
+    const client = new Client({
+      intents: options.voice ? [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] : [],
+    })
     const timeoutMs = options.readyTimeoutMs ?? 30_000
 
     try {
@@ -268,6 +280,35 @@ export class GatewayTransport implements DiscordTransport {
         })
         .catch(() => {})
     }
+  }
+
+  /**
+   * Moves everyone in one voice channel of a guild to another.
+   *
+   * Off the guild's voice states rather than `channel.members`, which also
+   * needs each member cached — and a member Discord never sent is someone
+   * silently left behind in Pit Lane.
+   */
+  async moveVoiceMembers(guildId: string, fromId: string, toId: string): Promise<VoiceMove> {
+    const guild = await this.#client.guilds.fetch(guildId)
+    const to = await guild.channels.fetch(toId).catch(() => null)
+    if (!to?.isVoiceBased()) {
+      throw new BotError(
+        `${toId} isn't a voice channel in this server. Check discord.qualiVoiceMove.toChannelId.`,
+      )
+    }
+    const result: VoiceMove = { moved: [], failed: [] }
+    for (const state of guild.voiceStates.cache.values()) {
+      if (state.channelId !== fromId) continue
+      const who = state.member?.displayName ?? state.id
+      try {
+        await state.setChannel(to, "Qualifying has started")
+        result.moved.push(who)
+      } catch (e) {
+        result.failed.push({ who, why: message(e) })
+      }
+    }
+    return result
   }
 
   async close(): Promise<void> {
