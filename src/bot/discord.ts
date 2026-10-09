@@ -291,12 +291,18 @@ export class GatewayTransport implements DiscordTransport {
    */
   async moveVoiceMembers(guildId: string, fromId: string, toId: string): Promise<VoiceMove> {
     const guild = await this.#client.guilds.fetch(guildId)
-    const to = await guild.channels.fetch(toId).catch(() => null)
-    if (!to?.isVoiceBased()) {
-      throw new BotError(
-        `${toId} isn't a voice channel in this server. Check discord.qualiVoiceMove.toChannelId.`,
-      )
+    const voiceChannel = async (id: string, key: string) => {
+      const channel = await guild.channels.fetch(id).catch(() => null)
+      if (!channel?.isVoiceBased()) {
+        throw new BotError(
+          `${id} isn't a voice channel in this server. Check discord.qualiVoiceMove.${key}.`,
+        )
+      }
+      return channel
     }
+    // The source too: a wrong one is an empty channel, and "moved 0" every week.
+    await voiceChannel(fromId, "fromChannelId")
+    const to = await voiceChannel(toId, "toChannelId")
     const result: VoiceMove = { moved: [], failed: [] }
     for (const state of guild.voiceStates.cache.values()) {
       if (state.channelId !== fromId) continue

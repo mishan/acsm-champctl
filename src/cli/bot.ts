@@ -943,7 +943,7 @@ async function serve(args: Args): Promise<number> {
   const liveries = await SqliteLiveryStore.open(storePath)
   const voice = profile.discord.qualiVoiceMove
   const transport = await connect({ voice: voice !== undefined })
-  let stopQualiCall = () => {}
+  let stopQualiCall = async () => {}
 
   try {
     if (!(transport instanceof GatewayTransport)) {
@@ -1003,7 +1003,7 @@ async function serve(args: Args): Promise<number> {
     // Closed in reverse, and the databases last: SQLite leaves a -wal beside
     // the file, and a queue whose log was never checkpointed is one the drain
     // reads short.
-    stopQualiCall()
+    await stopQualiCall()
     await transport.close()
     liveries.close()
     tokens.close()

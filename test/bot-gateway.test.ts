@@ -280,6 +280,22 @@ describe("GatewayTransport.moveVoiceMembers", () => {
     expect(moved).toEqual(["a"])
     expect(result).toEqual({ moved: ["a"], failed: [{ who: "c", why: "Missing Permissions" }] })
   })
+
+  it("refuses a source that isn't a voice channel, rather than moving nobody", async () => {
+    const PIT_LANE = "1".repeat(18)
+    const client = {
+      guilds: {
+        fetch: async () => ({
+          channels: { fetch: async (id: string) => ({ isVoiceBased: () => id !== PIT_LANE }) },
+          voiceStates: { cache: new Map() },
+        }),
+      },
+    } as unknown as Client
+
+    await expect(
+      GatewayTransport.wrapping(client).moveVoiceMembers("guild", PIT_LANE, "2".repeat(18)),
+    ).rejects.toThrow(/fromChannelId/)
+  })
 })
 
 /**

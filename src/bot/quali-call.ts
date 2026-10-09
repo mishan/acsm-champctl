@@ -14,6 +14,7 @@
  */
 
 import type { AcsmReader } from "../acsm/client.js"
+import type { Championship } from "../acsm/types.js"
 import { eventHasResults, eventSession, events, isZeroTime } from "../acsm/view.js"
 import type { LeagueProfile, QualiVoiceMove } from "../profile/types.js"
 import { qualiStart } from "./announce.js"
@@ -31,8 +32,11 @@ const GRACE = 120 * MINUTE
  * which ACSM stamps afresh, still moves them.
  */
 const FRESH = 10 * MINUTE
-/** How often the calendar is re-read from every championship. */
-const REFRESH = 60 * MINUTE
+/**
+ * How often the calendar is re-read from every championship. Short enough that
+ * a round brought forward is seen before its new quali, not after.
+ */
+const REFRESH = 15 * MINUTE
 
 interface Round {
   championshipId: string
@@ -56,9 +60,10 @@ export class QualiCall {
   readonly #o: QualiCallOptions
   #rounds: Round[] = []
   #refreshedAt = Number.NEGATIVE_INFINITY
-  /** Championships with every round raced: re-reading them hourly would buy nothing. */
+  /** Championships with every round raced: re-reading them would buy nothing. */
   readonly #finished = new Set<string>()
   readonly #done = new Set<string>()
+  #stopped = false
 
   constructor(options: QualiCallOptions) {
     this.#o = options
@@ -67,22 +72,25 @@ export class QualiCall {
   /**
    * Ticks until the returned function is called. Never two at once: a refresh
    * walks every championship through the rate limiter and can outlast a tick.
+   *
+   * Stopping waits for a tick in flight, which then moves and says nothing:
+   * the caller closes the Discord client next.
    */
-  start(everyMs = MINUTE): () => void {
+  start(everyMs = MINUTE): () => Promise<void> {
     let timer: NodeJS.Timeout | undefined
-    let stopped = false
-    const loop = async () => {
-      try {
-        await this.tick(new Date())
-      } catch (e) {
-        this.#o.log(`quali call: ${message(e)}`)
-      }
-      if (!stopped) timer = setTimeout(loop, everyMs)
+    let ticking = Promise.resolve()
+    const loop = () => {
+      ticking = this.tick(new Date())
+        .catch((e: unknown) => this.#o.log(`quali call: ${message(e)}`))
+        .then(() => {
+          if (!this.#stopped) timer = setTimeout(loop, everyMs)
+        })
     }
-    void loop()
-    return () => {
-      stopped = true
+    loop()
+    return async () => {
+      this.#stopped = true
       clearTimeout(timer)
+      await ticking
     }
   }
 
@@ -94,7 +102,14 @@ export class QualiCall {
       const key = `${round.championshipId}#${round.index}`
       if (this.#done.has(key) || t < round.quali - LEAD || t > round.quali + GRACE) continue
 
-      const c = await this.#o.reader.exportChampionship(round.championshipId)
+      let c: Championship
+      try {
+        c = await this.#o.reader.exportChampionship(round.championshipId)
+      } catch (e) {
+        this.#o.log(`quali call: couldn't read championship ${round.championshipId}: ${message(e)}`)
+        continue
+      }
+      if (this.#stopped) return
       const ev = events(c)[round.index]
       const started = ev ? eventSession(ev, "Qualifying")?.StartedTime : undefined
       if (!started || isZeroTime(started)) continue
@@ -156,6 +171,8 @@ export class QualiCall {
           })
         })
       } catch (e) {
+        // Kept as they were: one failed read must not drop tonight's round.
+        rounds.push(...this.#rounds.filter((r) => r.championshipId === id))
         this.#o.log(`quali call: couldn't read championship ${id}: ${message(e)}`)
       }
     }
