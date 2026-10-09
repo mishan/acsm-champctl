@@ -738,6 +738,13 @@ describe("the profile's Discord settings", () => {
     expect(() => withDiscord({ trophyChannelId: "#trophy-room" })).toThrow(/trophyChannelId/)
   })
 
+  it.each([
+    [{ fromChannelId: "#pit-lane", toChannelId: "1".repeat(18) }],
+    [{ fromChannelId: "1".repeat(18) }],
+  ])("checks both quali voice channels: %j", (qualiVoiceMove) => {
+    expect(() => withDiscord({ qualiVoiceMove })).toThrow(/qualiVoiceMove/)
+  })
+
   it("rejects a channel link", () => {
     expect(() =>
       withDiscord({ adminChannelId: "https://discord.com/channels/1/1234567890123456789" }),

@@ -923,9 +923,18 @@ without either, since a committed channel id is a channel every fork posts into.
     "autoApply": false,
     "uploadBaseUrl": "https://liveries.example.com",
     "championshipId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+  },
+  "qualiVoiceMove": {
+    "fromChannelId": "1234567890123456789",
+    "toChannelId": "9876543210987654321"
   }
 }
 ```
+
+`qualiVoiceMove` has `champctl-bot serve` move everyone in one voice channel to
+another once ACSM says a round's qualifying has started. BATL uses it to move
+Pit Lane to Race Control. See
+[`docs/discord-bot-setup.md`](docs/discord-bot-setup.md) step 11.
 
 `announce` trims the parts of an announcement champctl says, because ACSM has
 its own Discord integration and BATL already has it switched on — so some of

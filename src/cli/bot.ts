@@ -26,6 +26,7 @@ import { LIVERY_COMMANDS } from "../bot/commands.js"
 import { GatewayTransport } from "../bot/discord.js"
 import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
 import { nightlyMessages, standingsMessage } from "../bot/message.js"
+import { QualiCall } from "../bot/quali-call.js"
 import { findingsAtOrAbove, nightly, type NightlyEntry } from "../bot/nightly.js"
 import {
   compareStandings,
@@ -64,7 +65,9 @@ Usage:
   champctl-bot trophies                     post the podium of each championship
                                             that finished this week, once
   champctl-bot trophy <champ-id>            post one championship's podium now
-  champctl-bot serve                        answer /livery until stopped
+  champctl-bot serve                        answer /livery until stopped, and
+                                            move Pit Lane to Race Control when
+                                            qualifying starts
 
 Options:
   --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
@@ -111,6 +114,10 @@ The serve command takes drivers' liveries and writes them to the local queue.
 It cannot put them on the game server: that is champctl-liveries --drain, the
 process holding the credentials. Uploads apply by themselves only while
 --drain --watch is running, and the bot checks that rather than assuming it.
+
+With discord.qualiVoiceMove in the profile, serve also watches each round's
+export from shortly before quali and, once ACSM says qualifying has started,
+moves everyone in fromChannelId to toChannelId. The bot needs Move Members.
 
 The bot token comes from CHAMPCTL_DISCORD_TOKEN and is never a flag — a flag
 lands in shell history and in every ps listing on the box. There is deliberately
@@ -934,7 +941,9 @@ async function serve(args: Args): Promise<number> {
   const queue = await SqliteSubmissionQueue.open(storePath)
   const tokens = await SqliteTokenStore.open(storePath)
   const liveries = await SqliteLiveryStore.open(storePath)
-  const transport = await connect()
+  const voice = profile.discord.qualiVoiceMove
+  const transport = await connect({ voice: voice !== undefined })
+  let stopQualiCall = async () => {}
 
   try {
     if (!(transport instanceof GatewayTransport)) {
@@ -944,9 +953,11 @@ async function serve(args: Args): Promise<number> {
     process.stderr.write(`Registered /livery in ${guildId}.\n`)
     if (args.registerOnly) return 0
 
+    // One reader, so the livery path and the quali watch share a rate limit.
+    const reader = new HttpAcsmReader({ baseUrl, userAgent: BOT_USER_AGENT })
     const livery = profile.discord.livery
     const router = new LiveryRouter({
-      reader: new HttpAcsmReader({ baseUrl, userAgent: BOT_USER_AGENT }),
+      reader,
       claims,
       queue,
       tokens,
@@ -961,6 +972,27 @@ async function serve(args: Args): Promise<number> {
       `Answering /livery. Uploads go to ${storePath}; champctl-liveries --drain applies them.\n`,
     )
 
+    if (voice) {
+      const adminChannelId = profile.discord.adminChannelId
+      stopQualiCall = new QualiCall({
+        reader,
+        profile,
+        channels: voice,
+        mover: { move: (from, to) => transport.moveVoiceMembers(guildId, from, to) },
+        log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
+        notify: async (content) => {
+          if (adminChannelId) {
+            await transport.post({
+              channelId: adminChannelId,
+              content,
+              source: "discord.adminChannelId in the profile",
+            })
+          }
+        },
+      }).start()
+      process.stderr.write("Moving Pit Lane to Race Control when qualifying starts.\n")
+    }
+
     await new Promise<void>((done) => {
       const stop = () => done()
       process.once("SIGINT", stop)
@@ -971,6 +1003,7 @@ async function serve(args: Args): Promise<number> {
     // Closed in reverse, and the databases last: SQLite leaves a -wal beside
     // the file, and a queue whose log was never checkpointed is one the drain
     // reads short.
+    await stopQualiCall()
     await transport.close()
     liveries.close()
     tokens.close()
@@ -979,14 +1012,14 @@ async function serve(args: Args): Promise<number> {
   }
 }
 
-async function connect(): Promise<DiscordTransport> {
+async function connect(options: { voice?: boolean } = {}): Promise<DiscordTransport> {
   const token = process.env[TOKEN_ENV]
   if (!token) {
     throw new UsageError(
       `No bot token. Put it in ${TOKEN_ENV}, or use --dry-run to see what would be posted.`,
     )
   }
-  return GatewayTransport.login({ token })
+  return GatewayTransport.login({ token, ...options })
 }
 
 /** Entry point used by both `bin/champctl-bot.js` and `npm run bot`. */

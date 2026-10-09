@@ -248,6 +248,56 @@ describe("GatewayTransport.listen", () => {
   })
 })
 
+describe("GatewayTransport.moveVoiceMembers", () => {
+  it("moves only who is in the channel, and names who it couldn't", async () => {
+    const PIT_LANE = "1".repeat(18)
+    const moved: string[] = []
+    const state = (id: string, channelId: string, fails = false) => ({
+      id,
+      channelId,
+      member: { displayName: id },
+      setChannel: async () => {
+        if (fails) throw new Error("Missing Permissions")
+        moved.push(id)
+      },
+    })
+    const states = [state("a", PIT_LANE), state("b", "elsewhere"), state("c", PIT_LANE, true)]
+    const client = {
+      guilds: {
+        fetch: async () => ({
+          channels: { fetch: async () => ({ isVoiceBased: () => true }) },
+          voiceStates: { cache: new Map(states.map((s) => [s.id, s])) },
+        }),
+      },
+    } as unknown as Client
+
+    const result = await GatewayTransport.wrapping(client).moveVoiceMembers(
+      "guild",
+      PIT_LANE,
+      "2".repeat(18),
+    )
+
+    expect(moved).toEqual(["a"])
+    expect(result).toEqual({ moved: ["a"], failed: [{ who: "c", why: "Missing Permissions" }] })
+  })
+
+  it("refuses a source that isn't a voice channel, rather than moving nobody", async () => {
+    const PIT_LANE = "1".repeat(18)
+    const client = {
+      guilds: {
+        fetch: async () => ({
+          channels: { fetch: async (id: string) => ({ isVoiceBased: () => id !== PIT_LANE }) },
+          voiceStates: { cache: new Map() },
+        }),
+      },
+    } as unknown as Client
+
+    await expect(
+      GatewayTransport.wrapping(client).moveVoiceMembers("guild", PIT_LANE, "2".repeat(18)),
+    ).rejects.toThrow(/fromChannelId/)
+  })
+})
+
 /**
  * The interaction exactly as discord.js builds it from the gateway, rather than
  * a fake: the bug lived in how discord.js caches, so a fake that says

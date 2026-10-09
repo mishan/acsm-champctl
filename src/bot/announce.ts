@@ -199,7 +199,7 @@ export function announce(c: Championship, options: AnnounceOptions): Announcemen
 }
 
 /** Quali start, derived from `Scheduled`, which is practice start. */
-function qualiStart(ev: ChampionshipEvent, profile: LeagueProfile): DateTime | undefined {
+export function qualiStart(ev: ChampionshipEvent, profile: LeagueProfile): DateTime | undefined {
   return currentQualiStart(
     ev,
     profile.schedule.timezone,
