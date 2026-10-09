@@ -70,3 +70,7 @@ playwright-report/
 # the copies an operator fills in hold an ACSM password and a bot token.
 /deploy/config/
 /deploy/*.env
+
+# AC content copied in to work against, laid out as in an install. Skins are
+# named after drivers, so it's league data like data/.
+/content/

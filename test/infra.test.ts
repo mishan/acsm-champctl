@@ -338,6 +338,29 @@ describe("pit table precedence", () => {
 })
 
 describe("profile validation", () => {
+  it.each([
+    [{ overlapM: 0 }, /incidentThresholds.overlapM. must be a positive number/],
+    [{ moveM: "1" }, /incidentThresholds.moveM. must be a positive number/],
+    [{ overlap: 2 }, /incidentThresholds.overlap. isn't a threshold/],
+    [{ holdM: 1 }, /holdM. \(1\) must be less than .moveM. \(0\.8\)/],
+  ])("rejects incident thresholds %j", (incidentThresholds, message) => {
+    expect(() =>
+      validateProfile({
+        id: "x",
+        name: "X",
+        schedule: {
+          weekday: 3,
+          qualiStart: "20:00",
+          timezone: "UTC",
+          practiceMinutes: 60,
+          qualiMinutes: 20,
+        },
+        entryList: { targetSlots: 10 },
+        incidentThresholds,
+      }),
+    ).toThrow(message)
+  })
+
   it("rejects a weekday outside 1..7", () => {
     expect(() =>
       validateProfile({

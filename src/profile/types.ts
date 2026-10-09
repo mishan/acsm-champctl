@@ -8,6 +8,7 @@
 
 import type { Championship, RaceSetup } from "../acsm/types.js"
 import type { RaceFormat } from "../finalize/format.js"
+import type { IncidentThresholds } from "../spectator/thresholds.js"
 
 /** ISO weekday, 1 = Monday ... 7 = Sunday (matches Luxon). */
 export type Weekday = 1 | 2 | 3 | 4 | 5 | 6 | 7
@@ -260,4 +261,10 @@ export interface LeagueProfile {
    * and absent from a car list is not a finding.
    */
   excludedCarModels?: string[]
+  /**
+   * The judgment calls in measuring an incident from a recording: how close
+   * counts as overlapping, how far counts as a move. Unset ones take the
+   * defaults in `src/spectator/thresholds.ts`.
+   */
+  incidentThresholds?: Partial<IncidentThresholds>
 }

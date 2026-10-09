@@ -17,6 +17,9 @@ src/
   finalize/    race format, schedule maths, plan + apply
   reorder/     moving rounds around the calendar, plan + apply
   emit/        template merge, championship generation, clone
+  spectator/   a car that joins the game server and records every other car,
+               the UDP plugin feed for collisions, the .acreplay writer, and
+               incident analysis: measurements, a rules engine, an MCP server
   bot/         what champctl says in Discord: the nightly walk, the week's
                announcement, standings, the message composer, and the one
                module that imports discord.js

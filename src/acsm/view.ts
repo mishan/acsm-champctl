@@ -252,7 +252,7 @@ export function eventHasResults(ev: ChampionshipEvent | undefined): boolean {
 }
 
 /** Which field a championship keeps its spectator car in. */
-export type SpectatorCarField = "SpectatorCars[0]" | "SpectatorCar"
+export type SpectatorCarField = `SpectatorCars[${number}]` | "SpectatorCar"
 
 /** The stream car and the field it was read from. */
 export interface SpectatorCarRef {
@@ -267,16 +267,11 @@ export interface SpectatorCarRef {
  * ACSM 2.4.x carries both fields and populates only the plural one: BATL's
  * export has a `ford_transit` called "BATL TV" in the array and a blank
  * `Entrant` in the singular. Reading the singular gave every caller an empty
- * model on every real championship, silently — `derivedCars` left the van out
- * of `RaceSetup.Cars`, and the "spectator car has no model" check fired on a
- * championship that had one.
+ * model on every real championship, silently.
  *
- * This scanned the array for the first entry with a model, which was a bug
- * dressed as robustness: it could pick index 2, and the emitter rebuilds the
- * array as `[spectator, ...rest.slice(1)]` — so a car at index 2 would be
- * copied over index 0, duplicated, and index 0's own car lost. Nobody has seen
- * an array whose first entry is not the stream car, and guessing at one is how
- * a write goes somewhere nobody chose.
+ * Index 0 rather than the first entry with a model: later entries are other
+ * spectator cars, such as a race recorder, not candidates for the stream car.
+ * `spectatorCarRefs` is the one for "every car that isn't racing".
  *
  * The field comes back with the entrant because a caller that wants to *write*
  * the car, or point a finding at it, has to name the same place this read it
@@ -295,9 +290,30 @@ export function spectatorCar(c: Championship | undefined): Entrant | undefined {
   return spectatorCarRef(c)?.entrant
 }
 
-/** How many pit boxes the spectator car consumes: 1 when enabled, else 0. */
-export function spectatorCarCount(c: Championship | undefined): number {
-  return spectatorCar(c) ? 1 : 0
+/**
+ * Every spectator car, with the field each was read from, when the switch is
+ * on: the stream car first, then any others, such as a race recorder.
+ *
+ * All of the array, where `spectatorCarRef` stops at index 0. That one answers
+ * "which car is the stream", this one "which cars are not racing". The emitter
+ * writes every element back to its own index, so nothing is copied over
+ * another.
+ */
+export function spectatorCarRefs(c: Championship | undefined): SpectatorCarRef[] {
+  if (!c?.SpectatorCarEnabled) return []
+  if (c.SpectatorCars?.length) {
+    return c.SpectatorCars.map((entrant, i) => ({ entrant, field: `SpectatorCars[${i}]` as const }))
+  }
+  return c.SpectatorCar ? [{ entrant: c.SpectatorCar, field: "SpectatorCar" }] : []
+}
+
+/** The models of every spectator car, trimmed, blanks dropped. */
+export function spectatorModels(c: Championship | undefined): Set<string> {
+  return new Set(
+    spectatorCarRefs(c)
+      .map((r) => (r.entrant.Model ?? "").trim())
+      .filter(Boolean),
+  )
 }
 
 /** Normalises a Steam GUID for comparison. */

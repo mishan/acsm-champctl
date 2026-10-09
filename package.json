@@ -16,7 +16,8 @@
     "champctl-liveries": "./bin/champctl-liveries.js",
     "champctl-serve": "./bin/champctl-serve.js",
     "champctl-upload": "./bin/champctl-upload.js",
-    "champctl-bot": "./bin/champctl-bot.js"
+    "champctl-bot": "./bin/champctl-bot.js",
+    "champctl-spectator": "./bin/champctl-spectator.js"
   },
   "//files": "dist/ is in .gitignore, and without an explicit list npm packs by gitignore rules — so the tarball shipped bin/ scripts importing a directory that wasn't in it. README and LICENSE come along whatever this says.",
   "files": [
@@ -32,6 +33,7 @@
     "liveries": "tsx src/cli/liveries.ts",
     "serve": "tsx src/cli/serve.ts",
     "bot": "tsx src/cli/bot.ts",
+    "spectator": "tsx src/cli/spectator.ts",
     "dev": "vite",
     "//build": "Two outputs from one command: tsc emits dist/ for the CLIs and the server, vite emits dist/client for the browser. The gates run `npm run build`, so a client that doesn't compile fails CI the same way the server would.",
     "build": "npm run build:server && npm run build:client",

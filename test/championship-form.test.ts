@@ -346,6 +346,20 @@ describe("findChampionshipForm", () => {
     )
   })
 
+  it("refuses, by name, a championship with two spectator cars", () => {
+    // A race recorder beside the stream car: the rows add up, but how ACSM
+    // pairs them with the marker has never been measured.
+    const page = championshipPage([{ entrants: roster }]).replace(
+      '<div class="visible-spectator-enabled" style="display: none">',
+      `<div class="visible-spectator-enabled" style="display: none">${entrantRow({ name: "Recorder", spectator: true })}`,
+    )
+    expect(() => findChampionshipForm(page, PAGE_URL)).toThrowError(/it has 2 spectator cars/)
+    // A template ACSM renamed, which champctl couldn't strip, adds up the same.
+    expect(() => findChampionshipForm(page, PAGE_URL)).toThrowError(
+      /removed 0 #spectatorTemplate.*recon/,
+    )
+  })
+
   it("refuses a page whose template rows it could not remove", () => {
     // If ACSM renames the id, the extra rows survive and the arithmetic is what
     // notices. Simulated by renaming it here.

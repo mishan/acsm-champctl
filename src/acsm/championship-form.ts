@@ -312,6 +312,20 @@ export function findChampionshipForm(html: string, pageUrl: string): Championshi
   // has no spectator car and reads none. Deriving it from the arithmetic rather
   // than from a version string means a build that changes this is caught here
   // instead of by an entry list arriving one place out.
+  // A second spectator car, such as a race recorder beside a stream car, adds
+  // up too. Nobody has measured how ACSM numbers those rows, so it's refused
+  // by name rather than written on a guess.
+  const spectators = count(fields, SPECTATOR_MARKER)
+  if (spectators > 1 && rows === classTotal + spectators) {
+    throw new ChampionshipFormError(
+      `Refusing to write the championship form: it has ${spectators} spectator cars, and champctl ` +
+        `only knows how ACSM lays out the form with one. Edit this championship in ACSM itself ` +
+        `while it has more than one. If it has only one, a spectator template row champctl ` +
+        `couldn't strip would look the same (it removed ${stripped.spectatorTemplates} ` +
+        `#${SPECTATOR_TEMPLATE_ID}): run \`npm run recon:champ-form -- <championship-id>\` against ` +
+        `this manager and compare with docs/acsm-champ-form.md §4.2.`,
+    )
+  }
   let hasSpectatorRow: boolean
   if (rows === classTotal + 1) hasSpectatorRow = true
   else if (rows === classTotal) hasSpectatorRow = false
