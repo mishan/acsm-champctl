@@ -14,7 +14,7 @@ import {
   eventLabel,
   events,
   slots,
-  spectatorCar,
+  spectatorModels,
   trackLabel,
 } from "../../acsm/view.js"
 import type { Check } from "../context.js"
@@ -54,8 +54,7 @@ export const carNotInstalled: Check = {
     if (!content) return
 
     const models = availableCars(ctx.championship)
-    const spectatorModel = spectatorCar(ctx.championship)?.Model
-    if (spectatorModel) models.add(spectatorModel)
+    for (const m of spectatorModels(ctx.championship)) models.add(m)
 
     const missing = [...models].filter((m) => !content.hasCar(m))
     if (missing.length === 0) return

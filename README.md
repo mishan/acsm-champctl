@@ -856,6 +856,25 @@ sources disagreed or ACSM answered in a shape champctl can't read; `2` nothing
 it can honestly post — the export refused, the endpoint was gone under
 `--source endpoint`, or the championship couldn't be read.
 
+## champctl-spectator
+
+Records every race from a car parked on the game server: a journal per
+session, an `.acreplay` the game plays, and incident analysis with a suggested
+call for the stewards, from fixed rules and with no model to pay for.
+
+```
+champctl-spectator record --server <host:port> --ac-root <dir> --car <model> --guid <steam64> --out <dir> [options]
+champctl-spectator replay <journal> [--out <file>] [--cars <dir>] [--interval <ms>]
+champctl-spectator incidents <journal>
+champctl-spectator incident <journal> <n> --ac-root <dir> [--svg <file>] [--prompt] [--rules <file>] [--profile <id|path>]
+champctl-spectator mcp --journals <dir> --ac-root <dir> [--rules <file>] [--profile <id|path>]
+```
+
+It needs three things set up first: a spectator car slot of its own, copies of
+the league's car and track files (nobody can fetch these for you; ACSM doesn't
+serve them), and the server's UDP plugin feed for collisions. The guide is
+[`docs/spectator.md`](docs/spectator.md).
+
 ## Configuration
 
 **League profile.** BATL's baseline is `profiles/batl.json`; another league
@@ -1022,6 +1041,10 @@ have a web UI. What's left:
 - **Content checks have no source.** Three `content.*` checks need an index of
   what's installed on the server, and nothing populates one yet, so they can't
   fire. The pit-count check reads the pit table instead and works today.
+- **The race recorder hasn't run against a league's server.** Everything in
+  [`docs/spectator.md`](docs/spectator.md) is tested against stock `acServer`
+  and ACSM 2.4.15 on a disposable server, with scripted cars. A real session
+  will settle the steering scale and the contact-point axes.
 - **No real export fixture.** Everything is tested against synthetic ones; the
   archive's first run produces a real one, it just needs sanitising first.
 

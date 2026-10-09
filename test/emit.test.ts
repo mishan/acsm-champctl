@@ -331,12 +331,14 @@ describe("deriving RaceSetup.Cars", () => {
   it("includes the spectator model only when the spectator car is on", () => {
     // The §5.5 bug: the template's Cars still listed ford_transit with the
     // spectator car disabled, advertising a van nobody could pick.
-    expect(derivedCars(["a"], "ford_transit")).toBe("a;ford_transit")
+    expect(derivedCars(["a"], ["ford_transit"])).toBe("a;ford_transit")
     expect(derivedCars(["a"])).toBe("a")
   })
 
   it("does not duplicate a spectator model already in the list", () => {
-    expect(derivedCars(["a", "ford_transit"], "ford_transit")).toBe("a;ford_transit")
+    expect(derivedCars(["a", "ford_transit"], ["ford_transit", " ford_transit "])).toBe(
+      "a;ford_transit",
+    )
   })
 })
 
@@ -513,21 +515,26 @@ describe("emitting a championship", () => {
     expect(c.SpectatorCars).toBeUndefined()
   })
 
-  it("touches only index 0 of the array, and keeps the rest", () => {
+  it("parks every spectator car past the entry slots, in order, and lists every model", () => {
     const { championship: c } = emit({
       template: template({
         SpectatorCarEnabled: true,
         SpectatorCars: [
           { Model: "ford_transit", PitBox: 0 },
-          { Model: "second_car", PitBox: 7 },
+          { Model: "ks_mazda_mx5_nd", Name: "Race Recorder", PitBox: 7 },
         ],
       }),
       spec: spec({ entryListSlots: 12 }),
     })
-    expect(c.SpectatorCars).toHaveLength(2)
-    expect(c.SpectatorCars?.[0]).toMatchObject({ Model: "ford_transit", PitBox: 12 })
-    // Untouched, and not overwritten by a copy of index 0.
-    expect(c.SpectatorCars?.[1]).toMatchObject({ Model: "second_car", PitBox: 7 })
+    expect(c.SpectatorCars).toEqual([
+      expect.objectContaining({ Model: "ford_transit", PitBox: 12 }),
+      expect.objectContaining({ Model: "ks_mazda_mx5_nd", Name: "Race Recorder", PitBox: 13 }),
+    ])
+    for (const ev of events(c)) {
+      expect(ev.RaceSetup?.Cars?.split(";")).toEqual(
+        expect.arrayContaining(["ford_transit", "ks_mazda_mx5_nd"]),
+      )
+    }
   })
 
   it("leaves the spectator car alone when it is switched off", () => {

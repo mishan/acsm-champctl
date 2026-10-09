@@ -19,8 +19,8 @@ import {
   eventHasStarted,
   raceSetupCars,
   slots,
-  spectatorCar,
-  spectatorCarRef,
+  spectatorCarRefs,
+  spectatorModels,
   trackLabel,
   type Slot,
 } from "../../acsm/view.js"
@@ -229,7 +229,7 @@ export const modelNotInClass: Check = {
   id: "entry.model-not-available",
   section: "6.1",
   run(ctx, emit) {
-    const spectatorModel = spectatorCar(ctx.championship)?.Model
+    const spectators = spectatorModels(ctx.championship)
     const excluded = new Set(ctx.profile.excludedCarModels ?? [])
 
     classes(ctx.championship).forEach((cls, i) => {
@@ -242,7 +242,7 @@ export const modelNotInClass: Check = {
           const model = (s.entrant.Model ?? "").trim()
           if (!model || model === ANY_CAR_MODEL) continue
           if (available.has(model)) continue
-          if (model === spectatorModel || excluded.has(model)) continue
+          if (spectators.has(model) || excluded.has(model)) continue
           const who = s.entrant.Name || s.key
           const loc = { className: name, path: `${path}.${s.key}`, ...(round ? { round } : {}) }
           emit(
@@ -272,7 +272,7 @@ export const modelNotInClass: Check = {
         const model = (s.entrant.Model ?? "").trim()
         if (!model || model === ANY_CAR_MODEL) continue
         if (union.has(model)) continue
-        if (model === spectatorModel || excluded.has(model)) continue
+        if (spectators.has(model) || excluded.has(model)) continue
         const who = s.entrant.Name || s.key
         emit(
           "ERROR",
@@ -309,8 +309,7 @@ export const raceSetupCarsMismatch: Check = {
       for (const m of cls.AvailableCars ?? []) if (m) expected.add(m)
     }
     if (expected.size === 0) return
-    const spectatorModel = spectatorCar(ctx.championship)?.Model?.trim()
-    if (spectatorModel) expected.add(spectatorModel)
+    for (const m of spectatorModels(ctx.championship)) expected.add(m)
 
     // Forgiven in one direction only, which is the whole subtlety. An excluded
     // model in the list is fine; the same model *absent* is not a complaint,
@@ -686,7 +685,7 @@ export const unclaimedSlotNotSentinel: Check = {
 /**
  * The spectator car is switched on and no model is set anywhere.
  *
- * **Through `spectatorCar()`, which is the whole point of this check's
+ * **Through `spectatorCarRefs()`, which is the whole point of this check's
  * history.** It first read `championship.SpectatorCar.Model` directly, which
  * is blank on every 2.4.x export because the real car lives in
  * `SpectatorCars[0]` — so it fired on a championship whose spectator car was
@@ -703,27 +702,31 @@ export const spectatorCarWithoutModel: Check = {
   id: "entry.spectator-no-model",
   section: "6.1",
   run(ctx, emit) {
-    // Gated on the switch, not on finding a car. `spectatorCarRef` returns
-    // undefined when the championship has *neither* field populated, and that
+    // Gated on the switch, not on finding a car. `spectatorCarRefs` is empty
+    // when the championship has *neither* field populated, and that
     // is the sharpest version of what this check is for — switched on with
     // nothing configured at all. Returning early on it would have skipped the
     // one case with no car to describe.
     if (ctx.championship.SpectatorCarEnabled !== true) return
-    const ref = spectatorCarRef(ctx.championship)
-    if ((ref?.entrant.Model ?? "").trim()) return
-
-    emit(
-      "WARN",
-      "entry.spectator-no-model",
-      `The spectator car is switched on but has no car model set, so nothing in the championship ` +
-        `says which car it is.`,
-      // The field it was actually read from. Naming `SpectatorCars[0]` on a
-      // build that only has the singular sends someone to a key that isn't
-      // there — and `SpectatorCar` is the honest answer when there is no car
-      // at all, since that is where an older manager would put one.
-      { path: `${ref?.field ?? "SpectatorCar"}.Model` },
-      { field: ref?.field ?? null },
-    )
+    const refs = spectatorCarRefs(ctx.championship)
+    const blank =
+      refs.length === 0 ? [undefined] : refs.filter((r) => !(r.entrant.Model ?? "").trim())
+    for (const ref of blank) {
+      const which =
+        refs.length > 1 && ref ? `Spectator car ${refs.indexOf(ref) + 1}` : "The spectator car"
+      emit(
+        "WARN",
+        "entry.spectator-no-model",
+        `${which} is switched on but has no car model set, so nothing in the championship ` +
+          `says which car it is.`,
+        // The field it was actually read from. Naming `SpectatorCars[0]` on a
+        // build that only has the singular sends someone to a key that isn't
+        // there — and `SpectatorCar` is the honest answer when there is no car
+        // at all, since that is where an older manager would put one.
+        { path: `${ref?.field ?? "SpectatorCar"}.Model` },
+        { field: ref?.field ?? null },
+      )
+    }
   },
 }
 
@@ -747,24 +750,53 @@ export const spectatorCarInAnEntrantsBox: Check = {
   id: "entry.spectator-pit-box-taken",
   section: "6.1",
   run(ctx, emit) {
-    const ref = spectatorCarRef(ctx.championship)
-    if (!ref) return
-    const box = ref.entrant.PitBox
-    if (typeof box !== "number" || !Number.isFinite(box)) return
-
+    const refs = spectatorCarRefs(ctx.championship)
     const longest = Math.max(0, ...[...allLists(ctx)].map(({ list }) => slots(list).length))
-    if (longest === 0 || box >= longest) return
-
-    emit(
-      "WARN",
-      "entry.spectator-pit-box-taken",
-      `The spectator car is in pit box ${box}, which is one of the ${longest} entry list slots. ` +
-        `Two cars in one box means the next save drops one of them — park it at ${longest}, ` +
-        `past the end of the list.`,
-      // Where the box was read from, so the path is somewhere to go and look.
-      { path: `${ref.field}.PitBox` },
-      { pitBox: box, slots: longest, suggested: longest, field: ref.field },
-    )
+    const name = (i: number): string =>
+      refs.length > 1
+        ? `spectator car ${i + 1}${refs[i]?.entrant.Name ? ` (${refs[i]?.entrant.Name})` : ""}`
+        : "the spectator car"
+    const holder = new Map<number, number>()
+    // Suggestions past the list that no spectator car holds or has been offered.
+    const taken = new Set(refs.map((r) => r.entrant.PitBox))
+    const nextFree = (): number => {
+      let box = longest
+      while (taken.has(box)) box++
+      taken.add(box)
+      return box
+    }
+    refs.forEach((ref, i) => {
+      const box = ref.entrant.PitBox
+      if (typeof box !== "number" || !Number.isFinite(box)) return
+      // A recorder set up by copying the stream car keeps the stream car's
+      // box, past the entry slots where the check below can't see it.
+      const first = holder.get(box)
+      if (first !== undefined) {
+        emit(
+          "WARN",
+          "entry.spectator-pit-box-taken",
+          `${cap(name(i))} shares pit box ${box} with ${name(first)}, so the next save drops one of them. ` +
+            `Give each spectator car a box of its own past the entry list.`,
+          { path: `${ref.field}.PitBox` },
+          { pitBox: box, sharedWith: refs[first]!.field, field: ref.field },
+        )
+        return
+      }
+      holder.set(box, i)
+      if (longest === 0 || box >= longest) return
+      const which = cap(name(i))
+      const suggested = nextFree()
+      emit(
+        "WARN",
+        "entry.spectator-pit-box-taken",
+        `${which} is in pit box ${box}, which is one of the ${longest} entry list slots. ` +
+          `Two cars in one box means the next save drops one of them — park it at ${suggested}, ` +
+          `past the end of the list.`,
+        // Where the box was read from, so the path is somewhere to go and look.
+        { path: `${ref.field}.PitBox` },
+        { pitBox: box, slots: longest, suggested, field: ref.field },
+      )
+    })
   },
 }
 

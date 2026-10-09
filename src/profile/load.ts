@@ -5,6 +5,7 @@ import { dirname, isAbsolute, resolve } from "node:path"
 
 import { IANAZone } from "luxon"
 
+import { DEFAULT_THRESHOLDS, type IncidentThresholds } from "../spectator/thresholds.js"
 import type { LeagueProfile, Weekday } from "./types.js"
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -113,6 +114,27 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
     (typeof p["baseline"] !== "object" || p["baseline"] === null)
   ) {
     bad("`baseline` must be an object")
+  }
+
+  const thresholds = p["incidentThresholds"]
+  if (thresholds !== undefined) {
+    if (typeof thresholds !== "object" || thresholds === null)
+      bad("`incidentThresholds` must be an object")
+    for (const [key, value] of Object.entries(thresholds as Record<string, unknown>)) {
+      if (!["overlapM", "moveM", "holdM", "lookbackS"].includes(key)) {
+        bad(`\`incidentThresholds.${key}\` isn't a threshold champctl knows`)
+      }
+      if (typeof value !== "number" || !(value > 0))
+        bad(`\`incidentThresholds.${key}\` must be a positive number`)
+    }
+    // A car that moved less than holdM held its line and one that moved
+    // moveM or more moved; crossed, a car could count as doing both.
+    const merged = { ...DEFAULT_THRESHOLDS, ...(thresholds as Partial<IncidentThresholds>) }
+    if (merged.holdM >= merged.moveM) {
+      bad(
+        `\`incidentThresholds.holdM\` (${merged.holdM}) must be less than \`moveM\` (${merged.moveM})`,
+      )
+    }
   }
 
   // Checked rather than trusted, because a preset is a button someone taps

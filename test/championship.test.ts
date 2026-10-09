@@ -586,6 +586,20 @@ describe("installed cars", () => {
     )
     expect(f?.message).toContain("ford_transit")
   })
+
+  it("counts every spectator car, the recorder as well as the stream car", () => {
+    const c = championship({
+      SpectatorCarEnabled: true,
+      SpectatorCars: [
+        { Model: "ford_transit", PitBox: 29, Name: "BATL TV" },
+        { Model: "recorder_car", PitBox: 30, Name: "Race Recorder" },
+      ],
+    })
+    const f = runContent(c, stubContent(suzukaInstalled)).findings.find(
+      (x) => x.code === "content.car-missing",
+    )
+    expect(f?.data).toMatchObject({ models: ["ford_transit", "recorder_car"] })
+  })
 })
 
 describe("installed skins", () => {
