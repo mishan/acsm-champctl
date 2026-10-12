@@ -436,8 +436,3 @@ Two copies of that list is one that gets updated and one that doesn't.
   see anything — and the two refusals for a channel that is missing or isn't
   sendable. All three are one `champctl-bot report --channel` away from being
   checked by hand against a scratch server, and none of them is checked by CI.
-- **`champctl-serve` has no live test.** `test/live/flows.live.test.ts` drives
-  finalize against the Docker harness through the engine; nothing drives it
-  through HTTP. The engine is where the risk is, so this is a gap in coverage
-  rather than in confidence — but the session and cookie handling in particular
-  have only ever met a stub `fetch`.
