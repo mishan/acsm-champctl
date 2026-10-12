@@ -138,7 +138,7 @@ classEntrants: 29, classEntrantsWithoutUuid: 29
 matchedPerRound: [0, 0, 0, 0, 0], matchedEverywhere: 0
 ```
 
-If that holds up, the consequences run well past liveries:
+It holds (measured below), and the consequences run well past liveries:
 
 - **`CombineEntryLists` never applies an event's entry list.** Its guard is
   `entrant.InternalUUID != uuid.Nil` on the *class* entrant, so with nil UUIDs
@@ -153,19 +153,13 @@ If that holds up, the consequences run well past liveries:
   copy 29 sets of properties onto arbitrary event entrants. Inert at race time,
   corrupt in the stored export, and gridmom reads the stored export.
 
-One thing is not yet nailed down, and it inverts the answer if it goes the other
-way: whether these entrants genuinely hold the nil UUID, or whether premium
-2.4.15 simply **omits `InternalUUID` from the export JSON**. The OSS struct has
-`ini:"-"` and no `json:"-"`, so OSS exports it — but premium is a different
-build. The form settles it, because its 32 hidden `EntryList.InternalUUID`
-inputs are rendered from the stored entrants: if those carry real UUIDs, the
-export is hiding the field and everything above is wrong. `uuidCensus` counts
-them without emitting any. **Re-run `recon:champ-form` and read that line before
-building on this.**
-
-A third possibility, if the values are rendered *empty* rather than nil: a save
-would then give every entrant a fresh identity, because `BuildEntryList` starts
-from `NewEntrant()` and only overwrites the UUID when `uuid.Parse` succeeds.
+Measured, not assumed: the entrants genuinely hold the nil UUID. Premium
+2.4.15 could have been omitting `InternalUUID` from the export JSON instead, which
+would invert everything above, but the form settles it: its hidden
+`EntryList.InternalUUID` inputs are rendered from the stored entrants, and
+`recon:champ-form` against BATL's live championship (October 2026, 30 entrants)
+counts 30 nil, 2 empty (the clone-me template rows) and 2 real, as many as the
+form has spectator rows. The September capture agreed, 29 nil and 1 real.
 
 **What champctl does about it.** Not "assume the measurement holds". `planLiveries`
 recomputes the join from the export on every run and reports, per driver, the
