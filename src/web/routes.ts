@@ -54,6 +54,7 @@ import { planFinalize, type FinalizePlan } from "../finalize/plan.js"
 import { applyReorder, PartialReorderError } from "../reorder/apply.js"
 import { planReorder, type ReorderPlan } from "../reorder/plan.js"
 import type { CheckReport } from "../gridmom/finding.js"
+import { installedContentIndex, type ContentIndex } from "../content/index.js"
 import { check } from "../gridmom/index.js"
 import type { PitTable } from "../pits/table.js"
 import { EMPTY_PIT_TABLE } from "../pits/table.js"
@@ -577,6 +578,16 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           return null
         })
 
+    /** The installed-content index for gridmom, never fatal for the same reasons. */
+    const contentFor = async (req: FastifyRequest): Promise<ContentIndex | undefined> =>
+      ctx.content
+        .get()
+        .then(installedContentIndex)
+        .catch((err: unknown) => {
+          req.log.warn({ err }, "could not read installed content")
+          return undefined
+        })
+
     app.get("/content", async (req): Promise<ContentResponse> => {
       const s = requireSession(ctx, req)
       const [content, layouts] = await Promise.all([ctx.content.get(), layoutsFor(s, req)])
@@ -596,12 +607,13 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
       },
       async (req): Promise<ChampionshipResponse> => {
         const s = requireSession(ctx, req)
-        const [c, layouts] = await Promise.all([
+        const [c, layouts, content] = await Promise.all([
           ctx.reader.exportChampionship(req.params.id),
           // Costs a page fetch the first time and nothing for the hour after.
           // Worth it here of all places: this is the screen that shows a round
           // with no layout set, and the screen where it gets fixed.
           layoutsFor(s, req),
+          contentFor(req),
         ])
         return {
           championship: championshipView(c, ctx.profile),
@@ -609,7 +621,12 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           // §1's third job — "checking a championship for mistakes before
           // people show up to race" — is most of this tool's value and costs
           // one pure function call over an export already in hand.
-          gridmom: check(c, ctx.profile, { pits: ctx.pits, now: ctx.now(), layouts }),
+          gridmom: check(c, ctx.profile, {
+            pits: ctx.pits,
+            now: ctx.now(),
+            layouts,
+            content,
+          }),
         }
       },
     )
@@ -843,6 +860,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           pits: ctx.pits,
           now,
           layouts: await layoutsFor(s, req),
+          content: await contentFor(req),
         })
 
         return {

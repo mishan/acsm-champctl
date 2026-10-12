@@ -38,7 +38,7 @@ export const ALL_CHECKS: readonly Check[] = [
 
 export interface CheckOptions {
   pits?: PitTable
-  content?: ContentIndex
+  content?: ContentIndex | undefined
   /** Track layouts, when a caller has been able to read them. See CheckContext. */
   layouts?: TrackLayouts | null
   /** Injected so time-dependent checks are deterministic under test. */

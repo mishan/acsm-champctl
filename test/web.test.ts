@@ -1693,6 +1693,37 @@ describe("what content is installed", () => {
     expect(f?.message).toContain("indy and gp")
   })
 
+  /**
+   * The listings come back empty when ACSM couldn't be read, and reading that
+   * as "nothing installed" would put an error on every car in the
+   * championship.
+   */
+  it.each([
+    {
+      listed: "a server without the championship's car",
+      cars: [{ id: "ks_porsche_911_gt3_r_2016", name: "Porsche 911 GT3 R" }],
+      codes: ["content.car-missing"],
+    },
+    { listed: "a server whose car listing couldn't be read", cars: [], codes: [] },
+  ])("checks the round list against $listed", async ({ cars, codes }) => {
+    const h = harness({
+      content: new ContentCache({
+        load: async () => ({ cars, tracks: [{ id: "suzuka", name: "Suzuka" }] }),
+      }),
+    })
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/api/championships/${CHAMP_ID}`,
+      headers: { cookie: h.cookie() },
+    })
+    const found = res
+      .json()
+      .gridmom.findings.map((x: { code: string }) => x.code)
+      .filter((c: string) => c.startsWith("content."))
+    expect(found).toEqual(codes)
+  })
+
   it("needs a session, like every other read", async () => {
     // Not secrecy — it is a list of folder names — but it is champctl's most
     // expensive read, and it walks several pages of a league's manager.
