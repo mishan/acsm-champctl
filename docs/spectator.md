@@ -68,11 +68,25 @@ server checksums), or from the game server if its owner will copy them.
 Every track the league races, every car on its grids. A car's `data.acd` is a
 few hundred KB, so even a few hundred cars is around 100 MB.
 
-From a Windows AC install, PowerShell's `robocopy` copies just these files and
-keeps the folder layout:
+From a Windows AC install, PowerShell finds the install through Steam (AC is
+app 244210), whichever drive it's on, and `robocopy` copies just these files,
+keeping the folder layout:
 
 ```powershell
-$ac  = "C:\Program Files (x86)\Steam\steamapps\common\assettocorsa"
+$id   = 244210
+$keys = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App $id",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Steam App $id"
+$ac = $keys | ForEach-Object { (Get-ItemProperty $_ -ErrorAction SilentlyContinue).InstallLocation } |
+      Where-Object { $_ } | Select-Object -First 1
+if (-not $ac) {
+  # Not in the registry: look in each Steam library.
+  $steam = (Get-ItemProperty HKCU:\Software\Valve\Steam).SteamPath
+  $ac = Select-String "$steam\steamapps\libraryfolders.vdf" -Pattern '"path"\s+"(.+)"' |
+        ForEach-Object { ($_.Matches[0].Groups[1].Value -replace '\\\\', '\') + "\steamapps\common\assettocorsa" } |
+        Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+if (-not $ac) { throw "Couldn't find Assetto Corsa; set `$ac to its folder by hand." }
+"Copying from $ac"
 $out = "$env:USERPROFILE\champctl-ac"
 robocopy "$ac\system\data"    "$out\system\data"    surfaces.ini
 robocopy "$ac\content\cars"   "$out\content\cars"   data.acd suspensions.ini /S
