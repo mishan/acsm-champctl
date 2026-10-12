@@ -395,12 +395,12 @@ Two copies of that list is one that gets updated and one that doesn't.
 
 ## Known gaps
 
-- **`ContentIndex` has no producer.** The interface and three checks that use it
-  exist and are tested against a stub, but nothing populates a real one, so
-  those checks can't fire in production.
-  `/content/tracks/{track}/ui/ui_track.json` is the endpoint; the harness needs
-  AC content installed to exercise it. Either wire it up or delete it — a check
-  that cannot run is worse than no check, because the report looks complete.
+- **Only the web screens check installed content.** `installedContentIndex`
+  builds the index from the `/cars` and `/tracks` listings `champctl-serve`
+  already holds, and the round list and the new-championship preview pass it
+  to gridmom. The CLI, the nightly bot report and the finalize and reorder
+  plans don't read the listings, so their reports skip the track and car
+  checks. The skin check never fires anywhere: the listings carry no skins.
 - **No real export fixture.** `fixtures/import-roundtrip/` needs a real BATL
   export before the round-trip regression test can cover the real schema. The
   archive's first run produces one; it needs sanitising before it can be

@@ -2,7 +2,7 @@
  * Installed-content index (plan §6.4).
  *
  * "Is this track installed?" can only be answered by something that can see the
- * server. Off-host that means the event form's track XHR; on-host it means the
+ * server. Off-host that means ACSM's `/cars` and `/tracks` listings; on-host it means the
  * filesystem. Both sit behind this interface so moving the service onto the
  * ACSM box later is a config change, not a rewrite (plan §9).
  *
@@ -11,6 +11,8 @@
  * would be worse than silence.
  */
 
+import type { InstalledContent } from "../acsm/types.js"
+
 export interface ContentIndex {
   hasTrack(track: string, layout?: string): boolean
   hasCar(model: string): boolean
@@ -18,39 +20,24 @@ export interface ContentIndex {
   skinsFor(model: string): ReadonlySet<string> | undefined
 }
 
-export interface ContentSnapshot {
-  /** track -> layouts. A track with no layouts maps to `[""]`. */
-  tracks: Record<string, string[]>
-  /** model -> skin folder names. */
-  cars: Record<string, string[]>
-}
-
-export class SnapshotContentIndex implements ContentIndex {
-  readonly #tracks: Map<string, Set<string>>
-  readonly #cars: Map<string, Set<string>>
-
-  constructor(snapshot: ContentSnapshot) {
-    this.#tracks = new Map(
-      Object.entries(snapshot.tracks ?? {}).map(([t, ls]) => [t, new Set(ls ?? [])]),
-    )
-    this.#cars = new Map(
-      Object.entries(snapshot.cars ?? {}).map(([c, ss]) => [c, new Set(ss ?? [])]),
-    )
-  }
-
-  hasTrack(track: string, layout?: string): boolean {
-    const layouts = this.#tracks.get(track.trim())
-    if (!layouts) return false
-    const l = (layout ?? "").trim()
-    if (!l) return true
-    return layouts.has(l) || layouts.has("")
-  }
-
-  hasCar(model: string): boolean {
-    return this.#cars.has(model.trim())
-  }
-
-  skinsFor(model: string): ReadonlySet<string> | undefined {
-    return this.#cars.get(model.trim())
+/**
+ * The index ACSM's `/cars` and `/tracks` listings give.
+ *
+ * `undefined` when either listing came back empty, because `readInstalledContent`
+ * returns an empty list for one it failed to read, and an empty list here would
+ * report every car or track in the championship as missing.
+ *
+ * Layouts aren't in the listings, so `hasTrack` answers for the track alone and
+ * the layout checks work off `TrackLayouts` instead. Skins aren't either, so
+ * `skinsFor` never knows and the skin check stays quiet.
+ */
+export function installedContentIndex(content: InstalledContent): ContentIndex | undefined {
+  if (content.cars.length === 0 || content.tracks.length === 0) return undefined
+  const cars = new Set(content.cars.map((c) => c.id))
+  const tracks = new Set(content.tracks.map((t) => t.id))
+  return {
+    hasTrack: (track) => tracks.has(track.trim()),
+    hasCar: (model) => cars.has(model.trim()),
+    skinsFor: () => undefined,
   }
 }
