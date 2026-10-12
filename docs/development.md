@@ -422,13 +422,18 @@ Two copies of that list is one that gets updated and one that doesn't.
   `test/standings.test.ts` is a shape someone thought plausible, which makes the
   tests a record of an assumption rather than of a measurement. The one thing
   they genuinely pin is that an unrecognised shape returns `undefined` instead
-  of a half-read table. Until `npm run recon:standings` is run against a premium
-  manager, treat the accepted spellings as guesses.
-- **The export scorer is unverified against ACSM.** It agrees with itself and
-  with the fixtures; nothing has yet confirmed that it agrees with the standings
-  page for even the simple places-only case it is willing to compute.
-  `compareStandings` is built to answer this the first time both sources are
-  available on one championship.
+  of a half-read table. Measured in October 2026: BATL's premium build serves
+  `standings.json` only to a logged-in session, and the bot holds no login, so
+  in production it always reads the championship page instead. `recon:standings`
+  can't measure the endpoint without credentials either.
+- **The export scorer has been checked against ACSM once.** Measured in
+  October 2026 with `standings --dry-run` over BATL's 61 championships: one was
+  simple enough to score, and its standings matched the page exactly. The other
+  60 weren't scored. 31 have reversed-grid two-race rounds, 16 drop the worst
+  round, 3 run more than one class and 10 award a fastest-lap point, each a
+  rule champctl hasn't measured. The page is what the bot posts, so this only
+  matters if the page goes away. Reversed-grid rounds are the rule to measure
+  first, since they cover half the championships.
 - **CI doesn't exercise the real Discord gateway.** `GatewayTransport` is the
   one module `test/bot.test.ts` cannot reach, because every test above it stops
   at the transport interface. The login race the class exists to close —
