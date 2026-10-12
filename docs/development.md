@@ -429,15 +429,9 @@ Two copies of that list is one that gets updated and one that doesn't.
   page for even the simple places-only case it is willing to compute.
   `compareStandings` is built to answer this the first time both sources are
   available on one championship.
-- **Nothing exercises the real Discord gateway.** `GatewayTransport` is the one
-  module `test/bot.test.ts` cannot reach, because every test above it stops at
-  the transport interface. What that leaves uncovered is the login race the
-  class exists to close — `client.login()` resolves before `channels.fetch` can
-  see anything — and the two refusals for a channel that is missing or isn't
-  sendable. All three are one `champctl-bot report --channel` away from being
-  checked by hand against a scratch server, and none of them is checked by CI.
-- **`champctl-serve` has no live test.** `test/live/flows.live.test.ts` drives
-  finalize against the Docker harness through the engine; nothing drives it
-  through HTTP. The engine is where the risk is, so this is a gap in coverage
-  rather than in confidence — but the session and cookie handling in particular
-  have only ever met a stub `fetch`.
+- **CI doesn't exercise the real Discord gateway.** `GatewayTransport` is the
+  one module `test/bot.test.ts` cannot reach, because every test above it stops
+  at the transport interface. The login race the class exists to close —
+  `client.login()` resolves before `channels.fetch` can see anything — is
+  covered by the bot running in production. The two refusals for a channel
+  that is missing or isn't sendable have only been read, not run.
