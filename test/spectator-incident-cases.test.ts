@@ -435,3 +435,21 @@ describe("moves the turn-in rule mustn't excuse", () => {
     expect([s.call, s.rule]).toEqual([call, rule])
   })
 })
+
+describe("a collision from ACSM's live timing", () => {
+  it("says the contact point isn't recorded, rather than guessing one", async () => {
+    const track = new Track(parseFastLane(fastLane(loop("left"))))
+    const path = await writeScenario(
+      dir,
+      "no-contact-point",
+      track,
+      [
+        { carId: 1, driver: "A", s: (t) => 100 + 30 * (t / 1000), across: () => -2 },
+        { carId: 2, driver: "B", s: (t) => 101 + 30 * (t / 1000), across: () => 2 },
+      ],
+      { at: 5000, carId: 1, otherCarId: 2, contactPoint: false },
+    )
+    const { facts } = await buildIncident(path, 0, track)
+    expect(facts).toContain("Where on the cars they touched isn't recorded.")
+  })
+})

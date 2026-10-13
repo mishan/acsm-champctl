@@ -49,7 +49,8 @@ export type JournalRecord =
       otherCarId?: number
       impactSpeed: number
       worldPos: Vec3
-      relPos: Vec3
+      /** Absent when collisions came from ACSM's live timing, which doesn't say. */
+      relPos?: Vec3
     }
   | { t: "connection"; at: number; carId: number; connected: boolean }
   | { t: "end"; at: number; reason: string }

@@ -52,6 +52,24 @@ describe("champctl-spectator parseArgs", () => {
     ["a park position with two numbers", [...record, "--park", "1,2"], /x,y,z/],
     ["a park position with an empty number", [...record, "--park", "1,2,"], /x,y,z/],
     ["--plugin-from without the feed", [...record, "--plugin-from", "10.0.0.1"], /plugin-listen/],
+    [
+      "collisions from both the plugin and race control",
+      [
+        ...record,
+        "--plugin-listen",
+        "12001",
+        "--plugin-server",
+        "h:12000",
+        "--race-control",
+        "https://a.example",
+      ],
+      /not both/,
+    ],
+    [
+      "a race control address that isn't one",
+      [...record, "--race-control", "acsm.example"],
+      /ACSM address/,
+    ],
     ["an option it doesn't know", [...record, "--pasword", "x"], /Unknown option --pasword/],
   ])("refuses %s", (_, argv, message) => {
     expect(() => parseArgs(argv)).toThrow(UsageError)

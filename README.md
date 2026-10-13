@@ -872,7 +872,8 @@ champctl-spectator mcp --journals <dir> --ac-root <dir> [--rules <file>] [--prof
 
 It needs three things set up first: a spectator car slot of its own, copies of
 the league's car and track files (nobody can fetch these for you; ACSM doesn't
-serve them), and the server's UDP plugin feed for collisions. The guide is
+serve them), and a source of collisions: the server's UDP plugin feed, or
+ACSM's public live timing where nobody can set up a plugin. The guide is
 [`docs/spectator.md`](docs/spectator.md).
 
 ## Configuration

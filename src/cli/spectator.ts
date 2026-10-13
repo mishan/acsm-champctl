@@ -12,6 +12,7 @@ import { incidentBrief } from "../spectator/brief.js"
 import { listCollisions } from "../spectator/incident.js"
 import { renderIncidentSvg } from "../spectator/render.js"
 import { serveMcp } from "../spectator/mcp.js"
+import { raceControlUrl } from "../spectator/racecontrol.js"
 import { callName } from "../spectator/rules.js"
 import { Recorder } from "../spectator/recorder.js"
 import type { Vec3 } from "../spectator/protocol.js"
@@ -56,6 +57,10 @@ Record options:
   --plugin-from <addr>       accept the feed only from this address (default:
                              the --plugin-server host). A server in Docker
                              sends from its container address
+  --race-control <url>       take collisions from the server's ACSM live
+                             timing instead of the plugin feed, for when no
+                             admin can add a plugin. It doesn't say where on
+                             the car the contact was
   --no-replay                keep journals only
 
 Give the recorder a spectator car of its own in the championship, locked to
@@ -107,6 +112,7 @@ type Args =
         serverPort: number
         allowedSources?: string[]
       }
+      raceControl?: string
       replay: boolean
     }
   | { command: "replay"; journal: string; out?: string; intervalMs?: number; cars?: string }
@@ -249,6 +255,19 @@ export function parseArgs(argv: readonly string[]): Args {
     if (pluginFrom !== undefined && listen === undefined) {
       throw new UsageError("--plugin-from needs --plugin-listen and --plugin-server.")
     }
+    const raceControl = take("--race-control")
+    if (raceControl !== undefined) {
+      // Both would report every collision twice.
+      if (listen !== undefined)
+        throw new UsageError("Collisions come from --race-control or the plugin feed, not both.")
+      try {
+        raceControlUrl(raceControl)
+      } catch {
+        throw new UsageError(
+          `--race-control must be the server's ACSM address, such as https://acsm.example.org, not ${JSON.stringify(raceControl)}.`,
+        )
+      }
+    }
     args = {
       command,
       ...server,
@@ -272,6 +291,7 @@ export function parseArgs(argv: readonly string[]): Args {
             },
           }
         : {}),
+      ...(raceControl ? { raceControl } : {}),
       replay: !noReplay,
     }
   }
@@ -394,6 +414,7 @@ async function main(argv: readonly string[]): Promise<number> {
       pose: () => ({ pos: args.park, rot: [0, 0, 0], vel: [0, 0, 0] }),
     },
     ...(args.plugin ? { plugin: { ...args.plugin, realtimeIntervalMs: 100 } } : {}),
+    ...(args.raceControl ? { raceControl: { url: args.raceControl } } : {}),
     outDir: args.out,
     ...(args.replay ? { onJournal: (j: string) => void toReplay(j) } : {}),
     log,
