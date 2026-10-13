@@ -13,7 +13,8 @@ league's server.
 
 It doesn't need to run on the game server's machine, and usually won't. What
 it does need from wherever it runs is set out below: a slot to join, copies of
-some car and track files, and the server's plugin feed.
+some car and track files, and a source of collisions: the server's plugin
+feed, or ACSM's live timing.
 
 ---
 
@@ -113,15 +114,40 @@ that differs from the server's copy fails the checksum, and the recorder logs:
 which means: copy that car's or track's files again, from an install that
 matches the server.
 
-## 3. The plugin feed, for collisions
+## 3. Collisions: the plugin feed or ACSM's live timing
 
 The recorder sees every car by joining, but game clients are never told when
 two *other* cars touch: each driver's game reports its own contacts to the
-server, and only the server knows. The server passes them on to **UDP plugins**,
-programs it streams events to (Real Penalty and KissMyRank work this way).
-Without one, races are still recorded, but there are no collisions to analyze.
+server, and only the server knows. It tells two places, and the recorder can
+take collisions from either, not both:
 
-ACSM 2.4.8 and later can feed several plugins side by side. In **Server
+- **The UDP plugin feed**, which needs an ACSM admin to set up, and says where
+  on each car the contact was.
+- **ACSM's live timing**, which needs nothing set up, as long as the live
+  timing page shows without logging in. It doesn't say where on the car.
+
+Without either, races are still recorded, but there are no collisions to
+analyze.
+
+### ACSM's live timing
+
+Pass the address of the game server's ACSM, the one its live timing page is
+on:
+
+```
+--race-control https://acsm.example.org
+```
+
+The recorder keeps the page's feed open and journals each collision when the
+server says it happened. Incident reports then say the contact point isn't
+recorded. If the feed turns out to be for a different track from the server
+the recorder joined, it says so: each ACSM runs one server, and another's
+collisions would land on the wrong cars.
+
+### The UDP plugin feed
+
+The server streams events to **UDP plugins** (Real Penalty and KissMyRank work
+this way). ACSM 2.4.8 and later can feed several plugins side by side. In **Server
 Options → UDP Plugins**, add one:
 
 - **Send Address**: the public address of the machine champctl runs on, and a
@@ -156,6 +182,9 @@ CHAMPCTL_SPECTATOR_PASSWORD=… champctl-spectator record \
   --out /srv/champctl/recordings \
   --plugin-listen 0.0.0.0:12001 --plugin-server <game server>:12000
 ```
+
+Where there's no plugin, `--race-control <the server's ACSM address>` takes the
+place of the two plugin flags.
 
 - The join password comes from the environment, not the command line, where
   anyone on the machine could read it.

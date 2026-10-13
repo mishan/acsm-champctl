@@ -12,11 +12,14 @@ import { SpectatorClient, type SpectatorOptions } from "./client.js"
 import { JournalWriter, type JournalRecord } from "./journal.js"
 import { PluginListener, type PluginListenerOptions } from "./plugin.js"
 import type { HandshakeOk, ServerPacket } from "./protocol.js"
+import { RaceControlFeed, type RaceControlOptions, type RaceControlUpdate } from "./racecontrol.js"
 
 export interface RecorderOptions {
   client: Omit<SpectatorOptions, "onPacket" | "onClose" | "now">
   /** Omit to record without collisions or spline positions. */
   plugin?: Omit<PluginListenerOptions, "onEvent" | "onError" | "now">
+  /** Collisions from ACSM's live timing instead, where nobody can set up the plugin. */
+  raceControl?: Omit<RaceControlOptions, "onUpdate" | "onError" | "now">
   outDir: string
   /** Called with each journal once its session is over. */
   onJournal?: (path: string) => void
@@ -32,6 +35,7 @@ export class Recorder {
   readonly #start = performance.now()
   #client: SpectatorClient | undefined
   #plugin: PluginListener | undefined
+  #raceControl: RaceControlFeed | undefined
   #journal: JournalWriter | undefined
   #stopped = false
   #retryTimer: NodeJS.Timeout | undefined
@@ -58,6 +62,15 @@ export class Recorder {
       })
       await this.#plugin.start()
     }
+    if (this.#opts.raceControl) {
+      this.#raceControl = new RaceControlFeed({
+        ...this.#opts.raceControl,
+        now: this.now,
+        onUpdate: (u, at) => this.#onRaceControl(u, at),
+        onError: (e) => this.#log(e.message),
+      })
+      this.#raceControl.start()
+    }
     void this.#join()
   }
 
@@ -68,6 +81,7 @@ export class Recorder {
     const ended = this.#endJournal("recorder stopped")
     this.#client?.close()
     this.#plugin?.close()
+    this.#raceControl?.close()
     await ended
     await Promise.all(this.#closing)
   }
@@ -266,6 +280,42 @@ export class Recorder {
         if (e.kind === "malformed")
           this.#log(`plugin feed: malformed 0x${e.id.toString(16)}: ${e.error}`)
         return
+    }
+  }
+
+  #onRaceControl(u: RaceControlUpdate, at: number): void {
+    switch (u.kind) {
+      case "collision":
+        this.#write({
+          t: "collision",
+          at,
+          carId: u.carId,
+          ...(u.otherCarId === undefined ? {} : { otherCarId: u.otherCarId }),
+          impactSpeed: u.impactSpeed,
+          worldPos: u.worldPos,
+        })
+        return
+      case "connection":
+        if (u.connected)
+          this.#write({
+            t: "car",
+            at,
+            carId: u.carId,
+            model: u.model,
+            skin: u.skin,
+            driver: u.name,
+            guid: u.guid,
+          })
+        return
+      case "session": {
+        // Another server's ACSM would put its collisions on this server's cars.
+        const track = this.#client?.session?.track
+        if (track !== undefined && track !== u.track)
+          this.#log(
+            `race control feed is at ${u.track}, but the server the recorder joined is at ${track}: is --race-control this server's ACSM?`,
+          )
+        return
+      }
     }
   }
 }

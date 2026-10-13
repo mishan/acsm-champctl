@@ -4,9 +4,10 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import { readJournal, type JournalRecord } from "../src/spectator/journal.js"
-import { Recorder } from "../src/spectator/recorder.js"
+import { Recorder, type RecorderOptions } from "../src/spectator/recorder.js"
 import { WireWriter } from "../src/spectator/wire.js"
 import { type FakeAcServer, fakeAcRoot, fakeAcServer } from "./support/fake-ac-server.js"
+import { fakeRaceControl } from "./support/fake-race-control.js"
 
 let dir: string
 let server: FakeAcServer
@@ -21,8 +22,12 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true })
 })
 
-function recorder(onJournal: (p: string) => void = () => {}): Recorder {
+function recorder(
+  onJournal: (p: string) => void = () => {},
+  extra: Partial<RecorderOptions> = {},
+): Recorder {
   return new Recorder({
+    ...extra,
     client: {
       host: "127.0.0.1",
       port: server.port,
@@ -119,5 +124,32 @@ describe("Recorder", () => {
     await rec.stop()
     const names = (await journals()).map((r) => r.find((x) => x.t === "session"))
     expect(names.map((x) => x?.t === "session" && x.name)).toEqual(["Practice", "Race"])
+  })
+
+  it("journals collisions from ACSM's live timing, with no contact point", async () => {
+    const rc = await fakeRaceControl()
+    const rec = recorder(undefined, { raceControl: { url: rc.url } })
+    await rec.start()
+    await server.joins(1)
+    await rc.connections(1)
+    await settle()
+    rc.send({ EventType: 200, Message: { CarIDToGUID: { "1": "g1", "2": "g2" }, SessionInfo: {} } })
+    rc.send({
+      EventType: 108,
+      Message: {
+        Time: new Date().toISOString(),
+        DriverGUID: "g2",
+        OtherDriverGUID: "g1",
+        Speed: 30,
+        WorldPos: { X: 1, Y: 2, Z: 3 },
+      },
+    })
+    await settle()
+    await rec.stop()
+    await rc.close()
+    const [records] = await journals()
+    const hit = records!.find((r) => r.t === "collision")
+    expect(hit).toMatchObject({ carId: 2, otherCarId: 1, impactSpeed: 30, worldPos: [1, 2, 3] })
+    expect(hit).not.toHaveProperty("relPos")
   })
 })

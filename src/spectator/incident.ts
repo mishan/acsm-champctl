@@ -28,7 +28,7 @@ export interface CollisionSummary {
   otherCarId?: number
   impactSpeedKmh: number
   /** Contact point in the reporting car's frame, as the server passed it on. */
-  relPos: Vec3
+  relPos?: Vec3
   drivers: string[]
 }
 
@@ -129,7 +129,8 @@ export interface Measurements {
   moves: Record<Side, Move | null>
   /** Coming back from well beyond the track edge during the lookback. */
   rejoining: Record<Side, { maxOffM: number } | null>
-  contactPoint: string
+  /** Null when the recording doesn't say, as ACSM's live timing doesn't. */
+  contactPoint: string | null
   /** Whether car A was recorded at all in the window. */
   haveA: boolean
 }
@@ -160,7 +161,7 @@ function summarize(
     carId: r.carId,
     ...(r.otherCarId === undefined ? {} : { otherCarId: r.otherCarId }),
     impactSpeedKmh: r.impactSpeed * 3.6,
-    relPos: r.relPos,
+    ...(r.relPos === undefined ? {} : { relPos: r.relPos }),
     drivers,
   }
 }
@@ -331,7 +332,7 @@ export function measure(
   rows: readonly TimelineRow[],
   track: Track,
   th: IncidentThresholds,
-  relPos: Vec3,
+  relPos: Vec3 | undefined,
   haveA: boolean,
 ): Measurements {
   const both = rows.filter((r) => r.a && r.b && r.gapM !== null)
@@ -481,7 +482,7 @@ export function measure(
     lookbackLeader,
     moves: { a: move("a"), b: move("b") },
     rejoining: { a: rejoin("a"), b: rejoin("b") },
-    contactPoint: describeRel(relPos),
+    contactPoint: relPos ? describeRel(relPos) : null,
     haveA,
   }
 }
@@ -582,7 +583,11 @@ function describe(p: IncidentPacket, track: Track, th: IncidentThresholds): stri
       )
     }
   }
-  facts.push(`${A}'s game placed the contact on ${A}'s ${m.contactPoint}.`)
+  facts.push(
+    m.contactPoint
+      ? `${A}'s game placed the contact on ${A}'s ${m.contactPoint}.`
+      : "Where on the cars they touched isn't recorded.",
+  )
   return facts
 }
 
