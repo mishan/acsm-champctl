@@ -48,8 +48,8 @@ Record options:
   --guid <steam64>           the GUID to join with
   --name <name>              driver name others see (default: Race Recorder)
   --out <dir>                where journals and replays go
-  --park <x,y,z>             where the car sits (default: 1000 m above the
-                             origin, clear of anything a car can drive into)
+  --park <x,y,z>             where the car sits (default: 50 km off and 2 km
+                             under the origin, out of sight from any track)
   --plugin-listen [host:]port receive the server's UDP plugin feed here, for
                              collisions; the plugin's Send Address in ACSM.
                              Listens on 127.0.0.1 unless a host is given
@@ -240,7 +240,9 @@ export function parseArgs(argv: readonly string[]): Args {
     if (!/^\d{17}$/.test(guid))
       throw new UsageError(`--guid must be a 17-digit Steam64 ID, not ${JSON.stringify(guid)}.`)
     const parkRaw = take("--park")
-    const parts = (parkRaw ?? "0,1000,0").split(",")
+    // Out of sight: a game shows a car 1000 m above the origin to anyone on a
+    // track a kilometer across, and no track is 50 km across.
+    const parts = (parkRaw ?? "50000,-2000,50000").split(",")
     // Number("") is 0, so "1,2," would otherwise park at 1,2,0.
     const park = parts.map((v) => (v.trim() === "" ? Number.NaN : Number(v)))
     if (park.length !== 3 || park.some((v) => !Number.isFinite(v))) {
@@ -386,6 +388,7 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   await mkdir(args.out, { recursive: true })
+  const replays = new Set<Promise<void>>()
   const toReplay = async (journal: string): Promise<void> => {
     const out = journal.replace(/\.ndjson\.gz$/, ".acreplay")
     try {
@@ -416,19 +419,32 @@ async function main(argv: readonly string[]): Promise<number> {
     ...(args.plugin ? { plugin: { ...args.plugin, realtimeIntervalMs: 100 } } : {}),
     ...(args.raceControl ? { raceControl: { url: args.raceControl } } : {}),
     outDir: args.out,
-    ...(args.replay ? { onJournal: (j: string) => void toReplay(j) } : {}),
+    ...(args.replay
+      ? {
+          onJournal: (j: string) => {
+            const p = toReplay(j).finally(() => replays.delete(p))
+            replays.add(p)
+          },
+        }
+      : {}),
     log,
   })
   await recorder.start()
   await new Promise<void>((resolve) => {
     const stop = (): void => {
       log("stopping")
-      void recorder.stop().then(resolve)
+      void recorder
+        .stop()
+        .then(() => Promise.all(replays))
+        .then(() => resolve())
     }
     process.once("SIGINT", stop)
     process.once("SIGTERM", stop)
   })
-  return 0
+  // Everything is written. Node's WebSocket waits for the server to answer
+  // its close, and ACSM behind Cloudflare never did: the process stayed up
+  // after it had finished.
+  process.exit(0)
 }
 
 export async function run(argv: readonly string[]): Promise<void> {
