@@ -76,6 +76,11 @@ describe("champctl-spectator parseArgs", () => {
       [...record, "--race-control", "acsm.example"],
       /ACSM address/,
     ],
+    [
+      "a replays address that isn't one",
+      [...record, "--replay-url", "champctl.example/replays"],
+      /replays page/,
+    ],
     ["an option it doesn't know", [...record, "--pasword", "x"], /Unknown option --pasword/],
   ])("refuses %s", (_, argv, message) => {
     expect(() => parseArgs(argv)).toThrow(UsageError)

@@ -51,6 +51,10 @@ export interface ReplayOptions {
 }
 
 export interface ReplaySummary {
+  track: string
+  trackConfig: string
+  /** The session's name, such as "Race". */
+  session: string
   frames: number
   /** `ownWheels` is false where a car's data couldn't be read and the R32's stood in. */
   cars: { carId: number; model: string; driver: string; samples: number; ownWheels: boolean }[]
@@ -293,6 +297,9 @@ export async function writeReplay(
     out = undefined
 
     return {
+      track: session.track,
+      trackConfig: session.trackConfig,
+      session: session.name,
       frames,
       durationMs: end - start,
       cars: carIds.map((carId) => ({

@@ -175,6 +175,9 @@ contacts, nothing sensitive.
 
 ## 4. Running it
 
+On a champctl deployment it's the `recorder` service, set up in
+[`docs/deployment.md`](deployment.md#the-race-recorder). By hand:
+
 ```sh
 CHAMPCTL_SPECTATOR_PASSWORD=… champctl-spectator record \
   --server <game server>:9600 \
