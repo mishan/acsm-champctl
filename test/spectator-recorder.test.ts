@@ -133,7 +133,15 @@ describe("Recorder", () => {
     await server.joins(1)
     await rc.connections(1)
     await settle()
-    rc.send({ EventType: 200, Message: { CarIDToGUID: { "1": "g1", "2": "g2" }, SessionInfo: {} } })
+    rc.send({
+      EventType: 200,
+      Message: {
+        ConnectedDrivers: {
+          Drivers: { g1: { CarInfo: { CarID: 1 } }, g2: { CarInfo: { CarID: 2 } } },
+        },
+        SessionInfo: {},
+      },
+    })
     rc.send({
       EventType: 108,
       Message: {

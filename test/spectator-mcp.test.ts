@@ -146,7 +146,7 @@ describe("serveMcp", () => {
       `${SESSION}: loop, Race, 1 car-to-car collision`,
     )
     expect(r.get(2)?.result?.content[0]?.text).toMatch(
-      /^0: Bo hit Ana, 11 km\/h\n1: Ana hit the scenery/,
+      /^0: Bo hit Ana, 3 km\/h\n1: Ana hit the scenery/,
     )
   })
 

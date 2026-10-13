@@ -160,7 +160,9 @@ function summarize(
     at: r.at,
     carId: r.carId,
     ...(r.otherCarId === undefined ? {} : { otherCarId: r.otherCarId }),
-    impactSpeedKmh: r.impactSpeed * 3.6,
+    // Already km/h, as the game reports it: on BATL a wall hit came in at 73.7
+    // from a car doing 88.5 km/h, which in m/s would have been 265 km/h.
+    impactSpeedKmh: r.impactSpeed,
     ...(r.relPos === undefined ? {} : { relPos: r.relPos }),
     drivers,
   }
