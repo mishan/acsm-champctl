@@ -1,7 +1,13 @@
+import { spawn } from "node:child_process"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
 import { UsageError } from "../src/cli/args.js"
 import { parseArgs } from "../src/cli/spectator.js"
+import { fakeAcRoot, fakeAcServer } from "./support/fake-ac-server.js"
+import { fakeRaceControl } from "./support/fake-race-control.js"
 
 const record = [
   "record",
@@ -25,7 +31,7 @@ describe("champctl-spectator parseArgs", () => {
       command: "record",
       host: "127.0.0.1",
       port: 9600,
-      park: [0, 1000, 0],
+      park: [50000, -2000, 50000],
       plugin: {
         listenHost: "127.0.0.1",
         listenPort: 12001,
@@ -75,4 +81,36 @@ describe("champctl-spectator parseArgs", () => {
     expect(() => parseArgs(argv)).toThrow(UsageError)
     expect(() => parseArgs(argv)).toThrow(message)
   })
+})
+
+describe("champctl-spectator record", () => {
+  it("exits once stopped, though the race control feed never answers its close", async () => {
+    // As ACSM behind Cloudflare didn't: the recorder had finished and the
+    // process stayed up.
+    const dir = await mkdtemp(join(tmpdir(), "record-cli-"))
+    await fakeAcRoot(dir)
+    const server = await fakeAcServer()
+    const rc = await fakeRaceControl()
+    const child = spawn(
+      join("node_modules", ".bin", "tsx"),
+      [
+        "src/cli/spectator.ts",
+        ...["record", "--server", `127.0.0.1:${server.port}`, "--ac-root", dir],
+        ...["--car", "ks_mazda_mx5_cup", "--guid", "76561198000000001"],
+        ...["--out", join(dir, "rec"), "--no-replay", "--race-control", rc.url],
+      ],
+      { stdio: "ignore" },
+    )
+    try {
+      await server.joins(1)
+      await rc.connections(1)
+      const exited = new Promise<number | null>((r) => child.once("exit", r))
+      child.kill("SIGINT")
+      expect(await exited).toBe(0)
+    } finally {
+      child.kill("SIGKILL")
+      await Promise.all([server.close(), rc.close()])
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 20_000)
 })

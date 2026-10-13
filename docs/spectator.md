@@ -191,8 +191,10 @@ place of the two plugin flags.
   anyone on the machine could read it.
 - It rejoins on its own when ACSM moves to the next event, and gives up on a
   server that goes quiet for 15 s, which is how an event restart can look.
-- The car parks 1000 m above the track's origin, clear of anything that could
-  drive into it; `--park x,y,z` puts it elsewhere.
+- The car parks 50 km off and 2 km below the track's origin, out of sight and
+  clear of anything that could drive into it; `--park x,y,z` puts it
+  elsewhere. It can't take its pit box: where a box is lives in the track's 3D
+  model, which a game client loads and the recorder doesn't.
 - Each session's journal is kept; a replay is written next to it when the
   session ends, its wheels placed from `--ac-root`'s car data.
 
