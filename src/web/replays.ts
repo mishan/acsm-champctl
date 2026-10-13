@@ -8,7 +8,7 @@ import { createReadStream } from "node:fs"
 import { open, readdir, stat } from "node:fs/promises"
 import { join } from "node:path"
 
-import type { FastifyInstance } from "fastify"
+import type { FastifyInstance, FastifyReply } from "fastify"
 
 import { readJournal } from "../spectator/journal.js"
 
@@ -146,9 +146,11 @@ ${list.length ? `<div class="wrap"><table><thead><tr><th>Started</th><th>Track</
 }
 
 export function registerReplays(app: FastifyInstance, dir: string, timeZone: string): void {
-  app.get("/replays", async (_req, reply) =>
-    reply.type("text/html; charset=utf-8").send(replaysPage(await listReplays(dir), timeZone)),
-  )
+  const page = async (_req: unknown, reply: FastifyReply) =>
+    reply.type("text/html; charset=utf-8").send(replaysPage(await listReplays(dir), timeZone))
+  app.get("/replays", page)
+  // A proxy with a `location /replays/` block redirects /replays here.
+  app.get("/replays/", page)
   app.get<{ Params: { file: string } }>("/replays/:file", async (req, reply) => {
     const { file } = req.params
     // Only a name the folder lists, so nothing outside it can be asked for.
