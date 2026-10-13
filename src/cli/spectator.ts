@@ -3,10 +3,11 @@
  */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { type ReplaySummary, writeReplay } from "../spectator/acreplay.js"
+import { postToWebhook, replayMessage } from "../spectator/announce.js"
 import { analyzeIncident } from "../spectator/analysis.js"
 import { incidentBrief } from "../spectator/brief.js"
 import { listCollisions } from "../spectator/incident.js"
@@ -48,8 +49,8 @@ Record options:
   --guid <steam64>           the GUID to join with
   --name <name>              driver name others see (default: Race Recorder)
   --out <dir>                where journals and replays go
-  --park <x,y,z>             where the car sits (default: 1000 m above the
-                             origin, clear of anything a car can drive into)
+  --park <x,y,z>             where the car sits (default: 50 km off and 2 km
+                             under the origin, out of sight from any track)
   --plugin-listen [host:]port receive the server's UDP plugin feed here, for
                              collisions; the plugin's Send Address in ACSM.
                              Listens on 127.0.0.1 unless a host is given
@@ -61,6 +62,10 @@ Record options:
                              timing instead of the plugin feed, for when no
                              admin can add a plugin. It doesn't say where on
                              the car the contact was
+  --replay-url <url>         where champctl-serve publishes the replays, e.g.
+                             https://champctl.example.org/replays. With
+                             CHAMPCTL_REPLAY_WEBHOOK set to a Discord webhook,
+                             each session's replay is posted there
   --no-replay                keep journals only
 
 Give the recorder a spectator car of its own in the championship, locked to
@@ -113,6 +118,7 @@ type Args =
         allowedSources?: string[]
       }
       raceControl?: string
+      replayUrl?: string
       replay: boolean
     }
   | { command: "replay"; journal: string; out?: string; intervalMs?: number; cars?: string }
@@ -178,7 +184,8 @@ export function parseArgs(argv: readonly string[]): Args {
   }
   const need = (flag: string): string => {
     const v = take(flag)
-    if (v === undefined) throw new UsageError(`${command} needs ${flag}.`)
+    // Empty too: it's what deploy/compose.yml passes for a variable nobody set.
+    if (!v) throw new UsageError(`${command} needs ${flag}.`)
     return v
   }
 
@@ -240,7 +247,9 @@ export function parseArgs(argv: readonly string[]): Args {
     if (!/^\d{17}$/.test(guid))
       throw new UsageError(`--guid must be a 17-digit Steam64 ID, not ${JSON.stringify(guid)}.`)
     const parkRaw = take("--park")
-    const parts = (parkRaw ?? "0,1000,0").split(",")
+    // Out of sight: a game shows a car 1000 m above the origin to anyone on a
+    // track a kilometer across, and no track is 50 km across.
+    const parts = (parkRaw ?? "50000,-2000,50000").split(",")
     // Number("") is 0, so "1,2," would otherwise park at 1,2,0.
     const park = parts.map((v) => (v.trim() === "" ? Number.NaN : Number(v)))
     if (park.length !== 3 || park.some((v) => !Number.isFinite(v))) {
@@ -255,7 +264,15 @@ export function parseArgs(argv: readonly string[]): Args {
     if (pluginFrom !== undefined && listen === undefined) {
       throw new UsageError("--plugin-from needs --plugin-listen and --plugin-server.")
     }
-    const raceControl = take("--race-control")
+    // Empty is unset, which is what deploy/compose.yml passes for a variable
+    // nobody set.
+    const replayUrl = take("--replay-url") || undefined
+    if (replayUrl !== undefined && !/^https?:\/\//.test(replayUrl)) {
+      throw new UsageError(
+        `--replay-url must be where the replays page is, such as https://champctl.example.org/replays, not ${JSON.stringify(replayUrl)}.`,
+      )
+    }
+    const raceControl = take("--race-control") || undefined
     if (raceControl !== undefined) {
       // Both would report every collision twice.
       if (listen !== undefined)
@@ -292,6 +309,7 @@ export function parseArgs(argv: readonly string[]): Args {
           }
         : {}),
       ...(raceControl ? { raceControl } : {}),
+      ...(replayUrl ? { replayUrl } : {}),
       replay: !noReplay,
     }
   }
@@ -386,6 +404,16 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   await mkdir(args.out, { recursive: true })
+  const replays = new Set<Promise<void>>()
+  // A secret, so from the environment rather than the command line.
+  const webhook = replayWebhook(process.env["CHAMPCTL_REPLAY_WEBHOOK"])
+  if (Boolean(webhook) !== Boolean(args.replayUrl)) {
+    log(
+      webhook
+        ? "CHAMPCTL_REPLAY_WEBHOOK is set but --replay-url isn't, so there's no link to post"
+        : "--replay-url is set but CHAMPCTL_REPLAY_WEBHOOK isn't, so nothing will be posted",
+    )
+  }
   const toReplay = async (journal: string): Promise<void> => {
     const out = journal.replace(/\.ndjson\.gz$/, ".acreplay")
     try {
@@ -394,6 +422,18 @@ async function main(argv: readonly string[]): Promise<number> {
       log(`wrote ${out}: ${s.cars.length} cars, ${Math.round(s.durationMs / 1000)} s`)
       const fallback = defaultWheels(s)
       if (fallback) log(fallback.trim())
+      const message =
+        webhook && args.replayUrl
+          ? replayMessage(
+              s,
+              `${args.replayUrl.replace(/\/+$/, "")}/${encodeURIComponent(basename(out))}`,
+            )
+          : undefined
+      if (webhook && message) {
+        await postToWebhook(webhook, message).catch((e: unknown) =>
+          log(`couldn't post the replay to Discord: ${e instanceof Error ? e.message : String(e)}`),
+        )
+      }
     } catch (e) {
       log(`no replay from ${journal}: ${e instanceof Error ? e.message : String(e)}`)
     }
@@ -416,19 +456,49 @@ async function main(argv: readonly string[]): Promise<number> {
     ...(args.plugin ? { plugin: { ...args.plugin, realtimeIntervalMs: 100 } } : {}),
     ...(args.raceControl ? { raceControl: { url: args.raceControl } } : {}),
     outDir: args.out,
-    ...(args.replay ? { onJournal: (j: string) => void toReplay(j) } : {}),
+    ...(args.replay
+      ? {
+          onJournal: (j: string) => {
+            const p = toReplay(j).finally(() => replays.delete(p))
+            replays.add(p)
+          },
+        }
+      : {}),
     log,
   })
   await recorder.start()
   await new Promise<void>((resolve) => {
     const stop = (): void => {
       log("stopping")
-      void recorder.stop().then(resolve)
+      void recorder
+        .stop()
+        .then(() => Promise.all(replays))
+        .then(() => resolve())
     }
     process.once("SIGINT", stop)
     process.once("SIGTERM", stop)
   })
-  return 0
+  // Everything is written. Node's WebSocket waits for the server to answer
+  // its close, and ACSM behind Cloudflare never did: the process stayed up
+  // after it had finished.
+  process.exit(0)
+}
+
+/**
+ * The Discord webhook replays are posted to, checked up front. Never in a
+ * message: its path is the token, and a URL fetch can't parse is quoted whole
+ * in the error it throws.
+ */
+export function replayWebhook(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  try {
+    new URL(value)
+  } catch {
+    throw new UsageError(
+      "CHAMPCTL_REPLAY_WEBHOOK isn't a URL. It should be a Discord channel's webhook URL, as copied.",
+    )
+  }
+  return value
 }
 
 export async function run(argv: readonly string[]): Promise<void> {

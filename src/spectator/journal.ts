@@ -47,6 +47,7 @@ export type JournalRecord =
       at: number
       carId: number
       otherCarId?: number
+      /** km/h. */
       impactSpeed: number
       worldPos: Vec3
       /** Absent when collisions came from ACSM's live timing, which doesn't say. */

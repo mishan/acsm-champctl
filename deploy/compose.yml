@@ -3,6 +3,7 @@
 #   docker compose up -d                        the web UI
 #   docker compose --profile discord up -d      plus the bot, the livery drain
 #                                               and the upload server
+#   docker compose --profile recorder up -d     the race recorder
 #   docker compose run --rm report              one-shot jobs, from cron
 #
 # Every process gets only the secret it needs: the web UI holds none (each
@@ -22,6 +23,8 @@ x-champctl: &champctl
     CHAMPCTL_PITS: /etc/champctl/track-pits.json
     # The bot, the drain and the upload server must open the same file.
     CHAMPCTL_STORE: /var/lib/champctl/data/liveries/liveries.db
+    # Written by the recorder, published by serve at /replays.
+    CHAMPCTL_RECORDINGS: /var/lib/champctl/recordings
   volumes:
     - champctl-data:/var/lib/champctl
     - ./config:/etc/champctl:ro
@@ -98,6 +101,53 @@ services:
       - /var/lib/champctl/carsets
     ports:
       - ${CHAMPCTL_UPLOAD_LISTEN:-127.0.0.1:8477}:8477
+
+  # Joins the game server as its own spectator car and records every session,
+  # writing a replay of each and posting its link to Discord (docs/spectator.md).
+  # Holds the server's join password, if it has one, and the webhook, nothing
+  # else. Set in .env:
+  #
+  #   CHAMPCTL_RECORDER_SERVER        the game server, host:port as drivers join
+  #   CHAMPCTL_RECORDER_CAR           the recorder's spectator car model
+  #   CHAMPCTL_RECORDER_GUID          the GUID its slot is locked to
+  #   CHAMPCTL_RECORDER_RACE_CONTROL  the server's ACSM, for collisions
+  #   CHAMPCTL_REPLAY_URL             this deployment's /replays, for the links
+  #   CHAMPCTL_REPLAY_WEBHOOK         a Discord webhook (optional)
+  #   CHAMPCTL_SPECTATOR_PASSWORD     the server's join password (optional)
+  #   CHAMPCTL_AC_ROOT                the copied car and track files (./ac)
+  #
+  # Defaults rather than ${...:?}: Compose fills in every service's variables,
+  # so a required one here would stop `up` for everything else. A missing one
+  # fails the recorder instead, which restarts until it's set; its log says which.
+  recorder:
+    <<: *champctl
+    profiles: [recorder]
+    restart: unless-stopped
+    command:
+      - champctl-spectator
+      - record
+      - --server
+      - ${CHAMPCTL_RECORDER_SERVER:-}
+      - --ac-root
+      - /var/lib/champctl-ac
+      - --car
+      - ${CHAMPCTL_RECORDER_CAR:-}
+      - --guid
+      - ${CHAMPCTL_RECORDER_GUID:-}
+      - --out
+      - /var/lib/champctl/recordings
+      - --race-control
+      - ${CHAMPCTL_RECORDER_RACE_CONTROL:-}
+      - --replay-url
+      - ${CHAMPCTL_REPLAY_URL:-}
+    environment:
+      CHAMPCTL_REPLAY_WEBHOOK: ${CHAMPCTL_REPLAY_WEBHOOK:-}
+      CHAMPCTL_SPECTATOR_PASSWORD: ${CHAMPCTL_SPECTATOR_PASSWORD:-}
+    volumes:
+      - champctl-data:/var/lib/champctl
+      - ${CHAMPCTL_AC_ROOT:-./ac}:/var/lib/champctl-ac:ro
+    # Long enough to write a two-hour session's replay after the stop.
+    stop_grace_period: 2m
 
   # Each job's command is fixed in its entrypoint, so options given to
   # `docker compose run` are added to it rather than replacing it.

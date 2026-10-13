@@ -16,7 +16,14 @@ import { type FakeRaceControl, fakeRaceControl } from "./support/fake-race-contr
 const status = {
   EventType: 200,
   Message: {
-    CarIDToGUID: { "0": "76561198000000001", "1": "76561198000000002" },
+    // Every slot each GUID has held; the connected drivers say which is now.
+    CarIDToGUID: { "0": "76561198000000001", "1": "76561198000000002", "9": "76561198000000002" },
+    ConnectedDrivers: {
+      Drivers: {
+        "76561198000000001": { CarInfo: { CarID: 0 } },
+        "76561198000000002": { CarInfo: { CarID: 1 } },
+      },
+    },
     SessionInfo: { Track: "imola", TrackConfig: "", Name: "Qualify" },
   },
 }
@@ -39,7 +46,7 @@ describe("RaceControlDecoder", () => {
     return messages.flatMap((m) => d.decode(JSON.stringify(m)))
   }
 
-  it("names both cars in a collision by the IDs their GUIDs are in", () => {
+  it("names both cars in a collision by the slots their drivers are in now", () => {
     expect(decode(status, collision("76561198000000001")).at(-1)).toEqual({
       kind: "collision",
       carId: 1,

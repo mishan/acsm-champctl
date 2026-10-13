@@ -16,6 +16,7 @@ unrelated to `docker/`, which is a throwaway ACSM for tests.
 | `bot`    | answers `/livery` in Discord       | the Discord token     | `--profile discord`             |
 | `drain`  | puts queued liveries on the server | the ACSM account      | `--profile discord`             |
 | `upload` | one-time upload links, the carset  | nothing               | `--profile discord`             |
+| `recorder` | records every session on the game server | its join password, a Discord webhook | `--profile recorder` |
 | `report`, `announce`, `standings`, `archive` | one-shot jobs | per job      | cron, via `docker compose run`  |
 | `cli`, `admin` | any other command, by hand   | nothing / ACSM account | `docker compose run`           |
 
@@ -29,7 +30,7 @@ ACSM host's filesystem and can run anywhere that reaches it. Its reads rely on
 **Public Access** being on in Server Manager.
 
 All state is in one named volume, `champctl-data`: the response cache, the
-championship archive and the livery queue. Configuration is read-only, from
+championship archive, the livery queue and the race recordings. Configuration is read-only, from
 `deploy/config/`.
 
 ## Setting up
@@ -163,6 +164,36 @@ Two settings the proxy needs for it, beyond the three above:
   rather than champctl's explanation.
 - **No access log for `/u/`**, since the path is the token. In nginx,
   `location /u/ { access_log off; proxy_pass ...; }`.
+
+## The race recorder
+
+`recorder` joins the game server as a spectator car of its own and records
+every session. When a session ends it writes the session's replay, which
+`serve` lists at `/replays` for anyone to download, and posts the link to
+Discord. [`docs/spectator.md`](spectator.md) covers the slot and the car and
+track files it needs. Point it at them in `deploy/.env`:
+
+```sh
+CHAMPCTL_RECORDER_SERVER=203.0.113.5:9600      # the game server, as drivers join it
+CHAMPCTL_RECORDER_CAR=ford_transit             # the recorder's spectator car
+CHAMPCTL_RECORDER_GUID=90000000000000001       # the GUID its slot is locked to
+CHAMPCTL_RECORDER_RACE_CONTROL=https://acsm.example.org   # for collisions
+CHAMPCTL_REPLAY_URL=https://champctl.example.org/replays
+CHAMPCTL_REPLAY_WEBHOOK=https://discord.com/api/webhooks/…  # optional
+CHAMPCTL_AC_ROOT=/home/you/champctl-ac         # the copied car and track files
+```
+
+```sh
+docker compose --profile recorder up -d
+docker compose logs -f recorder                # "joined <track> as car N"
+```
+
+A recorder whose settings are missing or wrong fails and keeps restarting until
+they're fixed; its log says which.
+The webhook is a channel's **Integrations → Webhooks** URL, and nothing is
+posted without it. Sessions shorter than two minutes, which is a restart
+rather than a session, are recorded but not posted. The reverse proxy needs
+nothing new: `/replays` is served like the rest of the UI.
 
 ## Scheduled jobs
 

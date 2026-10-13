@@ -5,7 +5,7 @@
  * cannot answer; see the header of src/spectator/acreplay.ts.
  */
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -266,6 +266,26 @@ describe("writeReplay", () => {
     const [car] = parse(await readFile(out)).cars
     // Ana's car, and none of Bo's laps.
     expect([car!.driver, car!.model, car!.frames.at(-1)!.lap]).toEqual(["Ana", "m", 0])
+  })
+
+  it("gives a replay its name only once it's whole", async () => {
+    // Long enough to watch: 2 cars, 30 s at 1 ms a frame.
+    const path = await journal([
+      session,
+      ...[1, 2].flatMap((id) =>
+        [0, 30_000].map((at): JournalRecord => ({ t: "pos", at, car: state(id, at) })),
+      ),
+    ])
+    const out = join(dir, "s.acreplay")
+    const writing = writeReplay(path, out, { intervalMs: 1 })
+    let seenPart = false
+    while (!seenPart) {
+      const files = await readdir(dir)
+      seenPart = files.includes("s.acreplay.part")
+      expect(files).not.toContain("s.acreplay")
+    }
+    await writing
+    expect((await readdir(dir)).filter((f) => f.startsWith("s.acreplay"))).toEqual(["s.acreplay"])
   })
 
   it("rejects, and leaves the file alone, when the replay already exists", async () => {

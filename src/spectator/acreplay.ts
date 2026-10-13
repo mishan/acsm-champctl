@@ -13,7 +13,7 @@
 
 import { createReadStream, createWriteStream, type WriteStream } from "node:fs"
 import { finished } from "node:stream/promises"
-import { mkdtemp, rm } from "node:fs/promises"
+import { link, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { carWheels } from "./cardata.js"
@@ -51,6 +51,10 @@ export interface ReplayOptions {
 }
 
 export interface ReplaySummary {
+  track: string
+  trackConfig: string
+  /** The session's name, such as "Race". */
+  session: string
   frames: number
   /** `ownWheels` is false where a car's data couldn't be read and the R32's stood in. */
   cars: { carId: number; model: string; driver: string; samples: number; ownWheels: boolean }[]
@@ -138,6 +142,7 @@ export async function writeReplay(
 ): Promise<ReplaySummary> {
   const intervalMs = options.intervalMs ?? 1000 / 18
 
+  const partPath = `${outPath}.part`
   const spoolDir = await mkdtemp(join(tmpdir(), "acreplay-"))
   const spools = new Map<number, Sink>()
   let out: Sink | undefined
@@ -234,7 +239,10 @@ export async function writeReplay(
     const frames = Math.max(1, Math.floor((end - start) / intervalMs) + 1)
 
     const ownWheels = new Set<number>()
-    out = new Sink(createWriteStream(outPath, { flags: "wx" }))
+    // Written under another name and given its own only when complete, so
+    // nothing listing replays (champctl-serve's /replays) offers half a file,
+    // even one a kill cut off.
+    out = new Sink(createWriteStream(partPath, { flags: "wx" }))
     await out.write(
       Buffer.concat([
         u32(REPLAY_VERSION),
@@ -290,9 +298,15 @@ export async function writeReplay(
 
     await out.write(standings(carIds, laps))
     await out.end()
+    // A link rather than a rename, which would replace a replay already there.
+    await link(partPath, outPath)
+    await rm(partPath)
     out = undefined
 
     return {
+      track: session.track,
+      trackConfig: session.trackConfig,
+      session: session.name,
       frames,
       durationMs: end - start,
       cars: carIds.map((carId) => ({
@@ -309,7 +323,7 @@ export async function writeReplay(
     // (the wx refusal) belongs to someone else.
     if (out?.opened) {
       out.destroy()
-      await rm(outPath, { force: true })
+      await rm(partPath, { force: true })
     }
     await rm(spoolDir, { recursive: true, force: true })
   }

@@ -71,22 +71,23 @@ few hundred KB, so even a few hundred cars is around 100 MB.
 
 From a Windows AC install, PowerShell finds the install through Steam (AC is
 app 244210), whichever drive it's on, and `robocopy` copies just these files,
-keeping the folder layout:
+keeping the folder layout. Content Manager's Settings → Assetto Corsa shows the
+folder too, if the search comes up empty:
 
 ```powershell
 $id   = 244210
 $keys = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App $id",
         "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Steam App $id"
-$ac = $keys | ForEach-Object { (Get-ItemProperty $_ -ErrorAction SilentlyContinue).InstallLocation } |
-      Where-Object { $_ } | Select-Object -First 1
-if (-not $ac) {
-  # Not in the registry: look in each Steam library.
-  $steam = (Get-ItemProperty HKCU:\Software\Valve\Steam).SteamPath
-  $ac = Select-String "$steam\steamapps\libraryfolders.vdf" -Pattern '"path"\s+"(.+)"' |
-        ForEach-Object { ($_.Matches[0].Groups[1].Value -replace '\\\\', '\') + "\steamapps\common\assettocorsa" } |
-        Where-Object { Test-Path $_ } | Select-Object -First 1
+$candidates = @($keys | ForEach-Object { (Get-ItemProperty $_ -ErrorAction SilentlyContinue).InstallLocation })
+$steam = (Get-ItemProperty HKCU:\Software\Valve\Steam -ErrorAction SilentlyContinue).SteamPath
+if ($steam) {
+  $candidates += Select-String "$steam\steamapps\libraryfolders.vdf" -Pattern '"path"\s+"(.+)"' |
+    ForEach-Object { ($_.Matches[0].Groups[1].Value -replace '\\\\', '\') + "\steamapps\common\assettocorsa" }
 }
-if (-not $ac) { throw "Couldn't find Assetto Corsa; set `$ac to its folder by hand." }
+# A moved or uninstalled game can leave its folder, or its registry entry,
+# behind: only one with content in it is the install.
+$ac = $candidates | Where-Object { $_ -and (Test-Path "$_\content\cars") } | Select-Object -First 1
+if (-not $ac) { $candidates; throw "None of those has content\cars; set `$ac to the AC folder by hand." }
 "Copying from $ac"
 $out = "$env:USERPROFILE\champctl-ac"
 robocopy "$ac\system\data"    "$out\system\data"    surfaces.ini
@@ -174,6 +175,9 @@ contacts, nothing sensitive.
 
 ## 4. Running it
 
+On a champctl deployment it's the `recorder` service, set up in
+[`docs/deployment.md`](deployment.md#the-race-recorder). By hand:
+
 ```sh
 CHAMPCTL_SPECTATOR_PASSWORD=… champctl-spectator record \
   --server <game server>:9600 \
@@ -190,8 +194,10 @@ place of the two plugin flags.
   anyone on the machine could read it.
 - It rejoins on its own when ACSM moves to the next event, and gives up on a
   server that goes quiet for 15 s, which is how an event restart can look.
-- The car parks 1000 m above the track's origin, clear of anything that could
-  drive into it; `--park x,y,z` puts it elsewhere.
+- The car parks 50 km off and 2 km below the track's origin, out of sight and
+  clear of anything that could drive into it; `--park x,y,z` puts it
+  elsewhere. It can't take its pit box: where a box is lives in the track's 3D
+  model, which a game client loads and the recorder doesn't.
 - Each session's journal is kept; a replay is written next to it when the
   session ends, its wheels placed from `--ac-root`'s car data.
 

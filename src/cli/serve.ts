@@ -47,6 +47,8 @@ Options:
                         (default: $CHAMPCTL_PITS, else data/track-pits.json)
   --base-url <url>      override the profile's ACSM base URL
   --client <dir>        built client to serve (default: dist/client)
+  --recordings <dir>    the race recorder's output, published for download at
+                        /replays (default: $CHAMPCTL_RECORDINGS, else none)
   --no-cache            bypass the on-disk response cache
   --trust-proxy         read X-Forwarded-For for the client address. Set this
                         only behind a proxy you control: it is the key the
@@ -76,6 +78,7 @@ interface Args {
   pits?: string
   baseUrl?: string
   client?: string
+  recordings?: string
   cache: boolean
   trustProxy: boolean
   insecureCookies: boolean
@@ -150,6 +153,9 @@ export function parseArgs(argv: readonly string[]): Args {
         break
       case "--client":
         args.client = next()
+        break
+      case "--recordings":
+        args.recordings = next()
         break
       case "--no-cache":
         args.cache = false
@@ -328,6 +334,7 @@ async function main(argv: readonly string[]): Promise<number> {
   // used to close it. A pit table that won't load, a port already in use, or a
   // failure during drain all left the database open behind a process that was
   // on its way out — and the next start then inherits whatever that left.
+  const recordings = args.recordings ?? process.env["CHAMPCTL_RECORDINGS"]
   let app: Awaited<ReturnType<typeof buildServer>> | undefined
   try {
     app = buildServer({
@@ -341,6 +348,7 @@ async function main(argv: readonly string[]): Promise<number> {
       }),
       pits: await loadPits(args.pits),
       clientRoot: clientRootFor(args.client),
+      ...(recordings ? { recordings } : {}),
       secureCookies: !args.insecureCookies,
       trustProxy: args.trustProxy,
       logger: true,
