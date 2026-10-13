@@ -73,6 +73,15 @@ describe("listReplays", () => {
     ])
   })
 
+  it("reads a replay once, not on every view", async () => {
+    const stem = "2026-10-13T03-38-46-326Z-interlagos-1975-practice"
+    await recorded(stem, "Practice", 698)
+    await listReplays(dir)
+    // The session's name came from the journal; a second read would lose it.
+    await rm(join(dir, `${stem}.ndjson.gz`))
+    expect((await listReplays(dir))[0]?.session).toBe("Practice")
+  })
+
   it("leaves out a file that isn't a replay rather than failing the page", async () => {
     await writeFile(join(dir, "2026-10-13T00-00-00-000Z-x.acreplay"), "half")
     expect(await listReplays(dir)).toEqual([])

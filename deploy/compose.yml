@@ -118,7 +118,7 @@ services:
   #
   # Defaults rather than ${...:?}: Compose fills in every service's variables,
   # so a required one here would stop `up` for everything else. A missing one
-  # stops the recorder instead, and its log says which.
+  # fails the recorder instead, which restarts until it's set; its log says which.
   recorder:
     <<: *champctl
     profiles: [recorder]

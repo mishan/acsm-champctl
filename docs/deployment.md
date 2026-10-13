@@ -188,7 +188,8 @@ docker compose --profile recorder up -d
 docker compose logs -f recorder                # "joined <track> as car N"
 ```
 
-A recorder whose settings are missing or wrong stops, and its log says which.
+A recorder whose settings are missing or wrong fails and keeps restarting until
+they're fixed; its log says which.
 The webhook is a channel's **Integrations → Webhooks** URL, and nothing is
 posted without it. Sessions shorter than two minutes, which is a restart
 rather than a session, are recorded but not posted. The reverse proxy needs

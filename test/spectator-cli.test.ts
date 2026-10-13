@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
 import { UsageError } from "../src/cli/args.js"
-import { parseArgs } from "../src/cli/spectator.js"
+import { parseArgs, replayWebhook } from "../src/cli/spectator.js"
 import { fakeAcRoot, fakeAcServer } from "./support/fake-ac-server.js"
 import { fakeRaceControl } from "./support/fake-race-control.js"
 
@@ -77,6 +77,11 @@ describe("champctl-spectator parseArgs", () => {
       /ACSM address/,
     ],
     [
+      "an empty car, as compose passes an unset one",
+      [...record.slice(0, 5), "--car", "", ...record.slice(7)],
+      /needs --car/,
+    ],
+    [
       "a replays address that isn't one",
       [...record, "--replay-url", "champctl.example/replays"],
       /replays page/,
@@ -118,4 +123,16 @@ describe("champctl-spectator record", () => {
       await rm(dir, { recursive: true, force: true })
     }
   }, 20_000)
+})
+
+describe("replayWebhook", () => {
+  it("refuses a webhook it can't parse without repeating it, since the path is the token", () => {
+    const pasted = '"https://discord.com/api/webhooks/1/SECRETTOKEN'
+    expect(() => replayWebhook(pasted)).toThrow(UsageError)
+    expect(() => replayWebhook(pasted)).not.toThrow(/SECRETTOKEN/)
+  })
+
+  it("takes an empty one as none", () => {
+    expect(replayWebhook("")).toBeUndefined()
+  })
 })

@@ -184,7 +184,8 @@ export function parseArgs(argv: readonly string[]): Args {
   }
   const need = (flag: string): string => {
     const v = take(flag)
-    if (v === undefined) throw new UsageError(`${command} needs ${flag}.`)
+    // Empty too: it's what deploy/compose.yml passes for a variable nobody set.
+    if (!v) throw new UsageError(`${command} needs ${flag}.`)
     return v
   }
 
@@ -405,9 +406,14 @@ async function main(argv: readonly string[]): Promise<number> {
   await mkdir(args.out, { recursive: true })
   const replays = new Set<Promise<void>>()
   // A secret, so from the environment rather than the command line.
-  const webhook = process.env["CHAMPCTL_REPLAY_WEBHOOK"]
-  if (args.replayUrl && !webhook)
-    log("--replay-url is set but CHAMPCTL_REPLAY_WEBHOOK isn't, so nothing will be posted")
+  const webhook = replayWebhook(process.env["CHAMPCTL_REPLAY_WEBHOOK"])
+  if (Boolean(webhook) !== Boolean(args.replayUrl)) {
+    log(
+      webhook
+        ? "CHAMPCTL_REPLAY_WEBHOOK is set but --replay-url isn't, so there's no link to post"
+        : "--replay-url is set but CHAMPCTL_REPLAY_WEBHOOK isn't, so nothing will be posted",
+    )
+  }
   const toReplay = async (journal: string): Promise<void> => {
     const out = journal.replace(/\.ndjson\.gz$/, ".acreplay")
     try {
@@ -476,6 +482,23 @@ async function main(argv: readonly string[]): Promise<number> {
   // its close, and ACSM behind Cloudflare never did: the process stayed up
   // after it had finished.
   process.exit(0)
+}
+
+/**
+ * The Discord webhook replays are posted to, checked up front. Never in a
+ * message: its path is the token, and a URL fetch can't parse is quoted whole
+ * in the error it throws.
+ */
+export function replayWebhook(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  try {
+    new URL(value)
+  } catch {
+    throw new UsageError(
+      "CHAMPCTL_REPLAY_WEBHOOK isn't a URL. It should be a Discord channel's webhook URL, as copied.",
+    )
+  }
+  return value
 }
 
 export async function run(argv: readonly string[]): Promise<void> {

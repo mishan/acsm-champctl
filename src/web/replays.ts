@@ -71,6 +71,13 @@ function startedFrom(file: string): number {
   return m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`) : Number.NaN
 }
 
+/**
+ * What each replay said, by path, for as long as the file is unchanged. The
+ * page is public and a league's recordings run to thousands, so a view
+ * shouldn't open every one.
+ */
+const seen = new Map<string, { mtimeMs: number; listing: ReplayListing }>()
+
 export async function listReplays(dir: string): Promise<ReplayListing[]> {
   const files = (await readdir(dir).catch(() => [] as string[])).filter((f) =>
     f.endsWith(".acreplay"),
@@ -79,12 +86,19 @@ export async function listReplays(dir: string): Promise<ReplayListing[]> {
   for (const file of files) {
     const path = join(dir, file)
     try {
-      const [h, s, session] = await Promise.all([
+      const s = await stat(path)
+      const known = seen.get(path)
+      if (known?.mtimeMs === s.mtimeMs) {
+        out.push(known.listing)
+        continue
+      }
+      const [h, session] = await Promise.all([
         header(path),
-        stat(path),
         sessionName(path.replace(/\.acreplay$/, ".ndjson.gz")),
       ])
-      out.push({ file, ...h, session, started: startedFrom(file), bytes: s.size })
+      const listing = { file, ...h, session, started: startedFrom(file), bytes: s.size }
+      seen.set(path, { mtimeMs: s.mtimeMs, listing })
+      out.push(listing)
     } catch {
       // Still being written, or not a replay: leave it out rather than fail the page.
     }
