@@ -43,6 +43,7 @@ import {
   type ApiContextOptions,
 } from "./routes.js"
 import { SESSION_COOKIE } from "./sessions.js"
+import { registerReplays } from "./replays.js"
 
 export interface ServerOptions extends ApiContextOptions {
   /**
@@ -51,6 +52,8 @@ export interface ServerOptions extends ApiContextOptions {
    * reverse proxy would do.
    */
   clientRoot?: string
+  /** The race recorder's output, published at /replays. Omit for no such page. */
+  recordings?: string
   /** Passed through to Fastify. `false` in tests, so output stays readable. */
   logger?: FastifyServerOptions["logger"]
   /**
@@ -251,6 +254,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     return reply.code(described.status).send(described.body)
   })
 
+  if (options.recordings) registerReplays(app, options.recordings, ctx.profile.schedule.timezone)
   registerClient(app, options.clientRoot)
   return app
 }
