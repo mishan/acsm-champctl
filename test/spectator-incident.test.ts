@@ -122,7 +122,9 @@ describe("buildIncident", () => {
     const { packet } = packets.left
     expect([packet.a.driver, packet.b.driver]).toEqual(["Bob Divebomb", "Alice Apex"])
     expect(packet.collision.where).toMatch(/T1/)
-    expect(packet.facts[0]).toMatch(/reported Bob Divebomb hitting Alice Apex at .*T1.*14 km\/h/)
+    expect(packet.facts[0]).toMatch(
+      /reported Bob Divebomb hitting Alice Apex at .*T1.*impact speed of 4 km\/h/,
+    )
   })
 
   it.each([

@@ -46,7 +46,8 @@ interface Wire {
 
 /**
  * Collisions name drivers by GUID; the car each GUID is in comes from the
- * status message and each new connection, so this keeps that map.
+ * status message's connected drivers and each new connection, so this keeps
+ * that map.
  */
 export class RaceControlDecoder {
   readonly #carByGuid = new Map<string, number>()
@@ -62,9 +63,13 @@ export class RaceControlDecoder {
     const m = (msg.Message ?? {}) as Record<string, unknown>
     switch (msg.EventType) {
       case RaceControlEvent.Status: {
-        const ids = (m["CarIDToGUID"] ?? {}) as Record<string, unknown>
-        for (const [carId, guid] of Object.entries(ids)) {
-          if (typeof guid === "string" && guid) this.#carByGuid.set(guid, Number(carId))
+        // Not CarIDToGUID: it keeps every slot a GUID has held this event,
+        // and on BATL a driver who'd rejoined was in slot 8 but listed under
+        // 0, 8 and 25.
+        const connected = ((m["ConnectedDrivers"] ?? {}) as Record<string, unknown>)["Drivers"]
+        for (const [guid, d] of Object.entries((connected ?? {}) as Record<string, unknown>)) {
+          const carId = Number(((d ?? {}) as { CarInfo?: { CarID?: unknown } }).CarInfo?.CarID)
+          if (guid && Number.isInteger(carId)) this.#carByGuid.set(guid, carId)
         }
         const s = (m["SessionInfo"] ?? {}) as Record<string, unknown>
         const session = {
