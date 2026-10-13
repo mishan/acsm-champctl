@@ -89,6 +89,14 @@ describe("listReplays", () => {
 })
 
 describe("/replays", () => {
+  it("shows the page at /replays/ too, where a proxy's location block sends it", async () => {
+    const page = await app.inject({ url: "/replays/" })
+    expect([page.statusCode, page.headers["content-type"]]).toEqual([
+      200,
+      "text/html; charset=utf-8",
+    ])
+  })
+
   it("shows the replays in the league's time zone, linked for download", async () => {
     await recorded("2026-10-13T03-38-46-326Z-interlagos-1975-practice", "Practice", 698)
     const page = await app.inject({ url: "/replays" })
