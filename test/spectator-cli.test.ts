@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest"
 
 import { UsageError } from "../src/cli/args.js"
 import { parseArgs, replayWebhook } from "../src/cli/spectator.js"
+import { JournalWriter } from "../src/spectator/journal.js"
 import { fakeAcRoot, fakeAcServer } from "./support/fake-ac-server.js"
 import { fakeRaceControl } from "./support/fake-race-control.js"
 
@@ -82,6 +83,17 @@ describe("champctl-spectator parseArgs", () => {
       /needs --car/,
     ],
     [
+      "a clip that ends before it starts",
+      ["replay", "j.ndjson.gz", "--from", "13:40", "--to", "12:35"],
+      /later than --from/,
+    ],
+    [
+      "a clip time that isn't one",
+      ["replay", "j.ndjson.gz", "--from", "12m35s"],
+      /time into the session/,
+    ],
+    ["cuts without the track", ["cuts", "j.ndjson.gz"], /needs --ac-root/],
+    [
       "a replays address that isn't one",
       [...record, "--replay-url", "champctl.example/replays"],
       /replays page/,
@@ -123,6 +135,64 @@ describe("champctl-spectator record", () => {
       await rm(dir, { recursive: true, force: true })
     }
   }, 20_000)
+})
+
+describe("champctl-spectator incidents", () => {
+  it("times each from the session's start, as --from and --to take them", async () => {
+    // The recorder came up an hour before the race.
+    const dir = await mkdtemp(join(tmpdir(), "incidents-cli-"))
+    const w = new JournalWriter(join(dir, "race.ndjson.gz"))
+    w.write({
+      t: "session",
+      at: 3_600_000,
+      serverName: "s",
+      track: "loop",
+      trackConfig: "",
+      name: "Race",
+      type: 3,
+      recorderCarId: 0,
+    })
+    w.write({ t: "car", at: 3_600_000, carId: 1, model: "m", skin: "s", driver: "Ana" })
+    w.write({ t: "car", at: 3_600_000, carId: 2, model: "m", skin: "s", driver: "Bo" })
+    w.write({
+      t: "collision",
+      at: 3_665_000,
+      carId: 1,
+      otherCarId: 2,
+      impactSpeed: 40,
+      worldPos: [0, 0, 0],
+    })
+    await w.close()
+    const run = spawnSync(
+      join("node_modules", ".bin", "tsx"),
+      ["src/cli/spectator.ts", "incidents", w.path],
+      { encoding: "utf8" },
+    )
+    await rm(dir, { recursive: true, force: true })
+    expect(run.status).toBe(0)
+    expect(run.stdout).toBe("0  1:05  Ana hit Bo, 40 km/h\n")
+  }, 20_000)
+})
+
+describe("replay clips", () => {
+  it.each([
+    ["12:35", 755_000],
+    ["1:02:03", 3_723_000],
+    ["90", 90_000],
+    ["12:59.5", 779_500],
+  ])("reads %s as a time into the session", (from, ms) => {
+    expect(parseArgs(["replay", "j.ndjson.gz", "--from", from])).toMatchObject({
+      window: { fromMs: ms, toMs: Number.POSITIVE_INFINITY },
+    })
+  })
+})
+
+describe("clip times", () => {
+  it.each(["1e3", "0x10", " 5", "12:60", "-1", "Infinity"])("refuses %j", (from) => {
+    expect(() => parseArgs(["replay", "j.ndjson.gz", "--from", from])).toThrow(
+      /time into the session/,
+    )
+  })
 })
 
 describe("replayWebhook", () => {
