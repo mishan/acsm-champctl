@@ -30,8 +30,8 @@ const at = (s: number, across = 0): Vec3 => {
   const [lx, lz] = [(p.leftEdge[0] - p.rightEdge[0]) / 12, (p.leftEdge[1] - p.rightEdge[1]) / 12]
   return [p.x + lx * across, 0, p.z + lz * across]
 }
-const state = (timestamp: number, pos: Vec3): CarState => ({
-  carId: 1,
+const state = (timestamp: number, pos: Vec3, carId = 1): CarState => ({
+  carId,
   seq: 0,
   timestamp,
   ping: 0,
@@ -45,18 +45,19 @@ const state = (timestamp: number, pos: Vec3): CarState => ({
 })
 
 /**
- * Positions every 50 ms. On lap 2, between `from` and `to` along the lap, the
- * car follows `detour` instead, a path of points it covers at the same speed,
- * or, `put` there, sits at each point for a second as a car reset there would.
+ * Positions every 50 ms. On lap 2 (or `cutLaps`), between `from` and `to`
+ * along the lap, the car follows `detour` instead, a path of points it covers
+ * at the same speed, or, `put` there, sits at each point for a second as a car
+ * reset there would. A `rival` laps alongside on the track the whole time.
  */
 async function laps(
   name: string,
   from: number,
   to: number,
   detour: Vec3[],
-  put = false,
-  then?: string,
+  o: { put?: boolean; handover?: string; cutLaps?: number[]; rival?: boolean } = {},
 ): Promise<string> {
+  const { put = false, handover, cutLaps = [1] } = o
   const records: JournalRecord[] = [
     {
       t: "session",
@@ -78,8 +79,8 @@ async function laps(
   const step = (SPEED * 50) / 1000
   for (let lap = 0; lap < 3; lap++) {
     for (let s = 0; s < track.length; s += step) {
-      if (lap === 1 && s >= from && s < to) continue
-      if (lap === 1 && s >= to && s - step < to) {
+      if (cutLaps.includes(lap) && s >= from && s < to) continue
+      if (cutLaps.includes(lap) && s >= to && s - step < to) {
         // The detour, walked point to point at the same speed.
         if (put) for (const p of detour) for (let i = 0; i < 20; i++) put_(p)
         for (let k = 1; k < detour.length && !put; k++) {
@@ -92,10 +93,20 @@ async function laps(
       put_(at(s))
     }
   }
-  if (then) {
+  if (handover) {
     // The slot changes hands, and the new driver does a lap of their own.
-    records.push({ t: "car", at: t, carId: 1, model: "m", skin: "s", driver: then })
+    records.push({ t: "car", at: t, carId: 1, model: "m", skin: "s", driver: handover })
     for (let s = 0; s < track.length; s += step) put_(at(s))
+  }
+  if (o.rival) {
+    records.push({ t: "car", at: 0, carId: 2, model: "m", skin: "s", driver: "Clean" })
+    let rt = 0
+    for (let lap = 0; lap < 3; lap++) {
+      for (let s = 0; s < track.length; s += step) {
+        records.push({ t: "pos", at: rt, car: state(rt, at(s), 2) })
+        rt += 50
+      }
+    }
   }
   const w = new JournalWriter(join(dir, `${name}.ndjson.gz`))
   for (const r of records) w.write(r)
@@ -135,13 +146,28 @@ describe("findTrackSkips", () => {
     // a reset, not a shortcut, however quick.
     const [from, to] = [t1.entry - 20, t1.exit + 20]
     const box = at(t1.apex, 20)
-    const path = await laps("reset", from, to, [box, box], true)
+    const path = await laps("reset", from, to, [box, box], { put: true })
     expect(await findTrackSkips(path, track, 0.2)).toEqual([])
   })
 
   it("names whoever was driving at the time, when the slot later changes hands", async () => {
     const [from, to] = [t1.entry - 20, t1.exit + 20]
-    const path = await laps("handover", from, to, [at(from), at(to)], false, "Later")
-    expect((await findTrackSkips(path, track, 0.2)).map((k) => k.driver)).toEqual(["Cutter"])
+    const path = await laps("handover", from, to, [at(from), at(to)], { handover: "Later" })
+    // Timed against Cutter's own two clean laps, not Later's as well.
+    expect(await findTrackSkips(path, track, 0.2)).toMatchObject([{ driver: "Cutter", passes: 2 }])
+  })
+
+  it("times a driver who cuts the corner every lap against everyone else", async () => {
+    const [from, to] = [t1.entry - 20, t1.exit + 20]
+    const path = await laps("every lap", from, to, [at(from), at(to)], {
+      cutLaps: [0, 1, 2],
+      rival: true,
+    })
+    const skips = await findTrackSkips(path, track, 0.2)
+    expect(skips.map((k) => [k.driver, k.passes, k.field])).toEqual([
+      ["Cutter", 3, true],
+      ["Cutter", 3, true],
+      ["Cutter", 3, true],
+    ])
   })
 })

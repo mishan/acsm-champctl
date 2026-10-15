@@ -12,6 +12,7 @@ import { analyzeIncident, trackForJournal } from "../spectator/analysis.js"
 import { findTrackSkips } from "../spectator/cuts.js"
 import { incidentBrief } from "../spectator/brief.js"
 import { listCollisions } from "../spectator/incident.js"
+import { sessionStart } from "../spectator/journal.js"
 import { renderIncidentSvg } from "../spectator/render.js"
 import { serveMcp } from "../spectator/mcp.js"
 import { raceControlUrl } from "../spectator/racecontrol.js"
@@ -393,7 +394,7 @@ async function main(argv: readonly string[]): Promise<number> {
     for (const k of skips) {
       process.stdout.write(
         `${formatClock(k.offS * 1000)}  ${k.driver}: ${Math.round(k.skippedM)} m of track in ${k.tookS.toFixed(1)} s off it, ` +
-          `usually ${k.usualS.toFixed(1)} s (${k.passes} ${k.passes === 1 ? "pass" : "passes"}): ${k.savedS.toFixed(1)} s gained. ` +
+          `usually ${k.usualS.toFixed(1)} s (${k.passes} ${k.passes === 1 ? "pass" : "passes"}${k.field ? " by other drivers" : ""}): ${k.savedS.toFixed(1)} s gained. ` +
           `Back on at ${formatClock(k.backS * 1000)}.\n`,
       )
     }
@@ -401,6 +402,9 @@ async function main(argv: readonly string[]): Promise<number> {
   }
   if (args.command === "incidents") {
     const list = await listCollisions(args.journal)
+    // From the session's start, like --from and --to: the recorder's own clock
+    // starts when it does, hours before a race.
+    const start = await sessionStart(args.journal)
     if (list.length === 0) process.stdout.write("No collisions in this session.\n")
     for (const c of list) {
       const what =
@@ -408,7 +412,7 @@ async function main(argv: readonly string[]): Promise<number> {
           ? `${c.drivers[0]} hit the scenery`
           : `${c.drivers[0]} hit ${c.drivers[1]}`
       process.stdout.write(
-        `${c.index}  ${formatClock(c.at)}  ${what}, ${Math.round(c.impactSpeedKmh)} km/h\n`,
+        `${c.index}  ${formatClock(c.at - start)}  ${what}, ${Math.round(c.impactSpeedKmh)} km/h\n`,
       )
     }
     return 0

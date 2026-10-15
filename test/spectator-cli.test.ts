@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest"
 
 import { UsageError } from "../src/cli/args.js"
 import { parseArgs, replayWebhook } from "../src/cli/spectator.js"
+import { JournalWriter } from "../src/spectator/journal.js"
 import { fakeAcRoot, fakeAcServer } from "./support/fake-ac-server.js"
 import { fakeRaceControl } from "./support/fake-race-control.js"
 
@@ -133,6 +134,43 @@ describe("champctl-spectator record", () => {
       await Promise.all([server.close(), rc.close()])
       await rm(dir, { recursive: true, force: true })
     }
+  }, 20_000)
+})
+
+describe("champctl-spectator incidents", () => {
+  it("times each from the session's start, as --from and --to take them", async () => {
+    // The recorder came up an hour before the race.
+    const dir = await mkdtemp(join(tmpdir(), "incidents-cli-"))
+    const w = new JournalWriter(join(dir, "race.ndjson.gz"))
+    w.write({
+      t: "session",
+      at: 3_600_000,
+      serverName: "s",
+      track: "loop",
+      trackConfig: "",
+      name: "Race",
+      type: 3,
+      recorderCarId: 0,
+    })
+    w.write({ t: "car", at: 3_600_000, carId: 1, model: "m", skin: "s", driver: "Ana" })
+    w.write({ t: "car", at: 3_600_000, carId: 2, model: "m", skin: "s", driver: "Bo" })
+    w.write({
+      t: "collision",
+      at: 3_665_000,
+      carId: 1,
+      otherCarId: 2,
+      impactSpeed: 40,
+      worldPos: [0, 0, 0],
+    })
+    await w.close()
+    const run = spawnSync(
+      join("node_modules", ".bin", "tsx"),
+      ["src/cli/spectator.ts", "incidents", w.path],
+      { encoding: "utf8" },
+    )
+    await rm(dir, { recursive: true, force: true })
+    expect(run.status).toBe(0)
+    expect(run.stdout).toBe("0  1:05  Ana hit Bo, 40 km/h\n")
   }, 20_000)
 })
 
