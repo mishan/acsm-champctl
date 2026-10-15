@@ -205,6 +205,11 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
       }
     }
 
+    const whenRaced = d["postStandingsWhenRaced"]
+    if (whenRaced !== undefined && typeof whenRaced !== "boolean") {
+      bad("`discord.postStandingsWhenRaced` must be true or false")
+    }
+
     // Same check, same reason: a channel *name* and a role *mention* both reach
     // Discord as an id it cannot find. Here the failure is worse than a missing
     // report — a clamp built from ids that match nothing refuses every driver,

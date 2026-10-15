@@ -745,6 +745,10 @@ describe("the profile's Discord settings", () => {
     expect(() => withDiscord({ qualiVoiceMove })).toThrow(/qualiVoiceMove/)
   })
 
+  it("takes postStandingsWhenRaced as true or false, not a string that reads like one", () => {
+    expect(() => withDiscord({ postStandingsWhenRaced: "yes" })).toThrow(/postStandingsWhenRaced/)
+  })
+
   it("rejects a channel link", () => {
     expect(() =>
       withDiscord({ adminChannelId: "https://discord.com/channels/1/1234567890123456789" }),

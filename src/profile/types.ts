@@ -160,6 +160,11 @@ export interface DiscordSettings {
    * leaves voice alone, and asks Discord for no voice events at all.
    */
   qualiVoiceMove?: QualiVoiceMove
+  /**
+   * Post a championship's standings to `announceChannelId` once a round's
+   * event has finished, every session of it. `champctl-bot serve` does it.
+   */
+  postStandingsWhenRaced?: boolean
 }
 
 export interface QualiVoiceMove {
