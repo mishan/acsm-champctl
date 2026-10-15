@@ -156,6 +156,16 @@ describe("Recorder", () => {
     await rec.stop()
     await rc.close()
     const [records] = await journals()
+    // Already on the server when the feed opened: named, with GUIDs, for an
+    // incident report to find their cars by.
+    expect(
+      records!
+        .filter((r) => r.t === "car" && r.guid)
+        .map((r) => r.t === "car" && [r.carId, r.guid]),
+    ).toEqual([
+      [1, "g1"],
+      [2, "g2"],
+    ])
     const hit = records!.find((r) => r.t === "collision")
     expect(hit).toMatchObject({ carId: 2, otherCarId: 1, impactSpeed: 30, worldPos: [1, 2, 3] })
     expect(hit).not.toHaveProperty("relPos")
