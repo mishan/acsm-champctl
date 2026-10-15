@@ -752,6 +752,7 @@ describe("the profile's Discord settings", () => {
   it.each([
     [{ categoryId: "Incidents", stewardRoleId: "1".repeat(18) }],
     [{ categoryId: "1".repeat(18) }],
+    [{ categoryId: "1".repeat(18), stewardRoleId: "1".repeat(18), closedCategoryId: "Closed" }],
   ])("checks the incidents category and stewards' role: %j", (incidents) => {
     expect(() => withDiscord({ incidents })).toThrow(/discord\.incidents/)
   })

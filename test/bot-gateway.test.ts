@@ -115,6 +115,7 @@ describe("GatewayTransport autocomplete", () => {
 describe("GatewayTransport incident channels", () => {
   it("locks every overwrite but the bot's and @everyone's, threads included, as Discord has it now", async () => {
     const edits: [string, unknown][] = []
+    const moves: unknown[][] = []
     const overwrite = (id: string) => ({
       id,
       edit: async (p: unknown) => {
@@ -126,6 +127,9 @@ describe("GatewayTransport incident channels", () => {
       type: ChannelType.GuildText,
       guildId: "g",
       permissionOverwrites: { cache: new Map(ids.map((id) => [id, overwrite(id)])) },
+      setParent: async (...args: unknown[]) => {
+        moves.push([edits.length, ...args])
+      },
     })
     const client = {
       user: { id: "bot" },
@@ -136,7 +140,7 @@ describe("GatewayTransport incident channels", () => {
             : channel(["g", "stewards", "ana", "bot"]),
       },
     }
-    await GatewayTransport.wrapping(client as unknown as Client).lockChannel("c")
+    await GatewayTransport.wrapping(client as unknown as Client).lockChannel("c", "closed")
     const shut = {
       SendMessages: false,
       SendMessagesInThreads: false,
@@ -148,6 +152,8 @@ describe("GatewayTransport incident channels", () => {
       ["ana", shut],
       ["added", shut],
     ])
+    // After all three, keeping them rather than taking the closed category's.
+    expect(moves).toEqual([[3, "closed", { lockPermissions: false }]])
   })
 
   it.each([
