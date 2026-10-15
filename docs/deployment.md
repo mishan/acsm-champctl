@@ -218,8 +218,11 @@ CHAMPCTL=/opt/acsm-champctl/deploy
 15 22 *   *   3    cd $CHAMPCTL && docker compose run --rm -T standings
 ```
 
-`standings` posts the championship in `CHAMPCTL_LIVERY_CHAMPIONSHIP` unless
-given another id, so the month's change to `.env` moves it along too.
+`standings` posts the championship in `CHAMPCTL_LIVERY_CHAMPIONSHIP`, so the
+month's change to `.env` moves it along too, and options such as `--dry-run`
+go after the service name. With `discord.postStandingsWhenRaced` the bot posts
+them as each round finishes instead, and this line can go
+([`docs/discord-bot-setup.md`](discord-bot-setup.md) §12).
 
 `trophy <championship-id>` posts one championship's podium on demand, for an
 older season or to post one again. `docker compose run --rm trophy <id>

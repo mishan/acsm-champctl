@@ -98,6 +98,16 @@ describe("champctl-bot standings exit codes", () => {
     expect(posted).not.toEqual([])
   })
 
+  it("says it would post, not that it posted, on a dry run", async () => {
+    let out = ""
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      out += String(chunk)
+      return true
+    })
+    await run(reader(scorable(), acsmSays(25, 18)), "--dry-run")
+    expect(out).toMatch(/^Would post 1 message/m)
+  })
+
   it("exits 1 when they disagree, still posting ACSM's numbers", async () => {
     // Reported on stderr and exited 0, so from cron the cross-check that keeps
     // the fallback honest was reporting to nobody.
