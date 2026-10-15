@@ -304,15 +304,21 @@ export class GatewayTransport implements DiscordTransport {
         ],
       })
       .catch((e: unknown) => {
+        // Discord's own error codes, so the admin is pointed at the right thing.
+        const code = (e as { code?: unknown }).code
         throw new BotError(
-          `Couldn't create the incident's channel: ${message(e)}. The bot needs Manage Channels ` +
-            `and Manage Roles, and discord.incidents.categoryId must be a category in this server.`,
+          `Couldn't create the incident's channel: ${message(e)}. ` +
+            (code === 30013
+              ? "Discord allows 50 channels in a category: move or delete decided incidents' channels."
+              : code === 50013
+                ? "The bot needs Manage Channels and Manage Roles, and on the category every permission it gives a driver."
+                : "Check that discord.incidents.categoryId is a category in this server."),
         )
       })
     return channel.id
   }
 
-  /** Nobody but the bot can post in the channel any more; who could see it still can. */
+  /** Nobody but the bot can post in the channel or its threads any more; who could see it still can. */
   async lockChannel(channelId: string): Promise<void> {
     // Forced: with no intents the cached copy never hears of an overwrite a
     // steward added by hand, and that member would keep posting.
@@ -323,7 +329,12 @@ export class GatewayTransport implements DiscordTransport {
     const me = this.#client.user?.id
     for (const overwrite of channel.permissionOverwrites.cache.values()) {
       if (overwrite.id === me || overwrite.id === channel.guildId) continue
-      await overwrite.edit({ SendMessages: false })
+      await overwrite.edit({
+        SendMessages: false,
+        SendMessagesInThreads: false,
+        CreatePublicThreads: false,
+        CreatePrivateThreads: false,
+      })
     }
   }
 

@@ -11,7 +11,7 @@
  * `GatewayTransport.wrapping` exists for this: a fake client is enough to drive
  * `post` and the interaction handler, without a token or a socket.
  */
-import { ChatInputCommandInteraction, Client, Events, MessageFlags } from "discord.js"
+import { ChannelType, ChatInputCommandInteraction, Client, Events, MessageFlags } from "discord.js"
 import { describe, expect, it, vi } from "vitest"
 
 import { GatewayTransport, toSlashCommand } from "../src/bot/discord.js"
@@ -109,6 +109,72 @@ describe("GatewayTransport autocomplete", () => {
     await new Promise((r) => setTimeout(r, 0))
     expect(asked).toEqual([["incident", "race", { race: "lo" }]])
     expect(answered).toEqual([{ name: "Race · loop", value: "j.ndjson.gz" }])
+  })
+})
+
+describe("GatewayTransport incident channels", () => {
+  it("locks every overwrite but the bot's and @everyone's, threads included, as Discord has it now", async () => {
+    const edits: [string, unknown][] = []
+    const overwrite = (id: string) => ({
+      id,
+      edit: async (p: unknown) => {
+        edits.push([id, p])
+      },
+    })
+    // The cached copy predates a member a steward added by hand.
+    const channel = (ids: string[]) => ({
+      type: ChannelType.GuildText,
+      guildId: "g",
+      permissionOverwrites: { cache: new Map(ids.map((id) => [id, overwrite(id)])) },
+    })
+    const client = {
+      user: { id: "bot" },
+      channels: {
+        fetch: async (_: string, o?: { force?: boolean }) =>
+          o?.force
+            ? channel(["g", "stewards", "ana", "added", "bot"])
+            : channel(["g", "stewards", "ana", "bot"]),
+      },
+    }
+    await GatewayTransport.wrapping(client as unknown as Client).lockChannel("c")
+    const shut = {
+      SendMessages: false,
+      SendMessagesInThreads: false,
+      CreatePublicThreads: false,
+      CreatePrivateThreads: false,
+    }
+    expect(edits).toEqual([
+      ["stewards", shut],
+      ["ana", shut],
+      ["added", shut],
+    ])
+  })
+
+  it.each([
+    [30013, /50 channels in a category/],
+    [50013, /needs Manage Channels and Manage Roles/],
+    [10003, /discord\.incidents\.categoryId/],
+  ])("says what Discord's error %i means when a channel can't be made", async (code, says) => {
+    const client = {
+      user: { id: "bot" },
+      guilds: {
+        fetch: async () => ({
+          channels: {
+            create: async () => {
+              throw Object.assign(new Error("refused"), { code })
+            },
+          },
+        }),
+      },
+    }
+    await expect(
+      GatewayTransport.wrapping(client as unknown as Client).createPrivateChannel("g", {
+        parentId: "cat",
+        name: "incident-1",
+        roleId: "stewards",
+        userIds: ["ana"],
+      }),
+    ).rejects.toThrow(says)
   })
 })
 

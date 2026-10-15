@@ -1,10 +1,11 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { SlashCommand } from "../src/bot/transport.js"
+import { indexJournal } from "../src/incidents/journals.js"
 import { type IncidentChannels, IncidentRouter, parseClock } from "../src/incidents/router.js"
 import { SqliteIncidentStore } from "../src/incidents/store.js"
 import { type JournalRecord, JournalWriter } from "../src/spectator/journal.js"
@@ -35,6 +36,10 @@ let channels: {
 let failGather: boolean
 let failCreate: boolean
 let failLock: boolean
+/** Server Manager can't be reached. */
+let failRead: boolean
+/** The report's own first message doesn't go through. */
+let failFirstPost: boolean
 
 const track = new Track(parseFastLane(fastLane(loop("left"))))
 
@@ -67,6 +72,8 @@ beforeEach(async () => {
   failGather = false
   failCreate = false
   failLock = false
+  failRead = false
+  failFirstPost = false
 })
 afterEach(async () => {
   store.close()
@@ -102,11 +109,14 @@ function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo", [D
       return `chan-${channels.created.length}`
     },
     post: async (id, content, files, pings) => {
+      if (failFirstPost && content.startsWith("**Incident")) throw new Error("Unknown Channel")
       channels.posts.push([id, content, files?.length ?? 0])
       channels.pinged.push(pings ?? [])
     },
     lock: async (id) => {
       if (failLock) throw new Error("Missing Permissions")
+      // As long as Discord takes, so a second steward arrives while the first is waiting.
+      await new Promise((r) => setTimeout(r, 20))
       channels.locked.push(id)
     },
   }
@@ -115,7 +125,12 @@ function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo", [D
     acRoot: dir,
     replayUrl: "https://champctl.example/replays",
     championshipId: CHAMP,
-    reader: new StaticAcsmReader([c]) as unknown as AcsmReader,
+    reader: {
+      exportChampionship: async (id: string) => {
+        if (failRead) throw new Error("502 Bad Gateway")
+        return new StaticAcsmReader([c]).exportChampionship(id)
+      },
+    } as unknown as AcsmReader,
     claims: {
       forDiscordUser: async (_, user) => (claimed[user] ? claim(user, claimed[user]) : undefined),
       forEntrant: async (_, name) => {
@@ -282,6 +297,28 @@ describe("/incident report", () => {
     expect(reply.content).toMatch(/^I can't find Ana in the recording/)
   })
 
+  it("refuses, rather than going by names, when the entry list can't be read", async () => {
+    // Someone calling themselves Ana in the game, whose GUID can't be checked.
+    const key = await contact([car(1, "Ana", "76561198000000009"), car(2, "Bo"), hit])
+    failRead = true
+    const reply = await router().handle(
+      command(ANA, "report", { race: key, what: "c:0", description: "x" }),
+    )
+    expect(reply.content).toMatch(/^I can't read the championship's entry list right now/)
+    expect(channels.created).toEqual([])
+  })
+
+  it("posts the evidence though the report's own message didn't go through", async () => {
+    failFirstPost = true
+    const reply = await router().handle(
+      command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
+    )
+    expect(reply.content).toMatch(/^Filed as incident #1: <#chan-1>/)
+    expect(channels.posts.map(([, text]) => text.split("\n")[0])).toContain(
+      "**What the recording shows**",
+    )
+  })
+
   it("files one report when a driver taps twice", async () => {
     const r = router()
     const report = () =>
@@ -376,7 +413,6 @@ describe("/incident report", () => {
       /^I couldn't open a channel for the report\. Tell an admin: Missing Permissions/,
     )
     failCreate = false
-    failLock = false
     const again = await r.handle(
       command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
     )
@@ -428,6 +464,16 @@ describe("/incident decide", () => {
     expect(again.content).toBe("Incident #1 was already decided: Racing incident")
   })
 
+  it("is made once when two stewards decide at the same time", async () => {
+    const r = await filed()
+    const steward = (id: string) => ({ channelId: "chan-1", roleIds: [STEWARDS], userId: id })
+    await Promise.all([
+      r.handle(command("s1", "decide", { outcome: "Racing incident" }, steward("s1"))),
+      r.handle(command("s2", "decide", { outcome: "Warning for Bo" }, steward("s2"))),
+    ])
+    expect(channels.posts.filter(([, text]) => text.startsWith("**Decision"))).toHaveLength(1)
+  })
+
   it("can be made again when the channel couldn't be locked", async () => {
     const r = await filed()
     const steward = { channelId: "chan-1", roleIds: [STEWARDS] }
@@ -438,6 +484,14 @@ describe("/incident decide", () => {
       /^Recorded/,
     )
     expect(channels.locked).toEqual(["chan-1"])
+  })
+})
+
+describe("indexJournal", () => {
+  it("reads a journal once for callers that ask at the same time", async () => {
+    const path = join(dir, (await readdir(dir)).find((f) => f.endsWith(".ndjson.gz"))!)
+    const [a, b] = await Promise.all([indexJournal(path), indexJournal(path)])
+    expect(a).toBe(b)
   })
 })
 

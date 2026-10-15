@@ -388,7 +388,11 @@ bot's own role needs, on that category, **View Channel**, **Send Messages**,
 driver a permission it doesn't hold there itself. It also needs **Manage
 Channels** and **Manage Roles** from its server role, not just the category:
 a new channel doesn't inherit the category's settings, and locking one means
-changing who can post in it.
+changing who can post in it, threads included.
+
+Discord allows 50 channels in a category, and decided incidents stay in it,
+read-only, for the record. Move or delete old ones before it fills; the bot
+says so when it can't make another.
 
 The bot reads the recordings and the car and track files. In the compose
 deployment that's the shared data volume and `CHAMPCTL_AC_ROOT`, as for the

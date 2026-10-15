@@ -88,6 +88,8 @@ export class IncidentRouter {
   readonly #o: IncidentRouterOptions
   /** Drivers whose report is being filed: a double-tap shouldn't open two channels. */
   readonly #filing = new Set<string>()
+  /** Channels a decision is going out in: two stewards at once shouldn't both decide. */
+  readonly #deciding = new Set<string>()
   /** Renders run one at a time; a race night's reports can wait their turn. */
   #rendering: Promise<unknown> = Promise.resolve()
 
@@ -114,7 +116,11 @@ export class IncidentRouter {
       return matching(names.map((n) => ({ name: n, value: n })))
     }
     if (focused === "what") {
-      const mine = await this.#reporterCars(command.userId, index)
+      const who = await this.#who(command.userId)
+      const mine =
+        who?.claim && who.championship
+          ? this.#reporterCars(who.claim.entrantName, index, who.championship)
+          : []
       const choices: Choice[] = []
       for (const c of index.collisions) {
         const other = otherInContact(index, c, mine)
@@ -142,13 +148,13 @@ export class IncidentRouter {
 
   async #report(command: SlashCommand): Promise<CommandReply> {
     const now = (this.#o.now ?? (() => new Date()))()
-    const championshipId = this.#o.championshipId
-    if (!championshipId) {
+    const who = await this.#who(command.userId)
+    if (!who) {
       return {
         content: "Incident reports aren't set up yet: no championship is pinned. Tell an admin.",
       }
     }
-    const claim = await this.#o.claims.forDiscordUser(championshipId, command.userId)
+    const { claim, championship } = who
     if (!claim) {
       return {
         content:
@@ -159,7 +165,14 @@ export class IncidentRouter {
     const index = await this.#index(command.options["race"])
     if (!index)
       return { content: "Pick the race from the list, so I know which recording to look at." }
-    const mine = await this.#reporterCars(command.userId, index)
+    // Without the entry list there's no GUID to check a car against, and a name alone proves nothing.
+    if (!championship) {
+      return {
+        content:
+          "I can't read the championship's entry list right now. Try again in a few minutes.",
+      }
+    }
+    const mine = this.#reporterCars(claim.entrantName, index, championship)
     if (mine.length === 0) {
       return {
         content: `I can't find ${claim.entrantName} in the recording of that session. If you drove in it, tell a steward.`,
@@ -237,6 +250,8 @@ export class IncidentRouter {
     try {
       return await this.#file(
         command,
+        who.championshipId,
+        championship,
         claim.entrantName,
         index,
         me,
@@ -253,6 +268,8 @@ export class IncidentRouter {
 
   async #file(
     command: SlashCommand,
+    championshipId: string,
+    championship: Championship,
     reporter: string,
     index: JournalIndex,
     me: JournalCar,
@@ -262,15 +279,8 @@ export class IncidentRouter {
     description: string,
     now: Date,
   ): Promise<CommandReply> {
-    const championshipId = this.#o.championshipId as string
-
-    const championship = await this.#o.reader
-      .exportChampionship(championshipId)
-      .catch(() => undefined)
-    const otherEntrant = (championship && entrantFor(championship, other)) ?? other.driver
-    const otherClaim = championship
-      ? await this.#o.claims.forEntrant(championshipId, otherEntrant)
-      : undefined
+    const otherEntrant = entrantFor(championship, other) ?? other.driver
+    const otherClaim = await this.#o.claims.forEntrant(championshipId, otherEntrant)
 
     const incident = this.#o.store.file(
       {
@@ -292,7 +302,13 @@ export class IncidentRouter {
         ...(otherClaim ? [otherClaim.discordUserId] : []),
       ])
       this.#o.store.setChannel(incident.number, channelId)
+    } catch (e) {
+      this.#o.log?.(`incident #${incident.number}: ${message(e)}`)
+      return { content: `I couldn't open a channel for the report. Tell an admin: ${message(e)}` }
+    }
 
+    // The channel's there now, and the evidence is worth posting whatever happens to this.
+    try {
       const session = `${SESSION_TYPES[index.session.type] ?? index.session.name} at ${index.session.track}`
       const otherWho = otherClaim ? `<@${otherClaim.discordUserId}>` : `**${otherEntrant}**`
       await this.#o.channels.post(
@@ -307,7 +323,6 @@ export class IncidentRouter {
       )
     } catch (e) {
       this.#o.log?.(`incident #${incident.number}: ${message(e)}`)
-      return { content: `I couldn't open a channel for the report. Tell an admin: ${message(e)}` }
     }
 
     try {
@@ -390,6 +405,18 @@ export class IncidentRouter {
     }
     const outcome = (command.options["outcome"] ?? "").trim()
     if (!outcome) return { content: "Say what was decided." }
+    if (this.#deciding.has(command.channelId)) {
+      return { content: "Another steward is deciding this one right now." }
+    }
+    this.#deciding.add(command.channelId)
+    try {
+      return await this.#record(command, incident, outcome)
+    } finally {
+      this.#deciding.delete(command.channelId)
+    }
+  }
+
+  async #record(command: SlashCommand, incident: Incident, outcome: string): Promise<CommandReply> {
     const now = (this.#o.now ?? (() => new Date()))()
     const who = [incident.reporterDiscord, incident.otherDiscord]
       .filter(Boolean)
@@ -439,21 +466,25 @@ export class IncidentRouter {
    * The reporter's cars in a recording, every slot they held, through their
    * claim and the entry list's GUID. By name only where there's no GUID to go
    * on: anyone can call themselves anything in the game.
-   *
    */
-  async #reporterCars(discordUserId: string, index: JournalIndex): Promise<JournalCar[]> {
+  #reporterCars(entrantName: string, index: JournalIndex, c: Championship): JournalCar[] {
+    const guid = guidFor(c, entrantName)
+    // A car with a GUID is theirs only by it, when the entry list has theirs to
+    // compare; older recordings have some cars without.
+    return index.cars.filter((car) =>
+      guid && car.guid ? normGuid(car.guid) === guid : sameName(car.driver, entrantName),
+    )
+  }
+
+  /** The championship and who this Discord user is in it, or nothing to go on. */
+  async #who(discordUserId: string) {
     const championshipId = this.#o.championshipId
-    if (!championshipId) return []
+    if (!championshipId) return undefined
     const claim = await this.#o.claims.forDiscordUser(championshipId, discordUserId)
-    if (!claim) return []
     const championship = await this.#o.reader
       .exportChampionship(championshipId)
       .catch(() => undefined)
-    const guid = championship && guidFor(championship, claim.entrantName)
-    // A car with a GUID is theirs only by it; older recordings have some without.
-    return index.cars.filter((c) =>
-      guid && c.guid ? normGuid(c.guid) === guid : sameName(c.driver, claim.entrantName),
-    )
+    return { championshipId, claim, championship }
   }
 }
 

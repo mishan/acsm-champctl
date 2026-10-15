@@ -69,7 +69,9 @@ export async function indexJournal(path: string, now = Date.now()): Promise<Jour
   const known = cache.get(path)
   if (known && now - known.readAt < RECHECK_LIVE_MS) return known.index
   const { mtimeMs } = await stat(path)
-  if (known?.mtimeMs === mtimeMs) return known.index
+  // Again: another call may have started the read while this one waited on stat.
+  const latest = cache.get(path)
+  if (latest?.mtimeMs === mtimeMs) return latest.index
   // The promise, so a second keystroke waits on the first read rather than starting its own.
   const index = read(path)
   cache.set(path, { mtimeMs, readAt: now, index })
