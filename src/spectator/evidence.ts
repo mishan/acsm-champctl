@@ -5,13 +5,14 @@
  * overhead video, and a replay clip to watch in the game.
  */
 
+import { rm } from "node:fs/promises"
 import { join } from "node:path"
 
 import { writeReplay } from "./acreplay.js"
 import { analyzeIncident, trackForJournal } from "./analysis.js"
 import { listCollisions } from "./incident.js"
 import { findTrackSkips, type TrackSkip } from "./cuts.js"
-import { readJournal } from "./journal.js"
+import { sessionStart } from "./journal.js"
 import { renderIncidentSvg } from "./render.js"
 import { callName } from "./rules.js"
 import type { IncidentThresholds } from "./thresholds.js"
@@ -60,11 +61,6 @@ const CONTACT_NEAR_MS = 10_000
 /** A track skip this near the moment is part of the story. */
 const SKIP_NEAR_MS = 60_000
 
-export async function sessionStart(journal: string): Promise<number> {
-  for await (const r of readJournal(journal)) if (r.t === "session") return r.at
-  throw new Error(`${journal} has no session record`)
-}
-
 export async function gatherEvidence(q: EvidenceRequest): Promise<Evidence> {
   const track = await trackForJournal(q.journal, q.acRoot)
   const summary: string[] = []
@@ -111,20 +107,28 @@ export async function gatherEvidence(q: EvidenceRequest): Promise<Evidence> {
   for (const k of nearby) {
     summary.push(
       `${k.driver} left the track ${clock(k.offS * 1000)} into the session and came back on ` +
-        `${Math.round(k.skippedM)} m further round, ${k.savedS.toFixed(1)} s quicker than their usual ` +
-        `time through that stretch (${k.tookS.toFixed(1)} s against ${k.usualS.toFixed(1)} s).`,
+        `${Math.round(k.skippedM)} m further round, ${k.savedS.toFixed(1)} s quicker than ` +
+        `${k.field ? "other drivers' usual" : "their usual"} time through that stretch (${k.tookS.toFixed(1)} s against ${k.usualS.toFixed(1)} s).`,
     )
   }
 
-  const video = join(q.outDir, `${q.stem}.mp4`)
-  const sink = q.videoSink?.(video) ?? ffmpegSink(video, 1280, 720, 30)
-  await writeVideo(clip, sink, { ...window, focusCarIds: q.carIds })
-
+  // The clip first: it refuses to replace one already there, so a stem that's
+  // been used fails before anything of the earlier one is overwritten.
   const clipFile = `${q.stem}.acreplay`
   await writeReplay(q.journal, join(q.outDir, clipFile), {
     carsDir: join(q.acRoot, "content/cars"),
     window: { fromMs: Math.max(0, q.atMs - CLIP_BEFORE_MS), toMs: q.atMs + CLIP_AFTER_MS },
   })
+
+  const video = join(q.outDir, `${q.stem}.mp4`)
+  try {
+    const sink = q.videoSink?.(video) ?? ffmpegSink(video, 1280, 720, 30)
+    await writeVideo(clip, sink, { ...window, focusCarIds: q.carIds })
+  } catch (e) {
+    // Half a video plays as if it were the whole of one, and the stem is free to try again.
+    await Promise.all([rm(video, { force: true }), rm(join(q.outDir, clipFile), { force: true })])
+    throw e
+  }
 
   return {
     summary,

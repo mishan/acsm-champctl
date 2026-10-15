@@ -15,6 +15,7 @@ import type { SKRSContext2D } from "@napi-rs/canvas"
 
 import { readJournal } from "./journal.js"
 import type { Track } from "./track.js"
+import { JUMP_M, JUMP_PER_MS } from "./cuts.js"
 
 export interface VideoOptions {
   /** The stretch to show, in ms from the session's start, as a replay shows it. */
@@ -149,6 +150,9 @@ export function poseAt(c: CarTrack, t: number): Pose | undefined {
   const b = Math.min(lo + 1, c.t.length - 1)
   const span = c.t[b]! - c.t[lo]!
   if (t > c.t[lo]! && span > STALE_MS) return undefined
+  // Reset somewhere else: nothing drove the line between.
+  const moved = Math.hypot(c.x[b]! - c.x[lo]!, c.z[b]! - c.z[lo]!)
+  if (t > c.t[lo]! && moved > Math.max(JUMP_M, JUMP_PER_MS * span)) return undefined
   const w = span > 0 && t > c.t[lo]! ? Math.min(1, (t - c.t[lo]!) / span) : 0
   const mix = (a: number[]) => a[lo]! + (a[b]! - a[lo]!) * w
   const turn = Math.atan2(Math.sin(c.yaw[b]! - c.yaw[lo]!), Math.cos(c.yaw[b]! - c.yaw[lo]!))
@@ -274,15 +278,13 @@ export function drawFrame(
     ctx.lineWidth = 3
     ctx.globalAlpha = 0.55
     ctx.beginPath()
-    let on = false
+    let last: Pose | undefined
     for (let k = t - TRAIL_MS; k <= t; k += 50) {
       const p = poseAt(c, k)
-      if (!p) {
-        on = false
-        continue
-      }
-      on ? ctx.lineTo(X(p.x), Z(p.z)) : ctx.moveTo(X(p.x), Z(p.z))
-      on = true
+      // Steps of 50 ms can step over a reset's two samples without landing between them.
+      const on = p && last && Math.hypot(p.x - last.x, p.z - last.z) <= JUMP_M
+      if (p) on ? ctx.lineTo(X(p.x), Z(p.z)) : ctx.moveTo(X(p.x), Z(p.z))
+      last = p
     }
     ctx.stroke()
     ctx.globalAlpha = 1
@@ -335,6 +337,8 @@ export function drawFrame(
 export interface FrameSink {
   write(rgba: Buffer): Promise<void>
   end(): Promise<void>
+  /** Gives up: a run that stops partway mustn't leave ffmpeg waiting for frames. */
+  abort(): void
 }
 
 /** H.264 in an MP4 that Discord and browsers play inline. `command` is for the tests. */
@@ -387,10 +391,23 @@ export function ffmpegSink(
       ff.stdin.end()
       await exited
     },
+    abort: () => {
+      ff.stdin.destroy()
+      ff.kill()
+    },
   }
 }
 
 export async function writeVideo(clip: Clip, sink: FrameSink, o: VideoOptions): Promise<number> {
+  try {
+    return await draw(clip, sink, o)
+  } catch (e) {
+    sink.abort()
+    throw e
+  }
+}
+
+async function draw(clip: Clip, sink: FrameSink, o: VideoOptions): Promise<number> {
   // Loaded here: the CLI's record shares this module, and a recorder has no
   // business needing the native drawing library.
   const { createCanvas } = await import("@napi-rs/canvas")

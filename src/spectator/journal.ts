@@ -141,3 +141,9 @@ export async function* readJournal(path: string): AsyncGenerator<JournalRecord> 
   }
   if (fileError) throw fileError
 }
+
+/** The recorder's clock at the session's start: what times into the session count from. */
+export async function sessionStart(path: string): Promise<number> {
+  for await (const r of readJournal(path)) if (r.t === "session") return r.at
+  return 0
+}
