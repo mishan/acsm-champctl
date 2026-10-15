@@ -288,6 +288,22 @@ describe("writeReplay", () => {
     expect((await readdir(dir)).filter((f) => f.startsWith("s.acreplay"))).toEqual(["s.acreplay"])
   })
 
+  it("writes only the stretch a clip asks for, timed from the session's start", async () => {
+    const path = await journal([
+      { ...session, at: 1000 },
+      ...[0, 1, 2, 3, 4, 5].map(
+        (s): JournalRecord => ({
+          t: "pos",
+          at: 1000 + s * 1000,
+          car: state(1, s * 1000, { pos: [s, 0, 0] }),
+        }),
+      ),
+    ])
+    const out = join(dir, "clip.acreplay")
+    await writeReplay(path, out, { intervalMs: 1000, window: { fromMs: 2000, toMs: 4000 } })
+    expect(parse(await readFile(out)).cars[0]!.frames.map((f) => f.pos[0])).toEqual([2, 3, 4])
+  })
+
   it("rejects, and leaves the file alone, when the replay already exists", async () => {
     const path = await journal([session, { t: "pos", at: 0, car: state(1, 0) }])
     const out = join(dir, "s.acreplay")

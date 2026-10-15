@@ -8,7 +8,8 @@ import { pathToFileURL } from "node:url"
 
 import { type ReplaySummary, writeReplay } from "../spectator/acreplay.js"
 import { postToWebhook, replayMessage } from "../spectator/announce.js"
-import { analyzeIncident } from "../spectator/analysis.js"
+import { analyzeIncident, trackForJournal } from "../spectator/analysis.js"
+import { findTrackSkips } from "../spectator/cuts.js"
 import { incidentBrief } from "../spectator/brief.js"
 import { listCollisions } from "../spectator/incident.js"
 import { renderIncidentSvg } from "../spectator/render.js"
@@ -26,8 +27,10 @@ Usage:
   champctl-spectator record --server <host:port> --ac-root <dir> --car <model>
                             --guid <steam64> --out <dir> [options]
   champctl-spectator replay <journal.ndjson.gz> [--out <file>] [--interval <ms>]
+                            [--from <m:ss>] [--to <m:ss>]
                             [--cars <dir>]
   champctl-spectator incidents <journal.ndjson.gz>
+  champctl-spectator cuts <journal.ndjson.gz> --ac-root <dir> [--min-gain <s>]
   champctl-spectator incident <journal.ndjson.gz> <n> --ac-root <dir>
                               [--svg <file>] [--prompt] [--rules <file>]
                               [--profile <id|path>]
@@ -72,6 +75,10 @@ Give the recorder a spectator car of its own in the championship, locked to
 --guid, beside any stream car. ACSM leaves spectator cars out of points and
 grid decisions and exempts them from Car Update Filtering, which an ordinary
 entry would be subject to.
+
+cuts finds every time a car left the track and came back on further round,
+having covered that stretch at least --min-gain seconds (default 1) faster
+than its driver does on the track, measured against their own other laps.
 
 incidents lists a session's car-to-car collisions, numbered. incident <n>
 measures one: who was ahead, when they were alongside, who braked where, who
@@ -121,8 +128,16 @@ type Args =
       replayUrl?: string
       replay: boolean
     }
-  | { command: "replay"; journal: string; out?: string; intervalMs?: number; cars?: string }
+  | {
+      command: "replay"
+      journal: string
+      out?: string
+      intervalMs?: number
+      cars?: string
+      window?: { fromMs: number; toMs: number }
+    }
   | { command: "incidents"; journal: string }
+  | { command: "cuts"; journal: string; acRoot: string; minSavedS: number }
   | { command: "mcp"; journals: string; acRoot: string; rules?: string; profile: string }
   | {
       command: "incident"
@@ -150,7 +165,7 @@ function port(flag: string, v: string): number {
   return n
 }
 
-const COMMANDS = ["record", "replay", "incidents", "incident", "mcp"] as const
+const COMMANDS = ["record", "replay", "incidents", "incident", "cuts", "mcp"] as const
 
 export function parseArgs(argv: readonly string[]): Args {
   const [first, ...rest] = argv
@@ -199,6 +214,13 @@ export function parseArgs(argv: readonly string[]): Args {
       ...(rules ? { rules } : {}),
       profile: take("--profile") ?? defaultProfile(),
     }
+  } else if (command === "cuts") {
+    const journal = positional.shift()
+    if (journal === undefined) throw new UsageError("cuts needs a journal file.")
+    const min = take("--min-gain")
+    const minSavedS = min === undefined ? 1 : Number(min)
+    if (!(minSavedS > 0)) throw new UsageError("--min-gain must be a positive number of seconds.")
+    args = { command, journal, acRoot: need("--ac-root"), minSavedS }
   } else if (command === "incidents" || command === "incident") {
     const journal = positional.shift()
     if (journal === undefined) throw new UsageError(`${command} needs a journal file.`)
@@ -234,12 +256,18 @@ export function parseArgs(argv: readonly string[]): Args {
     if (intervalMs !== undefined && !(intervalMs > 0))
       throw new UsageError("--interval must be a positive number of ms.")
     const cars = take("--cars")
+    const from = take("--from")
+    const to = take("--to")
+    const fromMs = from === undefined ? 0 : clock("--from", from)
+    const toMs = to === undefined ? Number.POSITIVE_INFINITY : clock("--to", to)
+    if (!(toMs > fromMs)) throw new UsageError("--to must be later than --from.")
     args = {
       command,
       journal,
       ...(out ? { out } : {}),
       ...(intervalMs ? { intervalMs } : {}),
       ...(cars ? { cars } : {}),
+      ...(from !== undefined || to !== undefined ? { window: { fromMs, toMs } } : {}),
     }
   } else {
     const server = hostPort("--server", need("--server"))
@@ -354,6 +382,23 @@ async function main(argv: readonly string[]): Promise<number> {
     })
     return 0
   }
+  if (args.command === "cuts") {
+    const skips = await findTrackSkips(
+      args.journal,
+      await trackForJournal(args.journal, args.acRoot),
+      args.minSavedS,
+    )
+    if (skips.length === 0)
+      process.stdout.write(`Nobody gained ${args.minSavedS} s or more off the track.\n`)
+    for (const k of skips) {
+      process.stdout.write(
+        `${formatClock(k.offS * 1000)}  ${k.driver}: ${Math.round(k.skippedM)} m of track in ${k.tookS.toFixed(1)} s off it, ` +
+          `usually ${k.usualS.toFixed(1)} s (${k.passes} ${k.passes === 1 ? "pass" : "passes"}): ${k.savedS.toFixed(1)} s gained. ` +
+          `Back on at ${formatClock(k.backS * 1000)}.\n`,
+      )
+    }
+    return 0
+  }
   if (args.command === "incidents") {
     const list = await listCollisions(args.journal)
     if (list.length === 0) process.stdout.write("No collisions in this session.\n")
@@ -392,10 +437,14 @@ async function main(argv: readonly string[]): Promise<number> {
     return 0
   }
   if (args.command === "replay") {
-    const out = args.out ?? args.journal.replace(/(\.ndjson)?(\.gz)?$/, ".acreplay")
+    const clip = args.window
+      ? `-${formatClock(args.window.fromMs).replace(":", "m")}s-${Number.isFinite(args.window.toMs) ? `${formatClock(args.window.toMs).replace(":", "m")}s` : "end"}`
+      : ""
+    const out = args.out ?? args.journal.replace(/(\.ndjson)?(\.gz)?$/, `${clip}.acreplay`)
     const summary = await writeReplay(args.journal, out, {
       ...(args.intervalMs ? { intervalMs: args.intervalMs } : {}),
       ...(args.cars ? { carsDir: args.cars } : {}),
+      ...(args.window ? { window: args.window } : {}),
     })
     process.stdout.write(
       `${out}: ${summary.cars.length} cars, ${summary.frames} frames, ${Math.round(summary.durationMs / 1000)} s\n${defaultWheels(summary)}`,
@@ -482,6 +531,18 @@ async function main(argv: readonly string[]): Promise<number> {
   // its close, and ACSM behind Cloudflare never did: the process stayed up
   // after it had finished.
   process.exit(0)
+}
+
+/** "12:59", "1:02:03" or plain seconds, as a replay shows the time, to ms. */
+function clock(flag: string, value: string): number {
+  const parts = value.split(":")
+  const n = parts.map(Number)
+  if (parts.length > 3 || parts.some((p) => p === "") || n.some((v) => !(v >= 0))) {
+    throw new UsageError(
+      `${flag} must be a time into the session such as 12:59, not ${JSON.stringify(value)}.`,
+    )
+  }
+  return Math.round(n.reduce((t, v) => t * 60 + v, 0) * 1000)
 }
 
 /**

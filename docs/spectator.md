@@ -205,13 +205,24 @@ place of the two plugin flags.
 
 ```sh
 champctl-spectator replay <journal> [--out <file>] [--cars <ac-root>/content/cars] [--interval <ms>]
+                              [--from <m:ss>] [--to <m:ss>]
 champctl-spectator incidents <journal>
+champctl-spectator cuts <journal> --ac-root <dir> [--min-gain <s>]
 champctl-spectator incident <journal> <n> --ac-root <dir> [--svg out.svg] [--prompt] [--rules rules.txt]
 champctl-spectator mcp --journals <dir> --ac-root <dir> [--rules rules.txt]
 ```
 
 - `replay` writes the replay `record` would have, at the game's own 18 frames a
   second unless `--interval` says otherwise, in milliseconds between frames.
+- `--from` and `--to` make a clip: only that stretch of the session, timed as
+  the full replay shows it, with every car. A minute around an incident is a
+  few MB instead of a few hundred.
+- `cuts` finds every time a car left the track and came back on further round
+  having covered that stretch faster than its driver does on the track, by at
+  least `--min-gain` seconds (default 1). The comparison is against the same
+  driver's other laps through the same stretch, so running wide doesn't count,
+  and the server's own cut count, which says only that a lap had one, isn't
+  needed.
 - `incidents` lists a session's collisions, numbered.
 - `incident` measures one (who was ahead, when they overlapped, who braked
   where, who moved across whom, where the cars touched) and ends with a

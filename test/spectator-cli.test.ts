@@ -82,6 +82,17 @@ describe("champctl-spectator parseArgs", () => {
       /needs --car/,
     ],
     [
+      "a clip that ends before it starts",
+      ["replay", "j.ndjson.gz", "--from", "13:40", "--to", "12:35"],
+      /later than --from/,
+    ],
+    [
+      "a clip time that isn't one",
+      ["replay", "j.ndjson.gz", "--from", "12m35s"],
+      /time into the session/,
+    ],
+    ["cuts without the track", ["cuts", "j.ndjson.gz"], /needs --ac-root/],
+    [
       "a replays address that isn't one",
       [...record, "--replay-url", "champctl.example/replays"],
       /replays page/,
@@ -123,6 +134,18 @@ describe("champctl-spectator record", () => {
       await rm(dir, { recursive: true, force: true })
     }
   }, 20_000)
+})
+
+describe("replay clips", () => {
+  it.each([
+    ["12:35", 755_000],
+    ["1:02:03", 3_723_000],
+    ["90", 90_000],
+  ])("reads %s as a time into the session", (from, ms) => {
+    expect(parseArgs(["replay", "j.ndjson.gz", "--from", from])).toMatchObject({
+      window: { fromMs: ms, toMs: Number.POSITIVE_INFINITY },
+    })
+  })
 })
 
 describe("replayWebhook", () => {

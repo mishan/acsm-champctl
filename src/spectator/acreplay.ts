@@ -48,6 +48,8 @@ export interface ReplayOptions {
   /** An AC `content/cars` folder to read each car's wheel positions from. */
   carsDir?: string
   weather?: string
+  /** Only this stretch, in ms from the session's start: a clip of an incident. */
+  window?: { fromMs: number; toMs: number }
 }
 
 export interface ReplaySummary {
@@ -180,6 +182,8 @@ export async function writeReplay(
         case "pos": {
           const id = r.car.carId
           if (id === session?.recorderCarId) break
+          const w = options.window
+          if (w && session && (r.at - session.at < w.fromMs || r.at - session.at > w.toMs)) break
           let spool = spools.get(id)
           if (!spool) {
             spool = new Sink(createWriteStream(join(spoolDir, `${id}.bin`)))
