@@ -15,6 +15,7 @@ import { createInterface } from "node:readline"
 
 import { analyzeIncident } from "./analysis.js"
 import { DEFAULT_RULES, incidentBrief, LIMITS } from "./brief.js"
+import { svgToPng } from "./evidence.js"
 import type { IncidentThresholds } from "./incident.js"
 import { listCollisions } from "./incident.js"
 import { readJournal } from "./journal.js"
@@ -147,12 +148,7 @@ export async function serveMcp(o: McpOptions): Promise<void> {
       )
       const call = `Suggested call from the rules engine: ${callName(suggestion.call, packet)}${suggestion.rule ? ` (rule: ${suggestion.rule})` : ""}\n${suggestion.reasons.map((r) => `- ${r}`).join("\n")}`
       const svg = renderIncidentSvg(packet, track)
-      // Loaded here so `record`, which shares the CLI, never needs the native binary.
-      const { createCanvas, loadImage } = await import("@napi-rs/canvas")
-      const img = await loadImage(Buffer.from(svg))
-      const canvas = createCanvas(img.width, img.height)
-      canvas.getContext("2d").drawImage(img, 0, 0)
-      const png = await canvas.encode("png")
+      const png = await svgToPng(svg)
       return [
         { type: "text", text: `${incidentBrief(packet, o.rules ?? DEFAULT_RULES)}\n\n${call}` },
         { type: "image", data: png.toString("base64"), mimeType: "image/png" },

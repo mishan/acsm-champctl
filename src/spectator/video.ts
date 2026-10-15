@@ -22,6 +22,8 @@ export interface VideoOptions {
   toMs: number
   /** Drivers to follow and pick out, matched case-insensitively within their names. */
   focus?: readonly string[]
+  /** Cars to follow by slot, for a caller that knows them rather than their names. */
+  focusCarIds?: readonly number[]
   width?: number
   height?: number
   fps?: number
@@ -111,7 +113,9 @@ export async function loadClip(journal: string, track: Track, o: VideoOptions): 
   if (start === undefined) throw new Error(`${journal} has no session record`)
   for (const c of cars.values()) {
     c.driver = names.get(c.carId) ?? `car ${c.carId}`
-    c.focused = focus.some((f) => c.driver.toLowerCase().includes(f))
+    c.focused =
+      focus.some((f) => c.driver.toLowerCase().includes(f)) ||
+      (o.focusCarIds ?? []).includes(c.carId)
   }
   const missing = asked.filter(
     (f) => ![...cars.values()].some((c) => c.driver.toLowerCase().includes(f.toLowerCase())),
