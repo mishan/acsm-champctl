@@ -213,11 +213,16 @@ CHAMPCTL=/opt/acsm-champctl/deploy
 
 # Weekly: announce the next round of a championship, the day before.
 0  18 *   *   2    cd $CHAMPCTL && docker compose run --rm -T announce <championship-id>
+
+# Weekly: post the standings once race night is over.
+15 22 *   *   3    cd $CHAMPCTL && docker compose run --rm -T standings
 ```
 
-`standings <championship-id>` works the same way, and so does `trophy
-<championship-id>`, which posts one championship's podium on demand — for an
-older season, or to post one again. `docker compose run --rm trophy <id>
+`standings` posts the championship in `CHAMPCTL_LIVERY_CHAMPIONSHIP` unless
+given another id, so the month's change to `.env` moves it along too.
+
+`trophy <championship-id>` posts one championship's podium on demand, for an
+older season or to post one again. `docker compose run --rm trophy <id>
 --dry-run --out /var/lib/champctl/podiums` draws it without posting; the file
 lands in the volume. Each job takes the options
 its command documents, after the service name: `docker compose run --rm
