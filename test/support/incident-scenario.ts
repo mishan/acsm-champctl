@@ -19,6 +19,7 @@ export interface ScriptedCar {
   braking?(t: number): boolean
   /** Sample times to leave out, as [from, to) ms. */
   gap?: [number, number]
+  guid?: string
 }
 
 /** Where a car at (s, across) is in the world, using the track's own edges. */
@@ -61,6 +62,7 @@ export async function writeScenario(
         model: "m",
         skin: "s",
         driver: c.driver,
+        ...(c.guid ? { guid: c.guid } : {}),
       }),
     ),
   ]

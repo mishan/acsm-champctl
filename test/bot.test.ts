@@ -745,6 +745,13 @@ describe("the profile's Discord settings", () => {
     expect(() => withDiscord({ qualiVoiceMove })).toThrow(/qualiVoiceMove/)
   })
 
+  it.each([
+    [{ categoryId: "Incidents", stewardRoleId: "1".repeat(18) }],
+    [{ categoryId: "1".repeat(18) }],
+  ])("checks the incidents category and stewards' role: %j", (incidents) => {
+    expect(() => withDiscord({ incidents })).toThrow(/discord\.incidents/)
+  })
+
   it("rejects a channel link", () => {
     expect(() =>
       withDiscord({ adminChannelId: "https://discord.com/channels/1/1234567890123456789" }),

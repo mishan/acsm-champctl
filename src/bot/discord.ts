@@ -27,12 +27,16 @@
 
 import {
   type ApplicationCommandDataResolvable,
+  type AutocompleteInteraction,
+  ChannelType,
   type ChatInputCommandInteraction,
   Client,
   Events,
   GatewayIntentBits,
   MessageFlags,
   type Interaction,
+  OverwriteType,
+  PermissionFlagsBits,
 } from "discord.js"
 
 import type { CommandDefinition } from "./commands.js"
@@ -160,9 +164,13 @@ export class GatewayTransport implements DiscordTransport {
     // text carries an entry list name — which is attacker-supplied on a league
     // with open sign-ups, and `@` passes SAFE_COMPONENT. Signing up as
     // "@everyone" and running /livery claim was a guild-wide ping on demand.
+    // `pings` names users outright, by id: nothing in the text can widen it.
     await channel.send({
       content: message.content,
-      allowedMentions: { parse: [] },
+      allowedMentions: {
+        parse: [],
+        ...(message.pings?.length ? { users: [...message.pings] } : {}),
+      },
       ...(message.files?.length
         ? {
             files: message.files.map((f) => ({
@@ -230,9 +238,91 @@ export class GatewayTransport implements DiscordTransport {
    */
   listen(router: CommandRouter, options: { adminChannelId?: string } = {}): void {
     this.#client.on(Events.InteractionCreate, (interaction: Interaction) => {
+      if (interaction.isAutocomplete()) {
+        void this.#suggest(interaction, router)
+        return
+      }
       if (!interaction.isChatInputCommand()) return
       void this.#dispatch(interaction, router, options.adminChannelId)
     })
+  }
+
+  /** Suggestions as an option is typed. Nothing, rather than an error, if the router fails. */
+  async #suggest(interaction: AutocompleteInteraction, router: CommandRouter): Promise<void> {
+    const focused = interaction.options.getFocused(true).name
+    const command: SlashCommand = {
+      name: interaction.commandName,
+      ...(interaction.options.getSubcommand(false)
+        ? { subcommand: interaction.options.getSubcommand(false) as string }
+        : {}),
+      options: stringOptions(interaction.options.data),
+      userId: interaction.user.id,
+      username: interaction.user.username,
+      ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
+      channelId: interaction.channelId,
+      roleIds: memberRoleIds(interaction.member),
+    }
+    const choices = router.autocomplete
+      ? await router.autocomplete(command, focused).catch((e: unknown) => {
+          process.stderr.write(
+            `autocomplete for /${command.name} ${focused} failed: ${message(e)}\n`,
+          )
+          return []
+        })
+      : []
+    await interaction.respond(choices).catch(() => {})
+  }
+
+  /**
+   * A text channel in a category that only a role, some members and the bot
+   * can see: an incident's, for the stewards and the drivers in it.
+   *
+   * @everyone's role has the guild's id, so nothing needs fetching for it.
+   */
+  async createPrivateChannel(
+    guildId: string,
+    o: { parentId: string; name: string; roleId: string; userIds: readonly string[] },
+  ): Promise<string> {
+    const guild = await this.#client.guilds.fetch(guildId)
+    const can = [
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.SendMessages,
+      PermissionFlagsBits.ReadMessageHistory,
+      PermissionFlagsBits.AttachFiles,
+    ]
+    const me = this.#client.user?.id
+    const channel = await guild.channels
+      .create({
+        name: o.name,
+        type: ChannelType.GuildText,
+        parent: o.parentId,
+        permissionOverwrites: [
+          { id: guildId, type: OverwriteType.Role, deny: [PermissionFlagsBits.ViewChannel] },
+          { id: o.roleId, type: OverwriteType.Role, allow: can },
+          ...o.userIds.map((id) => ({ id, type: OverwriteType.Member, allow: can })),
+          ...(me ? [{ id: me, type: OverwriteType.Member, allow: can }] : []),
+        ],
+      })
+      .catch((e: unknown) => {
+        throw new BotError(
+          `Couldn't create the incident's channel: ${message(e)}. The bot needs Manage Channels ` +
+            `and Manage Roles, and discord.incidents.categoryId must be a category in this server.`,
+        )
+      })
+    return channel.id
+  }
+
+  /** Nobody but the bot can post in the channel any more; who could see it still can. */
+  async lockChannel(channelId: string): Promise<void> {
+    const channel = await this.#client.channels.fetch(channelId)
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      throw new BotError(`${channelId} isn't a text channel I can see.`)
+    }
+    const me = this.#client.user?.id
+    for (const overwrite of channel.permissionOverwrites.cache.values()) {
+      if (overwrite.id === me || overwrite.id === channel.guildId) continue
+      await overwrite.edit({ SendMessages: false })
+    }
   }
 
   async #dispatch(
@@ -276,7 +366,8 @@ export class GatewayTransport implements DiscordTransport {
       process.stderr.write(`${commandLine(interaction)} failed: ${message(e)}\n`)
       await interaction
         .editReply({
-          content: "Something went wrong at my end rather than with your file. Tell an admin.",
+          content:
+            "Something went wrong at my end rather than with anything you did. Tell an admin.",
         })
         .catch(() => {})
     }
@@ -329,10 +420,7 @@ export class GatewayTransport implements DiscordTransport {
  * `discord.js`: past this function it is ids, strings and one thunk.
  */
 export function toSlashCommand(interaction: ChatInputCommandInteraction): SlashCommand {
-  const options: Record<string, string> = {}
-  for (const option of interaction.options.data[0]?.options ?? interaction.options.data) {
-    if (typeof option.value === "string") options[option.name] = option.value
-  }
+  const options = stringOptions(interaction.options.data)
 
   const file = interaction.options.getAttachment("file")
   const attachment: IncomingAttachment | undefined = file
@@ -370,6 +458,21 @@ export function toSlashCommand(interaction: ChatInputCommandInteraction): SlashC
     channelId: interaction.channelId,
     roleIds,
   }
+}
+
+/** A command's string options by name, from inside its subcommand if it has one. */
+function stringOptions(
+  data: readonly {
+    name: string
+    value?: unknown
+    options?: readonly { name: string; value?: unknown }[]
+  }[],
+): Record<string, string> {
+  const options: Record<string, string> = {}
+  for (const option of data[0]?.options ?? data) {
+    if (typeof option.value === "string") options[option.name] = option.value
+  }
+  return options
 }
 
 /**

@@ -160,6 +160,12 @@ export interface DiscordSettings {
    * leaves voice alone, and asks Discord for no voice events at all.
    */
   qualiVoiceMove?: QualiVoiceMove
+  /**
+   * `/incident`: drivers report from the race recordings, and each report gets
+   * a channel in `categoryId` that the `stewardRoleId` role and both drivers
+   * can see. Absent, the command isn't registered.
+   */
+  incidents?: { categoryId: string; stewardRoleId: string }
 }
 
 export interface QualiVoiceMove {

@@ -347,6 +347,45 @@ where they are.
 The bot needs **Move Members**, and **Connect** on both channels. A move that
 fails is reported in `adminChannelId`.
 
+## 12. Optional: incident reports
+
+With the race recorder running ([spectator.md](spectator.md)), drivers can
+report an incident with `/incident report`:
+
+- **race**: picked from the sessions recorded in the last two weeks.
+- **what**: a contact the recording caught between them and someone else, or
+  "Something else", which also needs **other_driver** and **when**, the time
+  into the session as the replay shows it (`12:59`).
+- **description**: what happened, in their own words.
+
+A driver has to have claimed their name with `/livery claim` first: that's how
+the bot knows which car was theirs, and who the other driver is in Discord.
+
+Each report gets its own channel in a category, which only the stewards, the
+two drivers and the bot can see. The bot posts the report, what the recording
+shows about the moment (the speeds, the gap, any track skips nearby), a
+suggested call where one of its rules fits, a drawing of the approach, an
+overhead video of both cars, and a link to a replay clip to watch in the game.
+
+A steward closes it with `/incident decide`, in that channel. The decision is
+recorded and posted, both drivers are mentioned, and the channel goes
+read-only. Nothing is written to ACSM: any penalty is applied by hand.
+
+```json
+"incidents": {
+  "categoryId": "1234567890123456789",
+  "stewardRoleId": "9876543210987654321"
+}
+```
+
+Make an "Incidents" category with nobody but the stewards able to see it. The
+bot needs **Manage Channels** and **Manage Roles** there, to create each
+channel and set who can see it.
+
+The bot reads the recordings and the car and track files. In the compose
+deployment that's the shared data volume and `CHAMPCTL_AC_ROOT`, as for the
+recorder. Set `CHAMPCTL_REPLAY_URL` for the clip's link.
+
 ## When it doesn't work
 
 | What you see | What it is |
