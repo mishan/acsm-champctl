@@ -46,9 +46,17 @@ const state = (timestamp: number, pos: Vec3): CarState => ({
 
 /**
  * Positions every 50 ms. On lap 2, between `from` and `to` along the lap, the
- * car follows `detour` instead, a path of points it covers at the same speed.
+ * car follows `detour` instead, a path of points it covers at the same speed,
+ * or, `put` there, sits at each point for a second as a car reset there would.
  */
-async function laps(name: string, from: number, to: number, detour: Vec3[]): Promise<string> {
+async function laps(
+  name: string,
+  from: number,
+  to: number,
+  detour: Vec3[],
+  put = false,
+  then?: string,
+): Promise<string> {
   const records: JournalRecord[] = [
     {
       t: "session",
@@ -63,7 +71,7 @@ async function laps(name: string, from: number, to: number, detour: Vec3[]): Pro
     { t: "car", at: 0, carId: 1, model: "m", skin: "s", driver: "Cutter" },
   ]
   let t = 0
-  const put = (pos: Vec3) => {
+  const put_ = (pos: Vec3) => {
     records.push({ t: "pos", at: t, car: state(t, pos) })
     t += 50
   }
@@ -73,15 +81,21 @@ async function laps(name: string, from: number, to: number, detour: Vec3[]): Pro
       if (lap === 1 && s >= from && s < to) continue
       if (lap === 1 && s >= to && s - step < to) {
         // The detour, walked point to point at the same speed.
-        for (let k = 1; k < detour.length; k++) {
+        if (put) for (const p of detour) for (let i = 0; i < 20; i++) put_(p)
+        for (let k = 1; k < detour.length && !put; k++) {
           const [a, b] = [detour[k - 1]!, detour[k]!]
           const n = Math.max(1, Math.round(Math.hypot(b[0] - a[0], b[2] - a[2]) / step))
           for (let i = 0; i < n; i++)
-            put([a[0] + ((b[0] - a[0]) * i) / n, 0, a[2] + ((b[2] - a[2]) * i) / n])
+            put_([a[0] + ((b[0] - a[0]) * i) / n, 0, a[2] + ((b[2] - a[2]) * i) / n])
         }
       }
-      put(at(s))
+      put_(at(s))
     }
+  }
+  if (then) {
+    // The slot changes hands, and the new driver does a lap of their own.
+    records.push({ t: "car", at: t, carId: 1, model: "m", skin: "s", driver: then })
+    for (let s = 0; s < track.length; s += step) put_(at(s))
   }
   const w = new JournalWriter(join(dir, `${name}.ndjson.gz`))
   for (const r of records) w.write(r)
@@ -114,5 +128,20 @@ describe("findTrackSkips", () => {
     for (let s = from; s <= to; s += 2) wide.push(at(s, -10))
     const path = await laps("wide", from, to, [at(from), ...wide, at(to)])
     expect(await findTrackSkips(path, track, 0.2)).toEqual([])
+  })
+
+  it("doesn't count a car reset to the pits and driven out further round", async () => {
+    // Put in a pit box 80 m off the track, then back on 150 m further round:
+    // a reset, not a shortcut, however quick.
+    const [from, to] = [t1.entry - 20, t1.exit + 20]
+    const box = at(t1.apex, 20)
+    const path = await laps("reset", from, to, [box, box], true)
+    expect(await findTrackSkips(path, track, 0.2)).toEqual([])
+  })
+
+  it("names whoever was driving at the time, when the slot later changes hands", async () => {
+    const [from, to] = [t1.entry - 20, t1.exit + 20]
+    const path = await laps("handover", from, to, [at(from), at(to)], false, "Later")
+    expect((await findTrackSkips(path, track, 0.2)).map((k) => k.driver)).toEqual(["Cutter"])
   })
 })
