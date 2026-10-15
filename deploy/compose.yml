@@ -168,13 +168,14 @@ services:
     entrypoint: [champctl-bot, announce]
     env_file: bot.env
 
-  # The live championship by default, the one the livery drain writes to, so
-  # cron needs no id that changes every month. An id after the service name
-  # replaces it.
+  # The live championship, the one the livery drain writes to, so cron needs no
+  # id that changes every month. In the entrypoint rather than the command,
+  # which anything after the service name replaces: `run standings --dry-run`
+  # would have lost it. For another championship:
+  # `docker compose run --rm --entrypoint champctl-bot standings standings <id>`.
   standings:
     <<: *job
-    entrypoint: [champctl-bot, standings]
-    command: ["${CHAMPCTL_LIVERY_CHAMPIONSHIP:-}"]
+    entrypoint: [champctl-bot, standings, "${CHAMPCTL_LIVERY_CHAMPIONSHIP:-}"]
     env_file: bot.env
 
   # Posts each finished championship's podium to discord.trophyChannelId once.

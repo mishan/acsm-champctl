@@ -347,7 +347,23 @@ where they are.
 The bot needs **Move Members**, and **Connect** on both channels. A move that
 fails is reported in `adminChannelId`.
 
-## 12. Optional: incident reports
+## 12. Optional: standings when a round has been raced
+
+With this in the profile, `serve` posts a championship's standings to
+`announceChannelId` as soon as a round's event has finished:
+
+```json
+"postStandingsWhenRaced": true
+```
+
+"Finished" is ACSM stamping the event complete, which it does when the last
+session ends: after the second race on a night with two, not after the first.
+The bot looks every two minutes, posts each round once, and never posts a round
+that finished before it started watching, so a restart doesn't repeat last
+week's. A round that finished while the bot was down isn't posted; `docker
+compose run --rm standings` posts it by hand.
+
+## 13. Optional: incident reports
 
 With the race recorder running ([spectator.md](spectator.md)), drivers can
 report an incident with `/incident report`:

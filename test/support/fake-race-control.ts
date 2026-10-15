@@ -35,12 +35,19 @@ function frame(text: string): Buffer {
   return Buffer.concat([head, body])
 }
 
-export async function fakeRaceControl(): Promise<FakeRaceControl> {
+/** `refuse` turns away the first that many connections, as a proxy does while ACSM restarts. */
+export async function fakeRaceControl(o: { refuse?: number } = {}): Promise<FakeRaceControl> {
+  let refuse = o.refuse ?? 0
   const sockets = new Set<Duplex>()
   let count = 0
   const waiting: { n: number; resolve: () => void }[] = []
   const server: Server = createServer((_, res) => res.writeHead(404).end())
   server.on("upgrade", (req: IncomingMessage, socket: Duplex) => {
+    if (refuse > 0) {
+      refuse--
+      socket.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+      return
+    }
     if (req.url !== "/acsm/api/race-control") {
       socket.end("HTTP/1.1 404 Not Found\r\n\r\n")
       return

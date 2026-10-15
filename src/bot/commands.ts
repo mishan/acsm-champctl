@@ -104,7 +104,7 @@ export const LIVERY_COMMAND: CommandDefinition = {
 export const LIVERY_COMMANDS: CommandDefinition[] = [LIVERY_COMMAND]
 
 /**
- * `/incident` (docs/discord-bot-setup.md, step 12). Report and decide are subcommands of one
+ * `/incident` (docs/discord-bot-setup.md, step 13). Report and decide are subcommands of one
  * command, so a steward finds both where drivers report.
  */
 export const INCIDENT_COMMAND: CommandDefinition = {

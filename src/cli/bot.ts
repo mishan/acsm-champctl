@@ -27,6 +27,7 @@ import { GatewayTransport } from "../bot/discord.js"
 import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
 import { nightlyMessages, standingsMessage } from "../bot/message.js"
 import { QualiCall } from "../bot/quali-call.js"
+import { StandingsWatch } from "../bot/standings-watch.js"
 import { findingsAtOrAbove, nightly, type NightlyEntry } from "../bot/nightly.js"
 import {
   compareStandings,
@@ -120,6 +121,9 @@ process holding the credentials. Uploads apply by themselves only while
 With discord.qualiVoiceMove in the profile, serve also watches each round's
 export from shortly before quali and, once ACSM says qualifying has started,
 moves everyone in fromChannelId to toChannelId. The bot needs Move Members.
+With discord.postStandingsWhenRaced, serve posts a championship's standings to
+discord.announceChannelId once a round's event has finished, every session of
+it.
 
 The bot token comes from CHAMPCTL_DISCORD_TOKEN and is never a flag — a flag
 lands in shell history and in every ps listing on the box. There is deliberately
@@ -768,7 +772,7 @@ export async function runStandings(
 
   await post(messages)
   process.stdout.write(
-    `Posted ${messages.length} ${messages.length === 1 ? "message" : "messages"} from the ${resolved.source}.\n`,
+    `${args.dryRun ? "Would post" : "Posted"} ${messages.length} ${messages.length === 1 ? "message" : "messages"} from the ${resolved.source}.\n`,
   )
   // 1 when the post went out but something about it needs a person: the two
   // sources disagreed, or ACSM answered in a shape champctl can't read. Said
@@ -959,6 +963,7 @@ async function serve(args: Args): Promise<number> {
   const voice = profile.discord.qualiVoiceMove
   const transport = await connect({ voice: voice !== undefined })
   let stopQualiCall = async () => {}
+  let stopStandings = async () => {}
 
   try {
     if (!(transport instanceof GatewayTransport)) {
@@ -1062,6 +1067,39 @@ async function serve(args: Args): Promise<number> {
       process.stderr.write("Moving Pit Lane to Race Control when qualifying starts.\n")
     }
 
+    const announceChannelId = profile.discord.announceChannelId
+    if (profile.discord.postStandingsWhenRaced && announceChannelId) {
+      stopStandings = new StandingsWatch({
+        reader,
+        log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
+        post: async (id, name, sent) => {
+          const championship = await reader.exportChampionship(id)
+          const resolved = await resolveStandings(reader, championship, id, args, baseUrl)
+          if (!resolved) throw new Error("no standings to post")
+          for (const content of standingsMessage(name, resolved)) {
+            await transport.post({
+              channelId: announceChannelId,
+              content,
+              source: "discord.announceChannelId in the profile",
+            })
+            sent()
+          }
+          return resolved.warned
+        },
+        notify: async (content) => {
+          const adminChannelId = profile.discord?.adminChannelId
+          if (adminChannelId) {
+            await transport.post({
+              channelId: adminChannelId,
+              content,
+              source: "discord.adminChannelId in the profile",
+            })
+          }
+        },
+      }).start()
+      process.stderr.write("Posting the standings when each round has been raced.\n")
+    }
+
     await new Promise<void>((done) => {
       const stop = () => done()
       process.once("SIGINT", stop)
@@ -1073,6 +1111,7 @@ async function serve(args: Args): Promise<number> {
     // the file, and a queue whose log was never checkpointed is one the drain
     // reads short.
     await stopQualiCall()
+    await stopStandings()
     await transport.close()
     liveries.close()
     incidentStore?.close()

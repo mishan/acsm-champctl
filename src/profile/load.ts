@@ -205,6 +205,11 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
       }
     }
 
+    const whenRaced = d["postStandingsWhenRaced"]
+    if (whenRaced !== undefined && typeof whenRaced !== "boolean") {
+      bad("`discord.postStandingsWhenRaced` must be true or false")
+    }
+
     const incidents = d["incidents"]
     if (incidents !== undefined) {
       const i = incidents as Record<string, unknown> | null

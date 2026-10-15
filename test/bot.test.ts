@@ -745,6 +745,10 @@ describe("the profile's Discord settings", () => {
     expect(() => withDiscord({ qualiVoiceMove })).toThrow(/qualiVoiceMove/)
   })
 
+  it("takes postStandingsWhenRaced as true or false, not a string that reads like one", () => {
+    expect(() => withDiscord({ postStandingsWhenRaced: "yes" })).toThrow(/postStandingsWhenRaced/)
+  })
+
   it.each([
     [{ categoryId: "Incidents", stewardRoleId: "1".repeat(18) }],
     [{ categoryId: "1".repeat(18) }],
