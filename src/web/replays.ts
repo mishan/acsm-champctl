@@ -171,9 +171,17 @@ export function registerReplays(app: FastifyInstance, dir: string, timeZone: str
   app.get("/replays", page)
   // A proxy with a `location /replays/` block redirects /replays here.
   app.get("/replays/", page)
-  const download = async (file: string, reply: FastifyReply) => {
-    // Only a path the folder lists, so nothing outside it can be asked for.
-    if (!(await listRecordings(dir, ".acreplay")).includes(file)) {
+  const download = async (asked: string, reply: FastifyReply) => {
+    // Only a path the folder lists, so nothing outside it can be asked for. A
+    // name alone is also found in its round: links posted before rounds have
+    // no folder, and each name starts with its own millisecond timestamp.
+    const files = await listRecordings(dir, ".acreplay")
+    const file = files.includes(asked)
+      ? asked
+      : asked.includes("/")
+        ? undefined
+        : files.find((f) => basename(f) === asked)
+    if (!file) {
       return reply.code(404).send({ error: { code: "not-found", message: "No such replay." } })
     }
     return reply

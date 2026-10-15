@@ -10,7 +10,7 @@
  */
 
 import { mkdir, readdir, rename, stat } from "node:fs/promises"
-import { join } from "node:path"
+import { basename, dirname, join } from "node:path"
 
 import { readJournal } from "./journal.js"
 
@@ -83,23 +83,20 @@ export async function listRecordings(dir: string, ending: string): Promise<strin
 
 /** The newest round on disk, for a recorder starting again: it may still be going. */
 export async function lastRound(dir: string): Promise<Round | undefined> {
-  const folders = (await readdir(dir, { withFileTypes: true }).catch(() => []))
-    .filter((e) => e.isDirectory() && ROUND.test(e.name))
-    .map((e) => e.name)
-  // The recorder's timestamps lead each journal's name, so the newest journal says which is latest.
-  let newest: { folder: string; file: string } | undefined
-  for (const folder of folders) {
-    for (const f of await readdir(join(dir, folder)).catch(() => [] as string[])) {
-      if (f.endsWith(".ndjson.gz") && (!newest || f > newest.file)) newest = { folder, file: f }
-    }
-  }
-  if (!newest) return undefined
-  for await (const r of readJournal(join(dir, newest.folder, newest.file))) {
-    if (r.t !== "session") continue
-    return {
-      folder: newest.folder,
-      place: placeOf(r.track, r.trackConfig),
-      over: (r.sessionCount ?? 1) > 1 && r.sessionIndex === (r.sessionCount ?? 1) - 1,
+  const journals = (await listRecordings(dir, ".ndjson.gz"))
+    .filter((f) => f.includes("/"))
+    // The recorder's timestamp leads each name, so newest first whichever round it's in.
+    .sort((a, b) => basename(b).localeCompare(basename(a)))
+  // Past any with no session record: a recorder killed just after a session
+  // changed leaves one empty.
+  for (const file of journals) {
+    for await (const r of readJournal(join(dir, file))) {
+      if (r.t !== "session") break
+      return {
+        folder: dirname(file),
+        place: placeOf(r.track, r.trackConfig),
+        over: (r.sessionCount ?? 1) > 1 && r.sessionIndex === (r.sessionCount ?? 1) - 1,
+      }
     }
   }
   return undefined

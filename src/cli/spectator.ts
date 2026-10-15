@@ -92,8 +92,9 @@ speeds and gears. Needs ffmpeg.
 
 organize files recordings made before round folders into them, replays and
 clips with the sessions they came from. Those don't say which sessions were the
-championship event's, so each run of sessions on one track is a round. A
-journal written to in the last 10 minutes is left alone. --dry-run lists the
+championship event's, so each run of sessions on one track is a round. Run it
+before the first recorder that writes rounds starts, or the round under way
+splits in two. A journal written to in the last 10 minutes is left alone. --dry-run lists the
 moves without making them.
 
 cuts finds every time a car left the track and came back on further round,

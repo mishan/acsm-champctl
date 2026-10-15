@@ -243,8 +243,10 @@ champctl-spectator organize <dir> [--dry-run]
   else's laps instead.
 - `organize` files recordings made before round folders into them, once.
   Those don't say which sessions were the event's, so a run of sessions on
-  one track is a round. Stop the recorder first, or at least leave it: a
-  journal written in the last 10 minutes isn't moved.
+  one track is a round. Stop the recorder, run it, then start the recorder
+  that writes rounds: started first, it begins a round of its own, and the
+  week so far ends up in a separate folder. A journal written in the last 10
+  minutes isn't moved.
 - `incidents` lists a session's collisions, numbered.
 - `incident` measures one (who was ahead, when they overlapped, who braked
   where, who moved across whom, where the cars touched) and ends with a

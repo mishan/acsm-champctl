@@ -148,6 +148,11 @@ describe("/replays", () => {
     expect(file.headers["content-disposition"]).toBe(
       'attachment; filename="2026-10-15T03-24-29-113Z-interlagos-1975-race.acreplay"',
     )
+    // A link posted to Discord before the replay was filed into its round.
+    const old = await app.inject({
+      url: "/replays/2026-10-15T03-24-29-113Z-interlagos-1975-race.acreplay",
+    })
+    expect(old.statusCode).toBe(200)
   })
 
   it.each([

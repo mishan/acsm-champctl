@@ -166,4 +166,21 @@ describe("lastRound", () => {
       over,
     })
   })
+
+  it("goes past a newest journal with nothing in it, left by a recorder killed as it began", async () => {
+    await session(
+      "2026-10-13-interlagos-1975",
+      "2026-10-15T03-24-29-113Z-interlagos-1975-race",
+      2,
+      4,
+    )
+    await new JournalWriter(
+      join(
+        dir,
+        "2026-10-13-interlagos-1975",
+        "2026-10-15T03-49-57-114Z-interlagos-1975-race.ndjson.gz",
+      ),
+    ).close()
+    expect((await lastRound(dir))?.folder).toBe("2026-10-13-interlagos-1975")
+  })
 })
