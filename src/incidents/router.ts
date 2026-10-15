@@ -25,7 +25,6 @@ import {
   indexJournal,
   type JournalCar,
   type JournalIndex,
-  journalByKey,
   journalNames,
 } from "./journals.js"
 import type { Incident, SqliteIncidentStore } from "./store.js"
@@ -81,6 +80,7 @@ const SESSION_TYPES: Record<number, string> = { 1: "Practice", 2: "Qualifying", 
 const SOMETHING_ELSE = "other"
 /** Undecided reports one driver can have open at once: each is a channel and a video render. */
 const MAX_OPEN = 3
+const ENTRY_LIST_TTL_MS = 60_000
 /** Discord's limit for one message. */
 const MESSAGE_LIMIT = 2000
 
@@ -90,6 +90,7 @@ export class IncidentRouter {
   readonly #filing = new Set<string>()
   /** Channels a decision is going out in: two stewards at once shouldn't both decide. */
   readonly #deciding = new Set<string>()
+  #entryList: { at: number; value: Promise<Championship | undefined> } | undefined
   /** Renders run one at a time; a race night's reports can wait their turn. */
   #rendering: Promise<unknown> = Promise.resolve()
 
@@ -116,7 +117,7 @@ export class IncidentRouter {
       return matching(names.map((n) => ({ name: n, value: n })))
     }
     if (focused === "what") {
-      const who = await this.#who(command.userId)
+      const who = await this.#who(command.userId, false)
       const mine =
         who?.claim && who.championship
           ? this.#reporterCars(who.claim.entrantName, index, who.championship)
@@ -148,7 +149,7 @@ export class IncidentRouter {
 
   async #report(command: SlashCommand): Promise<CommandReply> {
     const now = (this.#o.now ?? (() => new Date()))()
-    const who = await this.#who(command.userId)
+    const who = await this.#who(command.userId, true)
     if (!who) {
       return {
         content: "Incident reports aren't set up yet: no championship is pinned. Tell an admin.",
@@ -279,8 +280,12 @@ export class IncidentRouter {
     description: string,
     now: Date,
   ): Promise<CommandReply> {
-    const otherEntrant = entrantFor(championship, other) ?? other.driver
-    const otherClaim = await this.#o.claims.forEntrant(championshipId, otherEntrant)
+    const entrant = entrantFor(championship, other)
+    const otherEntrant = entrant ?? other.driver
+    // Someone not on the entry list has no claim, whatever they called themselves.
+    const otherClaim = entrant
+      ? await this.#o.claims.forEntrant(championshipId, entrant)
+      : undefined
 
     const incident = this.#o.store.file(
       {
@@ -457,9 +462,12 @@ export class IncidentRouter {
     return out
   }
 
+  /** A recent session's index, by its key; Discord lets a driver type any key, not just one offered. */
   async #index(key: string | undefined): Promise<JournalIndex | undefined> {
-    const path = key && (await journalByKey(this.#o.recordings, key))
-    return path ? indexJournal(path).catch(() => undefined) : undefined
+    const oldest = Date.now() - OFFERED_DAYS * 24 * 3600_000
+    const j = (await journalNames(this.#o.recordings)).find((n) => n.key === key)
+    if (!j || !(j.started >= oldest)) return undefined
+    return indexJournal(join(this.#o.recordings, j.file)).catch(() => undefined)
   }
 
   /**
@@ -477,14 +485,20 @@ export class IncidentRouter {
   }
 
   /** The championship and who this Discord user is in it, or nothing to go on. */
-  async #who(discordUserId: string) {
+  /**
+   * `fresh` for a report; autocomplete takes one up to a minute old, since every
+   * keystroke asks and Server Manager's rate limit is shared with the rest of the bot.
+   */
+  async #who(discordUserId: string, fresh: boolean) {
     const championshipId = this.#o.championshipId
     if (!championshipId) return undefined
     const claim = await this.#o.claims.forDiscordUser(championshipId, discordUserId)
-    const championship = await this.#o.reader
-      .exportChampionship(championshipId)
-      .catch(() => undefined)
-    return { championshipId, claim, championship }
+    const now = Date.now()
+    if (fresh || !this.#entryList || now - this.#entryList.at > ENTRY_LIST_TTL_MS) {
+      const value = this.#o.reader.exportChampionship(championshipId).catch(() => undefined)
+      this.#entryList = { at: now, value }
+    }
+    return { championshipId, claim, championship: await this.#entryList.value }
   }
 }
 
@@ -516,7 +530,10 @@ function entrantFor(c: Championship, car: JournalCar): string | undefined {
   const byGuid = car.guid
     ? all.find((e) => e.GUID && normGuid(e.GUID) === normGuid(car.guid))
     : undefined
-  return (byGuid ?? all.find((e) => sameName(e.Name ?? "", car.driver)))?.Name
+  // By name only where one side has no GUID, as for the reporter: a guest
+  // calling themselves a driver's name isn't that driver.
+  const byName = all.find((e) => (!car.guid || !e.GUID) && sameName(e.Name ?? "", car.driver))
+  return (byGuid ?? byName)?.Name
 }
 
 const sameName = (a: string, b: string): boolean =>

@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -40,6 +40,9 @@ let failLock: boolean
 let failRead: boolean
 /** The report's own first message doesn't go through. */
 let failFirstPost: boolean
+let reads: number
+/** Most evidence renders running at once. */
+let rendersAtOnce: number
 
 const track = new Track(parseFastLane(fastLane(loop("left"))))
 
@@ -74,11 +77,15 @@ beforeEach(async () => {
   failLock = false
   failRead = false
   failFirstPost = false
+  reads = 0
+  rendersAtOnce = 0
 })
 afterEach(async () => {
   store.close()
   await rm(dir, { recursive: true, force: true })
 })
+
+let rendering = 0
 
 function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo", [DEE]: "Dee" }) {
   const c = championship({
@@ -127,6 +134,7 @@ function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo", [D
     championshipId: CHAMP,
     reader: {
       exportChampionship: async (id: string) => {
+        reads++
         if (failRead) throw new Error("502 Bad Gateway")
         return new StaticAcsmReader([c]).exportChampionship(id)
       },
@@ -143,6 +151,10 @@ function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo", [D
     stewardRoleId: STEWARDS,
     timeZone: "America/Los_Angeles",
     gather: async (q): Promise<Evidence> => {
+      rendering++
+      rendersAtOnce = Math.max(rendersAtOnce, rendering)
+      await new Promise((r) => setTimeout(r, 20))
+      rendering--
       if (failGather) throw new Error("no racing line")
       return {
         summary: [`at ${q.atMs}`],
@@ -176,7 +188,8 @@ const hit: JournalRecord = {
 
 /** A race with these cars and a contact in it, by hand; its key. */
 async function contact(records: JournalRecord[]): Promise<string> {
-  const key = "2026-01-01T00-00-00-000Z"
+  // Two hours ago: a session old enough not to be the beforeEach one, recent enough to report.
+  const key = new Date(Date.now() - 7200_000).toISOString().replace(/[:.]/g, "-")
   const w = new JournalWriter(join(dir, `${key}-loop-race.ndjson.gz`))
   w.write({
     t: "session",
@@ -277,11 +290,72 @@ describe("/incident report", () => {
     expect(choices.map((c) => c.value)).toEqual(["c:0", "other"])
   })
 
-  it("takes the driver who held the slot at the time, when it changed hands later", async () => {
-    // Bo leaves after the contact and Dee joins in the same slot.
-    const key = await contact([car(1, "Ana"), car(2, "Bo"), hit, { ...car(2, "Dee"), at: 8000 }])
+  it.each([
+    ["before", 5000, "incident-1-ana-bo", BO],
+    ["after", 9000, "incident-1-ana-dee", DEE],
+  ])(
+    "takes whoever held a slot at the time, for a contact %s it changed hands",
+    async (_, at, name, other) => {
+      // Bo leaves at 8 s and Dee joins in the same slot.
+      const key = await contact([
+        car(1, "Ana"),
+        car(2, "Bo"),
+        { ...car(2, "Dee"), at: 8000 },
+        { ...hit, at },
+      ])
+      await router().handle(command(ANA, "report", { race: key, what: "c:0", description: "x" }))
+      expect(channels.created).toEqual([[name, [ANA, other]]])
+    },
+  )
+
+  it("takes something else with a driver only if they were on the server then", async () => {
+    const key = await contact([car(1, "Ana"), car(2, "Bo"), { ...car(2, "Dee"), at: 8000 }])
+    const reply = await router().handle(
+      command(ANA, "report", {
+        race: key,
+        what: "other",
+        other_driver: "Dee",
+        when: "0:05",
+        description: "x",
+      }),
+    )
+    expect(reply.content).toBe("Dee wasn't on the server at 0:05 in that session.")
+  })
+
+  it("doesn't take the other driver by name when their car's GUID says it's someone else", async () => {
+    // A guest calling themselves Bo: the real Bo isn't added to the channel or pinged.
+    const key = await contact([car(1, "Ana"), car(2, "Bo", "76561198000000099"), hit])
     await router().handle(command(ANA, "report", { race: key, what: "c:0", description: "x" }))
-    expect(channels.created).toEqual([["incident-1-ana-bo", [ANA, BO]]])
+    expect(channels.created).toEqual([["incident-1-ana-bo", [ANA]]])
+  })
+
+  it("refuses a session older than the list offers, typed in by hand", async () => {
+    const old = new Date(Date.now() - 30 * 24 * 3600_000).toISOString().replace(/[:.]/g, "-")
+    await writeFile(
+      join(dir, `${old}-loop-race.ndjson.gz`),
+      await readFile(join(dir, `${journal}-loop-race.ndjson.gz`)),
+    )
+    const reply = await router().handle(
+      command(ANA, "report", { race: old, what: "c:0", description: "x" }),
+    )
+    expect(reply.content).toMatch(/^Pick the race from the list/)
+  })
+
+  it("reads the entry list once for a driver's keystrokes, not once each", async () => {
+    const r = router()
+    for (const typed of ["", "0", "0:"]) {
+      await r.autocomplete(command(ANA, "report", { race: journal, what: typed }), "what")
+    }
+    expect(reads).toBe(1)
+  })
+
+  it("renders one report's evidence at a time", async () => {
+    const r = router()
+    await Promise.all([
+      r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" })),
+      r.handle(command(BO, "report", { race: journal, what: "c:0", description: "x" })),
+    ])
+    expect([channels.created.length, rendersAtOnce]).toEqual([2, 1])
   })
 
   it("doesn't take a driver by name when their car's GUID says it's someone else", async () => {
@@ -327,7 +401,10 @@ describe("/incident report", () => {
     expect(channels.created).toHaveLength(1)
   })
 
-  it("holds a driver's reports at three the stewards haven't decided", async () => {
+  it.each([
+    ["the stewards haven't decided", true, /You have 3 reports the stewards haven't decided yet/],
+    ["only counting ones that got a channel", false, /^Filed as incident #4/],
+  ])("holds a driver's reports at three %s", async (_, opened, says) => {
     for (const atMs of [0, 6000, 11000]) {
       const i = store.file(
         {
@@ -340,13 +417,12 @@ describe("/incident report", () => {
         },
         new Date(),
       )
-      store.setChannel(i.number, `old-${i.number}`)
+      if (opened) store.setChannel(i.number, `old-${i.number}`)
     }
     const reply = await router().handle(
       command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
     )
-    expect(reply.content).toMatch(/You have 3 reports the stewards haven't decided yet/)
-    expect(channels.created).toEqual([])
+    expect(reply.content).toMatch(says)
   })
 
   it("says so when the other driver hasn't claimed their name, and leaves them out", async () => {
@@ -488,6 +564,31 @@ describe("/incident decide", () => {
 })
 
 describe("indexJournal", () => {
+  it("reads the session being recorded again once it's grown, but not on every keystroke", async () => {
+    const path = join(dir, "live.ndjson.gz")
+    const write = async (collisions: number) => {
+      await rm(path, { force: true })
+      const w = new JournalWriter(path)
+      w.write({
+        t: "session",
+        at: 0,
+        serverName: "s",
+        track: "loop",
+        trackConfig: "",
+        name: "Race",
+        type: 3,
+        recorderCarId: 0,
+      })
+      for (let i = 0; i < collisions; i++) w.write({ ...hit, at: 1000 * (i + 1) })
+      await w.close()
+    }
+    await write(1)
+    await indexJournal(path, 0)
+    await write(2)
+    expect((await indexJournal(path, 5_000)).collisions).toHaveLength(1)
+    expect((await indexJournal(path, 11_000)).collisions).toHaveLength(2)
+  })
+
   it("reads a journal once for callers that ask at the same time", async () => {
     const path = join(dir, (await readdir(dir)).find((f) => f.endsWith(".ndjson.gz"))!)
     const [a, b] = await Promise.all([indexJournal(path), indexJournal(path)])

@@ -10,7 +10,7 @@
  */
 
 import { readdir, stat } from "node:fs/promises"
-import { basename, join } from "node:path"
+import { basename } from "node:path"
 
 import { type CollisionSummary, summarize } from "../spectator/incident.js"
 import { readJournal } from "../spectator/journal.js"
@@ -57,12 +57,6 @@ export async function journalNames(recordings: string): Promise<JournalName[]> {
     out.push({ file, key: m[1] as string, started, rest: m[7] as string })
   }
   return out.sort((a, b) => b.started - a.started)
-}
-
-/** A journal by its key, and only one in the folder: the key comes from Discord. */
-export async function journalByKey(recordings: string, key: string): Promise<string | undefined> {
-  const found = (await journalNames(recordings)).find((j) => j.key === key)
-  return found && join(recordings, found.file)
 }
 
 export async function indexJournal(path: string, now = Date.now()): Promise<JournalIndex> {
