@@ -1014,6 +1014,17 @@ async function serve(args: Args): Promise<number> {
               source: "discord.announceChannelId in the profile",
             })
           }
+          return resolved.warned
+        },
+        notify: async (content) => {
+          const adminChannelId = profile.discord?.adminChannelId
+          if (adminChannelId) {
+            await transport.post({
+              channelId: adminChannelId,
+              content,
+              source: "discord.adminChannelId in the profile",
+            })
+          }
         },
       }).start()
       process.stderr.write("Posting the standings when each round has been raced.\n")

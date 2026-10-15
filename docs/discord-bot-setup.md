@@ -347,7 +347,6 @@ where they are.
 The bot needs **Move Members**, and **Connect** on both channels. A move that
 fails is reported in `adminChannelId`.
 
-
 ## 12. Optional: standings when a round has been raced
 
 With this in the profile, `serve` posts a championship's standings to
