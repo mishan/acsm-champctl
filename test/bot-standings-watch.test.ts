@@ -11,7 +11,7 @@ const at = (minutes: number) => new Date(NIGHT + minutes * 60_000)
 /** Two rounds; whatever is set on them is what the next export carries. */
 function harness(
   rounds: { completed?: string }[] = [{}, {}],
-  fail: { reads?: number; posts?: number } = {},
+  fail: { reads?: number; posts?: number; partly?: boolean } = {},
 ) {
   const evs: ChampionshipEvent[] = rounds.map((r) =>
     r.completed ? { ...raceEvent(), CompletedTime: r.completed } : raceEvent(),
@@ -34,8 +34,15 @@ function harness(
   const watch = new StandingsWatch({
     reader,
     log: () => {},
-    post: async (_id, name) => {
-      if (failPosts-- > 0) throw new Error("Discord said no")
+    post: async (_id, name, sent) => {
+      if (failPosts-- > 0) {
+        // A class's message out, and the next refused.
+        if (fail.partly) {
+          posts.push(name)
+          sent()
+        }
+        throw new Error("Discord said no")
+      }
       posts.push(name)
       return false
     },
@@ -94,6 +101,43 @@ describe("StandingsWatch", () => {
     await watch.tick(at(33))
     expect(posts).toEqual(["October"])
     expect(told).toEqual([expect.stringMatching(/couldn't post the standings: Discord said no/)])
+  })
+
+  it("tells the admins once about a post that keeps failing", async () => {
+    const { watch, evs, posts, told } = harness([{}, {}], { posts: 3 })
+    await watch.tick(at(0))
+    evs[0]!.CompletedTime = at(30).toISOString()
+    for (const m of [31, 33, 35, 37]) await watch.tick(at(m))
+    expect(posts).toEqual(["October"])
+    expect(told).toHaveLength(1)
+  })
+
+  it("doesn't post again when part of the standings went out", async () => {
+    const { watch, evs, posts, told } = harness([{}, {}], { posts: 1, partly: true })
+    await watch.tick(at(0))
+    evs[0]!.CompletedTime = at(30).toISOString()
+    await watch.tick(at(31))
+    await watch.tick(at(33))
+    expect(posts).toEqual(["October"])
+    expect(told).toEqual([expect.stringMatching(/only part of the standings went out/)])
+  })
+
+  it("posts once for a night raced as two events", async () => {
+    const { watch, evs, posts } = harness([{}, {}])
+    await watch.tick(at(0))
+    evs[0]!.CompletedTime = at(30).toISOString()
+    evs[1]!.CompletedTime = at(31).toISOString()
+    await watch.tick(at(32))
+    await watch.tick(at(34))
+    expect(posts).toEqual(["October"])
+  })
+
+  it("watches a championship created before its rounds are", async () => {
+    const { watch, evs, posts } = harness([])
+    await watch.tick(at(0))
+    evs.push({ ...raceEvent(), CompletedTime: at(30).toISOString() })
+    await watch.tick(at(31))
+    expect(posts).toEqual(["October"])
   })
 
   it("stops reading a championship whose rounds are all raced, stamped or not", async () => {

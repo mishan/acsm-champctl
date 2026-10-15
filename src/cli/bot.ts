@@ -1003,7 +1003,7 @@ async function serve(args: Args): Promise<number> {
       stopStandings = new StandingsWatch({
         reader,
         log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
-        post: async (id, name) => {
+        post: async (id, name, sent) => {
           const championship = await reader.exportChampionship(id)
           const resolved = await resolveStandings(reader, championship, id, args, baseUrl)
           if (!resolved) throw new Error("no standings to post")
@@ -1013,6 +1013,7 @@ async function serve(args: Args): Promise<number> {
               content,
               source: "discord.announceChannelId in the profile",
             })
+            sent()
           }
           return resolved.warned
         },

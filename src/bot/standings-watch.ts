@@ -29,9 +29,10 @@ export interface StandingsWatchOptions {
   /**
    * Posts the standings of the championship with this id. True when they went
    * out but something about them needs a person: ACSM's and champctl's
-   * disagreed, or ACSM's couldn't be read.
+   * disagreed, or ACSM's couldn't be read. `sent` is called as each message
+   * goes out: once one has, a retry would post it twice.
    */
-  post: (championshipId: string, name: string) => Promise<boolean>
+  post: (championshipId: string, name: string, sent: () => void) => Promise<boolean>
   /** Tells the admins: a post that failed or needs checking is otherwise a log line. */
   notify: (content: string) => Promise<void>
   log: (line: string) => void
@@ -41,6 +42,8 @@ export class StandingsWatch {
   readonly #o: StandingsWatchOptions
   /** `${event}#${CompletedTime}` for every completion already dealt with. */
   readonly #seen = new Set<string>()
+  /** Completions the admins were told failed to post, so a retry doesn't tell them again. */
+  readonly #failed = new Set<string>()
   /** Championships read at least once, whose old completions are in `#seen`. */
   readonly #primed = new Set<string>()
   /** Championships with every round raced, and long enough ago. */
@@ -109,25 +112,36 @@ export class StandingsWatch {
       this.#primed.add(id)
       return
     }
-    for (const r of raced) {
-      if (this.#seen.has(r.key) || !(t - r.at <= RECENT) || this.#stopped) continue
-      this.#seen.add(r.key)
-      const name = c.Name?.trim() || id
-      this.#o.log(`standings: ${name} round ${r.index + 1} is raced; posting the standings`)
-      try {
-        if (await this.#o.post(id, name)) {
-          await this.#tell(
-            `${name}'s standings are posted, but ACSM's and champctl's own disagreed, or ACSM's ` +
-              `couldn't be read. Worth a look; the log says which.`,
-          )
-        }
-      } catch (e) {
-        // Tried again next tick, for as long as the round is RECENT.
-        this.#seen.delete(r.key)
+    // One post covers every round newly raced: a night run as two events, or
+    // a stretch of failed reads, still posts the standings once.
+    const fresh = raced.filter((r) => !this.#seen.has(r.key) && t - r.at <= RECENT)
+    const r = fresh.at(-1)
+    if (!r || this.#stopped) return
+    for (const f of fresh) this.#seen.add(f.key)
+    const name = c.Name?.trim() || id
+    this.#o.log(`standings: ${name} round ${r.index + 1} is raced; posting the standings`)
+    let sent = false
+    try {
+      const warned = await this.#o.post(id, name, () => {
+        sent = true
+      })
+      if (warned) {
         await this.#tell(
-          `Round ${r.index + 1} of ${name} is raced, but I couldn't post the standings: ${message(e)}`,
+          `${name}'s standings are posted, but ACSM's and champctl's own disagreed, or ACSM's ` +
+            `couldn't be read. Worth a look; the log says which.`,
         )
       }
+    } catch (e) {
+      // Tried again next tick, for as long as the round is RECENT, unless part
+      // of it went out already.
+      if (!sent) for (const f of fresh) this.#seen.delete(f.key)
+      if (this.#failed.has(r.key)) return
+      this.#failed.add(r.key)
+      await this.#tell(
+        sent
+          ? `Round ${r.index + 1} of ${name} is raced, but only part of the standings went out: ${message(e)}`
+          : `Round ${r.index + 1} of ${name} is raced, but I couldn't post the standings: ${message(e)}`,
+      )
     }
   }
 
@@ -161,7 +175,8 @@ export class StandingsWatch {
         Number.NEGATIVE_INFINITY,
         ...all.map((ev) => Date.parse(ev.CompletedTime ?? "")).filter((v) => !Number.isNaN(v)),
       )
-      if (all.every((ev) => eventHasResults(ev)) && !(t - last <= RECENT)) {
+      // A championship with no rounds yet has them all still to come.
+      if (all.length > 0 && all.every((ev) => eventHasResults(ev)) && !(t - last <= RECENT)) {
         this.#finished.add(id)
         if (!this.#primed.has(id)) continue
       } else active.push(id)
