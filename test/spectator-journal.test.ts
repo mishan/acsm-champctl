@@ -61,6 +61,7 @@ describe("journal", () => {
     await expect(readAll(join(dir, "nope.ndjson.gz"))).rejects.toThrow(/ENOENT/)
   })
 
+  // 80,000 records to write and read: slower than the default 5 s with the suite running.
   it("closes the file when a reader stops early", async () => {
     // Big enough that the file is still being read when the reader stops.
     const w = new JournalWriter(join(dir, "big.ndjson.gz"))
@@ -74,7 +75,7 @@ describe("journal", () => {
     const before = await open()
     for (let i = 0; i < 5; i++) for await (const _ of readJournal(w.path)) break
     expect(await open()).toBe(before)
-  })
+  }, 30_000)
 
   it("will not overwrite a journal that already exists", async () => {
     const path = join(dir, "s.ndjson.gz")
