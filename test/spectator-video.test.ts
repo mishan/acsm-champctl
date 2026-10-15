@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createCanvas } from "@napi-rs/canvas"
@@ -71,6 +71,16 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true })
 })
 
+/** What `f` gives once it gives something, within two seconds. */
+async function until<T>(f: () => T | undefined | Promise<T | undefined>): Promise<T> {
+  for (let i = 0; i < 40; i++) {
+    const v = await Promise.resolve(f()).catch(() => undefined)
+    if (v !== undefined) return v
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  throw new Error("gave up waiting")
+}
+
 const car = (t: number[], x: number[]): CarTrack => ({
   carId: 1,
   driver: "d",
@@ -93,8 +103,11 @@ describe("poseAt", () => {
     expect(Math.abs(poseAt(c, 50)!.yaw)).toBeCloseTo(Math.PI, 1)
   })
 
-  it("draws no car across a gap in its recording, rather than gliding it", () => {
-    expect(poseAt(car([0, 5000], [0, 500]), 2500)).toBeUndefined()
+  it.each([
+    ["a gap in its recording", [0, 5000], [0, 500]],
+    ["a reset, 400 m in 50 ms", [0, 50], [0, 400]],
+  ])("draws no car across %s, rather than gliding it", (_, t, x) => {
+    expect(poseAt(car(t, x), t[1]! / 2)).toBeUndefined()
   })
 })
 
@@ -158,6 +171,25 @@ describe("frames", () => {
     ])
   })
 
+  it("draws no trail across the map from where a car was reset", () => {
+    // Sat at x=0, then put back on 400 m away; the frame looks at the middle.
+    const c = car([0, 1000, 1050, 2000], [0, 0, 400, 400])
+    const middle = (cars: CarTrack[]) => {
+      const clip = {
+        track,
+        session: { name: "Race", track: "loop" },
+        cars,
+        hits: [],
+        fromMs: 0,
+        toMs: 2000,
+      }
+      const ctx = createCanvas(320, 180).getContext("2d")
+      drawFrame(ctx, clip, 2000, { cx: 200, cz: 0, span: 500 }, 320, 180)
+      return [...ctx.getImageData(160, 90, 1, 1).data]
+    }
+    expect(middle([c])).toEqual(middle([]))
+  })
+
   it.each([
     ["exits early", "false", /ffmpeg failed/],
     ["isn't there", "champctl-no-such-ffmpeg", /needs ffmpeg/],
@@ -167,6 +199,37 @@ describe("frames", () => {
     await expect(
       writeVideo(clip, sink, { fromMs: 1000, toMs: 2000, width: 64, height: 36, fps: 10 }),
     ).rejects.toThrow(message)
+  })
+
+  it("stops ffmpeg when the video stops partway", async () => {
+    // An ffmpeg that would wait for frames forever, and says who it is.
+    const pidFile = join(dir, "waits.pid")
+    const waits = join(dir, "waits")
+    await writeFile(waits, `#!/bin/sh\necho $$ > ${pidFile}\nexec cat > /dev/null\n`)
+    await chmod(waits, 0o755)
+    const clip = await loadClip(journal, track, { fromMs: 1000, toMs: 2000 })
+    const broken = {
+      ...clip,
+      get cars(): never {
+        throw new Error("can't draw this")
+      },
+    }
+    const sink = ffmpegSink(join(dir, "y.mp4"), 64, 36, 10, waits)
+    // Running and waiting, before anything goes wrong.
+    const pid = await until(async () => Number(await readFile(pidFile, "utf8")) || undefined)
+    await expect(
+      writeVideo(broken, sink, { fromMs: 1000, toMs: 2000, width: 64, height: 36, fps: 10 }),
+    ).rejects.toThrow("can't draw this")
+    expect(
+      await until(() => {
+        try {
+          process.kill(pid, 0)
+          return undefined
+        } catch {
+          return true
+        }
+      }),
+    ).toBe(true)
   })
 
   it("writes one frame per 1/fps of the stretch, each the size asked for", async () => {
@@ -180,6 +243,7 @@ describe("frames", () => {
       end: async () => {
         ended = true
       },
+      abort: () => {},
     }
     const frames = await writeVideo(clip, sink, {
       fromMs: 1000,

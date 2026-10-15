@@ -27,6 +27,8 @@ export interface TrackSkip {
   usualS: number
   /** How many on-track passes `usualS` is the middle of. */
   passes: number
+  /** The passes are other drivers': this one never drove that stretch on the track. */
+  field?: true
   savedS: number
 }
 
@@ -55,8 +57,8 @@ const SLOWEST_PASS_MS = 120_000
  * put somewhere, not driven there. A floor as well as a speed because samples
  * arrive in bunches a few ms apart, and a reset moves a car hundreds of meters.
  */
-const JUMP_M = 30
-const JUMP_PER_MS = 100 / 1000
+export const JUMP_M = 30
+export const JUMP_PER_MS = 100 / 1000
 
 export async function findTrackSkips(
   journal: string,
@@ -106,14 +108,23 @@ export async function findTrackSkips(
       let b = i
       while (b < list.length - 1 && list[b]!.off > BACK_M) b++
       i = b
-      const out = list[Math.max(0, a - 1)]!
+      // Off from the start of the recording: no telling where it left the track.
+      if (a === 0) continue
+      const out = list[a - 1]!
       const back = list[b]!
       // Still off when the recording ends, or put back rather than driven back.
       if (back.off > BACK_M || list.slice(a, b + 1).some((p) => p.jump)) continue
       const tookMs = back.at - out.at
       const skippedM = track.gap(out.s, back.s)
       if (tookMs > LONGEST_MS || skippedM < SHORTEST_M) continue
-      const passes = onTrackPasses(list, track, out.s, back.s, [out.at, back.at])
+      let passes = onTrackPasses(list, track, out.s, back.s, [out.at, back.at])
+      // Cutting it every lap leaves nothing of their own to compare with.
+      const field = passes.length === 0
+      if (field) {
+        passes = [...samples.values()]
+          .filter((e) => e.list !== list)
+          .flatMap((e) => onTrackPasses(e.list, track, out.s, back.s, [1, 0]))
+      }
       if (passes.length === 0) continue
       // The lower middle of an even count: the slower one could be a lap from
       // the grid or the one after the flag.
@@ -131,6 +142,7 @@ export async function findTrackSkips(
         tookS: tookMs / 1000,
         usualS: usualMs / 1000,
         passes: passes.length,
+        ...(field ? { field } : {}),
         savedS,
       })
     }
