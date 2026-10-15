@@ -213,11 +213,12 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
     const incidents = d["incidents"]
     if (incidents !== undefined) {
       const i = incidents as Record<string, unknown> | null
-      for (const key of ["categoryId", "stewardRoleId"] as const) {
+      for (const key of ["categoryId", "stewardRoleId", "closedCategoryId"] as const) {
+        if (key === "closedCategoryId" && i?.[key] === undefined) continue
         if (typeof i?.[key] !== "string" || !/^\d{17,20}$/.test(i[key] as string)) {
           bad(
             `\`discord.incidents.${key}\` must be an id — 17 to 20 digits, the way "Copy ` +
-              `${key === "categoryId" ? "Channel" : "Role"} ID" gives it`,
+              `${key === "stewardRoleId" ? "Role" : "Channel"} ID" gives it`,
           )
         }
       }

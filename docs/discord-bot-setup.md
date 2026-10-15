@@ -389,26 +389,32 @@ room for another.
 
 A steward closes it with `/incident decide`, in that channel. The decision is
 recorded and posted, both drivers are mentioned, and the channel goes
-read-only. Nothing is written to ACSM: any penalty is applied by hand.
+read-only, is renamed from `incident-12-ana-bo` to `closed-12-ana-bo` and,
+with `closedCategoryId`, moves to that category, still visible to the
+stewards and both drivers. Nothing is written to ACSM: any penalty is
+applied by hand.
 
 ```json
 "incidents": {
   "categoryId": "1234567890123456789",
+  "closedCategoryId": "1234567890123456780",
   "stewardRoleId": "9876543210987654321"
 }
 ```
 
-Make an "Incidents" category that only the stewards and the bot can see. The
-bot's own role needs, on that category, **View Channel**, **Send Messages**,
-**Read Message History** and **Attach Files**: Discord won't let it give a
-driver a permission it doesn't hold there itself. It also needs **Manage
+Make an "Incidents" category that only the stewards and the bot can see, and
+one for closed incidents the same way. The bot's own role needs, on both,
+**View Channel**, **Send Messages**, **Read Message History** and **Attach
+Files**: Discord won't let it give a driver a permission it doesn't hold
+there itself. It also needs **Manage
 Channels** and **Manage Roles** from its server role, not just the category:
 a new channel doesn't inherit the category's settings, and locking one means
 changing who can post in it, threads included.
 
-Discord allows 50 channels in a category, and decided incidents stay in it,
-read-only, for the record. Move or delete old ones before it fills; the bot
-says so when it can't make another.
+Discord allows 50 channels in a category. Decided incidents stay, read-only,
+for the record: in the closed category if there is one, else where they were.
+Move or delete old ones before it fills; the bot says so when it can't make or
+move another.
 
 The bot reads the recordings and the car and track files. In the compose
 deployment that's the shared data volume and `CHAMPCTL_AC_ROOT`, as for the

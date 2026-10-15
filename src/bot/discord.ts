@@ -318,8 +318,12 @@ export class GatewayTransport implements DiscordTransport {
     return channel.id
   }
 
-  /** Nobody but the bot can post in the channel or its threads any more; who could see it still can. */
-  async lockChannel(channelId: string): Promise<void> {
+  /**
+   * Nobody but the bot can post in the channel or its threads any more; who
+   * could see it still can. Then renamed, and into `closedCategoryId` if there
+   * is one, keeping those permissions rather than taking the category's.
+   */
+  async lockChannel(channelId: string, name: string, closedCategoryId?: string): Promise<void> {
     // Forced: with no intents the cached copy never hears of an overwrite a
     // steward added by hand, and that member would keep posting.
     const channel = await this.#client.channels.fetch(channelId, { force: true })
@@ -336,6 +340,19 @@ export class GatewayTransport implements DiscordTransport {
         CreatePrivateThreads: false,
       })
     }
+    await channel
+      .edit({
+        name,
+        ...(closedCategoryId ? { parent: closedCategoryId, lockPermissions: false } : {}),
+      })
+      .catch((e: unknown) => {
+        throw new BotError(
+          `Locked the incident's channel but couldn't rename or move it: ${message(e)}. ` +
+            ((e as { code?: unknown }).code === 30013
+              ? "Discord allows 50 channels in a category: move or delete old ones."
+              : "Check discord.incidents.closedCategoryId, and that the bot can see that category."),
+        )
+      })
   }
 
   async #dispatch(

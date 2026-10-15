@@ -168,9 +168,10 @@ export interface DiscordSettings {
   /**
    * `/incident`: drivers report from the race recordings, and each report gets
    * a channel in `categoryId` that the `stewardRoleId` role and both drivers
-   * can see. Absent, the command isn't registered.
+   * can see. Absent, the command isn't registered. A decided incident's
+   * channel moves to `closedCategoryId`, if set, read-only.
    */
-  incidents?: { categoryId: string; stewardRoleId: string }
+  incidents?: { categoryId: string; stewardRoleId: string; closedCategoryId?: string }
 }
 
 export interface QualiVoiceMove {
