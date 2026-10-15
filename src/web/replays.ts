@@ -5,15 +5,19 @@
  */
 
 import { createReadStream } from "node:fs"
-import { open, readdir, stat } from "node:fs/promises"
-import { join } from "node:path"
+import { open, stat } from "node:fs/promises"
+import { basename, dirname, join } from "node:path"
 
 import type { FastifyInstance, FastifyReply } from "fastify"
 
 import { readJournal } from "../spectator/journal.js"
+import { listRecordings } from "../spectator/rounds.js"
 
 export interface ReplayListing {
+  /** Relative to the recordings folder: "<round>/<name>", or just the name for one from before rounds. */
   file: string
+  /** The round folder it's in, if any. */
+  round: string
   track: string
   session: string
   /** When the recording began, ms since the epoch. */
@@ -67,7 +71,7 @@ async function sessionName(journal: string): Promise<string> {
 
 /** The recording's start, from the time the recorder put at the front of the name. */
 function startedFrom(file: string): number {
-  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/.exec(file)
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/.exec(basename(file))
   return m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`) : Number.NaN
 }
 
@@ -79,9 +83,7 @@ function startedFrom(file: string): number {
 const seen = new Map<string, { mtimeMs: number; listing: ReplayListing }>()
 
 export async function listReplays(dir: string): Promise<ReplayListing[]> {
-  const files = (await readdir(dir).catch(() => [] as string[])).filter((f) =>
-    f.endsWith(".acreplay"),
-  )
+  const files = await listRecordings(dir, ".acreplay")
   const out: ReplayListing[] = []
   for (const file of files) {
     const path = join(dir, file)
@@ -96,7 +98,8 @@ export async function listReplays(dir: string): Promise<ReplayListing[]> {
         header(path),
         sessionName(path.replace(/\.acreplay$/, ".ndjson.gz")),
       ])
-      const listing = { file, ...h, session, started: startedFrom(file), bytes: s.size }
+      const round = file.includes("/") ? dirname(file) : ""
+      const listing = { file, round, ...h, session, started: startedFrom(file), bytes: s.size }
       seen.set(path, { mtimeMs: s.mtimeMs, listing })
       out.push(listing)
     } catch {
@@ -120,14 +123,31 @@ export function replaysPage(list: readonly ReplayListing[], timeZone: string): s
     dateStyle: "medium",
     timeStyle: "short",
   })
-  const rows = list
-    .map(
-      (r) =>
-        `<tr><td>${Number.isNaN(r.started) ? "" : esc(when.format(r.started))}</td>` +
-        `<td>${esc(r.track)}</td><td>${esc(r.session)}</td><td>${duration(r.durationS)}</td>` +
-        `<td>${r.cars}</td><td><a href="/replays/${encodeURIComponent(r.file)}" download>` +
-        `${(r.bytes / 1e6).toFixed(1)} MB</a></td></tr>`,
-    )
+  const day = new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric" })
+  const href = (file: string) => `/replays/${file.split("/").map(encodeURIComponent).join("/")}`
+  const row = (r: ReplayListing) =>
+    `<tr><td>${Number.isNaN(r.started) ? "" : esc(when.format(r.started))}</td>` +
+    `<td>${esc(r.session)}</td><td>${duration(r.durationS)}</td>` +
+    `<td>${r.cars}</td><td><a href="${href(r.file)}" download>` +
+    `${(r.bytes / 1e6).toFixed(1)} MB</a></td></tr>`
+  // Rounds newest first, by their newest replay; replays from before rounds last.
+  const rounds = new Map<string, ReplayListing[]>()
+  for (const r of list) rounds.set(r.round, [...(rounds.get(r.round) ?? []), r])
+  const sections = [...rounds]
+    .sort(([a], [b]) => (a === "" ? 1 : b === "" ? -1 : 0))
+    .map(([round, rs]) => {
+      const days = rs.map((r) => r.started).filter((t) => !Number.isNaN(t))
+      const span = days.length
+        ? [day.format(Math.min(...days)), day.format(Math.max(...days))]
+            .filter((d, i, a) => a.indexOf(d) === i)
+            .join(" – ")
+        : ""
+      const title = round ? `${rs[0]!.track}${span ? ` · ${span}` : ""}` : "Earlier recordings"
+      return (
+        `<h2>${esc(title)}</h2>\n<div class="wrap"><table><thead><tr><th>Started</th><th>Session</th>` +
+        `<th>Length</th><th>Cars</th><th>Download</th></tr></thead><tbody>\n${rs.map(row).join("\n")}\n</tbody></table></div>`
+      )
+    })
     .join("\n")
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -140,8 +160,8 @@ table { border-collapse: collapse; width: 100% } th, td { text-align: left; padd
 a { color: var(--link) } .wrap { overflow-x: auto }
 </style></head><body>
 <h1>Race replays</h1>
-<p>Every session on the server, recorded. Save a file into <code>Documents/Assetto Corsa/replay</code> and open it from the game's replay menu.</p>
-${list.length ? `<div class="wrap"><table><thead><tr><th>Started</th><th>Track</th><th>Session</th><th>Length</th><th>Cars</th><th>Download</th></tr></thead><tbody>\n${rows}\n</tbody></table></div>` : "<p>No replays yet.</p>"}
+<p>Every session on the server, recorded, by round: the week's practice on a track, then the championship event raced there, with any clips. Save a file into <code>Documents/Assetto Corsa/replay</code> and open it from the game's replay menu.</p>
+${list.length ? sections : "<p>No replays yet.</p>"}
 </body></html>`
 }
 
@@ -151,16 +171,20 @@ export function registerReplays(app: FastifyInstance, dir: string, timeZone: str
   app.get("/replays", page)
   // A proxy with a `location /replays/` block redirects /replays here.
   app.get("/replays/", page)
-  app.get<{ Params: { file: string } }>("/replays/:file", async (req, reply) => {
-    const { file } = req.params
-    // Only a name the folder lists, so nothing outside it can be asked for.
-    const files = await readdir(dir).catch(() => [] as string[])
-    if (!file.endsWith(".acreplay") || !files.includes(file)) {
+  const download = async (file: string, reply: FastifyReply) => {
+    // Only a path the folder lists, so nothing outside it can be asked for.
+    if (!(await listRecordings(dir, ".acreplay")).includes(file)) {
       return reply.code(404).send({ error: { code: "not-found", message: "No such replay." } })
     }
     return reply
       .type("application/octet-stream")
-      .header("Content-Disposition", `attachment; filename="${file}"`)
+      .header("Content-Disposition", `attachment; filename="${basename(file)}"`)
       .send(createReadStream(join(dir, file)))
-  })
+  }
+  app.get<{ Params: { file: string } }>("/replays/:file", (req, reply) =>
+    download(req.params.file, reply),
+  )
+  app.get<{ Params: { round: string; file: string } }>("/replays/:round/:file", (req, reply) =>
+    download(`${req.params.round}/${req.params.file}`, reply),
+  )
 }

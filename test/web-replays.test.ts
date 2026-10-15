@@ -1,6 +1,6 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import Fastify, { type FastifyInstance } from "fastify"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
@@ -36,14 +36,21 @@ const car = (carId: number, timestamp: number): CarState => ({
 })
 
 /** A recorded session and its replay, named the way the recorder names them. */
-async function recorded(stem: string, name: string, seconds: number, cars = 2): Promise<void> {
+async function recorded(
+  stem: string,
+  name: string,
+  seconds: number,
+  cars = 2,
+  track = "interlagos_1975",
+): Promise<void> {
+  await mkdir(dirname(join(dir, stem)), { recursive: true })
   const w = new JournalWriter(join(dir, `${stem}.ndjson.gz`))
   const records: JournalRecord[] = [
     {
       t: "session",
       at: 0,
       serverName: "s",
-      track: "interlagos_1975",
+      track,
       trackConfig: "",
       name,
       type: 1,
@@ -115,11 +122,42 @@ describe("/replays", () => {
     expect(file.rawPayload.readUInt32LE(0)).toBe(16)
   })
 
-  it.each(["..%2F..%2Fetc%2Fpasswd", "missing.acreplay", "2026-10-13T03-38-46-326Z-x.ndjson.gz"])(
-    "refuses %s",
-    async (file) => {
-      await recorded("2026-10-13T03-38-46-326Z-x", "Practice", 300)
-      expect((await app.inject({ url: `/replays/${file}` })).statusCode).toBe(404)
-    },
-  )
+  it("groups the replays by round, newest round first, and serves them from its folder", async () => {
+    const week = "2026-10-13-interlagos-1975"
+    await recorded(`${week}/2026-10-13T15-40-38-726Z-interlagos-1975-practice`, "Practice", 600)
+    await recorded(`${week}/2026-10-15T03-24-29-113Z-interlagos-1975-race`, "Race", 1500)
+    await recorded(
+      "2026-10-14-riverside/2026-10-15T04-15-47-173Z-riverside-practice",
+      "Practice",
+      300,
+      2,
+      "riverside",
+    )
+    await recorded("2026-10-01T03-00-00-000Z-imola-race", "Race", 300)
+    const page = (await app.inject({ url: "/replays" })).body
+    const headings = [...page.matchAll(/<h2>(.*?)<\/h2>/g)].map((m) => m[1])
+    expect(headings).toEqual([
+      "riverside · Oct 14",
+      "interlagos_1975 · Oct 13 – Oct 14",
+      "Earlier recordings",
+    ])
+    const file = await app.inject({
+      url: `/replays/${week}/2026-10-15T03-24-29-113Z-interlagos-1975-race.acreplay`,
+    })
+    expect(file.statusCode).toBe(200)
+    expect(file.headers["content-disposition"]).toBe(
+      'attachment; filename="2026-10-15T03-24-29-113Z-interlagos-1975-race.acreplay"',
+    )
+  })
+
+  it.each([
+    "..%2F..%2Fetc%2Fpasswd",
+    "missing.acreplay",
+    "2026-10-13T03-38-46-326Z-x.ndjson.gz",
+    "..%2F2026-10-13T03-38-46-326Z-x.acreplay",
+    "2026-10-13-x/..%2F2026-10-13T03-38-46-326Z-x.acreplay",
+  ])("refuses %s", async (file) => {
+    await recorded("2026-10-13T03-38-46-326Z-x", "Practice", 300)
+    expect((await app.inject({ url: `/replays/${file}` })).statusCode).toBe(404)
+  })
 })

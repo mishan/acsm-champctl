@@ -115,6 +115,35 @@ describe("Recorder", () => {
     expect(finished).toHaveLength(all.length)
   })
 
+  it.each([
+    ["carries on the round it left off", false, "2026-10-01-imola"],
+    ["starts a round when the last one's event is over", true, "TODAY-imola"],
+  ])("%s, with every session of it in the round's folder", async (_, over, folder) => {
+    const today = new Date().toISOString().slice(0, 10)
+    const rec = recorder(undefined, {
+      rounds: { timeZone: "UTC", last: { folder: "2026-10-01-imola", place: "imola", over } },
+    })
+    await rec.start()
+    await server.joins(1)
+    await settle()
+    server.sendTcp(sessionUpdate("Race"))
+    await settle()
+    await rec.stop()
+    const into = folder.replace("TODAY", today)
+    const files = (await readdir(join(dir, into))).filter((f) => f.endsWith(".ndjson.gz")).sort()
+    const sessions: JournalRecord[] = []
+    for (const f of files) {
+      for await (const r of readJournal(join(dir, into, f))) if (r.t === "session") sessions.push(r)
+    }
+    // Where each sits in the server's list of one: a practice server.
+    expect(
+      sessions.map((r) => r.t === "session" && [r.name, r.sessionIndex, r.sessionCount]),
+    ).toEqual([
+      ["Practice", 0, 1],
+      ["Race", 1, 1],
+    ])
+  })
+
   it("names the journal after the latest session when two changes come at once", async () => {
     const rec = recorder()
     await rec.start()

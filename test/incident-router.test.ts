@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -41,6 +41,7 @@ let failRead: boolean
 /** The report's own first message doesn't go through. */
 let failFirstPost: boolean
 let reads: number
+let gatheredInto: string | undefined
 /** Most evidence renders running at once. */
 let rendersAtOnce: number
 
@@ -151,6 +152,7 @@ function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo", [D
     stewardRoleId: STEWARDS,
     timeZone: "America/Los_Angeles",
     gather: async (q): Promise<Evidence> => {
+      gatheredInto = q.outDir
       rendering++
       rendersAtOnce = Math.max(rendersAtOnce, rendering)
       await new Promise((r) => setTimeout(r, 20))
@@ -187,10 +189,11 @@ const hit: JournalRecord = {
 }
 
 /** A race with these cars and a contact in it, by hand; its key. */
-async function contact(records: JournalRecord[]): Promise<string> {
+async function contact(records: JournalRecord[], round = ""): Promise<string> {
   // Two hours ago: a session old enough not to be the beforeEach one, recent enough to report.
   const key = new Date(Date.now() - 7200_000).toISOString().replace(/[:.]/g, "-")
-  const w = new JournalWriter(join(dir, `${key}-loop-race.ndjson.gz`))
+  await mkdir(join(dir, round), { recursive: true })
+  const w = new JournalWriter(join(dir, round, `${key}-loop-race.ndjson.gz`))
   w.write({
     t: "session",
     at: 0,
@@ -495,6 +498,16 @@ describe("/incident report", () => {
     expect(again.content).toMatch(/^Filed as incident #2: <#chan-1>/)
   })
 
+  it("puts a report's evidence in its session's round folder, and links it there", async () => {
+    const round = "2026-10-13-loop"
+    const key = await contact([car(1, "Ana"), car(2, "Bo"), hit], round)
+    await router().handle(command(ANA, "report", { race: key, what: "c:0", description: "x" }))
+    expect(gatheredInto).toBe(join(dir, round))
+    expect(channels.posts.at(-1)![1]).toBe(
+      `Overhead video below, and a replay clip to watch in the game: https://champctl.example/replays/${round}/incident-1.acreplay`,
+    )
+  })
+
   it("files the report and says so in the channel when the evidence can't be gathered", async () => {
     failGather = true
     const reply = await router().handle(
@@ -583,15 +596,15 @@ describe("indexJournal", () => {
       await w.close()
     }
     await write(1)
-    await indexJournal(path, 0)
+    await indexJournal(dir, "live.ndjson.gz", 0)
     await write(2)
-    expect((await indexJournal(path, 5_000)).collisions).toHaveLength(1)
-    expect((await indexJournal(path, 11_000)).collisions).toHaveLength(2)
+    expect((await indexJournal(dir, "live.ndjson.gz", 5_000)).collisions).toHaveLength(1)
+    expect((await indexJournal(dir, "live.ndjson.gz", 11_000)).collisions).toHaveLength(2)
   })
 
   it("reads a journal once for callers that ask at the same time", async () => {
-    const path = join(dir, (await readdir(dir)).find((f) => f.endsWith(".ndjson.gz"))!)
-    const [a, b] = await Promise.all([indexJournal(path), indexJournal(path)])
+    const file = (await readdir(dir)).find((f) => f.endsWith(".ndjson.gz"))!
+    const [a, b] = await Promise.all([indexJournal(dir, file), indexJournal(dir, file)])
     expect(a).toBe(b)
   })
 })

@@ -3,7 +3,7 @@
  */
 
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
-import { basename, join } from "node:path"
+import { join, relative, sep } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { type ReplaySummary, writeReplay } from "../spectator/acreplay.js"
@@ -16,6 +16,7 @@ import { listCollisions } from "../spectator/incident.js"
 import { sessionStart } from "../spectator/journal.js"
 import { renderIncidentSvg } from "../spectator/render.js"
 import { serveMcp } from "../spectator/mcp.js"
+import { lastRound, organize } from "../spectator/rounds.js"
 import { raceControlUrl } from "../spectator/racecontrol.js"
 import { callName } from "../spectator/rules.js"
 import { Recorder } from "../spectator/recorder.js"
@@ -40,6 +41,7 @@ Usage:
                               [--profile <id|path>]
   champctl-spectator mcp --journals <dir> --ac-root <dir> [--rules <file>]
                          [--profile <id|path>]
+  champctl-spectator organize <dir> [--dry-run] [--profile <id|path>]
 
 record joins the server as a car and stays: when ACSM moves to the next event
 it rejoins. Each session becomes a journal in --out, and when the session ends
@@ -55,7 +57,9 @@ Record options:
   --car <model>              the model of the slot to take
   --guid <steam64>           the GUID to join with
   --name <name>              driver name others see (default: Race Recorder)
-  --out <dir>                where journals and replays go
+  --out <dir>                where journals and replays go, a folder per
+                             round: a track's practice server sessions, then
+                             the championship event raced there
   --park <x,y,z>             where the car sits (default: 50 km off and 2 km
                              under the origin, out of sight from any track)
   --plugin-listen [host:]port receive the server's UDP plugin feed here, for
@@ -73,6 +77,8 @@ Record options:
                              https://champctl.example.org/replays. With
                              CHAMPCTL_REPLAY_WEBHOOK set to a Discord webhook,
                              each session's replay is posted there
+  --profile <id|path>        the league profile, whose time zone dates the
+                             round folders (default: $CHAMPCTL_PROFILE, else batl)
   --no-replay                keep journals only
 
 Give the recorder a spectator car of its own in the championship, locked to
@@ -83,6 +89,12 @@ entry would be subject to.
 video draws that stretch from above as an MP4: the track, every car where the
 recording put it, and the drivers named in --focus followed, with trails,
 speeds and gears. Needs ffmpeg.
+
+organize files recordings made before round folders into them, replays and
+clips with the sessions they came from. Those don't say which sessions were the
+championship event's, so each run of sessions on one track is a round. A
+journal written to in the last 10 minutes is left alone. --dry-run lists the
+moves without making them.
 
 cuts finds every time a car left the track and came back on further round,
 having covered that stretch at least --min-gain seconds (default 1) faster
@@ -135,6 +147,8 @@ type Args =
       raceControl?: string
       replayUrl?: string
       replay: boolean
+      /** The league profile, for its time zone: round folders are named by the league's date. */
+      profile: string
     }
   | {
       command: "replay"
@@ -146,6 +160,7 @@ type Args =
     }
   | { command: "incidents"; journal: string }
   | { command: "cuts"; journal: string; acRoot: string; minSavedS: number }
+  | { command: "organize"; dir: string; dryRun: boolean; profile: string }
   | {
       command: "video"
       journal: string
@@ -182,7 +197,16 @@ function port(flag: string, v: string): number {
   return n
 }
 
-const COMMANDS = ["record", "replay", "video", "incidents", "incident", "cuts", "mcp"] as const
+const COMMANDS = [
+  "record",
+  "replay",
+  "video",
+  "incidents",
+  "incident",
+  "cuts",
+  "mcp",
+  "organize",
+] as const
 
 export function parseArgs(argv: readonly string[]): Args {
   const [first, ...rest] = argv
@@ -194,6 +218,7 @@ export function parseArgs(argv: readonly string[]): Args {
   const positional: string[] = []
   let noReplay = false
   let prompt = false
+  let dryRun = false
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]!
     if (arg === "-h" || arg === "--help") return { command: "help" }
@@ -201,6 +226,8 @@ export function parseArgs(argv: readonly string[]): Args {
       noReplay = true
     } else if (arg === "--prompt") {
       prompt = true
+    } else if (arg === "--dry-run") {
+      dryRun = true
     } else if (arg.startsWith("--")) {
       const value = rest[++i]
       if (value === undefined) throw new UsageError(`${arg} needs a value.`)
@@ -253,6 +280,15 @@ export function parseArgs(argv: readonly string[]): Args {
       toMs,
       focus,
       ...(out ? { out } : {}),
+    }
+  } else if (command === "organize") {
+    const dir = positional.shift()
+    if (dir === undefined) throw new UsageError("organize needs the recordings folder.")
+    args = {
+      command,
+      dir,
+      dryRun,
+      profile: take("--profile") ?? defaultProfile(),
     }
   } else if (command === "cuts") {
     const journal = positional.shift()
@@ -361,6 +397,7 @@ export function parseArgs(argv: readonly string[]): Args {
       guid,
       name: take("--name") ?? "Race Recorder",
       out: need("--out"),
+      profile: take("--profile") ?? defaultProfile(),
       park: park as Vec3,
       ...(listen && pluginServer
         ? {
@@ -440,6 +477,17 @@ async function main(argv: readonly string[]): Promise<number> {
     process.stdout.write(`${out}: ${frames} frames, ${clip.cars.length} cars\n`)
     return 0
   }
+  if (args.command === "organize") {
+    const { schedule } = await loadProfile(args.profile)
+    const moves = await organize(args.dir, schedule.timezone, { dryRun: args.dryRun })
+    for (const m of moves) process.stdout.write(`${m.from} -> ${m.to}\n`)
+    process.stdout.write(
+      moves.length === 0
+        ? "Nothing to file.\n"
+        : `${args.dryRun ? "Would move" : "Moved"} ${moves.length} ${moves.length === 1 ? "file" : "files"}.\n`,
+    )
+    return 0
+  }
   if (args.command === "cuts") {
     const skips = await findTrackSkips(
       args.journal,
@@ -514,6 +562,13 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   await mkdir(args.out, { recursive: true })
+  const timeZone = await loadProfile(args.profile).then(
+    (p) => p.schedule.timezone,
+    () => {
+      log(`no league profile at ${args.profile}, so round folders are named by UTC dates`)
+      return "UTC"
+    },
+  )
   const replays = new Set<Promise<void>>()
   // A secret, so from the environment rather than the command line.
   const webhook = replayWebhook(process.env["CHAMPCTL_REPLAY_WEBHOOK"])
@@ -536,7 +591,7 @@ async function main(argv: readonly string[]): Promise<number> {
         webhook && args.replayUrl
           ? replayMessage(
               s,
-              `${args.replayUrl.replace(/\/+$/, "")}/${encodeURIComponent(basename(out))}`,
+              `${args.replayUrl.replace(/\/+$/, "")}/${relative(args.out, out).split(sep).map(encodeURIComponent).join("/")}`,
             )
           : undefined
       if (webhook && message) {
@@ -566,6 +621,7 @@ async function main(argv: readonly string[]): Promise<number> {
     ...(args.plugin ? { plugin: { ...args.plugin, realtimeIntervalMs: 100 } } : {}),
     ...(args.raceControl ? { raceControl: { url: args.raceControl } } : {}),
     outDir: args.out,
+    rounds: { timeZone, ...(await lastRound(args.out).then((last) => (last ? { last } : {}))) },
     ...(args.replay
       ? {
           onJournal: (j: string) => {
