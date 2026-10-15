@@ -57,8 +57,8 @@ const SLOWEST_PASS_MS = 120_000
  * put somewhere, not driven there. A floor as well as a speed because samples
  * arrive in bunches a few ms apart, and a reset moves a car hundreds of meters.
  */
-const JUMP_M = 30
-const JUMP_PER_MS = 100 / 1000
+export const JUMP_M = 30
+export const JUMP_PER_MS = 100 / 1000
 
 export async function findTrackSkips(
   journal: string,
