@@ -148,7 +148,7 @@ export async function listCollisions(journal: string): Promise<CollisionSummary[
   return out
 }
 
-function summarize(
+export function summarize(
   r: CollisionRecord,
   index: number,
   names: Map<number, string>,

@@ -22,6 +22,8 @@ export interface CommandOptionDefinition {
   required: boolean
   /** Suggestions as it's typed, from the router's `autocomplete`. Strings only. */
   autocomplete?: boolean
+  /** Strings only. Discord refuses longer before the bot sees it. */
+  max_length?: number
 }
 
 export interface SubcommandDefinition {
@@ -134,6 +136,8 @@ export const INCIDENT_COMMAND: CommandDefinition = {
           description: "What happened, in your own words",
           type: 3,
           required: true,
+          // Room for it in one message, under the report's own line.
+          max_length: 1500,
         },
         {
           name: "other_driver",
@@ -161,6 +165,7 @@ export const INCIDENT_COMMAND: CommandDefinition = {
           description: "What was decided, and any penalty",
           type: 3,
           required: true,
+          max_length: 1500,
         },
       ],
     },

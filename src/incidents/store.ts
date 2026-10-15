@@ -157,6 +157,16 @@ export class SqliteIncidentStore {
     return r && fromRow(r)
   }
 
+  /** Reports a driver filed that haven't been decided, and that got a channel. */
+  openCount(reporterDiscord: string): number {
+    const r = this.#db
+      .prepare(
+        "SELECT count(*) AS n FROM incidents WHERE reporter_discord = ? AND decision IS NULL AND channel_id IS NOT NULL",
+      )
+      .get(reporterDiscord) as { n: number }
+    return r.n
+  }
+
   decide(number: number, decision: string, by: string, at: Date): void {
     this.#db
       .prepare("UPDATE incidents SET decision = ?, decided_by = ?, decided_at = ? WHERE number = ?")

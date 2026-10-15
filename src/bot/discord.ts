@@ -314,7 +314,9 @@ export class GatewayTransport implements DiscordTransport {
 
   /** Nobody but the bot can post in the channel any more; who could see it still can. */
   async lockChannel(channelId: string): Promise<void> {
-    const channel = await this.#client.channels.fetch(channelId)
+    // Forced: with no intents the cached copy never hears of an overwrite a
+    // steward added by hand, and that member would keep posting.
+    const channel = await this.#client.channels.fetch(channelId, { force: true })
     if (!channel || channel.type !== ChannelType.GuildText) {
       throw new BotError(`${channelId} isn't a text channel I can see.`)
     }

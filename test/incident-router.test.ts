@@ -7,6 +7,7 @@ import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { SlashCommand } from "../src/bot/transport.js"
 import { type IncidentChannels, IncidentRouter, parseClock } from "../src/incidents/router.js"
 import { SqliteIncidentStore } from "../src/incidents/store.js"
+import { type JournalRecord, JournalWriter } from "../src/spectator/journal.js"
 import type { DriverClaim } from "../src/liveries/claims.js"
 import type { Evidence } from "../src/spectator/evidence.js"
 import { parseFastLane, Track } from "../src/spectator/track.js"
@@ -18,9 +19,12 @@ const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 const STEWARDS = "9".repeat(18)
 const ANA = "1".repeat(18)
 const BO = "2".repeat(18)
+const DEE = "4".repeat(18)
 
 let dir: string
+/** The race option's value: the recorder's timestamp at the front of the journal's name. */
 let journal: string
+let stamp: string
 let store: SqliteIncidentStore
 let channels: {
   created: [string, readonly string[]][]
@@ -30,14 +34,15 @@ let channels: {
 }
 let failGather: boolean
 let failCreate: boolean
+let failLock: boolean
 
 const track = new Track(parseFastLane(fastLane(loop("left"))))
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "incidents-"))
   // Named the way the recorder names a journal, an hour ago.
-  const stamp = new Date(Date.now() - 3600_000).toISOString().replace(/[:.]/g, "-")
-  const path = await writeScenario(
+  stamp = new Date(Date.now() - 3600_000).toISOString().replace(/[:.]/g, "-")
+  await writeScenario(
     dir,
     `${stamp}-loop-race`,
     track,
@@ -55,19 +60,20 @@ beforeEach(async () => {
     ],
     { at: 5000, carId: 2, otherCarId: 1 },
   )
-  journal = path.slice(dir.length + 1)
+  journal = stamp
   await writeFile(join(dir, "video.mp4"), "mp4")
   store = await SqliteIncidentStore.open(":memory:")
   channels = { created: [], posts: [], pinged: [], locked: [] }
   failGather = false
   failCreate = false
+  failLock = false
 })
 afterEach(async () => {
   store.close()
   await rm(dir, { recursive: true, force: true })
 })
 
-function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo" }) {
+function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo", [DEE]: "Dee" }) {
   const c = championship({
     ID: CHAMP,
     Classes: [
@@ -76,6 +82,7 @@ function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo" }) 
           { Name: "Ana", GUID: "76561198000000001" },
           { Name: "Bo", GUID: "76561198000000002" },
           { Name: "Cy", GUID: "76561198000000003" },
+          { Name: "Dee", GUID: "76561198000000004" },
         ]),
       }),
     ],
@@ -89,6 +96,8 @@ function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo" }) 
   const ch: IncidentChannels = {
     create: async (name, users) => {
       if (failCreate) throw new Error("Missing Permissions")
+      // As long as Discord takes, so a second tap arrives while the first is waiting.
+      await new Promise((r) => setTimeout(r, 20))
       channels.created.push([name, users])
       return `chan-${channels.created.length}`
     },
@@ -97,6 +106,7 @@ function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo" }) 
       channels.pinged.push(pings ?? [])
     },
     lock: async (id) => {
+      if (failLock) throw new Error("Missing Permissions")
       channels.locked.push(id)
     },
   }
@@ -131,6 +141,43 @@ function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo" }) 
   })
 }
 
+const car = (carId: number, driver: string, guid?: string): JournalRecord => ({
+  t: "car",
+  at: 0,
+  carId,
+  model: "m",
+  skin: "s",
+  driver,
+  ...(guid ? { guid } : {}),
+})
+const hit: JournalRecord = {
+  t: "collision",
+  at: 5000,
+  carId: 2,
+  otherCarId: 1,
+  impactSpeed: 40,
+  worldPos: [0, 0, 0],
+}
+
+/** A race with these cars and a contact in it, by hand; its key. */
+async function contact(records: JournalRecord[]): Promise<string> {
+  const key = "2026-01-01T00-00-00-000Z"
+  const w = new JournalWriter(join(dir, `${key}-loop-race.ndjson.gz`))
+  w.write({
+    t: "session",
+    at: 0,
+    serverName: "s",
+    track: "loop",
+    trackConfig: "",
+    name: "Race",
+    type: 3,
+    recorderCarId: 0,
+  })
+  for (const r of records) w.write(r)
+  await w.close()
+  return key
+}
+
 const command = (
   user: string,
   sub: string,
@@ -149,9 +196,9 @@ const command = (
 })
 
 describe("/incident autocomplete", () => {
-  it("offers recent sessions anyone drove in", async () => {
+  it("offers recent sessions by their recordings' names", async () => {
     const choices = await router().autocomplete(command(ANA, "report", { race: "" }), "race")
-    expect(choices).toEqual([{ name: expect.stringMatching(/^Race · loop · /), value: journal }])
+    expect(choices).toEqual([{ name: expect.stringMatching(/^Race · loop · /), value: stamp }])
   })
 
   it("offers the reporter's own contacts, and something else", async () => {
@@ -215,6 +262,56 @@ describe("/incident report", () => {
     expect(choices.map((c) => c.value)).toEqual(["c:0", "other"])
   })
 
+  it("takes the driver who held the slot at the time, when it changed hands later", async () => {
+    // Bo leaves after the contact and Dee joins in the same slot.
+    const key = await contact([car(1, "Ana"), car(2, "Bo"), hit, { ...car(2, "Dee"), at: 8000 }])
+    await router().handle(command(ANA, "report", { race: key, what: "c:0", description: "x" }))
+    expect(channels.created).toEqual([["incident-1-ana-bo", [ANA, BO]]])
+  })
+
+  it("doesn't take a driver by name when their car's GUID says it's someone else", async () => {
+    // Someone calling themselves Ana in the game, with a GUID that isn't Ana's.
+    const key = await contact([
+      car(1, "Ana", "76561198000000009"),
+      car(2, "Bo", "76561198000000002"),
+      hit,
+    ])
+    const reply = await router().handle(
+      command(ANA, "report", { race: key, what: "c:0", description: "x" }),
+    )
+    expect(reply.content).toMatch(/^I can't find Ana in the recording/)
+  })
+
+  it("files one report when a driver taps twice", async () => {
+    const r = router()
+    const report = () =>
+      r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    await Promise.all([report(), report()])
+    expect(channels.created).toHaveLength(1)
+  })
+
+  it("holds a driver's reports at three the stewards haven't decided", async () => {
+    for (const atMs of [0, 6000, 11000]) {
+      const i = store.file(
+        {
+          reporterDiscord: ANA,
+          reporter: "Ana",
+          other: "Cy",
+          journal: "elsewhere",
+          atMs,
+          description: "x",
+        },
+        new Date(),
+      )
+      store.setChannel(i.number, `old-${i.number}`)
+    }
+    const reply = await router().handle(
+      command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
+    )
+    expect(reply.content).toMatch(/You have 3 reports the stewards haven't decided yet/)
+    expect(channels.created).toEqual([])
+  })
+
   it("says so when the other driver hasn't claimed their name, and leaves them out", async () => {
     await router({ [ANA]: "Ana" }).handle(
       command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
@@ -228,7 +325,7 @@ describe("/incident report", () => {
       command(ANA, "report", {
         race: journal,
         what: "other",
-        other_driver: "3",
+        other_driver: "Cy",
         when: "0:02.5",
         description: "x",
       }),
@@ -239,11 +336,16 @@ describe("/incident report", () => {
 
   it.each([
     ["no other driver", { what: "other", when: "0:02" }, /pick the other driver/],
-    ["no time", { what: "other", other_driver: "2" }, /say when/],
+    ["no time", { what: "other", other_driver: "Cy" }, /say when/],
+    [
+      "a time past the recording",
+      { what: "other", other_driver: "Cy", when: "9:00" },
+      /only runs to 0:/,
+    ],
     ["someone else's contact", { what: "c:9" }, /isn't a contact of yours/],
     [
       "themselves",
-      { what: "other", other_driver: "1", when: "0:02" },
+      { what: "other", other_driver: "Ana", when: "0:02" },
       /an incident is between two cars/,
     ],
   ])("refuses %s", async (_, options, message) => {
@@ -274,6 +376,7 @@ describe("/incident report", () => {
       /^I couldn't open a channel for the report\. Tell an admin: Missing Permissions/,
     )
     failCreate = false
+    failLock = false
     const again = await r.handle(
       command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
     )
@@ -323,6 +426,18 @@ describe("/incident decide", () => {
     expect(store.byChannel("chan-1")?.decision).toBe("Racing incident")
     const again = await r.handle(command("s", "decide", { outcome: "No further action" }, steward))
     expect(again.content).toBe("Incident #1 was already decided: Racing incident")
+  })
+
+  it("can be made again when the channel couldn't be locked", async () => {
+    const r = await filed()
+    const steward = { channelId: "chan-1", roleIds: [STEWARDS] }
+    failLock = true
+    await expect(r.handle(command("s", "decide", { outcome: "x" }, steward))).rejects.toThrow()
+    failLock = false
+    expect((await r.handle(command("s", "decide", { outcome: "x" }, steward))).content).toMatch(
+      /^Recorded/,
+    )
+    expect(channels.locked).toEqual(["chan-1"])
   })
 })
 

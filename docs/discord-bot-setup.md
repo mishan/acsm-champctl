@@ -363,9 +363,13 @@ the bot knows which car was theirs, and who the other driver is in Discord.
 
 Each report gets its own channel in a category, which only the stewards, the
 two drivers and the bot can see. The bot posts the report, what the recording
-shows about the moment (the speeds, the gap, any track skips nearby), a
-suggested call where one of its rules fits, a drawing of the approach, an
+shows about the moment (the speeds, the gap, any track skips nearby), an
 overhead video of both cars, and a link to a replay clip to watch in the game.
+For a contact the recording caught, it adds a suggested call where one of its
+rules fits, and a drawing of the approach.
+
+A driver can have three reports open at once; the stewards deciding one makes
+room for another.
 
 A steward closes it with `/incident decide`, in that channel. The decision is
 recorded and posted, both drivers are mentioned, and the channel goes
@@ -378,9 +382,13 @@ read-only. Nothing is written to ACSM: any penalty is applied by hand.
 }
 ```
 
-Make an "Incidents" category with nobody but the stewards able to see it. The
-bot needs **Manage Channels** and **Manage Roles** there, to create each
-channel and set who can see it.
+Make an "Incidents" category that only the stewards and the bot can see. The
+bot's own role needs, on that category, **View Channel**, **Send Messages**,
+**Read Message History** and **Attach Files**: Discord won't let it give a
+driver a permission it doesn't hold there itself. It also needs **Manage
+Channels** and **Manage Roles** from its server role, not just the category:
+a new channel doesn't inherit the category's settings, and locking one means
+changing who can post in it.
 
 The bot reads the recordings and the car and track files. In the compose
 deployment that's the shared data volume and `CHAMPCTL_AC_ROOT`, as for the

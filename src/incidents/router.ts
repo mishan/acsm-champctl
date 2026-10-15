@@ -21,11 +21,12 @@ import type { CommandReply, DiscordFile, SlashCommand } from "../bot/transport.j
 import type { DriverClaim } from "../liveries/claims.js"
 import { type Evidence, type EvidenceRequest, gatherEvidence } from "../spectator/evidence.js"
 import {
+  carAt,
   indexJournal,
   type JournalCar,
   type JournalIndex,
-  journalFiles,
-  journalPath,
+  journalByKey,
+  journalNames,
 } from "./journals.js"
 import type { Incident, SqliteIncidentStore } from "./store.js"
 
@@ -78,11 +79,17 @@ const MAX_CHOICE_CHARS = 100
 const OFFERED_DAYS = 14
 const SESSION_TYPES: Record<number, string> = { 1: "Practice", 2: "Qualifying", 3: "Race" }
 const SOMETHING_ELSE = "other"
+/** Undecided reports one driver can have open at once: each is a channel and a video render. */
+const MAX_OPEN = 3
 /** Discord's limit for one message. */
 const MESSAGE_LIMIT = 2000
 
 export class IncidentRouter {
   readonly #o: IncidentRouterOptions
+  /** Drivers whose report is being filed: a double-tap shouldn't open two channels. */
+  readonly #filing = new Set<string>()
+  /** Renders run one at a time; a race night's reports can wait their turn. */
+  #rendering: Promise<unknown> = Promise.resolve()
 
   constructor(options: IncidentRouterOptions) {
     this.#o = options
@@ -90,8 +97,8 @@ export class IncidentRouter {
 
   /** Reads the newest recordings now, so the first driver to report doesn't wait on it. */
   async warm(count = 4): Promise<void> {
-    for (const f of (await journalFiles(this.#o.recordings)).slice(0, count)) {
-      await indexJournal(join(this.#o.recordings, f)).catch(() => undefined)
+    for (const j of (await journalNames(this.#o.recordings)).slice(0, count)) {
+      await indexJournal(join(this.#o.recordings, j.file)).catch(() => undefined)
     }
   }
 
@@ -103,25 +110,22 @@ export class IncidentRouter {
     const index = await this.#index(command.options["race"])
     if (!index) return []
     if (focused === "other_driver") {
-      return matching(index.cars.map((c) => ({ name: clip(c.driver), value: String(c.carId) })))
+      const names = [...new Set(index.cars.map((c) => clip(c.driver)))]
+      return matching(names.map((n) => ({ name: n, value: n })))
     }
     if (focused === "what") {
-      const me = await this.#reporterCar(command.userId, index)
-      const mine = me
-        ? index.collisions.filter(
-            (c) =>
-              c.otherCarId !== undefined && (c.carId === me.carId || c.otherCarId === me.carId),
-          )
-        : []
-      const choices = mine.map((c) => {
-        const other = c.carId === me!.carId ? c.drivers[1] : c.drivers[0]
-        return {
+      const mine = await this.#reporterCars(command.userId, index)
+      const choices: Choice[] = []
+      for (const c of index.collisions) {
+        const other = otherInContact(index, c, mine)
+        if (!other) continue
+        choices.push({
           name: clip(
-            `${clock(c.at - index.start)} · contact with ${other}, ${Math.round(c.impactSpeedKmh)} km/h`,
+            `${clock(c.at - index.start)} · contact with ${other.driver}, ${Math.round(c.impactSpeedKmh)} km/h`,
           ),
           value: `c:${c.index}`,
-        }
-      })
+        })
+      }
       return [
         ...matching(choices).slice(0, MAX_CHOICES - 1),
         { name: "Something else: name the driver and the time below", value: SOMETHING_ELSE },
@@ -155,28 +159,34 @@ export class IncidentRouter {
     const index = await this.#index(command.options["race"])
     if (!index)
       return { content: "Pick the race from the list, so I know which recording to look at." }
-    const me = await this.#reporterCar(command.userId, index)
-    if (!me) {
+    const mine = await this.#reporterCars(command.userId, index)
+    if (mine.length === 0) {
       return {
         content: `I can't find ${claim.entrantName} in the recording of that session. If you drove in it, tell a steward.`,
       }
     }
 
     const what = command.options["what"] ?? ""
+    let me: JournalCar | undefined
     let other: JournalCar | undefined
     let atMs: number
     let collisionIndex: number | undefined
     if (what.startsWith("c:")) {
       const c = index.collisions[Number(what.slice(2))]
-      if (!c || c.otherCarId === undefined || (c.carId !== me.carId && c.otherCarId !== me.carId)) {
+      other = c && otherInContact(index, c, mine)
+      if (!c || !other) {
         return { content: "Pick what happened from the list: that one isn't a contact of yours." }
       }
-      other = index.cars.find((x) => x.carId === (c.carId === me.carId ? c.otherCarId : c.carId))
+      me = mine.find(
+        (m) => m === carAt(index, c.carId, c.at) || m === carAt(index, c.otherCarId ?? -1, c.at),
+      )
       atMs = c.at - index.start
       collisionIndex = c.index
     } else if (what === SOMETHING_ELSE) {
-      other = index.cars.find((x) => String(x.carId) === command.options["other_driver"])
-      if (!other) return { content: "For something else, pick the other driver from the list too." }
+      const name = command.options["other_driver"] ?? ""
+      if (!index.cars.some((c) => clip(c.driver) === name)) {
+        return { content: "For something else, pick the other driver from the list too." }
+      }
       const when = parseClock(command.options["when"] ?? "")
       if (when === undefined) {
         return {
@@ -184,11 +194,24 @@ export class IncidentRouter {
             "For something else, say when as the time into the session, the way the replay shows it: `12:59`.",
         }
       }
+      if (when > index.end - index.start) {
+        return {
+          content: `The recording of that session only runs to ${clock(index.end - index.start)}.`,
+        }
+      }
       atMs = when
+      // Whoever held each slot then: a slot can change hands during a session.
+      const then = index.start + atMs
+      const holding = (c: JournalCar) => carAt(index, c.carId, then) === c
+      me = mine.find(holding)
+      if (!me) return { content: `You weren't on the server at ${clock(atMs)} in that session.` }
+      other = index.cars.find((c) => clip(c.driver) === name && holding(c))
+      if (!other)
+        return { content: `${name} wasn't on the server at ${clock(atMs)} in that session.` }
     } else {
       return { content: "Pick what happened from the list." }
     }
-    if (!other || other.carId === me.carId) {
+    if (!me || !other || other.carId === me.carId) {
       return { content: "Pick another driver: an incident is between two cars." }
     }
 
@@ -201,6 +224,45 @@ export class IncidentRouter {
         content: `You've already reported that as incident #${already.number}${already.channelId ? `: <#${already.channelId}>` : ""}.`,
       }
     }
+    if (this.#o.store.openCount(command.userId) >= MAX_OPEN) {
+      return {
+        content: `You have ${MAX_OPEN} reports the stewards haven't decided yet. Once they have, report this one.`,
+      }
+    }
+    // Claimed with no await since the check above, so a second tap can't slip between them.
+    if (this.#filing.has(command.userId)) {
+      return { content: "I'm still filing your last report. Give it a minute." }
+    }
+    this.#filing.add(command.userId)
+    try {
+      return await this.#file(
+        command,
+        claim.entrantName,
+        index,
+        me,
+        other,
+        atMs,
+        collisionIndex,
+        description,
+        now,
+      )
+    } finally {
+      this.#filing.delete(command.userId)
+    }
+  }
+
+  async #file(
+    command: SlashCommand,
+    reporter: string,
+    index: JournalIndex,
+    me: JournalCar,
+    other: JournalCar,
+    atMs: number,
+    collisionIndex: number | undefined,
+    description: string,
+    now: Date,
+  ): Promise<CommandReply> {
+    const championshipId = this.#o.championshipId as string
 
     const championship = await this.#o.reader
       .exportChampionship(championshipId)
@@ -213,7 +275,7 @@ export class IncidentRouter {
     const incident = this.#o.store.file(
       {
         reporterDiscord: command.userId,
-        reporter: claim.entrantName,
+        reporter,
         other: otherEntrant,
         ...(otherClaim ? { otherDiscord: otherClaim.discordUserId } : {}),
         journal: index.file,
@@ -249,7 +311,8 @@ export class IncidentRouter {
     }
 
     try {
-      const evidence = await (this.#o.gather ?? gatherEvidence)({
+      const gather = this.#o.gather ?? gatherEvidence
+      const request: EvidenceRequest = {
         journal: join(this.#o.recordings, index.file),
         acRoot: this.#o.acRoot,
         outDir: this.#o.recordings,
@@ -257,7 +320,10 @@ export class IncidentRouter {
         carIds: [me.carId, other.carId],
         atMs,
         ...(collisionIndex === undefined ? {} : { collisionIndex }),
-      })
+      }
+      const run = this.#rendering.then(() => gather(request))
+      this.#rendering = run.catch(() => undefined)
+      const evidence = await run
       await this.#postEvidence(channelId, evidence)
     } catch (e) {
       this.#o.log?.(`incident #${incident.number}: ${message(e)}`)
@@ -325,7 +391,6 @@ export class IncidentRouter {
     const outcome = (command.options["outcome"] ?? "").trim()
     if (!outcome) return { content: "Say what was decided." }
     const now = (this.#o.now ?? (() => new Date()))()
-    this.#o.store.decide(incident.number, outcome, command.userId, now)
     const who = [incident.reporterDiscord, incident.otherDiscord]
       .filter(Boolean)
       .map((id) => `<@${id}>`)
@@ -336,56 +401,74 @@ export class IncidentRouter {
       [incident.reporterDiscord, ...(incident.otherDiscord ? [incident.otherDiscord] : [])],
     )
     await this.#o.channels.lock(command.channelId)
+    // Last, so a decision that didn't reach the channel can be made again.
+    this.#o.store.decide(incident.number, outcome, command.userId, now)
     return { content: `Recorded. The channel is read-only now, kept for the record.` }
   }
 
   async #sessionChoices(): Promise<Choice[]> {
     const oldest = Date.now() - OFFERED_DAYS * 24 * 3600_000
     const out: Choice[] = []
-    for (const f of await journalFiles(this.#o.recordings)) {
-      const started = startedFrom(f)
-      if (!(started >= oldest)) continue
-      const index = await indexJournal(join(this.#o.recordings, f)).catch(() => undefined)
-      // A session nobody drove in has nothing to report.
-      if (!index || index.cars.length === 0) continue
+    for (const j of await journalNames(this.#o.recordings)) {
+      if (!(j.started >= oldest)) break
       const when = new Intl.DateTimeFormat("en-US", {
         timeZone: this.#o.timeZone,
         month: "short",
         day: "numeric",
         hour: "numeric",
         minute: "2-digit",
-      }).format(started)
+      }).format(j.started)
+      // "interlagos-1975-race": the session type last, as the recorder names it.
+      const type = j.rest.slice(j.rest.lastIndexOf("-") + 1)
+      const track = j.rest.slice(0, Math.max(0, j.rest.lastIndexOf("-")))
       out.push({
-        name: clip(
-          `${SESSION_TYPES[index.session.type] ?? index.session.name} · ${index.session.track} · ${when}`,
-        ),
-        value: f,
+        name: clip(`${type.charAt(0).toUpperCase()}${type.slice(1)} · ${track} · ${when}`),
+        value: j.key,
       })
       if (out.length === MAX_CHOICES) break
     }
     return out
   }
 
-  async #index(file: string | undefined): Promise<JournalIndex | undefined> {
-    const path = file && (await journalPath(this.#o.recordings, file))
+  async #index(key: string | undefined): Promise<JournalIndex | undefined> {
+    const path = key && (await journalByKey(this.#o.recordings, key))
     return path ? indexJournal(path).catch(() => undefined) : undefined
   }
 
-  /** The reporter's car in a recording, through their claim and the entry list's GUID. */
-  async #reporterCar(discordUserId: string, index: JournalIndex): Promise<JournalCar | undefined> {
+  /**
+   * The reporter's cars in a recording, every slot they held, through their
+   * claim and the entry list's GUID. By name only where there's no GUID to go
+   * on: anyone can call themselves anything in the game.
+   *
+   */
+  async #reporterCars(discordUserId: string, index: JournalIndex): Promise<JournalCar[]> {
     const championshipId = this.#o.championshipId
-    if (!championshipId) return undefined
+    if (!championshipId) return []
     const claim = await this.#o.claims.forDiscordUser(championshipId, discordUserId)
-    if (!claim) return undefined
+    if (!claim) return []
     const championship = await this.#o.reader
       .exportChampionship(championshipId)
       .catch(() => undefined)
     const guid = championship && guidFor(championship, claim.entrantName)
-    return (
-      (guid && index.cars.find((c) => c.guid && normGuid(c.guid) === guid)) ||
-      index.cars.find((c) => sameName(c.driver, claim.entrantName))
+    // A car with a GUID is theirs only by it; older recordings have some without.
+    return index.cars.filter((c) =>
+      guid && c.guid ? normGuid(c.guid) === guid : sameName(c.driver, claim.entrantName),
     )
   }
+}
+
+/** The other car in a contact, when one of the two was the reporter's at the time. */
+function otherInContact(
+  index: JournalIndex,
+  c: JournalIndex["collisions"][number],
+  mine: readonly JournalCar[],
+): JournalCar | undefined {
+  if (c.otherCarId === undefined) return undefined
+  const a = carAt(index, c.carId, c.at)
+  const b = carAt(index, c.otherCarId, c.at)
+  if (a && mine.includes(a)) return b
+  if (b && mine.includes(b)) return a
+  return undefined
 }
 
 function entrants(c: Championship) {
@@ -429,11 +512,6 @@ export function parseClock(value: string): number | undefined {
 function clock(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
-}
-
-function startedFrom(file: string): number {
-  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/.exec(file)
-  return m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`) : Number.NaN
 }
 
 const clip = (s: string): string =>
