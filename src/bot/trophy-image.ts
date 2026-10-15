@@ -91,7 +91,7 @@ let fontsLoaded = false
  * under one family so a name in Cyrillic or Greek still draws, rather than as
  * boxes on a trophy.
  */
-function loadFonts(): void {
+export function loadFonts(): void {
   if (fontsLoaded) return
   const require = createRequire(import.meta.url)
   const files = join(dirname(require.resolve("@fontsource/roboto/package.json")), "files")

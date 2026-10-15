@@ -24,6 +24,11 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
+# champctl-spectator video hands its frames to ffmpeg. A static build, one file:
+# Debian's package brings display and device libraries along and more than
+# doubled the image.
+COPY --from=mwader/static-ffmpeg:7.1.1 /ffmpeg /usr/local/bin/ffmpeg
+
 COPY LICENSE ./
 COPY bin bin
 COPY profiles profiles

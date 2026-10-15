@@ -92,6 +92,12 @@ describe("champctl-spectator parseArgs", () => {
       /time into the session/,
     ],
     ["cuts without the track", ["cuts", "j.ndjson.gz"], /needs --ac-root/],
+    ["a video with no stretch", ["video", "j.ndjson.gz", "--ac-root", "/ac"], /needs --from/],
+    [
+      "a video longer than ten minutes",
+      ["video", "j.ndjson.gz", "--ac-root", "/ac", "--from", "0:00", "--to", "10:01"],
+      /at most ten minutes/,
+    ],
     [
       "a replays address that isn't one",
       [...record, "--replay-url", "champctl.example/replays"],
