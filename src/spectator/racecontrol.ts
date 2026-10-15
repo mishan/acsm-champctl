@@ -215,13 +215,24 @@ export class RaceControlFeed {
       if (typeof m.data !== "string") return
       for (const u of decoder.decode(m.data)) this.#opts.onUpdate(u, this.#receivedAt(u))
     }
-    ws.onerror = () => this.#opts.onError?.(new Error(`race control feed at ${this.#url} failed`))
-    ws.onclose = () => {
-      if (this.#closed) return
-      const { max } = this.#opts.retryMs ?? RETRY
-      this.#retry = setTimeout(() => this.#open(), this.#retryMs)
-      this.#retryMs = Math.min(this.#retryMs * 2, max)
+    // Either one schedules the retry. Node 22's WebSocket fires only `error`
+    // when a connection is refused, never `close`, and the feed waiting for a
+    // close stayed down for good: on BATL, a race night with no collisions.
+    ws.onerror = () => {
+      this.#opts.onError?.(new Error(`race control feed at ${this.#url} failed`))
+      this.#reconnect(ws)
     }
+    ws.onclose = () => this.#reconnect(ws)
+  }
+
+  /** Once per socket, however many of its events say it's gone. */
+  #reconnect(ws: WebSocket): void {
+    if (this.#closed || ws !== this.#ws) return
+    this.#ws = undefined
+    ws.close()
+    const { max } = this.#opts.retryMs ?? RETRY
+    this.#retry = setTimeout(() => this.#open(), this.#retryMs)
+    this.#retryMs = Math.min(this.#retryMs * 2, max)
   }
 
   /**

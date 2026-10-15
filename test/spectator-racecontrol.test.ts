@@ -140,6 +140,20 @@ describe("RaceControlFeed", () => {
     expect(got.find(([u]) => u.kind === "collision")?.[1]).toBe(9_700)
   })
 
+  it("tries again after a refused connection, not only after a dropped one", async () => {
+    // Node 22 reports a refused connection with an error and no close.
+    await server.close()
+    server = await fakeRaceControl({ refuse: 2 })
+    const feed = new RaceControlFeed({
+      url: server.url,
+      retryMs: { min: 10, max: 10 },
+      onUpdate: () => {},
+    })
+    feed.start()
+    await server.connections(1)
+    feed.close()
+  })
+
   it("trusts its own clock over a server's that's far out", async () => {
     const got: number[] = []
     const feed = new RaceControlFeed({
