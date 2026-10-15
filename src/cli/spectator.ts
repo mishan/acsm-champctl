@@ -2,7 +2,7 @@
  * `champctl-spectator`: a car on the server that records everyone else.
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { pathToFileURL } from "node:url"
 
@@ -10,6 +10,7 @@ import { type ReplaySummary, writeReplay } from "../spectator/acreplay.js"
 import { postToWebhook, replayMessage } from "../spectator/announce.js"
 import { analyzeIncident, trackForJournal } from "../spectator/analysis.js"
 import { findTrackSkips } from "../spectator/cuts.js"
+import { ffmpegSink, loadClip, writeVideo } from "../spectator/video.js"
 import { incidentBrief } from "../spectator/brief.js"
 import { listCollisions } from "../spectator/incident.js"
 import { sessionStart } from "../spectator/journal.js"
@@ -32,6 +33,8 @@ Usage:
                             [--cars <dir>]
   champctl-spectator incidents <journal.ndjson.gz>
   champctl-spectator cuts <journal.ndjson.gz> --ac-root <dir> [--min-gain <s>]
+  champctl-spectator video <journal.ndjson.gz> --ac-root <dir> --from <m:ss> --to <m:ss>
+                           [--focus <driver,driver>] [--out <file.mp4>]
   champctl-spectator incident <journal.ndjson.gz> <n> --ac-root <dir>
                               [--svg <file>] [--prompt] [--rules <file>]
                               [--profile <id|path>]
@@ -76,6 +79,10 @@ Give the recorder a spectator car of its own in the championship, locked to
 --guid, beside any stream car. ACSM leaves spectator cars out of points and
 grid decisions and exempts them from Car Update Filtering, which an ordinary
 entry would be subject to.
+
+video draws that stretch from above as an MP4: the track, every car where the
+recording put it, and the drivers named in --focus followed, with trails,
+speeds and gears. Needs ffmpeg.
 
 cuts finds every time a car left the track and came back on further round,
 having covered that stretch at least --min-gain seconds (default 1) faster
@@ -139,6 +146,15 @@ type Args =
     }
   | { command: "incidents"; journal: string }
   | { command: "cuts"; journal: string; acRoot: string; minSavedS: number }
+  | {
+      command: "video"
+      journal: string
+      acRoot: string
+      fromMs: number
+      toMs: number
+      focus: string[]
+      out?: string
+    }
   | { command: "mcp"; journals: string; acRoot: string; rules?: string; profile: string }
   | {
       command: "incident"
@@ -166,7 +182,7 @@ function port(flag: string, v: string): number {
   return n
 }
 
-const COMMANDS = ["record", "replay", "incidents", "incident", "cuts", "mcp"] as const
+const COMMANDS = ["record", "replay", "video", "incidents", "incident", "cuts", "mcp"] as const
 
 export function parseArgs(argv: readonly string[]): Args {
   const [first, ...rest] = argv
@@ -214,6 +230,29 @@ export function parseArgs(argv: readonly string[]): Args {
       acRoot: need("--ac-root"),
       ...(rules ? { rules } : {}),
       profile: take("--profile") ?? defaultProfile(),
+    }
+  } else if (command === "video") {
+    const journal = positional.shift()
+    if (journal === undefined) throw new UsageError("video needs a journal file.")
+    const fromMs = clock("--from", need("--from"))
+    const toMs = clock("--to", need("--to"))
+    if (!(toMs > fromMs)) throw new UsageError("--to must be later than --from.")
+    // A video is drawn frame by frame; ten minutes is already 18,000 of them.
+    if (toMs - fromMs > 10 * 60_000)
+      throw new UsageError("A video can be at most ten minutes long.")
+    const focus = (take("--focus") ?? "")
+      .split(",")
+      .map((f) => f.trim())
+      .filter(Boolean)
+    const out = take("--out")
+    args = {
+      command,
+      journal,
+      acRoot: need("--ac-root"),
+      fromMs,
+      toMs,
+      focus,
+      ...(out ? { out } : {}),
     }
   } else if (command === "cuts") {
     const journal = positional.shift()
@@ -381,6 +420,24 @@ async function main(argv: readonly string[]): Promise<number> {
       ...(args.rules ? { rules: await readFile(args.rules, "utf8") } : {}),
       ...(profile.incidentThresholds ? { thresholds: profile.incidentThresholds } : {}),
     })
+    return 0
+  }
+  if (args.command === "video") {
+    const window = `-${formatClock(args.fromMs).replace(":", "m")}s-${formatClock(args.toMs).replace(":", "m")}s`
+    const out = args.out ?? args.journal.replace(/(\.ndjson)?(\.gz)?$/, `${window}.mp4`)
+    const track = await trackForJournal(args.journal, args.acRoot)
+    const options = { fromMs: args.fromMs, toMs: args.toMs, focus: args.focus }
+    const clip = await loadClip(args.journal, track, options)
+    const followed = clip.cars.filter((c) => c.focused).map((c) => c.driver)
+    if (followed.length > 0) process.stdout.write(`following ${followed.join(", ")}\n`)
+    const frames = await writeVideo(clip, ffmpegSink(out, 1280, 720, 30), options).catch(
+      async (e: unknown) => {
+        // Half a video plays as if it were the whole of one.
+        await rm(out, { force: true })
+        throw e
+      },
+    )
+    process.stdout.write(`${out}: ${frames} frames, ${clip.cars.length} cars\n`)
     return 0
   }
   if (args.command === "cuts") {

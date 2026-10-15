@@ -208,6 +208,7 @@ champctl-spectator replay <journal> [--out <file>] [--cars <ac-root>/content/car
                               [--from <m:ss>] [--to <m:ss>]
 champctl-spectator incidents <journal>
 champctl-spectator cuts <journal> --ac-root <dir> [--min-gain <s>]
+champctl-spectator video <journal> --ac-root <dir> --from <m:ss> --to <m:ss> [--focus <driver,driver>]
 champctl-spectator incident <journal> <n> --ac-root <dir> [--svg out.svg] [--prompt] [--rules rules.txt]
 champctl-spectator mcp --journals <dir> --ac-root <dir> [--rules rules.txt]
 ```
@@ -218,6 +219,12 @@ champctl-spectator mcp --journals <dir> --ac-root <dir> [--rules rules.txt]
   from the session's start as `incidents` and `cuts` list them, with every
   car. A minute around an incident is a
   few MB instead of a few hundred.
+- `video` draws a stretch from above as an MP4 that Discord plays inline: the
+  track, every car where the recording put it, and the drivers in `--focus`
+  (matched within their names) followed, with trails, speeds and gears, and
+  collisions marked where the server put them. It shows what the recording
+  knows, positions about 20 times a second, and no camera view; for that,
+  open the replay in the game. Needs `ffmpeg`, which the Docker image has.
 - `cuts` finds every time a car left the track and came back on further round
   having covered that stretch faster than its driver does on the track, by at
   least `--min-gain` seconds (default 1). The comparison is against the same

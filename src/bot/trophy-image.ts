@@ -8,10 +8,9 @@
  * because that is what the league has been posting by hand.
  */
 
-import { createRequire } from "node:module"
-import { dirname, join } from "node:path"
+import { createCanvas, loadImage, type SKRSContext2D } from "@napi-rs/canvas"
 
-import { createCanvas, GlobalFonts, loadImage, type SKRSContext2D } from "@napi-rs/canvas"
+import { loadFonts } from "../fonts.js"
 
 import type { PodiumClass } from "./podium.js"
 
@@ -82,25 +81,6 @@ function shade(hex: string, amount: number): string {
         .padStart(2, "0")
     })
     .join("")}`
-}
-
-let fontsLoaded = false
-
-/**
- * Roboto, from the npm package, in the scripts names are written in. Registered
- * under one family so a name in Cyrillic or Greek still draws, rather than as
- * boxes on a trophy.
- */
-function loadFonts(): void {
-  if (fontsLoaded) return
-  const require = createRequire(import.meta.url)
-  const files = join(dirname(require.resolve("@fontsource/roboto/package.json")), "files")
-  for (const subset of ["latin", "latin-ext", "cyrillic", "cyrillic-ext", "greek", "vietnamese"]) {
-    for (const weight of ["400", "500"]) {
-      GlobalFonts.registerFromPath(join(files, `roboto-${subset}-${weight}-normal.woff2`), "Roboto")
-    }
-  }
-  fontsLoaded = true
 }
 
 export function ordinal(n: number): string {

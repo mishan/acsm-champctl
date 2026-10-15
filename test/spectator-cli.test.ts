@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process"
+import { readFileSync } from "node:fs"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -9,6 +10,7 @@ import { parseArgs, replayWebhook } from "../src/cli/spectator.js"
 import { JournalWriter } from "../src/spectator/journal.js"
 import { fakeAcRoot, fakeAcServer } from "./support/fake-ac-server.js"
 import { fakeRaceControl } from "./support/fake-race-control.js"
+import { resolveSpecifier } from "./support/imports.js"
 
 const record = [
   "record",
@@ -93,6 +95,12 @@ describe("champctl-spectator parseArgs", () => {
       /time into the session/,
     ],
     ["cuts without the track", ["cuts", "j.ndjson.gz"], /needs --ac-root/],
+    ["a video with no stretch", ["video", "j.ndjson.gz", "--ac-root", "/ac"], /needs --from/],
+    [
+      "a video longer than ten minutes",
+      ["video", "j.ndjson.gz", "--ac-root", "/ac", "--from", "0:00", "--to", "10:01"],
+      /at most ten minutes/,
+    ],
     [
       "a replays address that isn't one",
       [...record, "--replay-url", "champctl.example/replays"],
@@ -204,5 +212,29 @@ describe("replayWebhook", () => {
 
   it("takes an empty one as none", () => {
     expect(replayWebhook("")).toBeUndefined()
+  })
+})
+
+describe("champctl-spectator's own imports", () => {
+  it("loads the native drawing library only for the commands that draw", () => {
+    // A recorder on a box without a prebuilt canvas binary would fail to
+    // start. Static imports only: an awaited import loads when it runs.
+    const statics = (file: string): string[] =>
+      [...readFileSync(file, "utf8").matchAll(/^import\s+(?!type\b)[^"]*?from\s+"([^"]+)"/gm)].map(
+        (m) => m[1]!,
+      )
+    const seen = new Set<string>()
+    const offences: string[] = []
+    const walk = (file: string, trail: string[]): void => {
+      if (seen.has(file)) return
+      seen.add(file)
+      for (const spec of statics(file)) {
+        if (spec === "@napi-rs/canvas") offences.push([...trail, file].join(" → "))
+        const next = resolveSpecifier(file, spec)
+        if (next) walk(next, [...trail, file])
+      }
+    }
+    walk(join(process.cwd(), "src/cli/spectator.ts"), [])
+    expect(offences).toEqual([])
   })
 })
