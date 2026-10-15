@@ -594,7 +594,13 @@ async function main(argv: readonly string[]): Promise<number> {
 function clock(flag: string, value: string): number {
   const parts = value.split(":")
   const n = parts.map(Number)
-  if (parts.length > 3 || parts.some((p) => p === "") || n.some((v) => !(v >= 0))) {
+  // Digits only, and minutes and seconds under 60: Number() would take 1e3,
+  // 0x10 and " 5", and 12:60 isn't a time anyone means.
+  if (
+    parts.length > 3 ||
+    parts.some((p) => !/^\d+(\.\d+)?$/.test(p)) ||
+    n.some((v, i) => i > 0 && v >= 60)
+  ) {
     throw new UsageError(
       `${flag} must be a time into the session such as 12:59, not ${JSON.stringify(value)}.`,
     )

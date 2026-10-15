@@ -230,7 +230,13 @@ export async function writeReplay(
     for (const spool of spools.values()) await spool.end()
 
     const carIds = [...spools.keys()].sort((a, b) => a - b)
-    if (carIds.length === 0) throw new Error(`${journalPath} recorded no cars moving`)
+    if (carIds.length === 0) {
+      throw new Error(
+        options.window
+          ? `${journalPath} has no car recorded in that stretch: check --from and --to against the session's length`
+          : `${journalPath} recorded no cars moving`,
+      )
+    }
     for (const [id, byDriver] of driven) {
       const mostly = [...byDriver.values()].sort((a, b) => b.n - a.n)[0]
       if (!mostly) continue

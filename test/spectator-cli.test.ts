@@ -147,10 +147,19 @@ describe("replay clips", () => {
     ["12:35", 755_000],
     ["1:02:03", 3_723_000],
     ["90", 90_000],
+    ["12:59.5", 779_500],
   ])("reads %s as a time into the session", (from, ms) => {
     expect(parseArgs(["replay", "j.ndjson.gz", "--from", from])).toMatchObject({
       window: { fromMs: ms, toMs: Number.POSITIVE_INFINITY },
     })
+  })
+})
+
+describe("clip times", () => {
+  it.each(["1e3", "0x10", " 5", "12:60", "-1", "Infinity"])("refuses %j", (from) => {
+    expect(() => parseArgs(["replay", "j.ndjson.gz", "--from", from])).toThrow(
+      /time into the session/,
+    )
   })
 })
 
