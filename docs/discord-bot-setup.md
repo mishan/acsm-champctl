@@ -389,8 +389,9 @@ room for another.
 
 A steward closes it with `/incident decide`, in that channel. The decision is
 recorded and posted, both drivers are mentioned, and the channel goes
-read-only and, with `closedCategoryId`, moves to that category, still visible
-to the stewards and both drivers. Nothing is written to ACSM: any penalty is
+read-only, is renamed from `incident-12-ana-bo` to `closed-12-ana-bo` and,
+with `closedCategoryId`, moves to that category, still visible to the
+stewards and both drivers. Nothing is written to ACSM: any penalty is
 applied by hand.
 
 ```json

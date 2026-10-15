@@ -127,8 +127,8 @@ describe("GatewayTransport incident channels", () => {
       type: ChannelType.GuildText,
       guildId: "g",
       permissionOverwrites: { cache: new Map(ids.map((id) => [id, overwrite(id)])) },
-      setParent: async (...args: unknown[]) => {
-        moves.push([edits.length, ...args])
+      edit: async (o: unknown) => {
+        moves.push([edits.length, o])
       },
     })
     const client = {
@@ -140,7 +140,11 @@ describe("GatewayTransport incident channels", () => {
             : channel(["g", "stewards", "ana", "bot"]),
       },
     }
-    await GatewayTransport.wrapping(client as unknown as Client).lockChannel("c", "closed")
+    await GatewayTransport.wrapping(client as unknown as Client).lockChannel(
+      "c",
+      "closed-1-ana-bo",
+      "closed",
+    )
     const shut = {
       SendMessages: false,
       SendMessagesInThreads: false,
@@ -153,7 +157,9 @@ describe("GatewayTransport incident channels", () => {
       ["added", shut],
     ])
     // After all three, keeping them rather than taking the closed category's.
-    expect(moves).toEqual([[3, "closed", { lockPermissions: false }]])
+    expect(moves).toEqual([
+      [3, { name: "closed-1-ana-bo", parent: "closed", lockPermissions: false }],
+    ])
   })
 
   it.each([

@@ -1019,8 +1019,8 @@ async function serve(args: Args): Promise<number> {
                   ...(files?.length ? { files } : {}),
                   ...(pings?.length ? { pings } : {}),
                 }),
-              lock: (channelId) =>
-                transport.lockChannel(channelId, incidentSettings.closedCategoryId),
+              lock: (channelId, name) =>
+                transport.lockChannel(channelId, name, incidentSettings.closedCategoryId),
             },
           })
         : undefined

@@ -40,8 +40,8 @@ export interface IncidentChannels {
     files?: readonly DiscordFile[],
     pings?: readonly string[],
   ): Promise<void>
-  /** Nobody but the bot can post in it any more; everyone who could see it still can. */
-  lock(channelId: string): Promise<void>
+  /** Nobody but the bot can post in it any more; everyone who could see it still can. Renamed `name`. */
+  lock(channelId: string, name: string): Promise<void>
 }
 
 export interface IncidentRouterOptions {
@@ -433,7 +433,7 @@ export class IncidentRouter {
       [],
       [incident.reporterDiscord, ...(incident.otherDiscord ? [incident.otherDiscord] : [])],
     )
-    await this.#o.channels.lock(command.channelId)
+    await this.#o.channels.lock(command.channelId, channelName(incident, "closed"))
     // Last, so a decision that didn't reach the channel can be made again.
     this.#o.store.decide(incident.number, outcome, command.userId, now)
     return { content: `Recorded. The channel is read-only now, kept for the record.` }
@@ -540,13 +540,13 @@ function entrantFor(c: Championship, car: JournalCar): string | undefined {
 const sameName = (a: string, b: string): boolean =>
   a.normalize("NFC").trim().toLowerCase() === b.normalize("NFC").trim().toLowerCase()
 
-function channelName(i: Incident): string {
+function channelName(i: Incident, state: "incident" | "closed" = "incident"): string {
   const slug = (s: string) =>
     s
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "")
-  return `incident-${i.number}-${slug(i.reporter)}-${slug(i.other)}`.slice(0, 100)
+  return `${state}-${i.number}-${slug(i.reporter)}-${slug(i.other)}`.slice(0, 100)
 }
 
 /** "12:59" into ms; undefined unless it's a time into the session. */

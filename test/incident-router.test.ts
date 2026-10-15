@@ -31,7 +31,7 @@ let channels: {
   created: [string, readonly string[]][]
   posts: [string, string, number][]
   pinged: (readonly string[])[]
-  locked: string[]
+  locked: [string, string][]
 }
 let failGather: boolean
 let failCreate: boolean
@@ -121,11 +121,11 @@ function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo", [D
       channels.posts.push([id, content, files?.length ?? 0])
       channels.pinged.push(pings ?? [])
     },
-    lock: async (id) => {
+    lock: async (id, name) => {
       if (failLock) throw new Error("Missing Permissions")
       // As long as Discord takes, so a second steward arrives while the first is waiting.
       await new Promise((r) => setTimeout(r, 20))
-      channels.locked.push(id)
+      channels.locked.push([id, name])
     },
   }
   return new IncidentRouter({
@@ -547,7 +547,7 @@ describe("/incident decide", () => {
       `**Decision on incident #1**, by <@s>:\n> Racing incident\n\n<@${ANA}> <@${BO}>`,
     )
     expect(channels.pinged.at(-1)).toEqual([ANA, BO])
-    expect(channels.locked).toEqual(["chan-1"])
+    expect(channels.locked).toEqual([["chan-1", "closed-1-ana-bo"]])
     expect(store.byChannel("chan-1")?.decision).toBe("Racing incident")
     const again = await r.handle(command("s", "decide", { outcome: "No further action" }, steward))
     expect(again.content).toBe("Incident #1 was already decided: Racing incident")
@@ -572,7 +572,7 @@ describe("/incident decide", () => {
     expect((await r.handle(command("s", "decide", { outcome: "x" }, steward))).content).toMatch(
       /^Recorded/,
     )
-    expect(channels.locked).toEqual(["chan-1"])
+    expect(channels.locked).toEqual([["chan-1", "closed-1-ana-bo"]])
   })
 })
 
