@@ -11,9 +11,8 @@
 
 import { spawn } from "node:child_process"
 
-import { createCanvas, type SKRSContext2D } from "@napi-rs/canvas"
+import type { SKRSContext2D } from "@napi-rs/canvas"
 
-import { loadFonts } from "../fonts.js"
 import { readJournal } from "./journal.js"
 import type { Track } from "./track.js"
 
@@ -388,6 +387,10 @@ export function ffmpegSink(
 }
 
 export async function writeVideo(clip: Clip, sink: FrameSink, o: VideoOptions): Promise<number> {
+  // Loaded here: the CLI's record shares this module, and a recorder has no
+  // business needing the native drawing library.
+  const { createCanvas } = await import("@napi-rs/canvas")
+  const { loadFonts } = await import("../fonts.js")
   loadFonts()
   const w = o.width ?? 1280
   const h = o.height ?? 720
