@@ -215,8 +215,9 @@ champctl-spectator mcp --journals <dir> --ac-root <dir> [--rules rules.txt]
 
 - `replay` writes the replay `record` would have, at the game's own 18 frames a
   second unless `--interval` says otherwise, in milliseconds between frames.
-- `--from` and `--to` make a clip: only that stretch of the session, timed as
-  the full replay shows it, with every car. A minute around an incident is a
+- `--from` and `--to` make a clip: only that stretch of the session, timed
+  from the session's start as `incidents` and `cuts` list them, with every
+  car. A minute around an incident is a
   few MB instead of a few hundred.
 - `video` draws a stretch from above as an MP4 that Discord plays inline: the
   track, every car where the recording put it, and the drivers in `--focus`
@@ -229,7 +230,8 @@ champctl-spectator mcp --journals <dir> --ac-root <dir> [--rules rules.txt]
   least `--min-gain` seconds (default 1). The comparison is against the same
   driver's other laps through the same stretch, so running wide doesn't count,
   and the server's own cut count, which says only that a lap had one, isn't
-  needed.
+  needed. A driver who took the shortcut every lap is compared with everyone
+  else's laps instead.
 - `incidents` lists a session's collisions, numbered.
 - `incident` measures one (who was ahead, when they overlapped, who braked
   where, who moved across whom, where the cars touched) and ends with a
