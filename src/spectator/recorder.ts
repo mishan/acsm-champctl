@@ -36,6 +36,11 @@ export class Recorder {
   #client: SpectatorClient | undefined
   #plugin: PluginListener | undefined
   #raceControl: RaceControlFeed | undefined
+  /**
+   * Each car's GUID, from the plugin feed or race control: the game protocol's
+   * car list has none, and an incident report finds a driver's car by it.
+   */
+  readonly #guids = new Map<number, string>()
   #journal: JournalWriter | undefined
   #stopped = false
   #retryTimer: NodeJS.Timeout | undefined
@@ -145,6 +150,7 @@ export class Recorder {
       recorderCarId: session.carId,
     })
     for (const c of client.cars) {
+      const guid = this.#guids.get(c.carId)
       this.#write({
         t: "car",
         at,
@@ -154,6 +160,7 @@ export class Recorder {
         driver: c.driver,
         nation: c.nation,
         team: c.team,
+        ...(guid ? { guid } : {}),
       })
     }
   }
@@ -217,6 +224,8 @@ export class Recorder {
         return
       }
       case "carDisconnected":
+        // Whoever takes the slot next isn't this driver, whatever a later journal says.
+        this.#guids.delete(p.carId)
         this.#write({ t: "connection", at, carId: p.carId, connected: false })
         return
       case "session": {
@@ -261,6 +270,8 @@ export class Recorder {
         })
         return
       case "connection":
+        if (e.connected && e.guid) this.#guids.set(e.carId, e.guid)
+        else if (!e.connected && this.#guids.get(e.carId) === e.guid) this.#guids.delete(e.carId)
         if (e.connected)
           this.#write({
             t: "car",
@@ -296,6 +307,8 @@ export class Recorder {
         })
         return
       case "connection":
+        if (u.connected && u.guid) this.#guids.set(u.carId, u.guid)
+        else if (!u.connected && this.#guids.get(u.carId) === u.guid) this.#guids.delete(u.carId)
         if (u.connected)
           this.#write({
             t: "car",

@@ -1,7 +1,7 @@
 /**
  * Just enough of an Assetto Corsa server to let a spectator join: the
  * handshake reply captured from acServer (UDP port rewritten to this fake's),
- * an empty car list, the UDP association ack, and pings on demand. Everything
+ * a car list, the UDP association ack, and pings on demand. Everything
  * else is whatever the test sends with `sendTcp`.
  */
 
@@ -11,6 +11,7 @@ import { createServer, type Server, type Socket as TcpSocket } from "node:net"
 import { dirname, join } from "node:path"
 
 import { frame, TcpDeframer } from "../../src/spectator/protocol.js"
+import { WireWriter } from "../../src/spectator/wire.js"
 
 export const HANDSHAKE_OK = Buffer.from(
   "3e0e6300000068000000610000006d0000007000000063000000740000006c0000002000000073000000700000006900" +
@@ -56,8 +57,17 @@ export interface FakeAcServer {
  * length. `tcpHost` is where TCP listens; "::" takes IPv6 as well.
  */
 export async function fakeAcServer(
-  o: { checksumPath?: string; tcpHost?: string } = {},
+  o: { checksumPath?: string; tcpHost?: string; cars?: { carId: number; driver: string }[] } = {},
 ): Promise<FakeAcServer> {
+  // Fewer than a page of ten, so the client asks once.
+  const carList = new WireWriter()
+    .u8(0x40)
+    .u8(0)
+    .u8(o.cars?.length ?? 0)
+  for (const c of o.cars ?? []) {
+    carList.u8(c.carId).ascii("m").ascii("s").ascii(c.driver).ascii("").ascii("").u8(0)
+    carList.bytes(Buffer.alloc(20))
+  }
   const udp: Socket = createSocket("udp4")
   await new Promise<void>((r) => udp.bind(0, "127.0.0.1", r))
   const reply = Buffer.from(HANDSHAKE_OK)
@@ -88,7 +98,7 @@ export async function fakeAcServer(
     sock.on("data", (c) => {
       for (const p of d.push(c)) {
         if (p[0] === 0x3d) sock.write(frame(reply))
-        if (p[0] === 0x3f) sock.write(frame(Buffer.from([0x40, 0, 0])))
+        if (p[0] === 0x3f) sock.write(frame(carList.build()))
       }
     })
   })

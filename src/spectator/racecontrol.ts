@@ -66,10 +66,26 @@ export class RaceControlDecoder {
         // Not CarIDToGUID: it keeps every slot a GUID has held this event,
         // and on BATL a driver who'd rejoined was in slot 8 but listed under
         // 0, 8 and 25.
+        // Drivers already on the server when the feed opened are only ever
+        // here, never in a connection message, so each is announced once.
+        const updates: RaceControlUpdate[] = []
         const connected = ((m["ConnectedDrivers"] ?? {}) as Record<string, unknown>)["Drivers"]
         for (const [guid, d] of Object.entries((connected ?? {}) as Record<string, unknown>)) {
-          const carId = Number(((d ?? {}) as { CarInfo?: { CarID?: unknown } }).CarInfo?.CarID)
-          if (guid && Number.isInteger(carId)) this.#carByGuid.set(guid, carId)
+          const info = ((d ?? {}) as { CarInfo?: Record<string, unknown> }).CarInfo ?? {}
+          const carId = Number(info["CarID"])
+          if (!guid || !Number.isInteger(carId)) continue
+          if (this.#carByGuid.get(guid) !== carId) {
+            updates.push({
+              kind: "connection",
+              connected: true,
+              carId,
+              guid,
+              name: String(info["DriverName"] ?? ""),
+              model: String(info["CarModel"] ?? ""),
+              skin: String(info["CarSkin"] ?? ""),
+            })
+          }
+          this.#carByGuid.set(guid, carId)
         }
         const s = (m["SessionInfo"] ?? {}) as Record<string, unknown>
         const session = {
@@ -80,9 +96,9 @@ export class RaceControlDecoder {
         }
         // The status repeats every few seconds; only a change is news.
         const key = `${session.track}/${session.trackConfig}/${session.name}`
-        if (key === this.#session) return []
+        if (key === this.#session) return updates
         this.#session = key
-        return [session]
+        return [session, ...updates]
       }
       case RaceControlEvent.NewConnection:
       case RaceControlEvent.ConnectionClosed: {

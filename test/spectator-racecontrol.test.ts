@@ -76,6 +76,14 @@ describe("RaceControlDecoder", () => {
     )
   })
 
+  it("announces each driver already on the server once, with their GUID", () => {
+    const connections = decode(status, status).filter((u) => u.kind === "connection")
+    expect(connections.map((u) => u.kind === "connection" && [u.carId, u.guid])).toEqual([
+      [0, "76561198000000001"],
+      [1, "76561198000000002"],
+    ])
+  })
+
   it("reports the session once, not with every status", () => {
     expect(decode(status, status).filter((u) => u.kind === "session")).toHaveLength(1)
   })

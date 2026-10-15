@@ -11,6 +11,7 @@ import { fakeRaceControl } from "./support/fake-race-control.js"
 
 let dir: string
 let server: FakeAcServer
+let rc: Awaited<ReturnType<typeof fakeRaceControl>>
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "recorder-"))
@@ -156,8 +157,66 @@ describe("Recorder", () => {
     await rec.stop()
     await rc.close()
     const [records] = await journals()
+    // Already on the server when the feed opened: named, with GUIDs, for an
+    // incident report to find their cars by.
+    expect(
+      records!
+        .filter((r) => r.t === "car" && r.guid)
+        .map((r) => r.t === "car" && [r.carId, r.guid]),
+    ).toEqual([
+      [1, "g1"],
+      [2, "g2"],
+    ])
     const hit = records!.find((r) => r.t === "collision")
     expect(hit).toMatchObject({ carId: 2, otherCarId: 1, impactSpeed: 30, worldPos: [1, 2, 3] })
     expect(hit).not.toHaveProperty("relPos")
+  })
+
+  it.each([
+    ["names every driver's GUID at the start of the next session", [], ["g1", "g2"]],
+    [
+      "forgets the GUID of a driver who left, by either feed",
+      [
+        // ACSM's feed says car 2 left; the game's own says car 1 did.
+        () => rc.send({ EventType: 52, Message: { CarID: 2, DriverGUID: "g2" } }),
+        () => server.sendTcp(new WireWriter().u8(0x4d).u8(1).build()),
+      ],
+      [undefined, undefined],
+    ],
+  ] as [string, (() => void)[], (string | undefined)[]][])("%s", async (_, leave, guids) => {
+    await server.close()
+    server = await fakeAcServer({
+      cars: [
+        { carId: 1, driver: "Ana" },
+        { carId: 2, driver: "Bo" },
+      ],
+    })
+    rc = await fakeRaceControl()
+    const rec = recorder(undefined, { raceControl: { url: rc.url } })
+    await rec.start()
+    await server.joins(1)
+    await rc.connections(1)
+    rc.send({
+      EventType: 200,
+      Message: {
+        ConnectedDrivers: {
+          Drivers: { g1: { CarInfo: { CarID: 1 } }, g2: { CarInfo: { CarID: 2 } } },
+        },
+        SessionInfo: {},
+      },
+    })
+    await settle()
+    for (const l of leave) l()
+    await settle()
+    server.sendTcp(sessionUpdate("Race"))
+    await settle()
+    await rec.stop()
+    await rc.close()
+    const next = (await journals())[1]!
+    const opening = next.filter((r) => r.t === "car" && r.at === next[0]!.at)
+    expect(opening.map((r) => r.t === "car" && [r.carId, r.guid])).toEqual([
+      [1, guids[0]],
+      [2, guids[1]],
+    ])
   })
 })
