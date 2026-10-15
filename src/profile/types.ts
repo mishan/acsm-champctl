@@ -165,6 +165,12 @@ export interface DiscordSettings {
    * event has finished, every session of it. `champctl-bot serve` does it.
    */
   postStandingsWhenRaced?: boolean
+  /**
+   * `/incident`: drivers report from the race recordings, and each report gets
+   * a channel in `categoryId` that the `stewardRoleId` role and both drivers
+   * can see. Absent, the command isn't registered.
+   */
+  incidents?: { categoryId: string; stewardRoleId: string }
 }
 
 export interface QualiVoiceMove {

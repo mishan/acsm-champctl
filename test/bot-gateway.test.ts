@@ -11,7 +11,7 @@
  * `GatewayTransport.wrapping` exists for this: a fake client is enough to drive
  * `post` and the interaction handler, without a token or a socket.
  */
-import { ChatInputCommandInteraction, Client, Events, MessageFlags } from "discord.js"
+import { ChannelType, ChatInputCommandInteraction, Client, Events, MessageFlags } from "discord.js"
 import { describe, expect, it, vi } from "vitest"
 
 import { GatewayTransport, toSlashCommand } from "../src/bot/discord.js"
@@ -55,6 +55,7 @@ function fakeInteraction(name = "livery") {
     interaction: {
       commandName: name,
       isChatInputCommand: () => true,
+      isAutocomplete: () => false,
       user: { id: "111111111111111111", username: "misha" },
       channelId: "222222222222222222",
       guildId: "333333333333333333",
@@ -76,6 +77,107 @@ function fakeInteraction(name = "livery") {
   }
 }
 
+describe("GatewayTransport autocomplete", () => {
+  it("asks the router for the focused option's suggestions and answers with them", async () => {
+    const { client, handlers } = fakeClient()
+    const asked: [string, string, Record<string, string>][] = []
+    let answered: unknown
+    GatewayTransport.wrapping(client).listen({
+      handle: async () => ({ content: "" }),
+      autocomplete: async (command, focused) => {
+        asked.push([command.name, focused, command.options])
+        return [{ name: "Race · loop", value: "j.ndjson.gz" }]
+      },
+    })
+    await handlers.get("interactionCreate")?.({
+      isAutocomplete: () => true,
+      isChatInputCommand: () => false,
+      commandName: "incident",
+      user: { id: "1", username: "ana" },
+      channelId: "2",
+      guildId: "3",
+      member: { roles: [] },
+      options: {
+        data: [{ name: "report", options: [{ name: "race", value: "lo", focused: true }] }],
+        getFocused: () => ({ name: "race", value: "lo" }),
+        getSubcommand: () => "report",
+      },
+      respond: async (choices: unknown) => {
+        answered = choices
+      },
+    })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(asked).toEqual([["incident", "race", { race: "lo" }]])
+    expect(answered).toEqual([{ name: "Race · loop", value: "j.ndjson.gz" }])
+  })
+})
+
+describe("GatewayTransport incident channels", () => {
+  it("locks every overwrite but the bot's and @everyone's, threads included, as Discord has it now", async () => {
+    const edits: [string, unknown][] = []
+    const overwrite = (id: string) => ({
+      id,
+      edit: async (p: unknown) => {
+        edits.push([id, p])
+      },
+    })
+    // The cached copy predates a member a steward added by hand.
+    const channel = (ids: string[]) => ({
+      type: ChannelType.GuildText,
+      guildId: "g",
+      permissionOverwrites: { cache: new Map(ids.map((id) => [id, overwrite(id)])) },
+    })
+    const client = {
+      user: { id: "bot" },
+      channels: {
+        fetch: async (_: string, o?: { force?: boolean }) =>
+          o?.force
+            ? channel(["g", "stewards", "ana", "added", "bot"])
+            : channel(["g", "stewards", "ana", "bot"]),
+      },
+    }
+    await GatewayTransport.wrapping(client as unknown as Client).lockChannel("c")
+    const shut = {
+      SendMessages: false,
+      SendMessagesInThreads: false,
+      CreatePublicThreads: false,
+      CreatePrivateThreads: false,
+    }
+    expect(edits).toEqual([
+      ["stewards", shut],
+      ["ana", shut],
+      ["added", shut],
+    ])
+  })
+
+  it.each([
+    [30013, /50 channels in a category/],
+    [50013, /needs Manage Channels and Manage Roles/],
+    [10003, /discord\.incidents\.categoryId/],
+  ])("says what Discord's error %i means when a channel can't be made", async (code, says) => {
+    const client = {
+      user: { id: "bot" },
+      guilds: {
+        fetch: async () => ({
+          channels: {
+            create: async () => {
+              throw Object.assign(new Error("refused"), { code })
+            },
+          },
+        }),
+      },
+    }
+    await expect(
+      GatewayTransport.wrapping(client as unknown as Client).createPrivateChannel("g", {
+        parentId: "cat",
+        name: "incident-1",
+        roleId: "stewards",
+        userIds: ["ana"],
+      }),
+    ).rejects.toThrow(says)
+  })
+})
+
 describe("GatewayTransport.post", () => {
   it("attaches a file when the message carries one", async () => {
     // The trophy-room image. Sent with the same no-pings rule as everything else.
@@ -96,6 +198,19 @@ describe("GatewayTransport.post", () => {
     expect(payload).toMatchObject({ content: "**October**", allowedMentions: { parse: [] } })
     expect(payload.files[0]?.name).toBe("October-podium.png")
     expect([...payload.files[0]!.attachment]).toEqual([...data])
+  })
+
+  it("pings the users a message names, and still nobody else", async () => {
+    // An incident's decision tells both drivers; a name in its text that reads
+    // "@everyone" still mustn't.
+    const { client, sent } = fakeClient()
+    const transport = GatewayTransport.wrapping(client)
+    await transport.post({
+      channelId: "444444444444444444",
+      content: "@everyone <@5>",
+      pings: ["5"],
+    })
+    expect(sent[0]?.payload).toMatchObject({ allowedMentions: { parse: [], users: ["5"] } })
   })
 
   it("suppresses every mention in an admin announcement", async () => {

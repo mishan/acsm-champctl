@@ -23,6 +23,11 @@ export interface DiscordMessage {
   source?: string
   /** Files to attach — the trophy-room image. */
   files?: readonly DiscordFile[]
+  /**
+   * Users this message may notify, by id, and nobody else: the drivers in an
+   * incident. Everything else the bot posts pings no one.
+   */
+  pings?: readonly string[]
 }
 
 export interface DiscordFile {
@@ -105,6 +110,11 @@ export interface CommandReply {
 
 export interface CommandRouter {
   handle(command: SlashCommand): Promise<CommandReply>
+  /**
+   * Suggestions for the option being typed, `focused`, with what's been typed
+   * so far in `command.options`. Discord waits three seconds for them.
+   */
+  autocomplete?(command: SlashCommand, focused: string): Promise<{ name: string; value: string }[]>
 }
 
 /**

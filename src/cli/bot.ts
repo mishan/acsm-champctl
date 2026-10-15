@@ -22,7 +22,7 @@ import { SqliteCache } from "../acsm/cache.js"
 import { AcsmNotJsonError, asMessage, HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { announce, NothingToAnnounce, RoundRefused, type Announcement } from "../bot/announce.js"
-import { LIVERY_COMMANDS } from "../bot/commands.js"
+import { INCIDENT_COMMAND, LIVERY_COMMANDS } from "../bot/commands.js"
 import { GatewayTransport } from "../bot/discord.js"
 import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
 import { nightlyMessages, standingsMessage } from "../bot/message.js"
@@ -46,6 +46,8 @@ import {
   type TrophyPost,
 } from "../bot/trophies.js"
 import { SqliteTrophyStore } from "../bot/trophy-store.js"
+import { IncidentRouter } from "../incidents/router.js"
+import { SqliteIncidentStore } from "../incidents/store.js"
 import type { Severity } from "../gridmom/finding.js"
 import { DEFAULT_MIN_SEVERITY } from "../gridmom/report.js"
 import { SqliteClaimStore } from "../liveries/claims.js"
@@ -945,6 +947,19 @@ async function serve(args: Args): Promise<number> {
   const queue = await SqliteSubmissionQueue.open(storePath)
   const tokens = await SqliteTokenStore.open(storePath)
   const liveries = await SqliteLiveryStore.open(storePath)
+  const incidentSettings = profile.discord.incidents
+  // The recordings to report from and the AC files to measure them with:
+  // checked before connecting, like the guild, so a misconfigured bot fails
+  // here rather than on the first report.
+  const recordings = process.env["CHAMPCTL_RECORDINGS"]
+  const acRoot = process.env["CHAMPCTL_AC_ROOT"]
+  if (incidentSettings && (!recordings || !acRoot)) {
+    throw new UsageError(
+      "discord.incidents needs CHAMPCTL_RECORDINGS, where the race recorder writes, and " +
+        "CHAMPCTL_AC_ROOT, the copied car and track files.",
+    )
+  }
+  const incidentStore = incidentSettings ? await SqliteIncidentStore.open(storePath) : undefined
   const voice = profile.discord.qualiVoiceMove
   const transport = await connect({ voice: voice !== undefined })
   let stopQualiCall = async () => {}
@@ -954,7 +969,10 @@ async function serve(args: Args): Promise<number> {
     if (!(transport instanceof GatewayTransport)) {
       throw new BotError("serve needs a real Discord connection.")
     }
-    await transport.registerCommands(guildId, LIVERY_COMMANDS)
+    await transport.registerCommands(guildId, [
+      ...LIVERY_COMMANDS,
+      ...(incidentSettings ? [INCIDENT_COMMAND] : []),
+    ])
     process.stderr.write(`Registered /livery in ${guildId}.\n`)
     if (args.registerOnly) return 0
 
@@ -970,9 +988,60 @@ async function serve(args: Args): Promise<number> {
       ...liveryRouterSettings(livery),
     })
 
-    transport.listen(router, {
-      ...(profile.discord.adminChannelId ? { adminChannelId: profile.discord.adminChannelId } : {}),
-    })
+    const incidents =
+      incidentSettings && incidentStore && recordings && acRoot
+        ? new IncidentRouter({
+            recordings,
+            acRoot,
+            ...(process.env["CHAMPCTL_REPLAY_URL"]
+              ? { replayUrl: process.env["CHAMPCTL_REPLAY_URL"] }
+              : {}),
+            ...(livery.championshipId ? { championshipId: livery.championshipId } : {}),
+            reader,
+            claims,
+            store: incidentStore,
+            stewardRoleId: incidentSettings.stewardRoleId,
+            timeZone: profile.schedule.timezone,
+            log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
+            channels: {
+              create: (name, userIds) =>
+                transport.createPrivateChannel(guildId, {
+                  parentId: incidentSettings.categoryId,
+                  name,
+                  roleId: incidentSettings.stewardRoleId,
+                  userIds,
+                }),
+              post: (channelId, content, files, pings) =>
+                transport.post({
+                  channelId,
+                  content,
+                  source: "an incident's channel",
+                  ...(files?.length ? { files } : {}),
+                  ...(pings?.length ? { pings } : {}),
+                }),
+              lock: (channelId) => transport.lockChannel(channelId),
+            },
+          })
+        : undefined
+    if (incidents) {
+      void incidents.warm()
+      process.stderr.write("Answering /incident.\n")
+    }
+
+    transport.listen(
+      incidents
+        ? {
+            handle: (c) => (c.name === "incident" ? incidents.handle(c) : router.handle(c)),
+            autocomplete: (c, focused) =>
+              c.name === "incident" ? incidents.autocomplete(c, focused) : Promise.resolve([]),
+          }
+        : router,
+      {
+        ...(profile.discord.adminChannelId
+          ? { adminChannelId: profile.discord.adminChannelId }
+          : {}),
+      },
+    )
     process.stderr.write(
       `Answering /livery. Uploads go to ${storePath}; champctl-liveries --drain applies them.\n`,
     )
@@ -1045,6 +1114,7 @@ async function serve(args: Args): Promise<number> {
     await stopStandings()
     await transport.close()
     liveries.close()
+    incidentStore?.close()
     tokens.close()
     queue.close()
     claims.close()

@@ -363,6 +363,57 @@ that finished before it started watching, so a restart doesn't repeat last
 week's. A round that finished while the bot was down isn't posted; `docker
 compose run --rm standings` posts it by hand.
 
+## 13. Optional: incident reports
+
+With the race recorder running ([spectator.md](spectator.md)), drivers can
+report an incident with `/incident report`:
+
+- **race**: picked from the sessions recorded in the last two weeks.
+- **what**: a contact the recording caught between them and someone else, or
+  "Something else", which also needs **other_driver** and **when**, the time
+  into the session as the replay shows it (`12:59`).
+- **description**: what happened, in their own words.
+
+A driver has to have claimed their name with `/livery claim` first: that's how
+the bot knows which car was theirs, and who the other driver is in Discord.
+
+Each report gets its own channel in a category, which only the stewards, the
+two drivers and the bot can see. The bot posts the report, what the recording
+shows about the moment (the speeds, the gap, any track skips nearby), an
+overhead video of both cars, and a link to a replay clip to watch in the game.
+For a contact the recording caught, it adds a suggested call where one of its
+rules fits, and a drawing of the approach.
+
+A driver can have three reports open at once; the stewards deciding one makes
+room for another.
+
+A steward closes it with `/incident decide`, in that channel. The decision is
+recorded and posted, both drivers are mentioned, and the channel goes
+read-only. Nothing is written to ACSM: any penalty is applied by hand.
+
+```json
+"incidents": {
+  "categoryId": "1234567890123456789",
+  "stewardRoleId": "9876543210987654321"
+}
+```
+
+Make an "Incidents" category that only the stewards and the bot can see. The
+bot's own role needs, on that category, **View Channel**, **Send Messages**,
+**Read Message History** and **Attach Files**: Discord won't let it give a
+driver a permission it doesn't hold there itself. It also needs **Manage
+Channels** and **Manage Roles** from its server role, not just the category:
+a new channel doesn't inherit the category's settings, and locking one means
+changing who can post in it, threads included.
+
+Discord allows 50 channels in a category, and decided incidents stay in it,
+read-only, for the record. Move or delete old ones before it fills; the bot
+says so when it can't make another.
+
+The bot reads the recordings and the car and track files. In the compose
+deployment that's the shared data volume and `CHAMPCTL_AC_ROOT`, as for the
+recorder. Set `CHAMPCTL_REPLAY_URL` for the clip's link.
+
 ## When it doesn't work
 
 | What you see | What it is |

@@ -25,6 +25,9 @@ x-champctl: &champctl
     CHAMPCTL_STORE: /var/lib/champctl/data/liveries/liveries.db
     # Written by the recorder, published by serve at /replays.
     CHAMPCTL_RECORDINGS: /var/lib/champctl/recordings
+    # Mounted where it's needed: the recorder, and the bot for /incident.
+    CHAMPCTL_AC_ROOT: /var/lib/champctl-ac
+    CHAMPCTL_REPLAY_URL: ${CHAMPCTL_REPLAY_URL:-}
   volumes:
     - champctl-data:/var/lib/champctl
     - ./config:/etc/champctl:ro
@@ -61,6 +64,10 @@ services:
     restart: unless-stopped
     command: [champctl-bot, serve]
     env_file: bot.env
+    volumes:
+      - champctl-data:/var/lib/champctl
+      - ./config:/etc/champctl:ro
+      - ${CHAMPCTL_AC_ROOT:-./ac}:/var/lib/champctl-ac:ro
 
   # Backs off on its own when ACSM is down or rate-limiting, and exits 3 only
   # when ACSM turns the account down — or when no championship id is set. Both

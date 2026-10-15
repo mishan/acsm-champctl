@@ -20,6 +20,10 @@ export interface CommandOptionDefinition {
   /** Discord's numeric option types. 3 is STRING, 11 is ATTACHMENT. */
   type: 3 | 11
   required: boolean
+  /** Suggestions as it's typed, from the router's `autocomplete`. Strings only. */
+  autocomplete?: boolean
+  /** Strings only. Discord refuses longer before the bot sees it. */
+  max_length?: number
 }
 
 export interface SubcommandDefinition {
@@ -98,3 +102,72 @@ export const LIVERY_COMMAND: CommandDefinition = {
 }
 
 export const LIVERY_COMMANDS: CommandDefinition[] = [LIVERY_COMMAND]
+
+/**
+ * `/incident` (docs/discord-bot-setup.md, step 13). Report and decide are subcommands of one
+ * command, so a steward finds both where drivers report.
+ */
+export const INCIDENT_COMMAND: CommandDefinition = {
+  name: "incident",
+  description: "Report an incident from a race, or decide one",
+  dmPermission: false,
+  options: [
+    {
+      name: "report",
+      description: "Report something that happened between you and another driver",
+      type: 1,
+      options: [
+        {
+          name: "race",
+          description: "The session it happened in",
+          type: 3,
+          required: true,
+          autocomplete: true,
+        },
+        {
+          name: "what",
+          description: "A contact the recording caught, or something else",
+          type: 3,
+          required: true,
+          autocomplete: true,
+        },
+        {
+          name: "description",
+          description: "What happened, in your own words",
+          type: 3,
+          required: true,
+          // Room for it in one message, under the report's own line.
+          max_length: 1500,
+        },
+        {
+          name: "other_driver",
+          description: "For something else: the other driver",
+          type: 3,
+          required: false,
+          autocomplete: true,
+        },
+        {
+          name: "when",
+          description:
+            "For something else: the time into the session, as the replay shows it (12:59)",
+          type: 3,
+          required: false,
+        },
+      ],
+    },
+    {
+      name: "decide",
+      description: "Stewards: record the decision on this incident",
+      type: 1,
+      options: [
+        {
+          name: "outcome",
+          description: "What was decided, and any penalty",
+          type: 3,
+          required: true,
+          max_length: 1500,
+        },
+      ],
+    },
+  ],
+}
