@@ -2,7 +2,7 @@
  * `champctl-spectator`: a car on the server that records everyone else.
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { pathToFileURL } from "node:url"
 
@@ -427,7 +427,15 @@ async function main(argv: readonly string[]): Promise<number> {
     const track = await trackForJournal(args.journal, args.acRoot)
     const options = { fromMs: args.fromMs, toMs: args.toMs, focus: args.focus }
     const clip = await loadClip(args.journal, track, options)
-    const frames = await writeVideo(clip, ffmpegSink(out, 1280, 720, 30), options)
+    const followed = clip.cars.filter((c) => c.focused).map((c) => c.driver)
+    if (followed.length > 0) process.stdout.write(`following ${followed.join(", ")}\n`)
+    const frames = await writeVideo(clip, ffmpegSink(out, 1280, 720, 30), options).catch(
+      async (e: unknown) => {
+        // Half a video plays as if it were the whole of one.
+        await rm(out, { force: true })
+        throw e
+      },
+    )
     process.stdout.write(`${out}: ${frames} frames, ${clip.cars.length} cars\n`)
     return 0
   }

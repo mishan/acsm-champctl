@@ -26,8 +26,9 @@ RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 # champctl-spectator video hands its frames to ffmpeg. A static build, one file:
 # Debian's package brings display and device libraries along and more than
-# doubled the image.
-COPY --from=mwader/static-ffmpeg:7.1.1 /ffmpeg /usr/local/bin/ffmpeg
+# doubled the image. Pinned by digest, being a third party's. It includes
+# libx264, so it's GPL: an image pushed to a registry carries that obligation.
+COPY --from=mwader/static-ffmpeg:7.1.1@sha256:11a44711684c0b9f754c047dcd64235b8b52deab251bd0e0a86f22faa160749c /ffmpeg /usr/local/bin/ffmpeg
 
 COPY LICENSE ./
 COPY bin bin

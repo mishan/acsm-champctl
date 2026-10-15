@@ -13,7 +13,7 @@ import { spawn } from "node:child_process"
 
 import { createCanvas, type SKRSContext2D } from "@napi-rs/canvas"
 
-import { loadFonts } from "../bot/trophy-image.js"
+import { loadFonts } from "../fonts.js"
 import { readJournal } from "./journal.js"
 import type { Track } from "./track.js"
 
@@ -61,7 +61,8 @@ const MIN_VIEW_M = 220
 const HIT_MS = 1500
 
 export async function loadClip(journal: string, track: Track, o: VideoOptions): Promise<Clip> {
-  const focus = (o.focus ?? []).map((f) => f.toLowerCase())
+  const asked = o.focus ?? []
+  const focus = asked.map((f) => f.toLowerCase())
   const names = new Map<number, string>()
   const cars = new Map<number, CarTrack>()
   const hits: Clip["hits"] = []
@@ -79,7 +80,8 @@ export async function loadClip(journal: string, track: Track, o: VideoOptions): 
     }
     if (start === undefined) continue
     const t = r.at - start
-    if (r.t === "car" && r.driver) names.set(r.carId, r.driver)
+    // Up to the stretch's end: a slot can change hands later in the session.
+    if (r.t === "car" && r.driver && t <= o.toMs) names.set(r.carId, r.driver)
     if (t < o.fromMs - TRAIL_MS || t > o.toMs + STALE_MS) continue
     if (r.t === "collision") {
       hits.push({ at: t, x: r.worldPos[0], z: r.worldPos[2], withCar: r.otherCarId !== undefined })
@@ -112,8 +114,8 @@ export async function loadClip(journal: string, track: Track, o: VideoOptions): 
     c.driver = names.get(c.carId) ?? `car ${c.carId}`
     c.focused = focus.some((f) => c.driver.toLowerCase().includes(f))
   }
-  const missing = focus.filter(
-    (f) => ![...cars.values()].some((c) => c.driver.toLowerCase().includes(f)),
+  const missing = asked.filter(
+    (f) => ![...cars.values()].some((c) => c.driver.toLowerCase().includes(f.toLowerCase())),
   )
   if (missing.length > 0) {
     throw new Error(
@@ -163,25 +165,30 @@ interface View {
   span: number
 }
 
+function wholeTrack(clip: Clip, aspect: number): View {
+  const xs = clip.track.points.map((p) => p.x)
+  const zs = clip.track.points.map((p) => p.z)
+  const [x0, x1, z0, z1] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)]
+  return {
+    cx: (x0 + x1) / 2,
+    cz: (z0 + z1) / 2,
+    span: Math.max(x1 - x0, (z1 - z0) * aspect) * 1.08,
+  }
+}
+
 /**
  * What the frame looks at: the focused cars with room around them, or the
- * whole track when nothing is focused.
+ * whole track when nothing is focused. Undefined when the focused cars are
+ * all out of the recording for the moment, so the view stays where it was
+ * rather than pulling out to the whole circuit and back.
  */
-export function frameView(clip: Clip, t: number, aspect: number): View {
+export function frameView(clip: Clip, t: number, aspect: number): View | undefined {
   const focused = clip.cars
     .filter((c) => c.focused)
     .map((c) => poseAt(c, t))
     .filter((p): p is Pose => p !== undefined)
-  if (focused.length === 0) {
-    const xs = clip.track.points.map((p) => p.x)
-    const zs = clip.track.points.map((p) => p.z)
-    const [x0, x1, z0, z1] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)]
-    return {
-      cx: (x0 + x1) / 2,
-      cz: (z0 + z1) / 2,
-      span: Math.max(x1 - x0, (z1 - z0) * aspect) * 1.08,
-    }
-  }
+  if (focused.length === 0 && clip.cars.some((c) => c.focused)) return undefined
+  if (focused.length === 0) return wholeTrack(clip, aspect)
   const xs = focused.map((p) => p.x)
   const zs = focused.map((p) => p.z)
   const [x0, x1, z0, z1] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)]
@@ -327,10 +334,16 @@ export interface FrameSink {
   end(): Promise<void>
 }
 
-/** H.264 in an MP4 that Discord and browsers play inline. */
-export function ffmpegSink(out: string, w: number, h: number, fps: number): FrameSink {
+/** H.264 in an MP4 that Discord and browsers play inline. `command` is for the tests. */
+export function ffmpegSink(
+  out: string,
+  w: number,
+  h: number,
+  fps: number,
+  command = "ffmpeg",
+): FrameSink {
   const ff = spawn(
-    "ffmpeg",
+    command,
     [
       ...["-hide_banner", "-loglevel", "error", "-y"],
       ...["-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${w}x${h}`, "-r", String(fps), "-i", "-"],
@@ -354,16 +367,18 @@ export function ffmpegSink(out: string, w: number, h: number, fps: number): Fram
       code === 0 ? resolve() : reject(new Error(`ffmpeg failed: ${err.trim() || `exit ${code}`}`)),
     )
   })
-  // One handler for the life of the pipe: ffmpeg quitting early is a write
-  // error, reported by the next write and by end().
-  let broken: Error | undefined
-  ff.stdin.on("error", (e) => {
-    broken ??= e
-  })
+  // A run that stops before end(), with a frame it couldn't draw, would
+  // otherwise leave ffmpeg's failure unhandled and take the process down.
+  exited.catch(() => {})
+  // The pipe breaks when ffmpeg quits early. A broken pipe never drains, so a
+  // write waits for either, and ffmpeg's own exit says why.
+  ff.stdin.on("error", () => {})
   return {
     write: async (rgba) => {
-      if (broken) throw broken
-      if (!ff.stdin.write(rgba)) await new Promise((resolve) => ff.stdin.once("drain", resolve))
+      if (ff.stdin.destroyed) return exited
+      if (!ff.stdin.write(rgba)) {
+        await Promise.race([new Promise((resolve) => ff.stdin.once("drain", resolve)), exited])
+      }
     },
     end: async () => {
       ff.stdin.end()
@@ -383,15 +398,18 @@ export async function writeVideo(clip: Clip, sink: FrameSink, o: VideoOptions): 
   // The view eases toward where the focused cars are, so it doesn't jitter
   // with every sample.
   let view: View | undefined
-  for (let t = clip.fromMs; t <= clip.toMs; t += 1000 / fps) {
+  const count = Math.floor(((clip.toMs - clip.fromMs) * fps) / 1000) + 1
+  for (let f = 0; f < count; f++) {
+    const t = clip.fromMs + (f * 1000) / fps
     const target = frameView(clip, t, w / h)
-    view = view
-      ? {
-          cx: view.cx + (target.cx - view.cx) * 0.15,
-          cz: view.cz + (target.cz - view.cz) * 0.15,
-          span: view.span + (target.span - view.span) * 0.1,
-        }
-      : target
+    view =
+      view && target
+        ? {
+            cx: view.cx + (target.cx - view.cx) * 0.15,
+            cz: view.cz + (target.cz - view.cz) * 0.15,
+            span: view.span + (target.span - view.span) * 0.1,
+          }
+        : (view ?? target ?? wholeTrack(clip, w / h))
     drawFrame(ctx, clip, t, view, w, h)
     await sink.write(Buffer.from(ctx.getImageData(0, 0, w, h).data.buffer))
     frames++

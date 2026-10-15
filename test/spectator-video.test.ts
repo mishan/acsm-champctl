@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises"
+import { spawnSync } from "node:child_process"
+import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createCanvas } from "@napi-rs/canvas"
@@ -10,6 +11,7 @@ import { parseFastLane, Track } from "../src/spectator/track.js"
 import {
   type CarTrack,
   drawFrame,
+  ffmpegSink,
   type FrameSink,
   frameView,
   loadClip,
@@ -86,6 +88,11 @@ describe("poseAt", () => {
     expect(poseAt(car([0, 100], [0, 10]), 50)?.x).toBeCloseTo(5)
   })
 
+  it("turns the short way across ±π, not back through 0", () => {
+    const c = { ...car([0, 100], [0, 0]), yaw: [3.1, -3.1] }
+    expect(Math.abs(poseAt(c, 50)!.yaw)).toBeCloseTo(Math.PI, 1)
+  })
+
   it("draws no car across a gap in its recording, rather than gliding it", () => {
     expect(poseAt(car([0, 5000], [0, 500]), 2500)).toBeUndefined()
   })
@@ -111,7 +118,7 @@ describe("loadClip", () => {
 describe("frames", () => {
   it("follows the focused car and paints it, rather than the whole track", async () => {
     const clip = await loadClip(journal, track, { fromMs: 1000, toMs: 2000, focus: ["ricardo"] })
-    const view = frameView(clip, 1000, 16 / 9)
+    const view = frameView(clip, 1000, 16 / 9)!
     const p = poseAt(clip.cars[0]!, 1000)!
     expect([view.cx, view.cz]).toEqual([p.x, p.z])
     const canvas = createCanvas(320, 180)
@@ -123,6 +130,43 @@ describe("frames", () => {
     const px = [...ctx.getImageData(160, 92, 1, 1).data].slice(0, 3)
     const focus = [0xd9, 0x4f, 0x0f]
     expect(Math.max(...px.map((v, i) => Math.abs(v - focus[i]!)))).toBeLessThan(40)
+  })
+
+  it("points a car's arrow the way it's heading", () => {
+    // Facing yaw π/2, which is AC's -x: left on screen. Away from the track, at
+    // a zoom where the arrow is 36 px long.
+    const c: CarTrack = {
+      ...car([0, 100], [500, 500]),
+      z: [500, 500],
+      yaw: [Math.PI / 2, Math.PI / 2],
+    }
+    const clip = {
+      track,
+      session: { name: "Race", track: "loop" },
+      cars: [c],
+      hits: [],
+      fromMs: 0,
+      toMs: 100,
+    }
+    const canvas = createCanvas(320, 180)
+    const ctx = canvas.getContext("2d")
+    drawFrame(ctx, clip, 50, { cx: 500, cz: 500, span: 40 }, 320, 180)
+    const at = (x: number) => [...ctx.getImageData(x, 90, 1, 1).data].slice(0, 3)
+    expect([at(160 - 15), at(160 + 18)]).toEqual([
+      [0xd9, 0x4f, 0x0f],
+      [0xec, 0xee, 0xe8],
+    ])
+  })
+
+  it.each([
+    ["exits early", "false", /ffmpeg failed/],
+    ["isn't there", "champctl-no-such-ffmpeg", /needs ffmpeg/],
+  ])("fails, rather than hangs, when ffmpeg %s", async (_, command, message) => {
+    const clip = await loadClip(journal, track, { fromMs: 1000, toMs: 2000 })
+    const sink = ffmpegSink(join(dir, "x.mp4"), 64, 36, 10, command)
+    await expect(
+      writeVideo(clip, sink, { fromMs: 1000, toMs: 2000, width: 64, height: 36, fps: 10 }),
+    ).rejects.toThrow(message)
   })
 
   it("writes one frame per 1/fps of the stretch, each the size asked for", async () => {
@@ -146,4 +190,41 @@ describe("frames", () => {
     })
     expect([frames, ended, new Set(sizes)]).toEqual([11, true, new Set([64 * 36 * 4])])
   })
+})
+
+describe("champctl-spectator video", () => {
+  it("leaves no half-written video behind when ffmpeg fails", async () => {
+    // An ffmpeg that writes the start of a file and then gives up.
+    const bin = join(dir, "bin")
+    await mkdir(bin, { recursive: true })
+    await writeFile(
+      join(bin, "ffmpeg"),
+      '#!/bin/sh\nfor a; do last="$a"; done\necho half > "$last"\nexit 1\n',
+    )
+    await chmod(join(bin, "ffmpeg"), 0o755)
+    const lane = join(dir, "ac", "content", "tracks", "loop", "ai")
+    await mkdir(lane, { recursive: true })
+    await writeFile(join(lane, "fast_lane.ai"), fastLane(loop("left")))
+    const out = join(dir, "out")
+    await mkdir(out, { recursive: true })
+    const run = spawnSync(
+      join("node_modules", ".bin", "tsx"),
+      [
+        "src/cli/spectator.ts",
+        "video",
+        journal,
+        "--ac-root",
+        join(dir, "ac"),
+        "--from",
+        "0:01",
+        "--to",
+        "0:02",
+        "--out",
+        join(out, "v.mp4"),
+      ],
+      { env: { ...process.env, PATH: `${bin}:${process.env["PATH"]}` }, encoding: "utf8" },
+    )
+    expect(run.status).not.toBe(0)
+    expect(await readdir(out)).toEqual([])
+  }, 30_000)
 })
