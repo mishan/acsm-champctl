@@ -9,11 +9,12 @@
  * every ten.
  */
 
-import { readdir, stat } from "node:fs/promises"
-import { basename } from "node:path"
+import { stat } from "node:fs/promises"
+import { basename, join } from "node:path"
 
 import { type CollisionSummary, summarize } from "../spectator/incident.js"
 import { readJournal } from "../spectator/journal.js"
+import { listRecordings } from "../spectator/rounds.js"
 
 /** One driver's time in one slot: a slot changes hands when someone leaves and another joins. */
 export interface JournalCar {
@@ -46,12 +47,13 @@ export interface JournalName {
 const RECHECK_LIVE_MS = 10_000
 const cache = new Map<string, { mtimeMs: number; readAt: number; index: Promise<JournalIndex> }>()
 
-/** The journals in the folder, newest first. */
+/** The journals in the folder and its round folders, newest first. */
 export async function journalNames(recordings: string): Promise<JournalName[]> {
-  const files = await readdir(recordings).catch(() => [] as string[])
   const out: JournalName[] = []
-  for (const file of files) {
-    const m = /^((\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z)-(.*)\.ndjson\.gz$/.exec(file)
+  for (const file of await listRecordings(recordings, ".ndjson.gz")) {
+    const m = /^((\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z)-(.*)\.ndjson\.gz$/.exec(
+      basename(file),
+    )
     if (!m) continue
     const started = Date.parse(`${m[2]}T${m[3]}:${m[4]}:${m[5]}.${m[6]}Z`)
     out.push({ file, key: m[1] as string, started, rest: m[7] as string })
@@ -59,7 +61,13 @@ export async function journalNames(recordings: string): Promise<JournalName[]> {
   return out.sort((a, b) => b.started - a.started)
 }
 
-export async function indexJournal(path: string, now = Date.now()): Promise<JournalIndex> {
+/** `file` is relative to `recordings`, as `journalNames` gives it. */
+export async function indexJournal(
+  recordings: string,
+  file: string,
+  now = Date.now(),
+): Promise<JournalIndex> {
+  const path = join(recordings, file)
   const known = cache.get(path)
   if (known && now - known.readAt < RECHECK_LIVE_MS) return known.index
   const { mtimeMs } = await stat(path)
@@ -67,13 +75,13 @@ export async function indexJournal(path: string, now = Date.now()): Promise<Jour
   const latest = cache.get(path)
   if (latest?.mtimeMs === mtimeMs) return latest.index
   // The promise, so a second keystroke waits on the first read rather than starting its own.
-  const index = read(path)
+  const index = read(path, file)
   cache.set(path, { mtimeMs, readAt: now, index })
   index.catch(() => cache.delete(path))
   return index
 }
 
-async function read(path: string): Promise<JournalIndex> {
+async function read(path: string, file: string): Promise<JournalIndex> {
   let session: JournalIndex["session"] | undefined
   let start = 0
   let end = 0
@@ -107,7 +115,7 @@ async function read(path: string): Promise<JournalIndex> {
     }
   }
   if (!session) throw new Error(`${basename(path)} has no session record`)
-  return { file: basename(path), session, start, end, cars, collisions }
+  return { file, session, start, end, cars, collisions }
 }
 
 /** Who was in a slot at a moment, by the recorder's clock. */

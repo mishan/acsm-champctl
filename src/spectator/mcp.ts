@@ -9,7 +9,6 @@
  * server needs four methods: initialize, ping, tools/list and tools/call.
  */
 
-import { readdir } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { createInterface } from "node:readline"
 
@@ -19,6 +18,7 @@ import { svgToPng } from "./evidence.js"
 import type { IncidentThresholds } from "./incident.js"
 import { listCollisions } from "./incident.js"
 import { readJournal } from "./journal.js"
+import { listRecordings } from "./rounds.js"
 import { renderIncidentSvg } from "./render.js"
 import { callName } from "./rules.js"
 
@@ -89,22 +89,23 @@ export async function serveMcp(o: McpOptions): Promise<void> {
   const journal = async (session: unknown): Promise<string> => {
     if (
       typeof session !== "string" ||
-      basename(session) !== session ||
-      !session.endsWith(".ndjson.gz")
+      !session.endsWith(".ndjson.gz") ||
+      session.split("/").includes("..")
     ) {
       throw new Error(`${JSON.stringify(session)} isn't a session name from list_sessions`)
     }
-    const files = await readdir(o.journals)
+    // Only a name the folder lists, so nothing outside it can be asked for.
+    const files = await listRecordings(o.journals, ".ndjson.gz")
     if (!files.includes(session)) throw new Error(`no session called ${session}`)
     return join(o.journals, session)
   }
 
   const tools: Record<string, (args: Record<string, unknown>) => Promise<Content[]>> = {
     async list_sessions() {
-      const files = (await readdir(o.journals))
-        .filter((f) => f.endsWith(".ndjson.gz"))
-        .sort()
-        .reverse()
+      // Newest first, by the recorder's timestamp leading each name, whichever round it's in.
+      const files = (await listRecordings(o.journals, ".ndjson.gz")).sort((a, b) =>
+        basename(b).localeCompare(basename(a)),
+      )
       const lines: string[] = []
       for (const f of files) {
         const path = join(o.journals, f)

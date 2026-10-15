@@ -12,7 +12,7 @@
  */
 
 import { readFile } from "node:fs/promises"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 
 import type { AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
@@ -101,7 +101,7 @@ export class IncidentRouter {
   /** Reads the newest recordings now, so the first driver to report doesn't wait on it. */
   async warm(count = 4): Promise<void> {
     for (const j of (await journalNames(this.#o.recordings)).slice(0, count)) {
-      await indexJournal(join(this.#o.recordings, j.file)).catch(() => undefined)
+      await indexJournal(this.#o.recordings, j.file).catch(() => undefined)
     }
   }
 
@@ -335,7 +335,8 @@ export class IncidentRouter {
       const request: EvidenceRequest = {
         journal: join(this.#o.recordings, index.file),
         acRoot: this.#o.acRoot,
-        outDir: this.#o.recordings,
+        // Beside the session, in its round's folder.
+        outDir: join(this.#o.recordings, dirname(index.file)),
         stem: `incident-${incident.number}`,
         carIds: [me.carId, other.carId],
         atMs,
@@ -344,7 +345,7 @@ export class IncidentRouter {
       const run = this.#rendering.then(() => gather(request))
       this.#rendering = run.catch(() => undefined)
       const evidence = await run
-      await this.#postEvidence(channelId, evidence)
+      await this.#postEvidence(channelId, evidence, dirname(index.file))
     } catch (e) {
       this.#o.log?.(`incident #${incident.number}: ${message(e)}`)
       await this.#o.channels.post(
@@ -358,7 +359,7 @@ export class IncidentRouter {
     }
   }
 
-  async #postEvidence(channelId: string, e: Evidence): Promise<void> {
+  async #postEvidence(channelId: string, e: Evidence, round: string): Promise<void> {
     for (const part of chunks([
       "**What the recording shows**",
       ...e.summary.map((s) => `- ${s}`),
@@ -384,7 +385,7 @@ export class IncidentRouter {
       )
     }
     const link = this.#o.replayUrl
-      ? `${this.#o.replayUrl.replace(/\/+$/, "")}/${encodeURIComponent(e.clip)}`
+      ? `${this.#o.replayUrl.replace(/\/+$/, "")}/${(round === "." ? [e.clip] : [round, e.clip]).map(encodeURIComponent).join("/")}`
       : `\`${e.clip}\` on the replays page`
     await this.#o.channels.post(
       channelId,
@@ -467,7 +468,7 @@ export class IncidentRouter {
     const oldest = Date.now() - OFFERED_DAYS * 24 * 3600_000
     const j = (await journalNames(this.#o.recordings)).find((n) => n.key === key)
     if (!j || !(j.started >= oldest)) return undefined
-    return indexJournal(join(this.#o.recordings, j.file)).catch(() => undefined)
+    return indexJournal(this.#o.recordings, j.file).catch(() => undefined)
   }
 
   /**

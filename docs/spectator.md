@@ -200,6 +200,14 @@ place of the two plugin flags.
   model, which a game client loads and the recorder doesn't.
 - Each session's journal is kept; a replay is written next to it when the
   session ends, its wheels placed from `--ac-root`'s car data.
+- Recordings go in a folder per round, such as `2026-10-13-interlagos-1975`,
+  dated by the league profile's time zone the day its track first appeared.
+  A round is a track's practice-server sessions and then the championship
+  event raced there. The game server's session list tells them apart: a
+  practice server runs one session over and over, an event its practice,
+  qualifying and races as one list. When the event's last session begins,
+  whatever comes next starts a new round, as does a new track. Clips and
+  incident evidence go beside the session they're cut from.
 
 ## 5. Using the recordings
 
@@ -211,6 +219,7 @@ champctl-spectator cuts <journal> --ac-root <dir> [--min-gain <s>]
 champctl-spectator video <journal> --ac-root <dir> --from <m:ss> --to <m:ss> [--focus <driver,driver>]
 champctl-spectator incident <journal> <n> --ac-root <dir> [--svg out.svg] [--prompt] [--rules rules.txt]
 champctl-spectator mcp --journals <dir> --ac-root <dir> [--rules rules.txt]
+champctl-spectator organize <dir> [--dry-run]
 ```
 
 - `replay` writes the replay `record` would have, at the game's own 18 frames a
@@ -232,6 +241,12 @@ champctl-spectator mcp --journals <dir> --ac-root <dir> [--rules rules.txt]
   and the server's own cut count, which says only that a lap had one, isn't
   needed. A driver who took the shortcut every lap is compared with everyone
   else's laps instead.
+- `organize` files recordings made before round folders into them, once.
+  Those don't say which sessions were the event's, so a run of sessions on
+  one track is a round. Stop the recorder, run it, then start the recorder
+  that writes rounds: started first, it begins a round of its own, and the
+  week so far ends up in a separate folder. A journal written in the last 10
+  minutes isn't moved.
 - `incidents` lists a session's collisions, numbered.
 - `incident` measures one (who was ahead, when they overlapped, who braked
   where, who moved across whom, where the cars touched) and ends with a

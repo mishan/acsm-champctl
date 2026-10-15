@@ -169,8 +169,8 @@ Two settings the proxy needs for it, beyond the three above:
 
 `recorder` joins the game server as a spectator car of its own and records
 every session. When a session ends it writes the session's replay, which
-`serve` lists at `/replays` for anyone to download, and posts the link to
-Discord. [`docs/spectator.md`](spectator.md) covers the slot and the car and
+`serve` lists at `/replays` for anyone to download, by round, and posts the
+link to Discord. [`docs/spectator.md`](spectator.md) covers the slot and the car and
 track files it needs. Point it at them in `deploy/.env`:
 
 ```sh

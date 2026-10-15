@@ -25,6 +25,9 @@ export type JournalRecord =
       trackConfig: string
       name: string
       type: number
+      /** Where it sits in the server's session list: a list of one is a practice server. */
+      sessionIndex?: number
+      sessionCount?: number
       weather?: string
       recorderCarId: number
     }

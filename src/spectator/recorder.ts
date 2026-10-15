@@ -7,12 +7,14 @@
  * trying to join until there is a server to join again.
  */
 
+import { existsSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { SpectatorClient, type SpectatorOptions } from "./client.js"
 import { JournalWriter, type JournalRecord } from "./journal.js"
 import { PluginListener, type PluginListenerOptions } from "./plugin.js"
 import type { HandshakeOk, ServerPacket } from "./protocol.js"
 import { RaceControlFeed, type RaceControlOptions, type RaceControlUpdate } from "./racecontrol.js"
+import { localDate, placeOf, type Round, roundFor, slug } from "./rounds.js"
 
 export interface RecorderOptions {
   client: Omit<SpectatorOptions, "onPacket" | "onClose" | "now">
@@ -21,6 +23,11 @@ export interface RecorderOptions {
   /** Collisions from ACSM's live timing instead, where nobody can set up the plugin. */
   raceControl?: Omit<RaceControlOptions, "onUpdate" | "onError" | "now">
   outDir: string
+  /**
+   * A folder per round in `outDir` (see rounds.ts), named by the league's
+   * date; `last` is the round on disk, which may still be going.
+   */
+  rounds?: { timeZone: string; last?: Round }
   /** Called with each journal once its session is over. */
   onJournal?: (path: string) => void
   log?: (message: string) => void
@@ -46,12 +53,14 @@ export class Recorder {
   #retryTimer: NodeJS.Timeout | undefined
   #retryMs: number
   /** The latest session change, which the next journal begins with. */
-  #nextSession: { name: string; type: number } | undefined
+  #nextSession: { name: string; type: number; index: number } | undefined
+  #round: Round | undefined
 
   constructor(opts: RecorderOptions) {
     this.#opts = opts
     this.#log = opts.log ?? (() => {})
     this.#retryMs = (opts.retryMs ?? RETRY).min
+    this.#round = opts.rounds?.last
   }
 
   /** Recorder clock: client packets and plugin events share it. */
@@ -135,9 +144,24 @@ export class Recorder {
   ): void {
     // Never two at once: the one being replaced would never be closed.
     if (this.#journal) void this.#endJournal("superseded")
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-")
-    const file = `${stamp}-${slug(session.track)}${session.trackConfig ? `-${slug(session.trackConfig)}` : ""}-${slug(name)}.ndjson.gz`
-    this.#journal = new JournalWriter(join(this.#opts.outDir, file))
+    const now = new Date()
+    const stamp = now.toISOString().replace(/[:.]/g, "-")
+    const place = placeOf(session.track, session.trackConfig)
+    const file = `${stamp}-${place}-${slug(name)}.ndjson.gz`
+    const index = session.currentSession.index
+    const count = session.sessions.length
+    let dir = this.#opts.outDir
+    if (this.#opts.rounds) {
+      this.#round = roundFor(
+        this.#round,
+        { place, index, count },
+        localDate(now, this.#opts.rounds.timeZone),
+        (f) => existsSync(join(this.#opts.outDir, f)),
+      )
+      dir = join(dir, this.#round.folder)
+      mkdirSync(dir, { recursive: true })
+    }
+    this.#journal = new JournalWriter(join(dir, file))
     const at = this.now()
     this.#write({
       t: "session",
@@ -147,6 +171,8 @@ export class Recorder {
       trackConfig: session.trackConfig,
       name,
       type: session.currentSession.type,
+      sessionIndex: index,
+      sessionCount: count,
       recorderCarId: session.carId,
     })
     for (const c of client.cars) {
@@ -232,7 +258,7 @@ export class Recorder {
         const client = this.#client
         const session = client?.session
         if (!client || !session) return
-        this.#nextSession = { name: p.name, type: p.type }
+        this.#nextSession = { name: p.name, type: p.type, index: p.index }
         void this.#endJournal(`session changed to ${p.name}`).then(() => {
           // Anything could have happened while the old journal closed: a
           // stop, a dropped connection and a rejoin, or another session,
@@ -241,7 +267,10 @@ export class Recorder {
           if (this.#stopped || this.#client !== client || client.closed || this.#journal || !next)
             return
           this.#beginJournal(
-            { ...session, currentSession: { ...session.currentSession, type: next.type } },
+            {
+              ...session,
+              currentSession: { ...session.currentSession, type: next.type, index: next.index },
+            },
             client,
             next.name,
           )
@@ -331,13 +360,4 @@ export class Recorder {
       }
     }
   }
-}
-
-function slug(s: string): string {
-  return (
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "") || "x"
-  )
 }
