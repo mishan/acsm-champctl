@@ -375,6 +375,8 @@ report an incident with `/incident report`:
   "Something else", which also needs **other_driver** and **when**, the time
   into the session as the replay shows it (`12:59`). With **when** typed
   first, the other drivers are listed nearest them at that moment first.
+  Anything typed in **what** rather than picked counts as "Something else",
+  and **other_driver** takes a typed name, or enough of one to be only theirs.
 - **description**: what happened, in their own words.
 
 A driver has to have claimed their name with `/livery claim` first: that's how

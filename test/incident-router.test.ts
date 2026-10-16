@@ -280,7 +280,12 @@ describe("/incident autocomplete", () => {
       command("c", "report", { race: journal, what: "" }),
       "what",
     )
-    expect(choices.map((c) => c.value)).toEqual(["other"])
+    expect(choices).toEqual([
+      {
+        name: "Something else (no contact of yours was recorded): give the driver and the time below",
+        value: "other",
+      },
+    ])
   })
 })
 
@@ -485,7 +490,30 @@ describe("/incident report", () => {
   })
 
   it.each([
-    ["no other driver", { what: "other", when: "0:02" }, /pick the other driver/],
+    ["what happened in their own words", "he pushed me wide", "cy"],
+    ["the start of a name", "other", "C"],
+  ])("takes something else when typed rather than picked: %s", async (_, what, typed) => {
+    // As postaL had to, when the list didn't come up in time.
+    const reply = await router().handle(
+      command(ANA, "report", {
+        race: journal,
+        what,
+        other_driver: typed,
+        when: "0:02",
+        description: "x",
+      }),
+    )
+    expect(reply.content).toMatch(/^Filed as incident #1/)
+    expect(channels.created[0]![0]).toBe("incident-1-ana-cy")
+  })
+
+  it.each([
+    ["no other driver", { what: "other", when: "0:02" }, /also say who in other_driver/],
+    [
+      "a name that's more than one driver's",
+      { what: "other", other_driver: "a", when: "0:02" },
+      /also say who/,
+    ],
     ["no time", { what: "other", other_driver: "Cy" }, /say when/],
     [
       "a time past the recording",
