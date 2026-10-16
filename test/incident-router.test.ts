@@ -45,6 +45,8 @@ let failLock: boolean
 let failRead: boolean
 /** The report's own first message doesn't go through. */
 let failFirstPost: boolean
+/** The video's upload times out. */
+let failVideo: boolean
 let reads: number
 let gatheredInto: string | undefined
 /** Most evidence renders running at once. */
@@ -83,6 +85,7 @@ beforeEach(async () => {
   failLock = false
   failRead = false
   failFirstPost = false
+  failVideo = false
   polls = []
   ended = []
   pollResult = { finalized: true, counts: [0, 0, 0] }
@@ -134,6 +137,7 @@ function router(
     },
     post: async (id, content, files, pings) => {
       if (failFirstPost && content.startsWith("**Incident")) throw new Error("Unknown Channel")
+      if (failVideo && content === "From above:") throw new Error("This operation was aborted")
       channels.posts.push([id, content, files?.length ?? 0])
       channels.pinged.push(pings ?? [])
     },
@@ -373,9 +377,22 @@ describe("/incident report", () => {
       ["**What the recording shows**", 0],
       ["**Suggested call: unclear**", 1],
       [
-        "Overhead video below, and a replay clip to watch in the game: https://champctl.example/replays/incident-1.acreplay",
-        1,
+        "A replay clip to watch in the game: https://champctl.example/replays/incident-1.acreplay",
+        0,
       ],
+      ["From above:", 1],
+    ])
+  })
+
+  it("keeps the rest of the evidence when the video won't upload, and says it was the video", async () => {
+    failVideo = true
+    const reply = await router().handle(
+      command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
+    )
+    expect(reply.content).toMatch(/^Filed as incident #1/)
+    expect(channels.posts.slice(-2).map(([, t]) => t)).toEqual([
+      "A replay clip to watch in the game: https://champctl.example/replays/incident-1.acreplay",
+      "The overhead video didn't upload (This operation was aborted). The replay clip shows the same stretch.",
     ])
   })
 
@@ -620,8 +637,8 @@ describe("/incident report", () => {
     const key = await contact([car(1, "Ana"), car(2, "Bo"), hit], round)
     await router().handle(command(ANA, "report", { race: key, what: "c:0", description: "x" }))
     expect(gatheredInto).toBe(join(dir, round))
-    expect(channels.posts.at(-1)![1]).toBe(
-      `Overhead video below, and a replay clip to watch in the game: https://champctl.example/replays/${round}/incident-1.acreplay`,
+    expect(channels.posts.at(-2)![1]).toBe(
+      `A replay clip to watch in the game: https://champctl.example/replays/${round}/incident-1.acreplay`,
     )
   })
 
@@ -743,7 +760,7 @@ describe("deciding by vote", () => {
         hours: 48,
       },
     ])
-    expect(channels.posts.at(-1)![1]).toMatch(/^Overhead video below/)
+    expect(channels.posts.at(-1)![1]).toBe("From above:")
     expect(reply.content).toMatch(/The Racers vote on it there\.$/)
   })
 

@@ -92,6 +92,9 @@ export class GatewayTransport implements DiscordTransport {
   static async login(options: GatewayOptions): Promise<GatewayTransport> {
     const client = new Client({
       intents: options.voice ? [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] : [],
+      // discord.js's 15 s is too short for an incident's video on a slow
+      // moment: one timed out four times over and the upload was lost.
+      rest: { timeout: 60_000 },
     })
     const timeoutMs = options.readyTimeoutMs ?? 30_000
 
