@@ -399,11 +399,25 @@ with `closedCategoryId`, moves to that category, still visible to the
 stewards and both drivers. Nothing is written to ACSM: any penalty is
 applied by hand.
 
+A league can decide by vote instead. With `vote`, its `roleId` role (the
+league's racers, say) is let into every incident channel to read, discuss and
+vote. After the evidence, GridMom posts a Discord poll, "who was at fault?",
+with each driver and "Racing incident (neither)", open for `hours` (48 by
+default, Discord allows 1 to 768). When it closes, the winner is the decision,
+posted and recorded the same way, and the channel is closed. A tie, or a poll
+nobody voted in, is handed to the stewards to decide with `/incident decide`,
+which also still works at any time before the vote closes, and ends the vote
+when it does. The bot needs **Send Polls**, which it gives itself in each
+channel and so must hold on its server role. GridMom counts
+closed polls every five minutes, so a decision can follow the close by that
+much.
+
 ```json
 "incidents": {
   "categoryId": "1234567890123456789",
   "closedCategoryId": "1234567890123456780",
-  "stewardRoleId": "9876543210987654321"
+  "stewardRoleId": "9876543210987654321",
+  "vote": { "roleId": "1234567890123456781", "hours": 48 }
 }
 ```
 

@@ -763,6 +763,14 @@ describe("the profile's Discord settings", () => {
     [{ categoryId: "Incidents", stewardRoleId: "1".repeat(18) }],
     [{ categoryId: "1".repeat(18) }],
     [{ categoryId: "1".repeat(18), stewardRoleId: "1".repeat(18), closedCategoryId: "Closed" }],
+    [{ categoryId: "1".repeat(18), stewardRoleId: "1".repeat(18), vote: { roleId: "Racers" } }],
+    [
+      {
+        categoryId: "1".repeat(18),
+        stewardRoleId: "1".repeat(18),
+        vote: { roleId: "1".repeat(18), hours: 1000 },
+      },
+    ],
   ])("checks the incidents category and stewards' role: %j", (incidents) => {
     expect(() => withDiscord({ incidents })).toThrow(/discord\.incidents/)
   })

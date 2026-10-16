@@ -281,7 +281,7 @@ export class GatewayTransport implements DiscordTransport {
    */
   async createPrivateChannel(
     guildId: string,
-    o: { parentId: string; name: string; roleId: string; userIds: readonly string[] },
+    o: { parentId: string; name: string; roleIds: readonly string[]; userIds: readonly string[] },
   ): Promise<string> {
     const guild = await this.#client.guilds.fetch(guildId)
     const can = [
@@ -298,9 +298,18 @@ export class GatewayTransport implements DiscordTransport {
         parent: o.parentId,
         permissionOverwrites: [
           { id: guildId, type: OverwriteType.Role, deny: [PermissionFlagsBits.ViewChannel] },
-          { id: o.roleId, type: OverwriteType.Role, allow: can },
+          ...o.roleIds.map((id) => ({ id, type: OverwriteType.Role, allow: can })),
           ...o.userIds.map((id) => ({ id, type: OverwriteType.Member, allow: can })),
-          ...(me ? [{ id: me, type: OverwriteType.Member, allow: can }] : []),
+          // Polls are the bot's alone: drivers and voters vote, they don't start them.
+          ...(me
+            ? [
+                {
+                  id: me,
+                  type: OverwriteType.Member,
+                  allow: [...can, PermissionFlagsBits.SendPolls],
+                },
+              ]
+            : []),
         ],
       })
       .catch((e: unknown) => {
@@ -316,6 +325,47 @@ export class GatewayTransport implements DiscordTransport {
         )
       })
     return channel.id
+  }
+
+  /** A poll, one answer each; its message id. */
+  async postPoll(
+    channelId: string,
+    question: string,
+    answers: readonly string[],
+    hours: number,
+  ): Promise<string> {
+    const channel = await this.#client.channels.fetch(channelId)
+    if (!channel?.isSendable()) throw new BotError(`${channelId} isn't a channel I can post in.`)
+    const sent = await channel.send({
+      poll: {
+        question: { text: question },
+        answers: answers.map((text) => ({ text })),
+        duration: hours,
+        allowMultiselect: false,
+      },
+      allowedMentions: { parse: [] },
+    })
+    return sent.id
+  }
+
+  async endPoll(channelId: string, messageId: string): Promise<void> {
+    const channel = await this.#client.channels.fetch(channelId)
+    if (!channel?.isTextBased()) throw new BotError(`${channelId} isn't a text channel I can see.`)
+    const poll = (await channel.messages.fetch({ message: messageId, force: true })).poll
+    if (poll && !poll.resultsFinalized) await poll.end()
+  }
+
+  /** A poll's votes per answer, in the order posted, fetched fresh: no intents means no vote events. */
+  async pollResults(
+    channelId: string,
+    messageId: string,
+  ): Promise<{ finalized: boolean; counts: number[] }> {
+    const channel = await this.#client.channels.fetch(channelId)
+    if (!channel?.isTextBased()) throw new BotError(`${channelId} isn't a text channel I can see.`)
+    const poll = (await channel.messages.fetch({ message: messageId, force: true })).poll
+    if (!poll) throw new BotError(`message ${messageId} in ${channelId} has no poll.`)
+    const answers = [...poll.answers.values()].sort((a, b) => a.id - b.id)
+    return { finalized: poll.resultsFinalized, counts: answers.map((a) => a.voteCount) }
   }
 
   /**

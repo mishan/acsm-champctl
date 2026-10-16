@@ -37,6 +37,16 @@ const MIGRATIONS: Migration[] = [
       `)
     },
   },
+  {
+    name: "incidents: the vote",
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE incidents ADD COLUMN poll_message_id TEXT;
+        ALTER TABLE incidents ADD COLUMN poll_ends_at TEXT;
+        ALTER TABLE incidents ADD COLUMN poll_settled INTEGER NOT NULL DEFAULT 0;
+      `)
+    },
+  },
 ]
 
 export interface IncidentFiling {
@@ -60,6 +70,9 @@ export interface Incident extends IncidentFiling {
   decision?: string
   decidedBy?: string
   decidedAt?: string
+  /** The Racers' vote on who was at fault, and when it closes. */
+  pollMessageId?: string
+  pollEndsAt?: string
 }
 
 interface Row {
@@ -77,6 +90,8 @@ interface Row {
   decision: string | null
   decided_by: string | null
   decided_at: string | null
+  poll_message_id: string | null
+  poll_ends_at: string | null
 }
 
 const fromRow = (r: Row): Incident => ({
@@ -94,6 +109,8 @@ const fromRow = (r: Row): Incident => ({
   ...(r.decision === null ? {} : { decision: r.decision }),
   ...(r.decided_by ? { decidedBy: r.decided_by } : {}),
   ...(r.decided_at ? { decidedAt: r.decided_at } : {}),
+  ...(r.poll_message_id ? { pollMessageId: r.poll_message_id } : {}),
+  ...(r.poll_ends_at ? { pollEndsAt: r.poll_ends_at } : {}),
 })
 
 export class SqliteIncidentStore {
@@ -141,6 +158,28 @@ export class SqliteIncidentStore {
 
   setChannel(number: number, channelId: string): void {
     this.#db.prepare("UPDATE incidents SET channel_id = ? WHERE number = ?").run(channelId, number)
+  }
+
+  setPoll(number: number, messageId: string, endsAt: Date): void {
+    this.#db
+      .prepare("UPDATE incidents SET poll_message_id = ?, poll_ends_at = ? WHERE number = ?")
+      .run(messageId, endsAt.toISOString(), number)
+  }
+
+  /** Votes that have closed on incidents nobody has decided, and that haven't been counted. */
+  pollsDue(now: Date): Incident[] {
+    const rows = this.#db
+      .prepare(
+        `SELECT * FROM incidents WHERE poll_message_id IS NOT NULL AND decision IS NULL
+           AND poll_settled = 0 AND poll_ends_at <= ? ORDER BY number`,
+      )
+      .all(now.toISOString()) as unknown as Row[]
+    return rows.map(fromRow)
+  }
+
+  /** Counted: a decision, or a tie handed to the stewards. Either way, not counted again. */
+  settlePoll(number: number): void {
+    this.#db.prepare("UPDATE incidents SET poll_settled = 1 WHERE number = ?").run(number)
   }
 
   /** Reports that got a channel, newest first; with `open`, only those not yet decided. */

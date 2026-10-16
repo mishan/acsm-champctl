@@ -169,9 +169,16 @@ export interface DiscordSettings {
    * `/incident`: drivers report from the race recordings, and each report gets
    * a channel in `categoryId` that the `stewardRoleId` role and both drivers
    * can see. Absent, the command isn't registered. A decided incident's
-   * channel moves to `closedCategoryId`, if set, read-only.
+   * channel moves to `closedCategoryId`, if set, read-only. With `vote`, the
+   * `roleId` role is let into each channel too and votes on it: a poll open
+   * `hours` (default 48) whose result is the decision.
    */
-  incidents?: { categoryId: string; stewardRoleId: string; closedCategoryId?: string }
+  incidents?: {
+    categoryId: string
+    stewardRoleId: string
+    closedCategoryId?: string
+    vote?: { roleId: string; hours?: number }
+  }
 }
 
 export interface QualiVoiceMove {

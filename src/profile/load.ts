@@ -222,6 +222,22 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
           )
         }
       }
+      const vote = i?.["vote"] as Record<string, unknown> | null | undefined
+      if (vote !== undefined) {
+        if (typeof vote?.["roleId"] !== "string" || !/^\d{17,20}$/.test(vote["roleId"])) {
+          bad(
+            '`discord.incidents.vote.roleId` must be an id — 17 to 20 digits, the way "Copy Role ID" gives it',
+          )
+        }
+        const hours = vote?.["hours"]
+        // Discord's own limits on a poll: an hour to 32 days.
+        if (
+          hours !== undefined &&
+          !(Number.isInteger(hours) && (hours as number) >= 1 && (hours as number) <= 768)
+        ) {
+          bad("`discord.incidents.vote.hours` must be a whole number of hours from 1 to 768")
+        }
+      }
     }
 
     // Same check, same reason: a channel *name* and a role *mention* both reach

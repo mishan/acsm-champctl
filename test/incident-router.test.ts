@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { SlashCommand } from "../src/bot/transport.js"
 import { indexJournal } from "../src/incidents/journals.js"
-import { type IncidentChannels, IncidentRouter, parseClock } from "../src/incidents/router.js"
+import {
+  type IncidentChannels,
+  IncidentRouter,
+  type IncidentRouterOptions,
+  parseClock,
+} from "../src/incidents/router.js"
 import { SqliteIncidentStore } from "../src/incidents/store.js"
 import { type JournalRecord, JournalWriter } from "../src/spectator/journal.js"
 import type { DriverClaim } from "../src/liveries/claims.js"
@@ -78,6 +83,9 @@ beforeEach(async () => {
   failLock = false
   failRead = false
   failFirstPost = false
+  polls = []
+  ended = []
+  pollResult = { finalized: true, counts: [0, 0, 0] }
   reads = 0
   rendersAtOnce = 0
 })
@@ -88,7 +96,15 @@ afterEach(async () => {
 
 let rendering = 0
 
-function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo", [DEE]: "Dee" }) {
+/** Polls posted, and what counting one answers. */
+let polls: { channel: string; question: string; answers: readonly string[]; hours: number }[]
+let pollResult: { finalized: boolean; counts: number[] }
+let ended: [string, string][]
+
+function router(
+  claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo", [DEE]: "Dee" },
+  extra: Partial<IncidentRouterOptions> = {},
+) {
   const c = championship({
     ID: CHAMP,
     Classes: [
@@ -127,6 +143,18 @@ function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo", [D
       await new Promise((r) => setTimeout(r, 20))
       channels.locked.push([id, name])
     },
+    poll: async (channel, question, answers, hours) => {
+      polls.push({ channel, question, answers, hours })
+      return `poll-${polls.length}`
+    },
+    pollResults: async () => {
+      // As long as Discord takes, so a steward can decide while it's counting.
+      await new Promise((r) => setTimeout(r, 20))
+      return pollResult
+    },
+    endPoll: async (channel, id) => {
+      ended.push([channel, id])
+    },
   }
   return new IncidentRouter({
     recordings: dir,
@@ -151,6 +179,7 @@ function router(claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo", [D
     channels: ch,
     stewardRoleId: STEWARDS,
     timeZone: "America/Los_Angeles",
+    ...extra,
     gather: async (q): Promise<Evidence> => {
       gatheredInto = q.outDir
       rendering++
@@ -694,6 +723,139 @@ describe("indexJournal", () => {
     const file = (await readdir(dir)).find((f) => f.endsWith(".ndjson.gz"))!
     const [a, b] = await Promise.all([indexJournal(dir, file), indexJournal(dir, file)])
     expect(a).toBe(b)
+  })
+})
+
+describe("deciding by vote", () => {
+  const FILED = new Date("2026-10-15T05:00:00Z")
+  const voting = (now = FILED) => router(undefined, { vote: { hours: 48 }, now: () => now })
+  const report = (r: IncidentRouter) =>
+    r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+  const hoursIn = (hours: number) => new Date(FILED.getTime() + hours * 3600_000)
+
+  it("asks the channel who was at fault, after the evidence", async () => {
+    const reply = await report(voting())
+    expect(polls).toEqual([
+      {
+        channel: "chan-1",
+        question: "Incident #1: who was at fault?",
+        answers: ["Ana", "Bo", "Racing incident (neither)"],
+        hours: 48,
+      },
+    ])
+    expect(channels.posts.at(-1)![1]).toMatch(/^Overhead video below/)
+    expect(reply.content).toMatch(/The Racers vote on it there\.$/)
+  })
+
+  it.each([
+    [
+      "the reporter",
+      [5, 2, 1],
+      "Ana at fault, by vote (Ana: 5, Bo: 2, Racing incident (neither): 1)",
+    ],
+    [
+      "the other driver",
+      [1, 4, 0],
+      "Bo at fault, by vote (Ana: 1, Bo: 4, Racing incident (neither): 0)",
+    ],
+    [
+      "neither",
+      [1, 1, 3],
+      "A racing incident: neither driver at fault, by vote (Ana: 1, Bo: 1, Racing incident (neither): 3)",
+    ],
+  ])("decides for %s when the vote closes", async (_, counts, outcome) => {
+    await report(voting())
+    pollResult = { finalized: true, counts }
+    await voting(hoursIn(47)).settlePolls()
+    expect(store.byChannel("chan-1")?.decision).toBeUndefined()
+    await voting(hoursIn(48)).settlePolls()
+    expect(channels.posts.at(-1)![1]).toBe(
+      `**Decision on incident #1**, by the vote:\n> ${outcome}\n\n<@${ANA}> <@${BO}>`,
+    )
+    expect(channels.locked).toEqual([["chan-1", "closed-1-ana-bo"]])
+    expect(store.byChannel("chan-1")).toMatchObject({ decision: outcome, decidedBy: "vote" })
+  })
+
+  it.each([
+    ["a tie", [2, 2, 1], /was tied/],
+    ["no votes", [0, 0, 0], /closed with no votes/],
+  ])("hands %s to the stewards, once", async (_, counts, says) => {
+    await report(voting())
+    pollResult = { finalized: true, counts }
+    await voting(hoursIn(49)).settlePolls()
+    await voting(hoursIn(50)).settlePolls()
+    expect(channels.posts.filter(([, t]) => says.test(t))).toHaveLength(1)
+    expect(channels.locked).toEqual([])
+    expect(store.byChannel("chan-1")?.decision).toBeUndefined()
+  })
+
+  it("waits for Discord to finish counting", async () => {
+    await report(voting())
+    pollResult = { finalized: false, counts: [5, 0, 0] }
+    await voting(hoursIn(49)).settlePolls()
+    expect(channels.locked).toEqual([])
+    pollResult = { finalized: true, counts: [5, 0, 0] }
+    await voting(hoursIn(49)).settlePolls()
+    expect(channels.locked).toHaveLength(1)
+  })
+
+  it("posts a vote's decision once, though the channel won't close", async () => {
+    await report(voting())
+    pollResult = { finalized: true, counts: [5, 0, 0] }
+    failLock = true
+    for (const h of [49, 50, 51]) await voting(hoursIn(h)).settlePolls()
+    expect(channels.posts.filter(([, t]) => t.startsWith("**Decision"))).toHaveLength(1)
+    expect(channels.posts.at(-1)![1]).toMatch(
+      /^The decision is recorded, but I couldn't close this channel/,
+    )
+    expect(store.byChannel("chan-1")?.decidedBy).toBe("vote")
+  })
+
+  it("makes one decision when a steward decides while the vote is being counted", async () => {
+    await report(voting())
+    const r = voting(hoursIn(49))
+    pollResult = { finalized: true, counts: [5, 0, 0] }
+    await Promise.all([
+      r.settlePolls(),
+      r.handle(
+        command(
+          "s",
+          "decide",
+          { outcome: "No action" },
+          { channelId: "chan-1", roleIds: [STEWARDS] },
+        ),
+      ),
+    ])
+    expect(channels.posts.filter(([, t]) => t.startsWith("**Decision"))).toHaveLength(1)
+  })
+
+  it("ends the vote when the stewards decide first", async () => {
+    await report(voting())
+    await voting().handle(
+      command(
+        "s",
+        "decide",
+        { outcome: "No action" },
+        { channelId: "chan-1", roleIds: [STEWARDS] },
+      ),
+    )
+    expect(ended).toEqual([["chan-1", "poll-1"]])
+  })
+
+  it("leaves alone a vote the stewards have already decided", async () => {
+    await report(voting())
+    await voting().handle(
+      command(
+        "s",
+        "decide",
+        { outcome: "No action" },
+        { channelId: "chan-1", roleIds: [STEWARDS] },
+      ),
+    )
+    pollResult = { finalized: true, counts: [5, 0, 0] }
+    await voting(hoursIn(49)).settlePolls()
+    expect(store.byChannel("chan-1")?.decision).toBe("No action")
+    expect(channels.locked).toHaveLength(1)
   })
 })
 
