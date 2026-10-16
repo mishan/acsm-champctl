@@ -9,7 +9,7 @@ import {
   type ReplayOptions,
   type ReplaySummary,
   writeReplay,
-} from "./acreplay.js"
+} from "acreplay"
 import { readJournal } from "./journal.js"
 
 export async function* replayEvents(journal: string): AsyncGenerator<ReplayEvent> {

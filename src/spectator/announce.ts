@@ -3,7 +3,7 @@
  * nobody has to go looking. The webhook is the only secret the recorder holds.
  */
 
-import type { ReplaySummary } from "./acreplay.js"
+import type { ReplaySummary } from "acreplay"
 
 /** Shorter than this is a recorder restart or an empty server, not a session. */
 export const MIN_ANNOUNCED_S = 120

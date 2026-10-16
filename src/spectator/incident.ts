@@ -9,7 +9,7 @@
  */
 
 import { readJournal, type JournalRecord } from "./journal.js"
-import { BRAKE_LIGHTS, type CarState, type Vec3 } from "./protocol.js"
+import { BRAKE_LIGHTS, type CarState, type Vec3 } from "ac-spectator"
 import { DEFAULT_THRESHOLDS, type IncidentThresholds } from "./thresholds.js"
 import type { Track } from "./track.js"
 

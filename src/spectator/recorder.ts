@@ -9,10 +9,10 @@
 
 import { existsSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
-import { SpectatorClient, type SpectatorOptions } from "./client.js"
+import { SpectatorClient, type SpectatorOptions } from "ac-spectator"
 import { JournalWriter, type JournalRecord } from "./journal.js"
-import { PluginListener, type PluginListenerOptions } from "./plugin.js"
-import type { HandshakeOk, ServerPacket } from "./protocol.js"
+import { PluginListener, type PluginListenerOptions } from "ac-spectator"
+import type { HandshakeOk, ServerPacket } from "ac-spectator"
 import { RaceControlFeed, type RaceControlOptions, type RaceControlUpdate } from "./racecontrol.js"
 import { localDate, placeOf, type Round, roundFor, slug } from "./rounds.js"
 

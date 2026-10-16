@@ -13,7 +13,7 @@
 import { createReadStream, createWriteStream, type WriteStream } from "node:fs"
 import { createInterface } from "node:readline"
 import { constants, createGunzip, createGzip, type Gzip } from "node:zlib"
-import type { CarState, Vec3 } from "./protocol.js"
+import type { CarState, Vec3 } from "ac-spectator"
 
 /** Every record carries `at`, the recorder's own clock in ms. */
 export type JournalRecord =

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import { readJournal, type JournalRecord } from "../src/spectator/journal.js"
 import { Recorder, type RecorderOptions } from "../src/spectator/recorder.js"
-import { WireWriter } from "../src/spectator/wire.js"
+import { WireWriter } from "ac-spectator"
 import { type FakeAcServer, fakeAcRoot, fakeAcServer } from "./support/fake-ac-server.js"
 import { fakeRaceControl } from "./support/fake-race-control.js"
 

@@ -6,8 +6,8 @@
  *   tsx scripts/spectator/spike.ts <host> <port> <acRoot> <car> [seconds]
  */
 
-import { SpectatorClient } from "../../src/spectator/client.js"
-import type { ServerPacket } from "../../src/spectator/protocol.js"
+import { SpectatorClient } from "ac-spectator"
+import type { ServerPacket } from "ac-spectator"
 
 const [host = "127.0.0.1", port = "9700", acRoot = ".", car = "", seconds = "30"] =
   process.argv.slice(2)

@@ -6,7 +6,7 @@
  */
 
 import { writeJournalReplay } from "../../src/spectator/replay.js"
-import { SpectatorClient } from "../../src/spectator/client.js"
+import { SpectatorClient } from "ac-spectator"
 import { Recorder } from "../../src/spectator/recorder.js"
 
 const [

@@ -6,7 +6,7 @@
 import { join } from "node:path"
 
 import { JournalWriter, type JournalRecord } from "../../src/spectator/journal.js"
-import { BRAKE_LIGHTS } from "../../src/spectator/protocol.js"
+import { BRAKE_LIGHTS } from "ac-spectator"
 import type { Track } from "../../src/spectator/track.js"
 
 export interface ScriptedCar {

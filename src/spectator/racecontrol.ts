@@ -7,7 +7,7 @@
  * Measured on ACSM 2.4.15.
  */
 
-import type { Vec3 } from "./protocol.js"
+import type { Vec3 } from "ac-spectator"
 
 /** ACSM's race-control message types this reads. */
 export const RaceControlEvent = {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import type { ReplaySummary } from "../src/spectator/acreplay.js"
+import type { ReplaySummary } from "acreplay"
 import { replayMessage } from "../src/spectator/announce.js"
 
 const summary = (
