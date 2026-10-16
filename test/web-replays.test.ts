@@ -4,7 +4,7 @@ import { dirname, join } from "node:path"
 import Fastify, { type FastifyInstance } from "fastify"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
-import { writeReplay } from "../src/spectator/acreplay.js"
+import { writeJournalReplay } from "../src/spectator/replay.js"
 import { JournalWriter, type JournalRecord } from "../src/spectator/journal.js"
 import type { CarState } from "../src/spectator/protocol.js"
 import { listReplays, registerReplays } from "../src/web/replays.js"
@@ -65,7 +65,7 @@ async function recorded(
   }
   for (const r of records) w.write(r)
   await w.close()
-  await writeReplay(w.path, join(dir, `${stem}.acreplay`), { intervalMs: 1000 })
+  await writeJournalReplay(w.path, join(dir, `${stem}.acreplay`), { intervalMs: 1000 })
 }
 
 describe("listReplays", () => {

@@ -6,7 +6,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join, relative, sep } from "node:path"
 import { pathToFileURL } from "node:url"
 
-import { type ReplaySummary, writeReplay } from "../spectator/acreplay.js"
+import type { ReplaySummary } from "../spectator/acreplay.js"
 import { postToWebhook, replayMessage } from "../spectator/announce.js"
 import { analyzeIncident, trackForJournal } from "../spectator/analysis.js"
 import { findTrackSkips } from "../spectator/cuts.js"
@@ -18,6 +18,7 @@ import { renderIncidentSvg } from "../spectator/render.js"
 import { serveMcp } from "../spectator/mcp.js"
 import { lastRound, organize } from "../spectator/rounds.js"
 import { raceControlUrl } from "../spectator/racecontrol.js"
+import { writeJournalReplay } from "../spectator/replay.js"
 import { callName } from "../spectator/rules.js"
 import { Recorder } from "../spectator/recorder.js"
 import type { Vec3 } from "../spectator/protocol.js"
@@ -551,7 +552,7 @@ async function main(argv: readonly string[]): Promise<number> {
       ? `-${formatClock(args.window.fromMs).replace(":", "m")}s-${Number.isFinite(args.window.toMs) ? `${formatClock(args.window.toMs).replace(":", "m")}s` : "end"}`
       : ""
     const out = args.out ?? args.journal.replace(/(\.ndjson)?(\.gz)?$/, `${clip}.acreplay`)
-    const summary = await writeReplay(args.journal, out, {
+    const summary = await writeJournalReplay(args.journal, out, {
       ...(args.intervalMs ? { intervalMs: args.intervalMs } : {}),
       ...(args.cars ? { carsDir: args.cars } : {}),
       ...(args.window ? { window: args.window } : {}),
@@ -584,7 +585,9 @@ async function main(argv: readonly string[]): Promise<number> {
     const out = journal.replace(/\.ndjson\.gz$/, ".acreplay")
     try {
       // The AC root's copies hold every car on the grid, data and all.
-      const s = await writeReplay(journal, out, { carsDir: join(args.acRoot, "content/cars") })
+      const s = await writeJournalReplay(journal, out, {
+        carsDir: join(args.acRoot, "content/cars"),
+      })
       log(`wrote ${out}: ${s.cars.length} cars, ${Math.round(s.durationMs / 1000)} s`)
       const fallback = defaultWheels(s)
       if (fallback) log(fallback.trim())

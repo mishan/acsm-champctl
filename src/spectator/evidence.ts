@@ -8,7 +8,7 @@
 import { rm } from "node:fs/promises"
 import { join } from "node:path"
 
-import { writeReplay } from "./acreplay.js"
+import { writeJournalReplay } from "./replay.js"
 import { analyzeIncident, trackForJournal } from "./analysis.js"
 import { listCollisions } from "./incident.js"
 import { findTrackSkips, type TrackSkip } from "./cuts.js"
@@ -115,7 +115,7 @@ export async function gatherEvidence(q: EvidenceRequest): Promise<Evidence> {
   // The clip first: it refuses to replace one already there, so a stem that's
   // been used fails before anything of the earlier one is overwritten.
   const clipFile = `${q.stem}.acreplay`
-  await writeReplay(q.journal, join(q.outDir, clipFile), {
+  await writeJournalReplay(q.journal, join(q.outDir, clipFile), {
     carsDir: join(q.acRoot, "content/cars"),
     window: { fromMs: Math.max(0, q.atMs - CLIP_BEFORE_MS), toMs: q.atMs + CLIP_AFTER_MS },
   })

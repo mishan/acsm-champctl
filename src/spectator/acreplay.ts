@@ -1,5 +1,7 @@
 /**
- * Writes an Assetto Corsa `.acreplay` (version 16) from a recorder journal.
+ * Writes an Assetto Corsa `.acreplay` (version 16) from what a spectator saw:
+ * the session, each car, its positions as the server sent them, and laps and
+ * disconnects, as `ReplayEvent`s in the order they happened.
  *
  * Built from published notes on the format, then checked against a 26-car
  * race replay the game itself wrote; what that settled is noted where it's
@@ -17,8 +19,62 @@ import { link, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { carWheels } from "./cardata.js"
-import { readJournal, type JournalRecord } from "./journal.js"
-import { BRAKE_LIGHTS, type CarState, type Vec3 } from "./protocol.js"
+
+export type Vec3 = [number, number, number]
+
+/** The status flag the game sets while a car's brake lights are on. */
+export const BRAKE_LIGHTS = 0x10
+
+/** One position update for one car, as AC's server sends it. */
+export interface CarSample {
+  carId: number
+  /** The receiver's clock, ms; it may wrap at 2^32. */
+  timestamp: number
+  pos: Vec3
+  /** Yaw, pitch, roll in radians. */
+  rot: Vec3
+  vel: Vec3
+  /** Signed steering byte, 0 when centered. */
+  steer: number
+  rpm: number
+  gear: number
+  statusFlags: number
+  /** 0–1, where the server sent it. */
+  gas?: number
+}
+
+/** Why there's no replay to write: `code` says which, for a caller's own message. */
+export class ReplayError extends Error {
+  override readonly name = "ReplayError"
+
+  constructor(
+    readonly code: "no-session" | "no-cars",
+    message: string,
+  ) {
+    super(message)
+  }
+}
+
+/**
+ * `at` is the receiver's clock in ms, the one each `CarSample.timestamp` is
+ * taken from, in full where the timestamp may wrap at 2^32. A clip's window
+ * counts from the session event's `at`.
+ */
+export type ReplayEvent =
+  | { t: "session"; at: number; track: string; trackConfig: string; name: string }
+  | {
+      t: "car"
+      at: number
+      carId: number
+      model: string
+      skin: string
+      driver: string
+      nation?: string
+      team?: string
+    }
+  | { t: "pos"; at: number; car: CarSample }
+  | { t: "connection"; at: number; carId: number; connected: boolean }
+  | { t: "lap"; at: number; carId: number; lapMs: number }
 
 export const REPLAY_VERSION = 16
 const FRAME_BYTES = 256
@@ -75,7 +131,7 @@ interface CarMeta {
 // flags u32, gas u8, pad.
 const SAMPLE_BYTES = 8 + 36 + 1 + 1 + 2 + 4 + 1 + 3
 
-function encodeSample(c: CarState): Buffer {
+function encodeSample(c: CarSample): Buffer {
   const b = Buffer.alloc(SAMPLE_BYTES)
   b.writeDoubleLE(c.timestamp, 0)
   ;[...c.pos, ...c.rot, ...c.vel].forEach((v, i) => {
@@ -125,7 +181,7 @@ function decodeSamples(raw: Buffer): Samples {
 }
 
 /**
- * Car timestamps are this recorder's u32 millisecond clock. A session never
+ * Car timestamps are the receiver's u32 millisecond clock. A session never
  * runs 49 days, but it can straddle the wrap, so times are unwrapped against
  * the first sample seen.
  */
@@ -138,7 +194,7 @@ function unwrapper(): (ts: number) => number {
 }
 
 export async function writeReplay(
-  journalPath: string,
+  events: AsyncIterable<ReplayEvent> | Iterable<ReplayEvent>,
   outPath: string,
   options: ReplayOptions = {},
 ): Promise<ReplaySummary> {
@@ -149,7 +205,7 @@ export async function writeReplay(
   const spools = new Map<number, Sink>()
   let out: Sink | undefined
   try {
-    let session: (JournalRecord & { t: "session" }) | undefined
+    let session: (ReplayEvent & { t: "session" }) | undefined
     const meta = new Map<number, CarMeta>()
     // Samples per driver name per car: a slot can change hands mid-session,
     // and the replay has room for one car and name, so it goes to whoever
@@ -163,7 +219,7 @@ export async function writeReplay(
     let start = Infinity
     let end = -Infinity
 
-    for await (const r of readJournal(journalPath)) {
+    for await (const r of events) {
       switch (r.t) {
         case "session":
           session ??= r
@@ -181,7 +237,6 @@ export async function writeReplay(
         }
         case "pos": {
           const id = r.car.carId
-          if (id === session?.recorderCarId) break
           const w = options.window
           if (w && session && (r.at - session.at < w.fromMs || r.at - session.at > w.toMs)) break
           let spool = spools.get(id)
@@ -212,7 +267,7 @@ export async function writeReplay(
           break
         case "lap": {
           const list = laps.get(r.carId) ?? []
-          // Lap times are the recorder's clock in full; samples carry it cut
+          // Events carry the receiver's clock in full; samples carry it cut
           // to 32 bits, so they part ways after 49.7 days of recording.
           list.push({
             at: unwrap(r.at),
@@ -226,15 +281,14 @@ export async function writeReplay(
           break
       }
     }
-    if (!session) throw new Error(`${journalPath} has no session record`)
+    if (!session) throw new ReplayError("no-session", "no session event")
     for (const spool of spools.values()) await spool.end()
 
     const carIds = [...spools.keys()].sort((a, b) => a - b)
     if (carIds.length === 0) {
-      throw new Error(
-        options.window
-          ? `${journalPath} has no car recorded in that stretch: check --from and --to against the session's length`
-          : `${journalPath} recorded no cars moving`,
+      throw new ReplayError(
+        "no-cars",
+        options.window ? "no car was recorded in that stretch" : "no cars were recorded moving",
       )
     }
     for (const [id, byDriver] of driven) {
@@ -250,7 +304,7 @@ export async function writeReplay(
 
     const ownWheels = new Set<number>()
     // Written under another name and given its own only when complete, so
-    // nothing listing replays (champctl-serve's /replays) offers half a file,
+    // nothing listing replays offers half a file,
     // even one a kill cut off.
     out = new Sink(createWriteStream(partPath, { flags: "wx" }))
     await out.write(
@@ -271,7 +325,7 @@ export async function writeReplay(
 
     for (const id of carIds) {
       // Decoded one car at a time: a car's session is a few MB, the grid's is
-      // a few hundred, and this runs beside a recorder that is still working.
+      // a few hundred, and this may run beside a recorder that is still working.
       const s = decodeSamples(await readAll(join(spoolDir, `${id}.bin`)))
       sortByTime(s)
       const m = meta.get(id)
@@ -342,7 +396,7 @@ export async function writeReplay(
 /**
  * A file being written whose errors arrive as rejections at the next call,
  * never as an error event nobody is listening for: that event would take the
- * recording daemon down with it.
+ * whole process down with it.
  */
 class Sink {
   readonly #stream: WriteStream
@@ -454,7 +508,7 @@ const wrapAngle = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a))
  * a gap it is held where it was, stopped.
  *
  * It's out of the game, as the game shows a driver who dropped, from the
- * moment its driver left until its next sample; and, where the journal says
+ * moment its driver left until its next sample; and, where the events say
  * nothing of leaving, more than a gap's length before its first sample or
  * after its last. A gap with no one leaving is a car still connected.
  */

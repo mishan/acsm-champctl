@@ -10,9 +10,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
-import { toHalfBits, writeReplay } from "../src/spectator/acreplay.js"
-import { JournalWriter, type JournalRecord } from "../src/spectator/journal.js"
-import type { CarState, Vec3 } from "../src/spectator/protocol.js"
+import {
+  type CarSample,
+  type ReplayEvent,
+  ReplayError,
+  toHalfBits,
+  type Vec3,
+  writeReplay,
+} from "../src/spectator/acreplay.js"
 
 let dir: string
 beforeEach(async () => {
@@ -106,11 +111,9 @@ function parse(b: Buffer) {
   return { version, interval, weather, track, config, frames, cars: out, trailing: b.length - o }
 }
 
-const state = (carId: number, timestamp: number, over: Partial<CarState> = {}): CarState => ({
+const state = (carId: number, timestamp: number, over: Partial<CarSample> = {}): CarSample => ({
   carId,
-  seq: 0,
   timestamp,
-  ping: 0,
   pos: [0, 0, 0],
   rot: [0, 0, 0],
   vel: [0, 0, 0],
@@ -122,38 +125,21 @@ const state = (carId: number, timestamp: number, over: Partial<CarState> = {}): 
   ...over,
 })
 
-async function journal(records: JournalRecord[]): Promise<string> {
-  const w = new JournalWriter(join(dir, "s.ndjson.gz"))
-  for (const r of records) w.write(r)
-  await w.close()
-  return w.path
-}
-
-const session: JournalRecord = {
-  t: "session",
-  at: 0,
-  serverName: "test",
-  track: "imola",
-  trackConfig: "",
-  name: "Race",
-  type: 3,
-  recorderCarId: 0,
-}
+const session: ReplayEvent = { t: "session", at: 0, track: "imola", trackConfig: "", name: "Race" }
 
 describe("writeReplay", () => {
-  it("writes every car but the recorder, on one frame grid, ending where the game expects", async () => {
-    const path = await journal([
+  it("writes every car on one frame grid, ending where the game expects", async () => {
+    const events: ReplayEvent[] = [
       session,
       { t: "car", at: 0, carId: 1, model: "ks_mazda_mx5_cup", skin: "red", driver: "Ana" },
       { t: "car", at: 0, carId: 2, model: "ks_mazda_mx5_cup", skin: "blue", driver: "Bo" },
-      { t: "pos", at: 0, car: state(0, 1000) },
       ...[0, 100, 200, 300].map(
-        (dt): JournalRecord => ({ t: "pos", at: dt, car: state(1, 1000 + dt) }),
+        (dt): ReplayEvent => ({ t: "pos", at: dt, car: state(1, 1000 + dt) }),
       ),
-      ...[50, 150].map((dt): JournalRecord => ({ t: "pos", at: dt, car: state(2, 1000 + dt) })),
-    ])
+      ...[50, 150].map((dt): ReplayEvent => ({ t: "pos", at: dt, car: state(2, 1000 + dt) })),
+    ]
     const out = join(dir, "s.acreplay")
-    await writeReplay(path, out, { intervalMs: 50, weather: "3_clear" })
+    await writeReplay(events, out, { intervalMs: 50, weather: "3_clear" })
     const r = parse(await readFile(out))
     expect(r).toMatchObject({
       version: 16,
@@ -171,13 +157,13 @@ describe("writeReplay", () => {
   })
 
   it("interpolates position between samples and turns yaw the short way across ±π", async () => {
-    const path = await journal([
+    const events: ReplayEvent[] = [
       session,
       { t: "pos", at: 0, car: state(1, 0, { pos: [0, 0, 0], rot: [3.0, 0, 0] }) },
       { t: "pos", at: 100, car: state(1, 100, { pos: [10, 0, 20], rot: [-3.0, 0, 0] }) },
-    ])
+    ]
     const out = join(dir, "s.acreplay")
-    await writeReplay(path, out, { intervalMs: 50 })
+    await writeReplay(events, out, { intervalMs: 50 })
     const [a, mid, b] = parse(await readFile(out)).cars[0]!.frames
     expect(mid!.pos).toEqual([5, 0, 10])
     // Halfway from 3.0 to -3.0 the short way is π, not 0.
@@ -188,16 +174,16 @@ describe("writeReplay", () => {
   // A recorder up for 49.7 days has a clock past 2^32 ms; the samples carry
   // it cut to 32 bits.
   it.each([0, 2 ** 32])("carries gear, gas, brake lights and lap timing, %i ms in", async (up) => {
-    const path = await journal([
+    const events: ReplayEvent[] = [
       session,
       { t: "pos", at: up, car: state(1, 0, { gear: 4, gas: 1 }) },
       { t: "pos", at: up + 100, car: state(1, 100, { statusFlags: 0x10, gas: 0 }) },
-      { t: "lap", at: up + 100, carId: 1, lapMs: 90_000, cuts: 0 },
+      { t: "lap", at: up + 100, carId: 1, lapMs: 90_000 },
       { t: "pos", at: up + 200, car: state(1, 200) },
-      { t: "lap", at: up + 200, carId: 1, lapMs: 100, cuts: 0 },
-    ])
+      { t: "lap", at: up + 200, carId: 1, lapMs: 100 },
+    ]
     const out = join(dir, "s.acreplay")
-    await writeReplay(path, out, { intervalMs: 50 })
+    await writeReplay(events, out, { intervalMs: 50 })
     const f = parse(await readFile(out)).cars[0]!.frames
     expect([f[0]!.gear, f[0]!.gas, f[0]!.brake]).toEqual([4, 255, 0])
     expect([f[2]!.gas, f[2]!.brake]).toEqual([0, 255])
@@ -208,7 +194,7 @@ describe("writeReplay", () => {
 
   it("holds a car where it was, stopped, across a gap, and shows it only while it's in the game", async () => {
     const moving = { vel: [30, 0, 0] as Vec3 }
-    const path = await journal([
+    const events: ReplayEvent[] = [
       session,
       // Car 1 goes unheard for 5 s but never leaves; car 3 leaves at 0.5 s
       // and is back at 5 s; car 2 joins at 7 s.
@@ -218,9 +204,9 @@ describe("writeReplay", () => {
       { t: "pos", at: 5000, car: state(1, 5000, { pos: [100, 0, 0], ...moving }) },
       { t: "pos", at: 5000, car: state(3, 5000, moving) },
       { t: "pos", at: 7000, car: state(2, 7000) },
-    ])
+    ]
     const out = join(dir, "s.acreplay")
-    await writeReplay(path, out, { intervalMs: 1000 })
+    await writeReplay(events, out, { intervalMs: 1000 })
     const [one, two, three] = parse(await readFile(out)).cars
     const flags = (
       car: typeof one,
@@ -238,31 +224,31 @@ describe("writeReplay", () => {
   it("puts samples that arrived out of order back in time order", async () => {
     // A rotation rather than a swap, so a sort that applied the inverse
     // permutation would come out wrong too.
-    const path = await journal([
+    const events: ReplayEvent[] = [
       session,
       ...[0, 300, 100, 200].map(
-        (ts, at): JournalRecord => ({ t: "pos", at, car: state(1, ts, { pos: [ts / 10, 0, 0] }) }),
+        (ts, at): ReplayEvent => ({ t: "pos", at, car: state(1, ts, { pos: [ts / 10, 0, 0] }) }),
       ),
-    ])
+    ]
     const out = join(dir, "s.acreplay")
-    await writeReplay(path, out, { intervalMs: 50 })
+    await writeReplay(events, out, { intervalMs: 50 })
     expect(parse(await readFile(out)).cars[0]!.frames.map((f) => f.pos[0])).toEqual([
       0, 5, 10, 15, 20, 25, 30,
     ])
   })
 
   it("names the car after whoever drove it most when the slot changed hands", async () => {
-    const pos = (at: number): JournalRecord => ({ t: "pos", at, car: state(1, at) })
-    const path = await journal([
+    const pos = (at: number): ReplayEvent => ({ t: "pos", at, car: state(1, at) })
+    const events: ReplayEvent[] = [
       session,
       { t: "car", at: 0, carId: 1, model: "m", skin: "s", driver: "Ana" },
       ...[0, 50, 100, 150].map(pos),
       { t: "car", at: 200, carId: 1, model: "other", skin: "s", driver: "Bo" },
       pos(200),
-      { t: "lap", at: 200, carId: 1, lapMs: 90_000, cuts: 0 },
-    ])
+      { t: "lap", at: 200, carId: 1, lapMs: 90_000 },
+    ]
     const out = join(dir, "s.acreplay")
-    await writeReplay(path, out, { intervalMs: 50 })
+    await writeReplay(events, out, { intervalMs: 50 })
     const [car] = parse(await readFile(out)).cars
     // Ana's car, and none of Bo's laps.
     expect([car!.driver, car!.model, car!.frames.at(-1)!.lap]).toEqual(["Ana", "m", 0])
@@ -270,14 +256,14 @@ describe("writeReplay", () => {
 
   it("gives a replay its name only once it's whole", async () => {
     // Long enough to watch: 2 cars, 30 s at 1 ms a frame.
-    const path = await journal([
+    const events: ReplayEvent[] = [
       session,
       ...[1, 2].flatMap((id) =>
-        [0, 30_000].map((at): JournalRecord => ({ t: "pos", at, car: state(id, at) })),
+        [0, 30_000].map((at): ReplayEvent => ({ t: "pos", at, car: state(id, at) })),
       ),
-    ])
+    ]
     const out = join(dir, "s.acreplay")
-    const writing = writeReplay(path, out, { intervalMs: 1 })
+    const writing = writeReplay(events, out, { intervalMs: 1 })
     let seenPart = false
     while (!seenPart) {
       const files = await readdir(dir)
@@ -289,35 +275,35 @@ describe("writeReplay", () => {
   })
 
   it("writes only the stretch a clip asks for, timed from the session's start", async () => {
-    const path = await journal([
+    const events: ReplayEvent[] = [
       { ...session, at: 1000 },
       ...[0, 1, 2, 3, 4, 5].map(
-        (s): JournalRecord => ({
+        (s): ReplayEvent => ({
           t: "pos",
           at: 1000 + s * 1000,
           car: state(1, s * 1000, { pos: [s, 0, 0] }),
         }),
       ),
-    ])
+    ]
     const out = join(dir, "clip.acreplay")
-    await writeReplay(path, out, { intervalMs: 1000, window: { fromMs: 2000, toMs: 4000 } })
+    await writeReplay(events, out, { intervalMs: 1000, window: { fromMs: 2000, toMs: 4000 } })
     expect(parse(await readFile(out)).cars[0]!.frames.map((f) => f.pos[0])).toEqual([2, 3, 4])
   })
 
   it("says a clip's stretch is outside the session, rather than that nobody moved", async () => {
-    const path = await journal([session, { t: "pos", at: 0, car: state(1, 0) }])
+    const events: ReplayEvent[] = [session, { t: "pos", at: 0, car: state(1, 0) }]
     await expect(
-      writeReplay(path, join(dir, "late.acreplay"), {
+      writeReplay(events, join(dir, "late.acreplay"), {
         window: { fromMs: 40 * 60_000, toMs: 41 * 60_000 },
       }),
-    ).rejects.toThrow(/no car recorded in that stretch/)
+    ).rejects.toThrow(/no car was recorded in that stretch/)
   })
 
   it("rejects, and leaves the file alone, when the replay already exists", async () => {
-    const path = await journal([session, { t: "pos", at: 0, car: state(1, 0) }])
+    const events: ReplayEvent[] = [session, { t: "pos", at: 0, car: state(1, 0) }]
     const out = join(dir, "s.acreplay")
     await writeFile(out, "keep")
-    await expect(writeReplay(path, out)).rejects.toThrow(/EEXIST/)
+    await expect(writeReplay(events, out)).rejects.toThrow(/EEXIST/)
     expect(await readFile(out, "utf8")).toBe("keep")
   })
 
@@ -332,13 +318,13 @@ describe("writeReplay", () => {
       [91.02418518066406, 21.937702178955078, -65.25155639648438],
       [90.28025817871094, 21.87651252746582, -66.57445526123047],
     ]
-    const path = await journal([
+    const events: ReplayEvent[] = [
       session,
       { t: "pos", at: 0, car: state(1, 0, { pos, rot, steer: -120 }) },
       { t: "pos", at: 50, car: state(1, 50, { pos, rot, steer: -120 }) },
-    ])
+    ]
     const out = join(dir, "s.acreplay")
-    await writeReplay(path, out, { intervalMs: 50 })
+    await writeReplay(events, out, { intervalMs: 50 })
     const b = await readFile(out)
     const frame = parse(b).cars[0]!.frames[0]!.at
     for (let w = 0; w < 4; w++) {
@@ -352,16 +338,16 @@ describe("writeReplay", () => {
   })
 
   it("lists the running order after the last car, pointing at the right cars", async () => {
-    const path = await journal([
+    const events: ReplayEvent[] = [
       session,
-      ...[1, 2, 3].map((carId): JournalRecord => ({ t: "pos", at: 0, car: state(carId, 0) })),
-      ...[1, 2, 3].map((carId): JournalRecord => ({ t: "pos", at: 300, car: state(carId, 300) })),
-      { t: "lap", at: 100, carId: 3, lapMs: 90_000, cuts: 0 },
-      { t: "lap", at: 110, carId: 1, lapMs: 90_500, cuts: 0 },
-      { t: "lap", at: 200, carId: 3, lapMs: 89_000, cuts: 0 },
-    ])
+      ...[1, 2, 3].map((carId): ReplayEvent => ({ t: "pos", at: 0, car: state(carId, 0) })),
+      ...[1, 2, 3].map((carId): ReplayEvent => ({ t: "pos", at: 300, car: state(carId, 300) })),
+      { t: "lap", at: 100, carId: 3, lapMs: 90_000 },
+      { t: "lap", at: 110, carId: 1, lapMs: 90_500 },
+      { t: "lap", at: 200, carId: 3, lapMs: 89_000 },
+    ]
     const out = join(dir, "s.acreplay")
-    await writeReplay(path, out, { intervalMs: 100 })
+    await writeReplay(events, out, { intervalMs: 100 })
     const b = await readFile(out)
     // The table is the last thing in the file: u32 group count, then rows.
     const rows = 3
@@ -398,15 +384,15 @@ describe("writeReplay", () => {
       join(cars, "wide", "data", "suspensions.ini"),
       "[BASIC]\nWHEELBASE=3\nCG_LOCATION=0.5\n[FRONT]\nBASEY=-0.2\nTRACK=2.4\n[REAR]\nBASEY=-0.2\nTRACK=2.4\n",
     )
-    const path = await journal([
+    const events: ReplayEvent[] = [
       session,
       { t: "car", at: 0, carId: 1, model: "wide", skin: "s", driver: "Ana" },
       { t: "car", at: 0, carId: 2, model: "unknown", skin: "s", driver: "Bo" },
-      ...[1, 2].map((carId): JournalRecord => ({ t: "pos", at: 0, car: state(carId, 0) })),
-      ...[1, 2].map((carId): JournalRecord => ({ t: "pos", at: 50, car: state(carId, 50) })),
-    ])
+      ...[1, 2].map((carId): ReplayEvent => ({ t: "pos", at: 0, car: state(carId, 0) })),
+      ...[1, 2].map((carId): ReplayEvent => ({ t: "pos", at: 50, car: state(carId, 50) })),
+    ]
     const out = join(dir, "s.acreplay")
-    const summary = await writeReplay(path, out, { intervalMs: 50, carsDir: cars })
+    const summary = await writeReplay(events, out, { intervalMs: 50, carsDir: cars })
     expect(summary.cars.map((c) => [c.model, c.ownWheels])).toEqual([
       ["wide", true],
       ["unknown", false],
@@ -421,8 +407,15 @@ describe("writeReplay", () => {
     expect(fl(1).map((v) => Number(v.toFixed(3)))).toEqual([0.79, -0.15, 1.07])
   })
 
-  it("refuses a journal with nobody moving rather than writing an empty replay", async () => {
-    const path = await journal([session, { t: "pos", at: 0, car: state(0, 0) }])
-    await expect(writeReplay(path, join(dir, "s.acreplay"))).rejects.toThrow(/no cars moving/)
+  it("refuses events with no session, or nobody moving, rather than writing an empty replay", async () => {
+    const code = (events: ReplayEvent[]) =>
+      writeReplay(events, join(dir, "s.acreplay")).then(
+        () => undefined,
+        (e: unknown) => (e instanceof ReplayError ? e.code : e),
+      )
+    expect(await code([{ t: "car", at: 0, carId: 1, model: "m", skin: "s", driver: "Ana" }])).toBe(
+      "no-session",
+    )
+    expect(await code([session])).toBe("no-cars")
   })
 })
