@@ -46,6 +46,18 @@ export interface IncidentChannels {
   ): Promise<void>
   /** Nobody but the bot can post in it any more; everyone who could see it still can. Renamed `name`. */
   lock(channelId: string, name: string): Promise<void>
+  /** A Discord poll, one choice each, open `hours`; its message id. */
+  poll(
+    channelId: string,
+    question: string,
+    answers: readonly string[],
+    hours: number,
+  ): Promise<string>
+  /** The votes for each answer, in the order they were posted, and whether Discord has finished counting. */
+  pollResults(
+    channelId: string,
+    messageId: string,
+  ): Promise<{ finalized: boolean; counts: number[] }>
 }
 
 export interface IncidentRouterOptions {
@@ -66,6 +78,11 @@ export interface IncidentRouterOptions {
   /** The league's, for the times sessions are listed under. */
   timeZone: string
   gather?: (q: EvidenceRequest) => Promise<Evidence>
+  /**
+   * The league decides by vote: a poll in each channel, open `hours`, whose
+   * result is the decision when it closes. A tie is left to the stewards.
+   */
+  vote?: { hours: number }
   now?: () => Date
   log?: (line: string) => void
 }
@@ -380,8 +397,77 @@ export class IncidentRouter {
       )
     }
 
+    // After the evidence, so whoever votes has seen it.
+    if (this.#o.vote) {
+      try {
+        const id = await this.#o.channels.poll(
+          channelId,
+          `Incident #${incident.number}: who was at fault?`,
+          voteAnswers(incident),
+          this.#o.vote.hours,
+        )
+        this.#o.store.setPoll(
+          incident.number,
+          id,
+          new Date(now.getTime() + this.#o.vote.hours * 3600_000),
+        )
+      } catch (e) {
+        this.#o.log?.(`incident #${incident.number}: ${message(e)}`)
+        await this.#o.channels.post(
+          channelId,
+          `I couldn't start the vote on this one: ${message(e)}. The stewards will decide it.`,
+        )
+      }
+    }
+
     return {
-      content: `Filed as incident #${incident.number}: <#${channelId}>. The stewards will look at it there.`,
+      content: this.#o.vote
+        ? `Filed as incident #${incident.number}: <#${channelId}>. The Racers vote on it there.`
+        : `Filed as incident #${incident.number}: <#${channelId}>. The stewards will look at it there.`,
+    }
+  }
+
+  /**
+   * Counts the votes that have closed. A clear result is the decision, posted
+   * and recorded as the stewards' would be; a tie, or no votes, is handed to
+   * the stewards. Run every few minutes: Discord tells a bot without intents
+   * nothing when a poll ends.
+   */
+  async settlePolls(): Promise<void> {
+    const now = (this.#o.now ?? (() => new Date()))()
+    for (const incident of this.#o.store.pollsDue(now)) {
+      const channelId = incident.channelId
+      if (!channelId || !incident.pollMessageId) continue
+      try {
+        const { finalized, counts } = await this.#o.channels.pollResults(
+          channelId,
+          incident.pollMessageId,
+        )
+        // Discord finishes counting a little after the poll closes.
+        if (!finalized) continue
+        const tally = voteAnswers(incident)
+          .map((a, i) => `${a}: ${counts[i] ?? 0}`)
+          .join(", ")
+        const top = Math.max(...counts)
+        const winners = counts.flatMap((c, i) => (c === top ? [i] : []))
+        if (top === 0 || winners.length > 1) {
+          await this.#o.channels.post(
+            channelId,
+            `**The vote on incident #${incident.number} ${top === 0 ? "closed with no votes" : "was tied"}** (${tally}). ` +
+              `Stewards, please decide it with \`/incident decide\`.`,
+          )
+          this.#o.store.settlePoll(incident.number)
+          continue
+        }
+        const outcome = `${winners[0] === 2 ? "A racing incident: neither driver at fault" : `${voteAnswers(incident)[winners[0]!]} at fault`}, by vote (${tally})`
+        await this.#announce(channelId, incident, outcome, "the vote")
+        await this.#o.channels.lock(channelId, channelName(incident, "closed"))
+        // Last, so a decision that didn't reach the channel is counted again.
+        this.#o.store.decide(incident.number, outcome, "vote", now)
+        this.#o.store.settlePoll(incident.number)
+      } catch (e) {
+        this.#o.log?.(`incident #${incident.number}: counting the vote: ${message(e)}`)
+      }
     }
   }
 
@@ -450,19 +536,30 @@ export class IncidentRouter {
 
   async #record(command: SlashCommand, incident: Incident, outcome: string): Promise<CommandReply> {
     const now = (this.#o.now ?? (() => new Date()))()
-    const who = [incident.reporterDiscord, incident.otherDiscord]
-      .filter(Boolean)
-      .map((id) => `<@${id}>`)
-    await this.#o.channels.post(
-      command.channelId,
-      `**Decision on incident #${incident.number}**, by <@${command.userId}>:\n> ${outcome.replace(/\n/g, "\n> ")}\n\n${who.join(" ")}`,
-      [],
-      [incident.reporterDiscord, ...(incident.otherDiscord ? [incident.otherDiscord] : [])],
-    )
+    await this.#announce(command.channelId, incident, outcome, `<@${command.userId}>`)
     await this.#o.channels.lock(command.channelId, channelName(incident, "closed"))
     // Last, so a decision that didn't reach the channel can be made again.
     this.#o.store.decide(incident.number, outcome, command.userId, now)
     return { content: `Recorded. The channel is read-only now, kept for the record.` }
+  }
+
+  /** The decision, in the channel, pinging both drivers. */
+  async #announce(
+    channelId: string,
+    incident: Incident,
+    outcome: string,
+    by: string,
+  ): Promise<void> {
+    const drivers = [
+      incident.reporterDiscord,
+      ...(incident.otherDiscord ? [incident.otherDiscord] : []),
+    ]
+    await this.#o.channels.post(
+      channelId,
+      `**Decision on incident #${incident.number}**, by ${by}:\n> ${outcome.replace(/\n/g, "\n> ")}\n\n${drivers.map((id) => `<@${id}>`).join(" ")}`,
+      [],
+      drivers,
+    )
   }
 
   /**
@@ -652,6 +749,12 @@ function channelName(i: Incident, state: "incident" | "closed" = "incident"): st
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "")
   return `${state}-${i.number}-${slug(i.reporter)}-${slug(i.other)}`.slice(0, 100)
+}
+
+/** The vote's answers, in order: one driver, the other, neither. Discord caps each at 55 characters. */
+function voteAnswers(i: Incident): string[] {
+  const cap = (s: string) => (s.length > 55 ? `${s.slice(0, 54)}…` : s)
+  return [cap(i.reporter), cap(i.other), "Racing incident (neither)"]
 }
 
 /** "12:59" into ms; undefined unless it's a time into the session. */

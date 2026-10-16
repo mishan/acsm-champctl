@@ -183,10 +183,74 @@ describe("GatewayTransport incident channels", () => {
       GatewayTransport.wrapping(client as unknown as Client).createPrivateChannel("g", {
         parentId: "cat",
         name: "incident-1",
-        roleId: "stewards",
+        roleIds: ["stewards"],
         userIds: ["ana"],
       }),
     ).rejects.toThrow(says)
+  })
+})
+
+describe("GatewayTransport incident votes", () => {
+  it("lets every role it's given into a new channel", async () => {
+    let made: { permissionOverwrites: { id: string; allow?: unknown }[] } | undefined
+    const client = {
+      user: { id: "bot" },
+      guilds: {
+        fetch: async () => ({
+          channels: {
+            create: async (o: typeof made) => {
+              made = o
+              return { id: "c" }
+            },
+          },
+        }),
+      },
+    }
+    await GatewayTransport.wrapping(client as unknown as Client).createPrivateChannel("g", {
+      parentId: "cat",
+      name: "incident-1",
+      roleIds: ["stewards", "racers"],
+      userIds: ["ana"],
+    })
+    expect(made?.permissionOverwrites.filter((o) => o.allow).map((o) => o.id)).toEqual([
+      "stewards",
+      "racers",
+      "ana",
+      "bot",
+    ])
+  })
+
+  it("posts a one-choice poll, and reads its votes back in the order of its answers", async () => {
+    const sent: unknown[] = []
+    const answers = new Map([
+      [3, { id: 3, voteCount: 1 }],
+      [1, { id: 1, voteCount: 5 }],
+      [2, { id: 2, voteCount: 0 }],
+    ])
+    const client = {
+      channels: {
+        fetch: async () => ({
+          isSendable: () => true,
+          isTextBased: () => true,
+          send: async (p: unknown) => {
+            sent.push(p)
+            return { id: "m" }
+          },
+          messages: { fetch: async () => ({ poll: { resultsFinalized: true, answers } }) },
+        }),
+      },
+    }
+    const t = GatewayTransport.wrapping(client as unknown as Client)
+    expect(await t.postPoll("c", "Who?", ["Ana", "Bo", "Neither"], 48)).toBe("m")
+    expect(sent[0]).toMatchObject({
+      poll: {
+        question: { text: "Who?" },
+        answers: [{ text: "Ana" }, { text: "Bo" }, { text: "Neither" }],
+        duration: 48,
+        allowMultiselect: false,
+      },
+    })
+    expect(await t.pollResults("c", "m")).toEqual({ finalized: true, counts: [5, 0, 1] })
   })
 })
 

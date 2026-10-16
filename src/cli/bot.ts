@@ -964,6 +964,7 @@ async function serve(args: Args): Promise<number> {
   const transport = await connect({ voice: voice !== undefined })
   let stopQualiCall = async () => {}
   let stopStandings = async () => {}
+  let stopPolls = () => {}
 
   try {
     if (!(transport instanceof GatewayTransport)) {
@@ -1001,6 +1002,9 @@ async function serve(args: Args): Promise<number> {
             claims,
             store: incidentStore,
             stewardRoleId: incidentSettings.stewardRoleId,
+            ...(incidentSettings.vote
+              ? { vote: { hours: incidentSettings.vote.hours ?? 48 } }
+              : {}),
             timeZone: profile.schedule.timezone,
             log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
             channels: {
@@ -1008,7 +1012,10 @@ async function serve(args: Args): Promise<number> {
                 transport.createPrivateChannel(guildId, {
                   parentId: incidentSettings.categoryId,
                   name,
-                  roleId: incidentSettings.stewardRoleId,
+                  roleIds: [
+                    incidentSettings.stewardRoleId,
+                    ...(incidentSettings.vote ? [incidentSettings.vote.roleId] : []),
+                  ],
                   userIds,
                 }),
               post: (channelId, content, files, pings) =>
@@ -1021,12 +1028,22 @@ async function serve(args: Args): Promise<number> {
                 }),
               lock: (channelId, name) =>
                 transport.lockChannel(channelId, name, incidentSettings.closedCategoryId),
+              poll: (channelId, question, answers, hours) =>
+                transport.postPoll(channelId, question, answers, hours),
+              pollResults: (channelId, messageId) => transport.pollResults(channelId, messageId),
             },
           })
         : undefined
     if (incidents) {
       void incidents.warm()
       process.stderr.write("Answering /incident.\n")
+      if (incidentSettings?.vote) {
+        // Every five minutes: a closed vote waits that long at most to be counted.
+        const timer = setInterval(() => void incidents.settlePolls(), 5 * 60_000)
+        stopPolls = () => clearInterval(timer)
+        void incidents.settlePolls()
+        process.stderr.write("Counting incident votes when they close.\n")
+      }
     }
 
     transport.listen(
@@ -1113,6 +1130,7 @@ async function serve(args: Args): Promise<number> {
     // reads short.
     await stopQualiCall()
     await stopStandings()
+    stopPolls()
     await transport.close()
     liveries.close()
     incidentStore?.close()
