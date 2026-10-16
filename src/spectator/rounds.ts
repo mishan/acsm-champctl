@@ -60,6 +60,34 @@ export function slug(s: string): string {
   )
 }
 
+/**
+ * Each race's number on a night with more than one, by start: the server names
+ * them all "Race". A race is numbered among those in the same round on the
+ * same day, as the league counts days; a night with one race has no number.
+ */
+export function raceNumbers<T>(
+  items: readonly T[],
+  of: (item: T) => { race: boolean; round: string; started: number },
+  timeZone: string,
+): Map<T, number> {
+  const nights = new Map<string, T[]>()
+  for (const item of items) {
+    const o = of(item)
+    if (!o.race || Number.isNaN(o.started)) continue
+    const night = `${o.round}|${localDate(new Date(o.started), timeZone)}`
+    nights.set(night, [...(nights.get(night) ?? []), item])
+  }
+  const out = new Map<T, number>()
+  for (const races of nights.values()) {
+    if (races.length < 2) continue
+    races.sort((a, b) => of(a).started - of(b).started)
+    races.forEach((r, i) => {
+      out.set(r, i + 1)
+    })
+  }
+  return out
+}
+
 /** A day as the league counts it: "2026-10-13". */
 export function localDate(at: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone }).format(at)

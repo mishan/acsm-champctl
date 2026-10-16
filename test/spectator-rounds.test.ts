@@ -4,7 +4,14 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import { JournalWriter } from "../src/spectator/journal.js"
-import { lastRound, localDate, organize, type Round, roundFor } from "../src/spectator/rounds.js"
+import {
+  lastRound,
+  localDate,
+  organize,
+  type Round,
+  raceNumbers,
+  roundFor,
+} from "../src/spectator/rounds.js"
 
 describe("roundFor", () => {
   const practiceServer = { index: 0, count: 1 }
@@ -182,5 +189,31 @@ describe("lastRound", () => {
       ),
     ).close()
     expect((await lastRound(dir))?.folder).toBe("2026-10-13-interlagos-1975")
+  })
+})
+
+describe("raceNumbers", () => {
+  // 8:24 and 8:50 PM in California on the 14th, and the next week's race.
+  const at = (iso: string) => Date.parse(iso)
+  const session = (name: string, round: string, started: string) => ({
+    name,
+    round,
+    started: at(started),
+  })
+  const q = session("Qualify", "r1", "2026-10-15T03:04:00Z")
+  const r1 = session("Race", "r1", "2026-10-15T03:24:00Z")
+  const r2 = session("Race", "r1", "2026-10-15T03:50:00Z")
+  const next = session("Race", "r2", "2026-10-22T03:24:00Z")
+  const lone = session("Race", "r3", "2026-10-29T03:24:00Z")
+  it("numbers a night's races in the order they started, and nothing else", () => {
+    const numbers = raceNumbers(
+      [r2, next, q, r1, lone],
+      (s) => ({ race: s.name === "Race", round: s.round, started: s.started }),
+      "America/Los_Angeles",
+    )
+    expect([...numbers].map(([s, n]) => [s.started, n]).sort()).toEqual([
+      [r1.started, 1],
+      [r2.started, 2],
+    ])
   })
 })

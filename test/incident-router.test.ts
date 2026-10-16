@@ -254,6 +254,32 @@ describe("/incident autocomplete", () => {
     ])
   })
 
+  it("numbers the races on a night with two", async () => {
+    // A second race a minute after the one in beforeEach: close enough that the
+    // two can't fall either side of midnight.
+    const key = new Date(
+      Date.parse(stamp.replace(/T(\d+)-(\d+)-(\d+)-(\d+)Z/, "T$1:$2:$3.$4Z")) + 60_000,
+    )
+      .toISOString()
+      .replace(/[:.]/g, "-")
+    const w = new JournalWriter(join(dir, `${key}-loop-race.ndjson.gz`))
+    w.write({
+      t: "session",
+      at: 0,
+      serverName: "s",
+      track: "loop",
+      trackConfig: "",
+      name: "Race",
+      type: 3,
+      recorderCarId: 0,
+    })
+    await w.close()
+    const choices = await router().autocomplete(command(ANA, "report", { race: "" }), "race")
+    expect(choices.map((c) => c.name.split(" · ")[0])).toEqual(["Race 2", "Race 1"])
+    await router().handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    expect(channels.posts[0]![1]).toMatch(/ Race 1 at loop, /)
+  })
+
   it("offers the reporter's own contacts, and something else", async () => {
     const choices = await router().autocomplete(
       command(ANA, "report", { race: journal, what: "" }),

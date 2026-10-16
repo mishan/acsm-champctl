@@ -20,11 +20,13 @@ import { classes, normGuid, slots } from "../acsm/view.js"
 import type { CommandReply, DiscordFile, SlashCommand } from "../bot/transport.js"
 import type { DriverClaim } from "../liveries/claims.js"
 import { type Evidence, type EvidenceRequest, gatherEvidence } from "../spectator/evidence.js"
+import { raceNumbers } from "../spectator/rounds.js"
 import {
   carAt,
   indexJournal,
   type JournalCar,
   type JournalIndex,
+  type JournalName,
   journalNames,
   sessionType,
   whereAt,
@@ -338,7 +340,7 @@ export class IncidentRouter {
 
     // The channel's there now, and the evidence is worth posting whatever happens to this.
     try {
-      const session = `${SESSION_TYPES[index.session.type] ?? index.session.name} at ${index.session.track}`
+      const session = `${await this.#sessionLabel(index)} at ${index.session.track}`
       const otherWho = otherClaim ? `<@${otherClaim.discordUserId}>` : `**${otherEntrant}**`
       await this.#o.channels.post(
         channelId,
@@ -505,22 +507,51 @@ export class IncidentRouter {
       // Discord doesn't tell a bot a driver's own time zone, so the league's, named.
       timeZoneName: "short",
     })
+    const offered: { j: JournalName; type: number }[] = []
     for (const j of await journalNames(this.#o.recordings)) {
       if (!(j.started >= oldest)) break
       // Qualifying and races: practice is where nobody files a report.
-      if (!RACING.has((await sessionType(this.#o.recordings, j.file)) ?? 0)) continue
+      const type = (await sessionType(this.#o.recordings, j.file)) ?? 0
+      if (RACING.has(type)) offered.push({ j, type })
+    }
+    const numbers = this.#raceNumbers(offered)
+    for (const { j } of offered.slice(0, MAX_CHOICES)) {
       // "interlagos-1975-race": the session type last, as the recorder names it.
       const type = j.rest.slice(j.rest.lastIndexOf("-") + 1)
       const track = j.rest.slice(0, Math.max(0, j.rest.lastIndexOf("-")))
+      const n = numbers.get(j.file)
       out.push({
         name: clip(
-          `${type.charAt(0).toUpperCase()}${type.slice(1)} · ${track} · ${when.format(j.started)}`,
+          `${type.charAt(0).toUpperCase()}${type.slice(1)}${n ? ` ${n}` : ""} · ${track} · ${when.format(j.started)}`,
         ),
         value: j.key,
       })
-      if (out.length === MAX_CHOICES) break
     }
     return out
+  }
+
+  /** Race 1 and Race 2 on a night with two, by journal file. */
+  #raceNumbers(sessions: readonly { j: JournalName; type: number }[]): Map<string, number> {
+    const numbers = raceNumbers(
+      sessions,
+      ({ j, type }) => ({ race: type === 3, round: dirname(j.file), started: j.started }),
+      this.#o.timeZone,
+    )
+    return new Map([...numbers].map(([s, n]) => [s.j.file, n]))
+  }
+
+  /** A session as a steward would name it: "Race 2", "Qualifying". */
+  async #sessionLabel(index: JournalIndex): Promise<string> {
+    const name = SESSION_TYPES[index.session.type] ?? index.session.name
+    if (index.session.type !== 3) return name
+    const round = dirname(index.file)
+    const nights: { j: JournalName; type: number }[] = []
+    for (const j of await journalNames(this.#o.recordings)) {
+      if (dirname(j.file) === round)
+        nights.push({ j, type: (await sessionType(this.#o.recordings, j.file)) ?? 0 })
+    }
+    const n = this.#raceNumbers(nights).get(index.file)
+    return n ? `${name} ${n}` : name
   }
 
   /** A recent session's index, by its key; Discord lets a driver type any key, not just one offered. */
