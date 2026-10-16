@@ -13,10 +13,10 @@
 
 import { readFileSync } from "node:fs"
 
-import { type Pose, SpectatorClient } from "../../src/spectator/client.js"
-import { BRAKE_LIGHTS, type Vec3 } from "../../src/spectator/protocol.js"
+import { type Pose, SpectatorClient } from "ac-spectator"
+import { BRAKE_LIGHTS, type Vec3 } from "ac-spectator"
 import { parseFastLane, Track } from "../../src/spectator/track.js"
-import { WireWriter } from "../../src/spectator/wire.js"
+import { WireWriter } from "ac-spectator"
 
 const [host = "127.0.0.1", port = "9600", acRoot = ".", car = "", fastLane = ""] =
   process.argv.slice(2)

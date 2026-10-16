@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import { writeJournalReplay } from "../src/spectator/replay.js"
 import { JournalWriter, type JournalRecord } from "../src/spectator/journal.js"
-import type { CarState } from "../src/spectator/protocol.js"
+import type { CarState } from "ac-spectator"
 import { listReplays, registerReplays } from "../src/web/replays.js"
 
 let dir: string

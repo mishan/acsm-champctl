@@ -6,7 +6,7 @@ import { createCanvas } from "@napi-rs/canvas"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { JournalWriter, type JournalRecord } from "../src/spectator/journal.js"
-import type { CarState } from "../src/spectator/protocol.js"
+import type { CarState } from "ac-spectator"
 import { parseFastLane, Track } from "../src/spectator/track.js"
 import {
   type CarTrack,

@@ -7,9 +7,9 @@
  *   tsx scripts/spectator/collide.ts <host> <port> <acRoot> <car> <pluginListenPort> <pluginServerPort>
  */
 
-import { SpectatorClient } from "../../src/spectator/client.js"
-import { PluginListener } from "../../src/spectator/plugin.js"
-import { WireWriter } from "../../src/spectator/wire.js"
+import { SpectatorClient } from "ac-spectator"
+import { PluginListener } from "ac-spectator"
+import { WireWriter } from "ac-spectator"
 
 const [
   host = "127.0.0.1",

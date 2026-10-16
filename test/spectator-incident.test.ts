@@ -17,7 +17,7 @@ import {
   type IncidentPacket,
 } from "../src/spectator/incident.js"
 import { JournalWriter, type JournalRecord } from "../src/spectator/journal.js"
-import { BRAKE_LIGHTS, type CarState } from "../src/spectator/protocol.js"
+import { BRAKE_LIGHTS, type CarState } from "ac-spectator"
 import { renderIncidentSvg } from "../src/spectator/render.js"
 import { incidentBrief } from "../src/spectator/brief.js"
 import { suggest } from "../src/spectator/rules.js"

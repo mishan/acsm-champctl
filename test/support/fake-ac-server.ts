@@ -10,8 +10,8 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { createServer, type Server, type Socket as TcpSocket } from "node:net"
 import { dirname, join } from "node:path"
 
-import { frame, TcpDeframer } from "../../src/spectator/protocol.js"
-import { WireWriter } from "../../src/spectator/wire.js"
+import { frame, TcpDeframer } from "ac-spectator"
+import { WireWriter } from "ac-spectator"
 
 export const HANDSHAKE_OK = Buffer.from(
   "3e0e6300000068000000610000006d0000007000000063000000740000006c0000002000000073000000700000006900" +

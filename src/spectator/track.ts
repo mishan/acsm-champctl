@@ -12,8 +12,8 @@
  * puts every point after the first in the wrong place.
  */
 
-import type { Vec3 } from "./protocol.js"
-import { WireReader } from "./wire.js"
+import type { Vec3 } from "ac-spectator"
+import { WireReader } from "ac-spectator"
 
 export interface LinePoint {
   x: number

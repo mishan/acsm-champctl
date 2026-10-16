@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import { JournalWriter, type JournalRecord } from "../src/spectator/journal.js"
-import type { CarState } from "../src/spectator/protocol.js"
+import type { CarState } from "ac-spectator"
 import { writeJournalReplay } from "../src/spectator/replay.js"
 
 let dir: string
