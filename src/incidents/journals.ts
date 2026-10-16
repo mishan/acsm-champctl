@@ -33,7 +33,12 @@ export interface JournalIndex {
   end: number
   cars: JournalCar[]
   collisions: CollisionSummary[]
+  /** Where each slot's car was, about once a second: enough to say who was near whom. */
+  positions: Map<number, { at: number[]; x: number[]; z: number[] }>
 }
+
+/** Seconds between the positions kept: a car covers 90 m in one, and a race runs to thousands. */
+const POSITION_EVERY_MS = 1000
 
 export interface JournalName {
   file: string
@@ -109,6 +114,7 @@ async function read(path: string, file: string): Promise<JournalIndex> {
   const current = new Map<number, JournalCar>()
   const names = new Map<number, string>()
   const collisions: CollisionSummary[] = []
+  const positions: JournalIndex["positions"] = new Map()
   for await (const r of readJournal(path)) {
     end = r.at
     if (r.t === "session" && !session) {
@@ -132,10 +138,17 @@ async function read(path: string, file: string): Promise<JournalIndex> {
       current.set(r.carId, car)
     } else if (r.t === "collision") {
       collisions.push(summarize(r, collisions.length, names))
+    } else if (r.t === "pos") {
+      const p = positions.get(r.car.carId) ?? { at: [], x: [], z: [] }
+      positions.set(r.car.carId, p)
+      if (r.at - (p.at.at(-1) ?? Number.NEGATIVE_INFINITY) < POSITION_EVERY_MS) continue
+      p.at.push(r.at)
+      p.x.push(r.car.pos[0])
+      p.z.push(r.car.pos[2])
     }
   }
   if (!session) throw new Error(`${basename(path)} has no session record`)
-  return { file, session, start, end, cars, collisions }
+  return { file, session, start, end, cars, collisions, positions }
 }
 
 /** Who was in a slot at a moment, by the recorder's clock. */
@@ -143,4 +156,23 @@ export function carAt(index: JournalIndex, carId: number, at: number): JournalCa
   let found: JournalCar | undefined
   for (const c of index.cars) if (c.carId === carId && c.from <= at) found = c
   return found
+}
+
+/** Where a slot's car was at a moment, from the nearest position kept, if one is within two seconds. */
+export function whereAt(
+  index: JournalIndex,
+  carId: number,
+  at: number,
+): [number, number] | undefined {
+  const p = index.positions.get(carId)
+  if (!p || p.at.length === 0) return undefined
+  let lo = 0
+  let hi = p.at.length - 1
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (p.at[mid]! < at) lo = mid + 1
+    else hi = mid
+  }
+  const i = lo > 0 && at - p.at[lo - 1]! < p.at[lo]! - at ? lo - 1 : lo
+  return Math.abs(p.at[i]! - at) <= 2000 ? [p.x[i]!, p.z[i]!] : undefined
 }

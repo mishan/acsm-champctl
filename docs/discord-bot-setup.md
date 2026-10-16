@@ -373,7 +373,8 @@ report an incident with `/incident report`:
   tell a bot a driver's own.
 - **what**: a contact the recording caught between them and someone else, or
   "Something else", which also needs **other_driver** and **when**, the time
-  into the session as the replay shows it (`12:59`).
+  into the session as the replay shows it (`12:59`). With **when** typed
+  first, the other drivers are listed nearest them at that moment first.
 - **description**: what happened, in their own words.
 
 A driver has to have claimed their name with `/livery claim` first: that's how

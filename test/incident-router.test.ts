@@ -263,6 +263,18 @@ describe("/incident autocomplete", () => {
     expect(choices[0]!.name).toMatch(/^0:05 · contact with B0 \[BATL\]/)
   })
 
+  it("offers the other drivers nearest first, once the time is typed", async () => {
+    // At 5 s Bo is alongside Ana and Cy 40 m behind.
+    const choices = await router().autocomplete(
+      command(ANA, "report", { race: journal, what: "other", when: "0:05", other_driver: "" }),
+      "other_driver",
+    )
+    expect(choices).toEqual([
+      { name: expect.stringMatching(/^B0 \[BATL\] · [1-6] m away at 0:05$/), value: "B0 [BATL]" },
+      { name: expect.stringMatching(/^Cy · (3\d|4\d) m away at 0:05$/), value: "Cy" },
+    ])
+  })
+
   it("offers someone else only something else", async () => {
     const choices = await router({ [ANA]: "Ana", [BO]: "Bo", c: "Cy" }).autocomplete(
       command("c", "report", { race: journal, what: "" }),
