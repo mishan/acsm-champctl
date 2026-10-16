@@ -1,7 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { chmod, mkdtemp, rm, stat } from "node:fs/promises"
+import { DatabaseSync } from "node:sqlite"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { Championship } from "../src/acsm/types.js"
+import { openStores } from "../src/cli/mcp.js"
 import { SqliteIncidentStore } from "../src/incidents/store.js"
 import { SqliteClaimStore } from "../src/liveries/claims.js"
 import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
@@ -41,8 +46,8 @@ const run = async (tools: McpTool[], name: string, args: object = {}) => {
 
 describe("championship tools", async () => {
   const profile = await loadProfile("batl")
-  const tools = (standings: () => Promise<unknown> = async () => undefined) =>
-    championshipTools({ reader: reader(standings), profile })
+  const tools = (standings: () => Promise<unknown> = async () => undefined, page?: string) =>
+    championshipTools({ reader: reader(standings, page), profile })
 
   it("lists the championships and describes one, open slots and all", async () => {
     expect(await run(tools(), "list_championships")).toBe(`${ID}  October`)
@@ -57,6 +62,18 @@ describe("championship tools", async () => {
     })
     expect(await run(tools(standings), "get_standings", { championship: ID })).toBe(
       "Standings (Server Manager):\n\nRSS:\n1. Ana, 43 pts",
+    )
+  })
+
+  it("reads the championship page when Server Manager wants a login for its standings", async () => {
+    // BATL's build, logged out: the endpoint refuses, the page has the table.
+    const page =
+      `<html><body><div class="tab-pane" id="drivers"><table class="table"><thead><tr><th>#</th>` +
+      `<th>Driver</th><th>Points</th></tr></thead><tbody><tr><td>1</td><td>Ana</td><td><span>97</span></td></tr>` +
+      `</tbody></table></div></body></html>`
+    const refused = async () => Promise.reject(new Error("login required"))
+    expect(await run(tools(refused, page), "get_standings", { championship: ID })).toBe(
+      "Standings (Server Manager's page):\n\n1. Ana, 97 pts",
     )
   })
 
@@ -96,6 +113,29 @@ describe("store tools", () => {
     for (const s of Object.values(stores)) s.close()
   })
 
+  it("lists every upload waiting to be applied, however many came after it", async () => {
+    const profile = await loadProfile("batl")
+    const tools = storeTools({ reader: reader(async () => undefined), profile, stores })
+    const submit = (driver: string, minute: number) =>
+      stores.queue.submit({
+        discordUserId: driver,
+        championshipId: ID,
+        driverName: driver,
+        carModel: "car",
+        skinFolder: driver,
+        body: new Uint8Array([1]),
+        at: new Date(Date.UTC(2026, 9, 15, 0, minute)),
+      })
+    await submit("Ana", 0)
+    // Fifty uploads since, all refused: more than the history keeps.
+    for (let i = 1; i <= 50; i++) {
+      const r = await submit(`Driver ${i}`, i)
+      await stores.queue.markRefused(r.submission.id, "not a skin", new Date())
+    }
+    const status = await run(tools, "livery_status", { championship: ID })
+    expect(status).toContain("1 uploads waiting to be applied:\n- Ana, car")
+  })
+
   it("lists incident reports newest first, and only the undecided ones when asked", async () => {
     const profile = await loadProfile("batl")
     const tools = storeTools({ reader: reader(async () => undefined), profile, stores })
@@ -125,5 +165,62 @@ describe("store tools", () => {
     ])
     expect(all).toContain("Decided 2026-10-15T05:00:00.000Z: Racing incident")
     expect(await run(tools, "list_incident_reports", { open: true })).not.toContain("#1,")
+  })
+})
+
+describe("opening the bot's store to read", () => {
+  let dir: string
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "mcp-store-"))
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it("changes nothing: not the file's mode, and nothing in it can be written", async () => {
+    const path = join(dir, "store.db")
+    ;(await SqliteIncidentStore.open(path)).close()
+    await chmod(path, 0o640)
+    const store = SqliteIncidentStore.openForReading(path)
+    expect(store.list()).toEqual([])
+    expect(() =>
+      store.file(
+        {
+          reporterDiscord: "1",
+          reporter: "Ana",
+          other: "Bo",
+          journal: "j",
+          atMs: 0,
+          description: "x",
+        },
+        new Date(),
+      ),
+    ).toThrow(/readonly/)
+    store.close()
+    expect((await stat(path)).mode & 0o777).toBe(0o640)
+  })
+
+  it.each([
+    ["one a newer champctl wrote", 99],
+    ["one this champctl hasn't migrated yet", 0],
+  ])("refuses %s rather than misread it", async (_, version) => {
+    const path = join(dir, "store.db")
+    ;(await SqliteIncidentStore.open(path)).close()
+    const db = new DatabaseSync(path)
+    db.prepare("UPDATE champctl_schema SET version = ? WHERE component = 'incidents'").run(version)
+    db.close()
+    expect(() => SqliteIncidentStore.openForReading(path)).toThrow(/schema version/)
+  })
+
+  it("leaves the store's tools out, rather than failing the server, when it won't open", async () => {
+    const path = join(dir, "store.db")
+    ;(await SqliteIncidentStore.open(path)).close()
+    const db = new DatabaseSync(path)
+    db.prepare("UPDATE champctl_schema SET version = 99 WHERE component = 'incidents'").run()
+    db.close()
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true)
+    expect(openStores(path)).toBeUndefined()
+    expect(String(stderr.mock.calls[0]?.[0])).toMatch(/serving without the store's tools/)
+    stderr.mockRestore()
   })
 })

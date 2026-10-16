@@ -11,7 +11,7 @@ import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
-import { migrate, type Migration, restrictToOwner } from "../sqlite.js"
+import { migrate, type Migration, openForReading, restrictToOwner } from "../sqlite.js"
 
 const MIGRATIONS: Migration[] = [
   {
@@ -101,6 +101,11 @@ export class SqliteIncidentStore {
 
   private constructor(db: DatabaseSync) {
     this.#db = db
+  }
+
+  /** For reading alongside the process that writes it: see `openForReading`. */
+  static openForReading(path: string): SqliteIncidentStore {
+    return new SqliteIncidentStore(openForReading(path, "incidents", MIGRATIONS))
   }
 
   static async open(path: string): Promise<SqliteIncidentStore> {

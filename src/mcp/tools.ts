@@ -1,7 +1,8 @@
 /**
  * champctl's reading side as MCP tools: championships, standings, GridMom's
  * findings, liveries and stewarding. Nothing here can change a championship:
- * it holds the credential-free ACSM reader, and opens the stores only to read.
+ * it holds the credential-free ACSM reader, and the stores it's given are
+ * opened read-only (`openForReading`).
  */
 
 import type { AcsmReader } from "../acsm/client.js"
@@ -171,9 +172,10 @@ export function storeTools(o: ChampctlToolOptions): McpTool[] {
         const id = args["championship"]
         if (typeof id !== "string" || !id)
           throw new Error("championship must be an id from list_championships")
-        const [claims, applied, history] = await Promise.all([
+        const [claims, applied, queued, history] = await Promise.all([
           stores.claims.list(id),
           stores.liveries.list(id),
+          stores.queue.queued(id),
           stores.queue.history(id),
         ])
         const lines = [`${claims.length} drivers have claimed their name.`]
@@ -181,11 +183,14 @@ export function storeTools(o: ChampctlToolOptions): McpTool[] {
         lines.push("", `${applied.length} liveries applied:`)
         for (const l of applied)
           lines.push(`- ${l.driverName}: ${l.carModel}/${l.skinFolder}, ${l.appliedAt}`)
-        const pending = history.filter((s) => s.state === "queued" || s.state === "refused")
-        lines.push("", `${pending.length} uploads queued or refused:`)
-        for (const s of pending) {
+        lines.push("", `${queued.length} uploads waiting to be applied:`)
+        for (const s of queued) lines.push(`- ${s.driverName}, ${s.carModel} (${s.submittedAt})`)
+        // History is the newest 50, which is plenty for what was refused lately.
+        const refused = history.filter((s) => s.state === "refused")
+        lines.push("", `${refused.length} refused among the latest uploads:`)
+        for (const s of refused) {
           lines.push(
-            `- ${s.driverName}, ${s.carModel}, ${s.state}${s.reason ? `: ${s.reason}` : ""} (${s.submittedAt})`,
+            `- ${s.driverName}, ${s.carModel}: ${s.reason ?? "no reason recorded"} (${s.submittedAt})`,
           )
         }
         return text(lines.join("\n"))

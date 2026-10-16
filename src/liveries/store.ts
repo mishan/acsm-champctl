@@ -38,7 +38,7 @@ import { createHash, randomBytes } from "node:crypto"
 import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
-import { migrate, type Migration, restrictToOwner } from "../sqlite.js"
+import { migrate, type Migration, openForReading, restrictToOwner } from "../sqlite.js"
 import type { Livery, SkinFile } from "./pack.js"
 
 /** Where a livery came in by. Recorded for the audit trail, not branched on. */
@@ -248,6 +248,11 @@ export class SqliteLiveryStore implements LiveryRecorder {
 
   private constructor(db: DatabaseSync) {
     this.#db = db
+  }
+
+  /** For reading alongside the process that writes it: see `openForReading`. */
+  static openForReading(path: string): SqliteLiveryStore {
+    return new SqliteLiveryStore(openForReading(path, "liveries", MIGRATIONS))
   }
 
   static async open(path: string, options: OpenOptions = {}): Promise<SqliteLiveryStore> {

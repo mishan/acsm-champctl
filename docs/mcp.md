@@ -7,7 +7,7 @@ scraping pages or running commands.
 
 It's read-only. It holds no ACSM login, only the reader every other read-only
 part of champctl uses, and a test fails if anything it serves can reach the
-code that writes to Server Manager.
+code that writes to Server Manager. The bot's store is opened read-only.
 
 ## Tools
 
@@ -31,24 +31,25 @@ recording tools when `CHAMPCTL_RECORDINGS` and `CHAMPCTL_AC_ROOT` are set.
 
 ## Running it
 
-Where champctl runs in Docker, the bot's container already has the profile,
-the store, the recordings and the car and track files. In Claude Code, on that
-host:
+Where champctl runs in Docker, the `mcp` service has the profile, the store,
+the recordings and the car and track files, and no secrets: not the bot's
+Discord token, not the ACSM account. In Claude Code, on that host:
 
 ```sh
-claude mcp add champctl -- docker compose -f /path/to/deploy/compose.yml \
-  run --rm -T --no-deps --entrypoint champctl-mcp bot
+claude mcp add champctl -- docker compose -f /path/to/deploy/compose.yml run --rm -T mcp
 ```
 
 From another machine, the same over SSH:
 
 ```sh
-claude mcp add champctl -- ssh deploy-host docker compose -f /path/to/deploy/compose.yml \
-  run --rm -T --no-deps --entrypoint champctl-mcp bot
+claude mcp add champctl -- ssh deploy-host docker compose -f /path/to/deploy/compose.yml run --rm -T mcp
 ```
 
-Each session starts its own short-lived container, and it reads the same files
-the bot does, so its answers are the bot's.
+Each session starts its own short-lived container. It opens the bot's store
+read-only, so it changes nothing there either, and refuses a store whose tables
+are at a different version from its own: rebuild and restart the bot before
+using a newer champctl-mcp. If the store won't open, the other tools still
+serve.
 
 `champctl-spectator mcp` still serves the recording tools alone, for a steward
 with a copy of the recordings and no access to anything else.

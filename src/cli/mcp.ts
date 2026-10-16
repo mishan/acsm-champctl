@@ -13,7 +13,7 @@ import { SqliteClaimStore } from "../liveries/claims.js"
 import { SqliteSubmissionQueue } from "../liveries/queue.js"
 import { SqliteLiveryStore } from "../liveries/store.js"
 import { serveTools } from "../mcp/server.js"
-import { championshipTools, storeTools } from "../mcp/tools.js"
+import { type ChampctlToolOptions, championshipTools, storeTools } from "../mcp/tools.js"
 import { loadProfile } from "../profile/load.js"
 import { recordingTools } from "../spectator/mcp.js"
 import { defaultStorePath } from "../sqlite.js"
@@ -37,8 +37,7 @@ Options:
                         (default: $CHAMPCTL_AC_ROOT)
 
 In Claude Code, on the host that runs champctl's containers:
-  claude mcp add champctl -- docker compose -f <deploy>/compose.yml run --rm -T \\
-    --no-deps --entrypoint champctl-mcp bot
+  claude mcp add champctl -- docker compose -f <deploy>/compose.yml run --rm -T mcp
 `
 
 export async function main(argv: readonly string[]): Promise<number> {
@@ -65,15 +64,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   const profile = await loadProfile(flags.get("--profile") ?? defaultProfile())
   const baseUrl = flags.get("--base-url") ?? profile.acsmBaseUrl
   if (!baseUrl) throw new UsageError("No ACSM base URL; set one in the profile or pass --base-url.")
-  const storePath = flags.get("--store") ?? defaultStorePath()
-  const stores = existsSync(storePath)
-    ? {
-        claims: await SqliteClaimStore.open(storePath),
-        liveries: await SqliteLiveryStore.open(storePath),
-        queue: await SqliteSubmissionQueue.open(storePath),
-        incidents: await SqliteIncidentStore.open(storePath),
-      }
-    : undefined
+  const stores = openStores(flags.get("--store") ?? defaultStorePath())
   const recordings = flags.get("--recordings") ?? process.env["CHAMPCTL_RECORDINGS"]
   const acRoot = flags.get("--ac-root") ?? process.env["CHAMPCTL_AC_ROOT"]
   const options = {
@@ -101,6 +92,33 @@ export async function main(argv: readonly string[]): Promise<number> {
     if (stores) for (const s of Object.values(stores)) s.close()
   }
   return 0
+}
+
+/**
+ * The bot's store, read-only, or nothing: without it the store's tools are
+ * left out and the rest still serve, which is better than no server at all.
+ */
+export function openStores(path: string): ChampctlToolOptions["stores"] {
+  if (!existsSync(path)) return undefined
+  const opened: { close(): void }[] = []
+  const open = <T extends { close(): void }>(s: T): T => {
+    opened.push(s)
+    return s
+  }
+  try {
+    return {
+      claims: open(SqliteClaimStore.openForReading(path)),
+      liveries: open(SqliteLiveryStore.openForReading(path)),
+      queue: open(SqliteSubmissionQueue.openForReading(path)),
+      incidents: open(SqliteIncidentStore.openForReading(path)),
+    }
+  } catch (e) {
+    for (const s of opened) s.close()
+    process.stderr.write(
+      `champctl-mcp: serving without the store's tools: ${e instanceof Error ? e.message : String(e)}\n`,
+    )
+    return undefined
+  }
 }
 
 export async function run(argv: readonly string[]): Promise<void> {
