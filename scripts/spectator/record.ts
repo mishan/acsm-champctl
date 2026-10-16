@@ -5,7 +5,7 @@
  *   tsx scripts/spectator/record.ts <host> <port> <acRoot> <car> <outDir> [seconds] [pluginListenPort pluginServerPort]
  */
 
-import { writeReplay } from "../../src/spectator/acreplay.js"
+import { writeJournalReplay } from "../../src/spectator/replay.js"
 import { SpectatorClient } from "../../src/spectator/client.js"
 import { Recorder } from "../../src/spectator/recorder.js"
 
@@ -80,5 +80,5 @@ await recorder.stop()
 
 for (const j of journals) {
   const out = j.replace(/\.ndjson\.gz$/, ".acreplay")
-  console.log(out, JSON.stringify(await writeReplay(j, out)))
+  console.log(out, JSON.stringify(await writeJournalReplay(j, out)))
 }
