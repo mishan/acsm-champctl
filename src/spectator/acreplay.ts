@@ -45,6 +45,8 @@ export interface CarSample {
 
 /** Why there's no replay to write: `code` says which, for a caller's own message. */
 export class ReplayError extends Error {
+  override readonly name = "ReplayError"
+
   constructor(
     readonly code: "no-session" | "no-cars",
     message: string,
@@ -53,7 +55,11 @@ export class ReplayError extends Error {
   }
 }
 
-/** `at` is any one clock in ms, shared by every event; samples carry their own. */
+/**
+ * `at` is the receiver's clock in ms, the one each `CarSample.timestamp` is
+ * taken from, in full where the timestamp may wrap at 2^32. A clip's window
+ * counts from the session event's `at`.
+ */
 export type ReplayEvent =
   | { t: "session"; at: number; track: string; trackConfig: string; name: string }
   | {
@@ -175,7 +181,7 @@ function decodeSamples(raw: Buffer): Samples {
 }
 
 /**
- * Car timestamps are this recorder's u32 millisecond clock. A session never
+ * Car timestamps are the receiver's u32 millisecond clock. A session never
  * runs 49 days, but it can straddle the wrap, so times are unwrapped against
  * the first sample seen.
  */
@@ -261,7 +267,7 @@ export async function writeReplay(
           break
         case "lap": {
           const list = laps.get(r.carId) ?? []
-          // Lap times are the recorder's clock in full; samples carry it cut
+          // Events carry the receiver's clock in full; samples carry it cut
           // to 32 bits, so they part ways after 49.7 days of recording.
           list.push({
             at: unwrap(r.at),
@@ -298,7 +304,7 @@ export async function writeReplay(
 
     const ownWheels = new Set<number>()
     // Written under another name and given its own only when complete, so
-    // nothing listing replays (champctl-serve's /replays) offers half a file,
+    // nothing listing replays offers half a file,
     // even one a kill cut off.
     out = new Sink(createWriteStream(partPath, { flags: "wx" }))
     await out.write(
@@ -319,7 +325,7 @@ export async function writeReplay(
 
     for (const id of carIds) {
       // Decoded one car at a time: a car's session is a few MB, the grid's is
-      // a few hundred, and this runs beside a recorder that is still working.
+      // a few hundred, and this may run beside a recorder that is still working.
       const s = decodeSamples(await readAll(join(spoolDir, `${id}.bin`)))
       sortByTime(s)
       const m = meta.get(id)
@@ -390,7 +396,7 @@ export async function writeReplay(
 /**
  * A file being written whose errors arrive as rejections at the next call,
  * never as an error event nobody is listening for: that event would take the
- * recording daemon down with it.
+ * whole process down with it.
  */
 class Sink {
   readonly #stream: WriteStream
@@ -502,7 +508,7 @@ const wrapAngle = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a))
  * a gap it is held where it was, stopped.
  *
  * It's out of the game, as the game shows a driver who dropped, from the
- * moment its driver left until its next sample; and, where the journal says
+ * moment its driver left until its next sample; and, where the events say
  * nothing of leaving, more than a gap's length before its first sample or
  * after its last. A gap with no one leaving is a car still connected.
  */
