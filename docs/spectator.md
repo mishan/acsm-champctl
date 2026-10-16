@@ -256,6 +256,7 @@ champctl-spectator organize <dir> [--dry-run]
 - `--prompt` prints the incident written up for any chat model, for a second
   opinion. champctl itself calls no model.
 - `mcp` serves the journals to a steward's MCP client, over stdin and stdout.
+  `champctl-mcp` ([mcp.md](mcp.md)) serves the same tools with the rest of champctl.
   For Claude Code:
 
   ```sh

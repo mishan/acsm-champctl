@@ -138,6 +138,17 @@ export class SqliteIncidentStore {
     this.#db.prepare("UPDATE incidents SET channel_id = ? WHERE number = ?").run(channelId, number)
   }
 
+  /** Reports that got a channel, newest first; with `open`, only those not yet decided. */
+  list(o: { open?: boolean } = {}): Incident[] {
+    const rows = this.#db
+      .prepare(
+        `SELECT * FROM incidents WHERE channel_id IS NOT NULL ${o.open ? "AND decision IS NULL" : ""}
+         ORDER BY number DESC`,
+      )
+      .all() as unknown as Row[]
+    return rows.map(fromRow)
+  }
+
   byChannel(channelId: string): Incident | undefined {
     const r = this.#db.prepare("SELECT * FROM incidents WHERE channel_id = ?").get(channelId) as
       | Row
