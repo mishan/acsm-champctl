@@ -103,9 +103,18 @@ export class IncidentRouter {
   }
 
   /** Reads the newest recordings now, so the first driver to report doesn't wait on it. */
+  /**
+   * Reads the newest sessions the race list offers now, so the first driver to
+   * pick one doesn't wait on it: the first read of a race takes about two of
+   * the three seconds Discord gives autocomplete.
+   */
   async warm(count = 4): Promise<void> {
-    for (const j of (await journalNames(this.#o.recordings)).slice(0, count)) {
+    let read = 0
+    for (const j of await journalNames(this.#o.recordings)) {
+      if (read === count) return
+      if (!RACING.has((await sessionType(this.#o.recordings, j.file)) ?? 0)) continue
       await indexJournal(this.#o.recordings, j.file).catch(() => undefined)
+      read++
     }
   }
 
@@ -141,7 +150,13 @@ export class IncidentRouter {
       }
       return [
         ...matching(choices).slice(0, MAX_CHOICES - 1),
-        { name: "Something else: name the driver and the time below", value: SOMETHING_ELSE },
+        {
+          name:
+            choices.length === 0
+              ? "Something else (no contact of yours was recorded): give the driver and the time below"
+              : "Something else: give the driver and the time below",
+          value: SOMETHING_ELSE,
+        },
       ]
     }
     return []
@@ -202,16 +217,21 @@ export class IncidentRouter {
       )
       atMs = c.at - index.start
       collisionIndex = c.index
-    } else if (what === SOMETHING_ELSE) {
-      const name = command.options["other_driver"] ?? ""
-      if (!index.cars.some((c) => clip(c.driver) === name)) {
-        return { content: "For something else, pick the other driver from the list too." }
+    } else {
+      // Anything but a listed contact is something else, typed or picked: a
+      // driver whose list never came up, as a slow first read can do, typed it.
+      const name = driverNamed(index, command.options["other_driver"] ?? "")
+      if (!name) {
+        return {
+          content:
+            "For anything but a contact from the list, also say who in other_driver: pick them from its list, or type their name as it shows in the game.",
+        }
       }
       const when = parseClock(command.options["when"] ?? "")
       if (when === undefined) {
         return {
           content:
-            "For something else, say when as the time into the session, the way the replay shows it: `12:59`.",
+            "For anything but a contact from the list, also say when, as the time into the session the way the replay shows it: `12:59`.",
         }
       }
       if (when > index.end - index.start) {
@@ -228,8 +248,6 @@ export class IncidentRouter {
       other = index.cars.find((c) => clip(c.driver) === name && holding(c))
       if (!other)
         return { content: `${name} wasn't on the server at ${clock(atMs)} in that session.` }
-    } else {
-      return { content: "Pick what happened from the list." }
     }
     if (!me || !other || other.carId === me.carId) {
       return { content: "Pick another driver: an incident is between two cars." }
@@ -543,6 +561,20 @@ export class IncidentRouter {
     }
     return { championshipId, claim, championship: await this.#entryList.value }
   }
+}
+
+/**
+ * A driver in the session by what was typed: their name, any case, or enough
+ * of it to be only theirs. As the list offers them, clipped to Discord's length.
+ */
+function driverNamed(index: JournalIndex, typed: string): string | undefined {
+  const names = [...new Set(index.cars.map((c) => clip(c.driver)))]
+  const t = typed.trim().toLowerCase()
+  if (!t) return undefined
+  const exact = names.find((n) => n.toLowerCase() === t)
+  if (exact) return exact
+  const partial = names.filter((n) => n.toLowerCase().includes(t))
+  return partial.length === 1 ? partial[0] : undefined
 }
 
 /** The other car in a contact, when one of the two was the reporter's at the time. */
