@@ -26,6 +26,7 @@ import {
   type JournalCar,
   type JournalIndex,
   journalNames,
+  sessionType,
 } from "./journals.js"
 import type { Incident, SqliteIncidentStore } from "./store.js"
 
@@ -78,6 +79,8 @@ const MAX_CHOICE_CHARS = 100
 const OFFERED_DAYS = 14
 const SESSION_TYPES: Record<number, string> = { 1: "Practice", 2: "Qualifying", 3: "Race" }
 const SOMETHING_ELSE = "other"
+/** AC's session types for qualifying and a race. */
+const RACING = new Set([2, 3])
 /** Undecided reports one driver can have open at once: each is a channel and a video render. */
 const MAX_OPEN = 3
 const ENTRY_LIST_TTL_MS = 60_000
@@ -442,20 +445,26 @@ export class IncidentRouter {
   async #sessionChoices(): Promise<Choice[]> {
     const oldest = Date.now() - OFFERED_DAYS * 24 * 3600_000
     const out: Choice[] = []
+    const when = new Intl.DateTimeFormat("en-US", {
+      timeZone: this.#o.timeZone,
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      // Discord doesn't tell a bot a driver's own time zone, so the league's, named.
+      timeZoneName: "short",
+    })
     for (const j of await journalNames(this.#o.recordings)) {
       if (!(j.started >= oldest)) break
-      const when = new Intl.DateTimeFormat("en-US", {
-        timeZone: this.#o.timeZone,
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(j.started)
+      // Qualifying and races: practice is where nobody files a report.
+      if (!RACING.has((await sessionType(this.#o.recordings, j.file)) ?? 0)) continue
       // "interlagos-1975-race": the session type last, as the recorder names it.
       const type = j.rest.slice(j.rest.lastIndexOf("-") + 1)
       const track = j.rest.slice(0, Math.max(0, j.rest.lastIndexOf("-")))
       out.push({
-        name: clip(`${type.charAt(0).toUpperCase()}${type.slice(1)} · ${track} · ${when}`),
+        name: clip(
+          `${type.charAt(0).toUpperCase()}${type.slice(1)} · ${track} · ${when.format(j.started)}`,
+        ),
         value: j.key,
       })
       if (out.length === MAX_CHOICES) break

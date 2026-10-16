@@ -61,6 +61,26 @@ export async function journalNames(recordings: string): Promise<JournalName[]> {
   return out.sort((a, b) => b.started - a.started)
 }
 
+const types = new Map<string, Promise<number | undefined>>()
+
+/**
+ * The session's type, 2 qualifying and 3 a race, from the journal's first
+ * record: read once, as it never changes, so a list of every recent session
+ * stays quick.
+ */
+export function sessionType(recordings: string, file: string): Promise<number | undefined> {
+  const path = join(recordings, file)
+  let type = types.get(path)
+  if (!type) {
+    type = (async () => {
+      for await (const r of readJournal(path)) return r.t === "session" ? r.type : undefined
+      return undefined
+    })().catch(() => undefined)
+    types.set(path, type)
+  }
+  return type
+}
+
 /** `file` is relative to `recordings`, as `journalNames` gives it. */
 export async function indexJournal(
   recordings: string,

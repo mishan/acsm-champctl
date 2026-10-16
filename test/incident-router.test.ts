@@ -227,9 +227,31 @@ const command = (
 })
 
 describe("/incident autocomplete", () => {
-  it("offers recent sessions by their recordings' names", async () => {
+  it("offers recent qualifying and races, not practice, in the league's time named", async () => {
+    // Two and three hours before the race in beforeEach.
+    for (const [hours, name, type] of [
+      [2, "Qualify", 2],
+      [3, "Practice", 1],
+    ] as const) {
+      const key = new Date(Date.now() - 3600_000 * hours).toISOString().replace(/[:.]/g, "-")
+      const w = new JournalWriter(join(dir, `${key}-loop-${name.toLowerCase()}.ndjson.gz`))
+      w.write({
+        t: "session",
+        at: 0,
+        serverName: "s",
+        track: "loop",
+        trackConfig: "",
+        name,
+        type,
+        recorderCarId: 0,
+      })
+      await w.close()
+    }
     const choices = await router().autocomplete(command(ANA, "report", { race: "" }), "race")
-    expect(choices).toEqual([{ name: expect.stringMatching(/^Race · loop · /), value: stamp }])
+    expect(choices.map((c) => c.name)).toEqual([
+      expect.stringMatching(/^Race · loop · \w{3} \d+, \d+:\d{2} [AP]M P[DS]T$/),
+      expect.stringMatching(/^Qualify · loop · /),
+    ])
   })
 
   it("offers the reporter's own contacts, and something else", async () => {

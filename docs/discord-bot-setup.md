@@ -368,7 +368,9 @@ compose run --rm standings` posts it by hand.
 With the race recorder running ([spectator.md](spectator.md)), drivers can
 report an incident with `/incident report`:
 
-- **race**: picked from the sessions recorded in the last two weeks.
+- **race**: picked from the qualifying sessions and races recorded in the last
+  two weeks, timed in the league's time zone, which is named: Discord doesn't
+  tell a bot a driver's own.
 - **what**: a contact the recording caught between them and someone else, or
   "Something else", which also needs **other_driver** and **when**, the time
   into the session as the replay shows it (`12:59`).
