@@ -13,7 +13,7 @@ import { SpectatorClient, type SpectatorOptions } from "ac-spectator"
 import { JournalWriter, type JournalRecord } from "./journal.js"
 import { PluginListener, type PluginListenerOptions } from "ac-spectator"
 import type { HandshakeOk, ServerPacket } from "ac-spectator"
-import { RaceControlFeed, type RaceControlOptions, type RaceControlUpdate } from "./racecontrol.js"
+import { RaceControlFeed, type RaceControlOptions, type RaceControlUpdate } from "acsm-race-control"
 import { localDate, placeOf, type Round, roundFor, slug } from "./rounds.js"
 
 export interface RecorderOptions {

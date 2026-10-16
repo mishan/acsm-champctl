@@ -14,7 +14,7 @@ import {
 } from "./incident.js"
 import { readJournal } from "./journal.js"
 import { type Suggestion, suggest } from "./rules.js"
-import { parseFastLane, Track } from "./track.js"
+import { parseFastLane, Track } from "ac-ai-line"
 
 export interface Analysis {
   packet: IncidentPacket

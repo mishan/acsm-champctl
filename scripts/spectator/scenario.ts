@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs"
 
 import { type Pose, SpectatorClient } from "ac-spectator"
 import { BRAKE_LIGHTS, type Vec3 } from "ac-spectator"
-import { parseFastLane, Track } from "../../src/spectator/track.js"
+import { parseFastLane, Track } from "ac-ai-line"
 import { WireWriter } from "ac-spectator"
 
 const [host = "127.0.0.1", port = "9600", acRoot = ".", car = "", fastLane = ""] =

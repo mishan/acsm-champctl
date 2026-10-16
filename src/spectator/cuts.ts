@@ -10,7 +10,7 @@
  */
 
 import { readJournal } from "./journal.js"
-import type { Track } from "./track.js"
+import type { Track } from "ac-ai-line"
 
 export interface TrackSkip {
   carId: number
