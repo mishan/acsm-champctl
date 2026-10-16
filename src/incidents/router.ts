@@ -27,6 +27,7 @@ import {
   type JournalIndex,
   journalNames,
   sessionType,
+  whereAt,
 } from "./journals.js"
 import type { Incident, SqliteIncidentStore } from "./store.js"
 
@@ -116,6 +117,8 @@ export class IncidentRouter {
     const index = await this.#index(command.options["race"])
     if (!index) return []
     if (focused === "other_driver") {
+      const near = await this.#nearby(command, index)
+      if (near) return matching(near)
       const names = [...new Set(index.cars.map((c) => clip(c.driver)))]
       return matching(names.map((n) => ({ name: n, value: n })))
     }
@@ -440,6 +443,36 @@ export class IncidentRouter {
     // Last, so a decision that didn't reach the channel can be made again.
     this.#o.store.decide(incident.number, outcome, command.userId, now)
     return { content: `Recorded. The channel is read-only now, kept for the record.` }
+  }
+
+  /**
+   * With a time typed in, the drivers on the server then, nearest the reporter
+   * first: whoever they mean is usually at the top. Straight-line distance, so
+   * across a hairpin counts as near; it orders a list, nothing more.
+   */
+  async #nearby(command: SlashCommand, index: JournalIndex): Promise<Choice[] | undefined> {
+    const atMs = parseClock(command.options["when"] ?? "")
+    if (atMs === undefined) return undefined
+    const who = await this.#who(command.userId, false)
+    if (!who?.claim || !who.championship) return undefined
+    const then = index.start + atMs
+    const holding = (c: JournalCar) => carAt(index, c.carId, then) === c
+    const me = this.#reporterCars(who.claim.entrantName, index, who.championship).find(holding)
+    const mine = me && whereAt(index, me.carId, then)
+    if (!me || !mine) return undefined
+    const others = index.cars
+      .filter((c) => c.carId !== me.carId && holding(c))
+      .map((c) => {
+        const p = whereAt(index, c.carId, then)
+        return { c, m: p ? Math.hypot(p[0] - mine[0], p[1] - mine[1]) : Number.POSITIVE_INFINITY }
+      })
+      .sort((a, b) => a.m - b.m)
+    return others.map(({ c, m }) => ({
+      name: clip(
+        Number.isFinite(m) ? `${c.driver} · ${Math.round(m)} m away at ${clock(atMs)}` : c.driver,
+      ),
+      value: clip(c.driver),
+    }))
   }
 
   async #sessionChoices(): Promise<Choice[]> {
