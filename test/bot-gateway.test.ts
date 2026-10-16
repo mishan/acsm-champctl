@@ -120,31 +120,38 @@ describe("GatewayTransport autocomplete", () => {
 })
 
 describe("GatewayTransport incident channels", () => {
-  it("locks every overwrite but the bot's and @everyone's, threads included, as Discord has it now", async () => {
-    const edits: [string, unknown][] = []
-    const moves: unknown[][] = []
-    const overwrite = (id: string) => ({
-      id,
-      edit: async (p: unknown) => {
-        edits.push([id, p])
-      },
-    })
+  /** A channel's overwrites as discord.js holds them: everyone may view and send. */
+  const VIEW_SEND = PermissionFlagsBits.ViewChannel | PermissionFlagsBits.SendMessages
+  const channel = (ids: string[], edit: (o: unknown) => Promise<unknown>) => ({
+    type: ChannelType.GuildText,
+    guildId: "g",
+    permissionOverwrites: {
+      cache: new Map(
+        ids.map((id) => [
+          id,
+          {
+            id,
+            type: id === "stewards" || id === "g" ? 0 : 1,
+            allow: { bitfield: VIEW_SEND },
+            deny: { bitfield: 0n },
+          },
+        ]),
+      ),
+    },
+    edit,
+  })
+
+  it("closes a channel in one edit: everyone but the bot and @everyone stops posting, threads included, as Discord has it now", async () => {
+    const edits: unknown[] = []
     // The cached copy predates a member a steward added by hand.
-    const channel = (ids: string[]) => ({
-      type: ChannelType.GuildText,
-      guildId: "g",
-      permissionOverwrites: { cache: new Map(ids.map((id) => [id, overwrite(id)])) },
-      edit: async (o: unknown) => {
-        moves.push([edits.length, o])
-      },
-    })
     const client = {
       user: { id: "bot" },
       channels: {
         fetch: async (_: string, o?: { force?: boolean }) =>
-          o?.force
-            ? channel(["g", "stewards", "ana", "added", "bot"])
-            : channel(["g", "stewards", "ana", "bot"]),
+          channel(
+            o?.force ? ["g", "stewards", "ana", "added", "bot"] : ["g", "stewards", "ana", "bot"],
+            async (e) => edits.push(e),
+          ),
       },
     }
     await GatewayTransport.wrapping(client as unknown as Client).lockChannel(
@@ -152,21 +159,46 @@ describe("GatewayTransport incident channels", () => {
       "closed-1-ana-bo",
       "closed",
     )
-    const shut = {
-      SendMessages: false,
-      SendMessagesInThreads: false,
-      CreatePublicThreads: false,
-      CreatePrivateThreads: false,
-    }
+    const shut =
+      PermissionFlagsBits.SendMessages |
+      PermissionFlagsBits.SendMessagesInThreads |
+      PermissionFlagsBits.CreatePublicThreads |
+      PermissionFlagsBits.CreatePrivateThreads
+    const closed = { allow: VIEW_SEND & ~shut, deny: shut }
+    const open = { allow: VIEW_SEND, deny: 0n }
     expect(edits).toEqual([
-      ["stewards", shut],
-      ["ana", shut],
-      ["added", shut],
+      {
+        name: "closed-1-ana-bo",
+        parent: "closed",
+        lockPermissions: false,
+        permissionOverwrites: [
+          { id: "g", type: 0, ...open },
+          { id: "stewards", type: 0, ...closed },
+          { id: "ana", type: 1, ...closed },
+          { id: "added", type: 1, ...closed },
+          { id: "bot", type: 1, ...open },
+        ],
+      },
     ])
-    // After all three, keeping them rather than taking the closed category's.
-    expect(moves).toEqual([
-      [3, { name: "closed-1-ana-bo", parent: "closed", lockPermissions: false }],
-    ])
+  })
+
+  it("tells the steward to try again rather than wait on Discord without end", async () => {
+    vi.useFakeTimers()
+    try {
+      const client = {
+        user: { id: "bot" },
+        channels: { fetch: async () => channel(["g", "ana"], () => new Promise(() => {})) },
+      }
+      const closing = GatewayTransport.wrapping(client as unknown as Client).lockChannel(
+        "c",
+        "closed-1",
+      )
+      const failed = expect(closing).rejects.toThrow(/holding back changes to this channel/)
+      await vi.advanceTimersByTimeAsync(60_000)
+      await failed
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each([
