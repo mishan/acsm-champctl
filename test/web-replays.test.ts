@@ -155,6 +155,17 @@ describe("/replays", () => {
     expect(old.statusCode).toBe(200)
   })
 
+  it("numbers the races on a night with two", async () => {
+    const round = "2026-10-12-interlagos-1975"
+    await recorded(`${round}/2026-10-15T03-24-29-113Z-interlagos-1975-race`, "Race", 1500)
+    await recorded(`${round}/2026-10-15T03-49-57-114Z-interlagos-1975-race`, "Race", 1500)
+    const page = (await app.inject({ url: "/replays" })).body
+    expect([...page.matchAll(/<td>(Race[^<]*)<\/td>/g)].map((m) => m[1])).toEqual([
+      "Race 2",
+      "Race 1",
+    ])
+  })
+
   it.each([
     "..%2F..%2Fetc%2Fpasswd",
     "missing.acreplay",

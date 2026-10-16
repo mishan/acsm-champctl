@@ -11,7 +11,7 @@ import { basename, dirname, join } from "node:path"
 import type { FastifyInstance, FastifyReply } from "fastify"
 
 import { readJournal } from "../spectator/journal.js"
-import { listRecordings } from "../spectator/rounds.js"
+import { listRecordings, raceNumbers } from "../spectator/rounds.js"
 
 export interface ReplayListing {
   /** Relative to the recordings folder: "<round>/<name>", or just the name for one from before rounds. */
@@ -124,10 +124,16 @@ export function replaysPage(list: readonly ReplayListing[], timeZone: string): s
     timeStyle: "short",
   })
   const day = new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric" })
+  // The server names both of a night's races "Race".
+  const numbers = raceNumbers(
+    list,
+    (r) => ({ race: /^race$/i.test(r.session), round: r.round, started: r.started }),
+    timeZone,
+  )
   const href = (file: string) => `/replays/${file.split("/").map(encodeURIComponent).join("/")}`
   const row = (r: ReplayListing) =>
     `<tr><td>${Number.isNaN(r.started) ? "" : esc(when.format(r.started))}</td>` +
-    `<td>${esc(r.session)}</td><td>${duration(r.durationS)}</td>` +
+    `<td>${esc(r.session)}${numbers.has(r) ? ` ${numbers.get(r)}` : ""}</td><td>${duration(r.durationS)}</td>` +
     `<td>${r.cars}</td><td><a href="${href(r.file)}" download>` +
     `${(r.bytes / 1e6).toFixed(1)} MB</a></td></tr>`
   // Rounds newest first, by their newest replay; replays from before rounds last.
