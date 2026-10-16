@@ -9,7 +9,7 @@
  */
 
 import type { IncidentPacket } from "./incident.js"
-import type { Track } from "./track.js"
+import type { Track } from "ac-ai-line"
 
 const COLORS = { a: "#d1495b", b: "#2e86ab" } as const
 /** Seconds of approach drawn before the contact, and after it. */

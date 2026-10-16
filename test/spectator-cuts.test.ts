@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { findTrackSkips } from "../src/spectator/cuts.js"
 import { JournalWriter, type JournalRecord } from "../src/spectator/journal.js"
 import type { CarState, Vec3 } from "ac-spectator"
-import { parseFastLane, Track } from "../src/spectator/track.js"
+import { parseFastLane, Track } from "ac-ai-line"
 import { fastLane, loop } from "./support/synthetic-track.js"
 
 const track = new Track(parseFastLane(fastLane(loop("left"))))

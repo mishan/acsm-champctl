@@ -15,7 +15,7 @@ import {
   type IncidentPacket,
 } from "../src/spectator/incident.js"
 import { suggest } from "../src/spectator/rules.js"
-import { parseFastLane, Track } from "../src/spectator/track.js"
+import { parseFastLane, Track } from "ac-ai-line"
 import { type ScriptedCar, writeScenario } from "./support/incident-scenario.js"
 import { fastLane, loop } from "./support/synthetic-track.js"
 

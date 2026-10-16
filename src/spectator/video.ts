@@ -14,7 +14,7 @@ import { spawn } from "node:child_process"
 import type { SKRSContext2D } from "@napi-rs/canvas"
 
 import { readJournal } from "./journal.js"
-import type { Track } from "./track.js"
+import type { Track } from "ac-ai-line"
 import { JUMP_M, JUMP_PER_MS } from "./cuts.js"
 
 export interface VideoOptions {

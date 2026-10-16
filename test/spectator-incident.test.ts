@@ -21,7 +21,7 @@ import { BRAKE_LIGHTS, type CarState } from "ac-spectator"
 import { renderIncidentSvg } from "../src/spectator/render.js"
 import { incidentBrief } from "../src/spectator/brief.js"
 import { suggest } from "../src/spectator/rules.js"
-import { parseFastLane, Track } from "../src/spectator/track.js"
+import { parseFastLane, Track } from "ac-ai-line"
 import { fastLane, loop } from "./support/synthetic-track.js"
 
 const ALICE = 1

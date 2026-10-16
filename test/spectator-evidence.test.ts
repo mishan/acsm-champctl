@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { gatherEvidence } from "../src/spectator/evidence.js"
-import { parseFastLane, Track } from "../src/spectator/track.js"
+import { parseFastLane, Track } from "ac-ai-line"
 import type { FrameSink } from "../src/spectator/video.js"
 import { writeScenario } from "./support/incident-scenario.js"
 import { fastLane, loop } from "./support/synthetic-track.js"
