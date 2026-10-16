@@ -131,6 +131,7 @@ describe("serveMcp", () => {
       "list_sessions",
       "list_incidents",
       "get_incident",
+      "list_track_skips",
       "get_rules",
     ])
     // Notifications get no answer.
@@ -148,6 +149,12 @@ describe("serveMcp", () => {
     expect(r.get(2)?.result?.content[0]?.text).toMatch(
       /^0: Bo hit Ana, 3 km\/h\n1: Ana hit the scenery/,
     )
+  })
+
+  it("says when nobody in a session gained from a cut", async () => {
+    // Two cars side by side down a straight: on track throughout.
+    const r = await session([call(1, "list_track_skips", { session: SESSION })])
+    expect(r.get(1)?.result?.content[0]?.text).toBe("Nobody gained a second or more off the track.")
   })
 
   it("returns an incident as the brief, the suggested call and a drawing", async () => {

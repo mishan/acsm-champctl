@@ -197,6 +197,17 @@ services:
   cli:
     <<: *job
 
+  # champctl-mcp for an MCP client: `docker compose run --rm -T mcp`. It reads
+  # the bot's store and the recordings, with the car and track files to measure
+  # them, and holds no secret: not the bot's token, not the ACSM account.
+  mcp:
+    <<: *job
+    entrypoint: [champctl-mcp]
+    volumes:
+      - champctl-data:/var/lib/champctl
+      - ./config:/etc/champctl:ro
+      - ${CHAMPCTL_AC_ROOT:-./ac}:/var/lib/champctl-ac:ro
+
   # The same with the ACSM account, for finalize, championship --import and
   # the livery admin commands. Prompts need a terminal, which `run` gives.
   admin:

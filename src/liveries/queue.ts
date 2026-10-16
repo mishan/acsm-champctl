@@ -31,7 +31,7 @@
 import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
-import { migrate, type Migration, restrictToOwner } from "../sqlite.js"
+import { migrate, type Migration, openForReading, restrictToOwner } from "../sqlite.js"
 
 export type SubmissionState = "queued" | "applied" | "refused" | "superseded"
 
@@ -249,6 +249,11 @@ export class SqliteSubmissionQueue {
 
   private constructor(db: DatabaseSync) {
     this.#db = db
+  }
+
+  /** For reading alongside the process that writes it: see `openForReading`. */
+  static openForReading(path: string): SqliteSubmissionQueue {
+    return new SqliteSubmissionQueue(openForReading(path, "queue", MIGRATIONS))
   }
 
   static async open(path: string, options: OpenOptions = {}): Promise<SqliteSubmissionQueue> {

@@ -11,7 +11,7 @@
 
 import { chmod } from "node:fs/promises"
 import { resolve } from "node:path"
-import type { DatabaseSync } from "node:sqlite"
+import { DatabaseSync } from "node:sqlite"
 
 /**
  * Owner-only on a SQLite database and its sidecars.
@@ -110,6 +110,37 @@ export function migrate(
           `${e instanceof Error ? e.message : String(e)}`,
       )
     }
+  }
+}
+
+/**
+ * A store's database to read and never write: no migration, no change to its
+ * mode, and refused unless its tables are at exactly the version this champctl
+ * knows. A reader on an older or newer schema than the writer beside it would
+ * misread it, and one that migrated would change it under the writer's feet.
+ */
+export function openForReading(
+  path: string,
+  component: string,
+  migrations: readonly Migration[],
+): DatabaseSync {
+  const db = new DatabaseSync(path, { readOnly: true })
+  try {
+    db.exec("PRAGMA busy_timeout = 5000")
+    const row = db
+      .prepare("SELECT version FROM champctl_schema WHERE component = ?")
+      .get(component) as { version: number } | undefined
+    const at = Number(row?.version ?? 0)
+    if (at !== migrations.length) {
+      throw new Error(
+        `The ${component} tables in ${path} are at schema version ${at}, and this champctl reads ` +
+          `version ${migrations.length}. Run the same champctl as the one that writes them.`,
+      )
+    }
+    return db
+  } catch (e) {
+    db.close()
+    throw e
   }
 }
 
