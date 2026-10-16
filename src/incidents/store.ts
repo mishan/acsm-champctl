@@ -11,7 +11,7 @@ import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
-import { migrate, type Migration, restrictToOwner } from "../sqlite.js"
+import { migrate, type Migration, openForReading, restrictToOwner } from "../sqlite.js"
 
 const MIGRATIONS: Migration[] = [
   {
@@ -120,6 +120,11 @@ export class SqliteIncidentStore {
     this.#db = db
   }
 
+  /** For reading alongside the process that writes it: see `openForReading`. */
+  static openForReading(path: string): SqliteIncidentStore {
+    return new SqliteIncidentStore(openForReading(path, "incidents", MIGRATIONS))
+  }
+
   static async open(path: string): Promise<SqliteIncidentStore> {
     if (path !== ":memory:") await mkdir(dirname(path), { recursive: true, mode: 0o700 })
     const db = new DatabaseSync(path)
@@ -175,6 +180,17 @@ export class SqliteIncidentStore {
   /** Counted: a decision, or a tie handed to the stewards. Either way, not counted again. */
   settlePoll(number: number): void {
     this.#db.prepare("UPDATE incidents SET poll_settled = 1 WHERE number = ?").run(number)
+  }
+
+  /** Reports that got a channel, newest first; with `open`, only those not yet decided. */
+  list(o: { open?: boolean } = {}): Incident[] {
+    const rows = this.#db
+      .prepare(
+        `SELECT * FROM incidents WHERE channel_id IS NOT NULL ${o.open ? "AND decision IS NULL" : ""}
+         ORDER BY number DESC`,
+      )
+      .all() as unknown as Row[]
+    return rows.map(fromRow)
   }
 
   byChannel(channelId: string): Incident | undefined {

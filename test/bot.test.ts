@@ -533,6 +533,16 @@ describe("the bot cannot write to ACSM", () => {
     expect(importers.map((f) => basename(f))).toEqual(["discord.ts"])
   })
 
+  // The same wall around champctl-mcp, which hands whatever a model asks for
+  // to the tools it serves: none of them may reach a write.
+  it("is matched by champctl-mcp, which reaches nothing in the write path either", () => {
+    const mcp = [
+      join(srcDir, "cli", "mcp.ts"),
+      ...readdirSync(join(srcDir, "mcp")).map((f) => join(srcDir, "mcp", f)),
+    ]
+    expect(reachesAny(mcp, writePath)).toEqual([])
+  })
+
   it("checks a directory that actually has modules in it", () => {
     // Otherwise the tests above pass by finding nothing to look at.
     expect(botModules().length).toBeGreaterThan(0)

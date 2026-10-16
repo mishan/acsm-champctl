@@ -33,7 +33,7 @@ import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import type { Championship } from "../acsm/types.js"
-import { migrate, type Migration, restrictToOwner } from "../sqlite.js"
+import { migrate, type Migration, openForReading, restrictToOwner } from "../sqlite.js"
 import { usableAsFolder } from "./pack.js"
 import { nearbyNames, rosterOf } from "./plan.js"
 
@@ -345,6 +345,11 @@ export class SqliteClaimStore {
 
   private constructor(db: DatabaseSync) {
     this.#db = db
+  }
+
+  /** For reading alongside the process that writes it: see `openForReading`. */
+  static openForReading(path: string): SqliteClaimStore {
+    return new SqliteClaimStore(openForReading(path, "claims", MIGRATIONS))
   }
 
   static async open(path: string, options: OpenOptions = {}): Promise<SqliteClaimStore> {

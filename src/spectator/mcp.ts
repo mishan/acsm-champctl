@@ -1,19 +1,16 @@
 /**
- * An MCP server over a folder of recorder journals, so a steward can talk an
- * incident through with whatever model their MCP client runs: Claude Desktop
- * or Claude Code on their own subscription, or a local model. champctl calls
- * no model and spends nothing.
- *
- * Written against the protocol directly rather than the official SDK, which
- * brings a web server stack along for transports this doesn't use. A stdio
- * server needs four methods: initialize, ping, tools/list and tools/call.
+ * The recordings as MCP tools: sessions, their collisions, and one collision
+ * measured with a suggested call and a drawing, for a steward to talk an
+ * incident through with a model. `champctl-spectator mcp` serves these alone;
+ * `champctl-mcp` serves them with the rest of champctl.
  */
 
 import { basename, join } from "node:path"
-import { createInterface } from "node:readline"
 
-import { analyzeIncident } from "./analysis.js"
+import { type Content, type McpTool, NO_ARGS, serveTools } from "../mcp/server.js"
+import { analyzeIncident, trackForJournal } from "./analysis.js"
 import { DEFAULT_RULES, incidentBrief, LIMITS } from "./brief.js"
+import { findTrackSkips } from "./cuts.js"
 import { svgToPng } from "./evidence.js"
 import type { IncidentThresholds } from "./incident.js"
 import { listCollisions } from "./incident.js"
@@ -22,19 +19,17 @@ import { listRecordings } from "./rounds.js"
 import { renderIncidentSvg } from "./render.js"
 import { callName } from "./rules.js"
 
-export interface McpOptions {
+export interface RecordingToolOptions {
   journals: string
   acRoot: string
   rules?: string
   thresholds?: Partial<IncidentThresholds>
+}
+
+export interface McpOptions extends RecordingToolOptions {
   input?: NodeJS.ReadableStream
   output?: NodeJS.WritableStream
 }
-
-/** Newest first. A client that asks for one of these gets it back. */
-const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
-
-type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
 
 const SESSION_ARG = {
   type: "string",
@@ -46,7 +41,7 @@ const TOOLS = [
     name: "list_sessions",
     description:
       "The recorded sessions: track, session, when, and how many car-to-car collisions each has.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: NO_ARGS,
   },
   {
     name: "list_incidents",
@@ -73,18 +68,24 @@ const TOOLS = [
     },
   },
   {
+    name: "list_track_skips",
+    description:
+      "Every time a car left the track and came back on further round having covered that stretch at least a second faster than its driver usually does on the track: a big cut. Times are into the session.",
+    inputSchema: {
+      type: "object",
+      properties: { session: SESSION_ARG },
+      required: ["session"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "get_rules",
     description: "The league's racing rules, and what a recording can and can't show.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: NO_ARGS,
   },
 ]
 
-export async function serveMcp(o: McpOptions): Promise<void> {
-  const out = o.output ?? process.stdout
-  const send = (msg: object): void => {
-    out.write(`${JSON.stringify({ jsonrpc: "2.0", ...msg })}\n`)
-  }
-
+export function recordingTools(o: RecordingToolOptions): McpTool[] {
   /** A journal in the folder by its file name, and nothing outside it. */
   const journal = async (session: unknown): Promise<string> => {
     if (
@@ -155,6 +156,22 @@ export async function serveMcp(o: McpOptions): Promise<void> {
         { type: "image", data: png.toString("base64"), mimeType: "image/png" },
       ]
     },
+    async list_track_skips(args) {
+      const path = await journal(args["session"])
+      const skips = await findTrackSkips(path, await trackForJournal(path, o.acRoot))
+      const clock = (s: number) =>
+        `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`
+      const lines = skips.map(
+        (k) =>
+          `${clock(k.offS)}  ${k.driver}: ${Math.round(k.skippedM)} m of track in ${k.tookS.toFixed(1)} s off it, usually ${k.usualS.toFixed(1)} s${k.field ? " for other drivers" : ""}: ${k.savedS.toFixed(1)} s gained. Back on at ${clock(k.backS)}.`,
+      )
+      return [
+        {
+          type: "text",
+          text: lines.length ? lines.join("\n") : "Nobody gained a second or more off the track.",
+        },
+      ]
+    },
     async get_rules() {
       return [
         {
@@ -165,99 +182,17 @@ export async function serveMcp(o: McpOptions): Promise<void> {
     },
   }
 
-  const handle = async (msg: unknown): Promise<void> => {
-    if (typeof msg !== "object" || msg === null || Array.isArray(msg)) {
-      send({ id: null, error: { code: -32600, message: "expected a JSON-RPC request object" } })
-      return
-    }
-    const { id, method } = msg as { id?: unknown; method?: unknown }
-    const raw = (msg as { params?: unknown }).params
-    const params =
-      typeof raw === "object" && raw !== null && !Array.isArray(raw)
-        ? (raw as Record<string, unknown>)
-        : {}
-    // Notifications have no id and get no answer.
-    if (id === undefined) return
-    switch (method) {
-      case "initialize": {
-        const asked = params["protocolVersion"]
-        send({
-          id,
-          result: {
-            protocolVersion:
-              typeof asked === "string" && PROTOCOL_VERSIONS.includes(asked)
-                ? asked
-                : PROTOCOL_VERSIONS[0],
-            capabilities: { tools: {} },
-            serverInfo: { name: "champctl-spectator", version: "0.1.0" },
-            instructions:
-              "Recorded race sessions and the collisions in them. Start with list_sessions, then list_incidents and get_incident. Facts come from a server-side recording; the suggested call is from fixed rules; the decision is a human steward's.",
-          },
-        })
-        return
-      }
-      case "ping":
-        send({ id, result: {} })
-        return
-      case "tools/list":
-        send({ id, result: { tools: TOOLS } })
-        return
-      case "tools/call": {
-        const name = params["name"]
-        const tool =
-          typeof name === "string" && Object.hasOwn(tools, name) ? tools[name] : undefined
-        if (!tool) {
-          send({ id, error: { code: -32602, message: `no tool called ${JSON.stringify(name)}` } })
-          return
-        }
-        try {
-          const args = params["arguments"]
-          const content = await tool(
-            typeof args === "object" && args !== null && !Array.isArray(args)
-              ? (args as Record<string, unknown>)
-              : {},
-          )
-          send({ id, result: { content } })
-        } catch (e) {
-          // A tool that fails tells the model why, as a result it can read,
-          // rather than a protocol error it can't.
-          send({
-            id,
-            result: {
-              content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
-              isError: true,
-            },
-          })
-        }
-        return
-      }
-      default:
-        send({ id, error: { code: -32601, message: `method not found: ${String(method)}` } })
-    }
-  }
+  return TOOLS.map((t) => ({ ...t, run: tools[t.name]! }))
+}
 
-  const lines = createInterface({ input: o.input ?? process.stdin, crlfDelay: Infinity })
-  const pending = new Set<Promise<void>>()
-  for await (const line of lines) {
-    if (!line.trim()) continue
-    let msg: unknown
-    try {
-      msg = JSON.parse(line)
-    } catch {
-      send({ id: null, error: { code: -32700, message: "parse error" } })
-      continue
-    }
-    // Whatever goes wrong answering one request must not take the server
-    // down: the steward's client would lose it mid-conversation.
-    const p = handle(msg)
-      .catch((e: unknown) => {
-        const id = (msg as { id?: unknown } | null)?.id
-        if (id !== undefined) {
-          send({ id, error: { code: -32603, message: e instanceof Error ? e.message : String(e) } })
-        }
-      })
-      .finally(() => pending.delete(p))
-    pending.add(p)
-  }
-  await Promise.all(pending)
+export async function serveMcp(o: McpOptions): Promise<void> {
+  await serveTools({
+    name: "champctl-spectator",
+    version: "0.1.0",
+    instructions:
+      "Recorded race sessions and the collisions in them. Start with list_sessions, then list_incidents and get_incident. Facts come from a server-side recording; the suggested call is from fixed rules; the decision is a human steward's.",
+    tools: recordingTools(o),
+    ...(o.input ? { input: o.input } : {}),
+    ...(o.output ? { output: o.output } : {}),
+  })
 }
