@@ -514,17 +514,24 @@ export class IncidentRouter {
     const link = this.#o.replayUrl
       ? `${this.#o.replayUrl.replace(/\/+$/, "")}/${(round === "." ? [e.clip] : [round, e.clip]).map(encodeURIComponent).join("/")}`
       : `\`${e.clip}\` on the replays page`
-    await this.#o.channels.post(
-      channelId,
-      `Overhead video below, and a replay clip to watch in the game: ${link}`,
-      [
+    await this.#o.channels.post(channelId, `A replay clip to watch in the game: ${link}`)
+    // On its own, last: an upload Discord is slow to take mustn't cost the
+    // channel the rest, or be reported as evidence that couldn't be gathered.
+    await this.#o.channels
+      .post(channelId, "From above:", [
         {
           name: "overhead.mp4",
           data: await readFile(e.video),
           description: "Both cars from above",
         },
-      ],
-    )
+      ])
+      .catch(async (err) => {
+        this.#o.log?.(`overhead video for ${channelId}: ${message(err)}`)
+        await this.#o.channels.post(
+          channelId,
+          `The overhead video didn't upload (${message(err)}). The replay clip shows the same stretch.`,
+        )
+      })
   }
 
   async #decide(command: SlashCommand): Promise<CommandReply> {

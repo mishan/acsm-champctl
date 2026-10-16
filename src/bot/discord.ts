@@ -50,6 +50,9 @@ import {
   type VoiceMove,
 } from "./transport.js"
 
+/** How long closing a channel may wait on Discord before the steward is told to try again. */
+const LOCK_TIMEOUT_MS = 60_000
+
 export interface GatewayOptions {
   token: string
   /** How long to wait for the gateway handshake. */
@@ -89,6 +92,9 @@ export class GatewayTransport implements DiscordTransport {
   static async login(options: GatewayOptions): Promise<GatewayTransport> {
     const client = new Client({
       intents: options.voice ? [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] : [],
+      // discord.js's 15 s is too short for an incident's video on a slow
+      // moment: one timed out four times over and the upload was lost.
+      rest: { timeout: 60_000 },
     })
     const timeoutMs = options.readyTimeoutMs ?? 30_000
 
@@ -381,28 +387,55 @@ export class GatewayTransport implements DiscordTransport {
       throw new BotError(`${channelId} isn't a text channel I can see.`)
     }
     const me = this.#client.user?.id
-    for (const overwrite of channel.permissionOverwrites.cache.values()) {
-      if (overwrite.id === me || overwrite.id === channel.guildId) continue
-      await overwrite.edit({
-        SendMessages: false,
-        SendMessagesInThreads: false,
-        CreatePublicThreads: false,
-        CreatePrivateThreads: false,
-      })
+    const shut =
+      PermissionFlagsBits.SendMessages |
+      PermissionFlagsBits.SendMessagesInThreads |
+      PermissionFlagsBits.CreatePublicThreads |
+      PermissionFlagsBits.CreatePrivateThreads
+    const overwrites = [...channel.permissionOverwrites.cache.values()].map((o) => {
+      const keep = o.id === me || o.id === channel.guildId
+      return {
+        id: o.id,
+        type: o.type,
+        allow: keep ? o.allow.bitfield : o.allow.bitfield & ~shut,
+        deny: keep ? o.deny.bitfield : o.deny.bitfield | shut,
+      }
+    })
+    // One edit, not one per overwrite and another to rename: Discord limits
+    // permission changes to a couple at a time, and the bot waited out its
+    // limit without a word while a steward watched "thinking…".
+    let timer: NodeJS.Timeout | undefined
+    const held = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new BotError(
+              "Discord is holding back changes to this channel. Try again in a few minutes.",
+            ),
+          ),
+        LOCK_TIMEOUT_MS,
+      )
+    })
+    try {
+      await Promise.race([
+        channel.edit({
+          name,
+          permissionOverwrites: overwrites,
+          ...(closedCategoryId ? { parent: closedCategoryId, lockPermissions: false } : {}),
+        }),
+        held,
+      ])
+    } catch (e) {
+      if (e instanceof BotError) throw e
+      throw new BotError(
+        `Couldn't close the incident's channel: ${message(e)}. ` +
+          ((e as { code?: unknown }).code === 30013
+            ? "Discord allows 50 channels in a category: move or delete old ones."
+            : "Check discord.incidents.closedCategoryId, and that the bot can see that category."),
+      )
+    } finally {
+      clearTimeout(timer)
     }
-    await channel
-      .edit({
-        name,
-        ...(closedCategoryId ? { parent: closedCategoryId, lockPermissions: false } : {}),
-      })
-      .catch((e: unknown) => {
-        throw new BotError(
-          `Locked the incident's channel but couldn't rename or move it: ${message(e)}. ` +
-            ((e as { code?: unknown }).code === 30013
-              ? "Discord allows 50 channels in a category: move or delete old ones."
-              : "Check discord.incidents.closedCategoryId, and that the bot can see that category."),
-        )
-      })
   }
 
   async #dispatch(
