@@ -53,6 +53,8 @@ export interface IncidentChannels {
     answers: readonly string[],
     hours: number,
   ): Promise<string>
+  /** Closes a poll early, where its count no longer matters. */
+  endPoll(channelId: string, messageId: string): Promise<void>
   /** The votes for each answer, in the order they were posted, and whether Discord has finished counting. */
   pollResults(
     channelId: string,
@@ -438,7 +440,11 @@ export class IncidentRouter {
     for (const incident of this.#o.store.pollsDue(now)) {
       const channelId = incident.channelId
       if (!channelId || !incident.pollMessageId) continue
+      // A steward deciding this one right now goes first.
+      if (this.#deciding.has(channelId)) continue
+      this.#deciding.add(channelId)
       try {
+        if (this.#o.store.byChannel(channelId)?.decision !== undefined) continue
         const { finalized, counts } = await this.#o.channels.pollResults(
           channelId,
           incident.pollMessageId,
@@ -461,12 +467,21 @@ export class IncidentRouter {
         }
         const outcome = `${winners[0] === 2 ? "A racing incident: neither driver at fault" : `${voteAnswers(incident)[winners[0]!]} at fault`}, by vote (${tally})`
         await this.#announce(channelId, incident, outcome, "the vote")
-        await this.#o.channels.lock(channelId, channelName(incident, "closed"))
-        // Last, so a decision that didn't reach the channel is counted again.
+        // Recorded once it's announced, and before the lock: a channel that
+        // won't close mustn't have the decision posted again every five minutes.
         this.#o.store.decide(incident.number, outcome, "vote", now)
         this.#o.store.settlePoll(incident.number)
+        await this.#o.channels.lock(channelId, channelName(incident, "closed")).catch(async (e) => {
+          this.#o.log?.(`incident #${incident.number}: closing the channel: ${message(e)}`)
+          await this.#o.channels.post(
+            channelId,
+            `The decision is recorded, but I couldn't close this channel: ${message(e)}. Stewards, please close it by hand.`,
+          )
+        })
       } catch (e) {
         this.#o.log?.(`incident #${incident.number}: counting the vote: ${message(e)}`)
+      } finally {
+        this.#deciding.delete(channelId)
       }
     }
   }
@@ -537,6 +552,12 @@ export class IncidentRouter {
   async #record(command: SlashCommand, incident: Incident, outcome: string): Promise<CommandReply> {
     const now = (this.#o.now ?? (() => new Date()))()
     await this.#announce(command.channelId, incident, outcome, `<@${command.userId}>`)
+    // A vote still open under the stewards' decision would only confuse: it's ended.
+    if (incident.pollMessageId) {
+      await this.#o.channels.endPoll(command.channelId, incident.pollMessageId).catch((e) => {
+        this.#o.log?.(`incident #${incident.number}: ending the vote: ${message(e)}`)
+      })
+    }
     await this.#o.channels.lock(command.channelId, channelName(incident, "closed"))
     // Last, so a decision that didn't reach the channel can be made again.
     this.#o.store.decide(incident.number, outcome, command.userId, now)

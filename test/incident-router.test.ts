@@ -84,6 +84,7 @@ beforeEach(async () => {
   failRead = false
   failFirstPost = false
   polls = []
+  ended = []
   pollResult = { finalized: true, counts: [0, 0, 0] }
   reads = 0
   rendersAtOnce = 0
@@ -98,6 +99,7 @@ let rendering = 0
 /** Polls posted, and what counting one answers. */
 let polls: { channel: string; question: string; answers: readonly string[]; hours: number }[]
 let pollResult: { finalized: boolean; counts: number[] }
+let ended: [string, string][]
 
 function router(
   claimed: Record<string, string> = { [ANA]: "Ana", [BO]: "Bo", [DEE]: "Dee" },
@@ -145,7 +147,14 @@ function router(
       polls.push({ channel, question, answers, hours })
       return `poll-${polls.length}`
     },
-    pollResults: async () => pollResult,
+    pollResults: async () => {
+      // As long as Discord takes, so a steward can decide while it's counting.
+      await new Promise((r) => setTimeout(r, 20))
+      return pollResult
+    },
+    endPoll: async (channel, id) => {
+      ended.push([channel, id])
+    },
   }
   return new IncidentRouter({
     recordings: dir,
@@ -788,6 +797,49 @@ describe("deciding by vote", () => {
     pollResult = { finalized: true, counts: [5, 0, 0] }
     await voting(hoursIn(49)).settlePolls()
     expect(channels.locked).toHaveLength(1)
+  })
+
+  it("posts a vote's decision once, though the channel won't close", async () => {
+    await report(voting())
+    pollResult = { finalized: true, counts: [5, 0, 0] }
+    failLock = true
+    for (const h of [49, 50, 51]) await voting(hoursIn(h)).settlePolls()
+    expect(channels.posts.filter(([, t]) => t.startsWith("**Decision"))).toHaveLength(1)
+    expect(channels.posts.at(-1)![1]).toMatch(
+      /^The decision is recorded, but I couldn't close this channel/,
+    )
+    expect(store.byChannel("chan-1")?.decidedBy).toBe("vote")
+  })
+
+  it("makes one decision when a steward decides while the vote is being counted", async () => {
+    await report(voting())
+    const r = voting(hoursIn(49))
+    pollResult = { finalized: true, counts: [5, 0, 0] }
+    await Promise.all([
+      r.settlePolls(),
+      r.handle(
+        command(
+          "s",
+          "decide",
+          { outcome: "No action" },
+          { channelId: "chan-1", roleIds: [STEWARDS] },
+        ),
+      ),
+    ])
+    expect(channels.posts.filter(([, t]) => t.startsWith("**Decision"))).toHaveLength(1)
+  })
+
+  it("ends the vote when the stewards decide first", async () => {
+    await report(voting())
+    await voting().handle(
+      command(
+        "s",
+        "decide",
+        { outcome: "No action" },
+        { channelId: "chan-1", roleIds: [STEWARDS] },
+      ),
+    )
+    expect(ended).toEqual([["chan-1", "poll-1"]])
   })
 
   it("leaves alone a vote the stewards have already decided", async () => {

@@ -1031,6 +1031,7 @@ async function serve(args: Args): Promise<number> {
               poll: (channelId, question, answers, hours) =>
                 transport.postPoll(channelId, question, answers, hours),
               pollResults: (channelId, messageId) => transport.pollResults(channelId, messageId),
+              endPoll: (channelId, messageId) => transport.endPoll(channelId, messageId),
             },
           })
         : undefined

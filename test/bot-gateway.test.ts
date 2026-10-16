@@ -11,7 +11,14 @@
  * `GatewayTransport.wrapping` exists for this: a fake client is enough to drive
  * `post` and the interaction handler, without a token or a socket.
  */
-import { ChannelType, ChatInputCommandInteraction, Client, Events, MessageFlags } from "discord.js"
+import {
+  ChannelType,
+  ChatInputCommandInteraction,
+  Client,
+  Events,
+  MessageFlags,
+  PermissionFlagsBits,
+} from "discord.js"
 import { describe, expect, it, vi } from "vitest"
 
 import { GatewayTransport, toSlashCommand } from "../src/bot/discord.js"
@@ -218,6 +225,12 @@ describe("GatewayTransport incident votes", () => {
       "ana",
       "bot",
     ])
+    // Only the bot may start a poll.
+    const polls = (id: string) =>
+      ((made?.permissionOverwrites.find((o) => o.id === id)?.allow ?? []) as bigint[]).includes(
+        PermissionFlagsBits.SendPolls,
+      )
+    expect(["stewards", "racers", "ana", "bot"].map(polls)).toEqual([false, false, false, true])
   })
 
   it("posts a one-choice poll, and reads its votes back in the order of its answers", async () => {

@@ -406,7 +406,9 @@ with each driver and "Racing incident (neither)", open for `hours` (48 by
 default, Discord allows 1 to 768). When it closes, the winner is the decision,
 posted and recorded the same way, and the channel is closed. A tie, or a poll
 nobody voted in, is handed to the stewards to decide with `/incident decide`,
-which also still works at any time before the vote closes. GridMom counts
+which also still works at any time before the vote closes, and ends the vote
+when it does. The bot needs **Send Polls**, which it gives itself in each
+channel and so must hold on its server role. GridMom counts
 closed polls every five minutes, so a decision can follow the close by that
 much.
 

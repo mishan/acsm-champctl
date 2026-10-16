@@ -300,7 +300,16 @@ export class GatewayTransport implements DiscordTransport {
           { id: guildId, type: OverwriteType.Role, deny: [PermissionFlagsBits.ViewChannel] },
           ...o.roleIds.map((id) => ({ id, type: OverwriteType.Role, allow: can })),
           ...o.userIds.map((id) => ({ id, type: OverwriteType.Member, allow: can })),
-          ...(me ? [{ id: me, type: OverwriteType.Member, allow: can }] : []),
+          // Polls are the bot's alone: drivers and voters vote, they don't start them.
+          ...(me
+            ? [
+                {
+                  id: me,
+                  type: OverwriteType.Member,
+                  allow: [...can, PermissionFlagsBits.SendPolls],
+                },
+              ]
+            : []),
         ],
       })
       .catch((e: unknown) => {
@@ -337,6 +346,13 @@ export class GatewayTransport implements DiscordTransport {
       allowedMentions: { parse: [] },
     })
     return sent.id
+  }
+
+  async endPoll(channelId: string, messageId: string): Promise<void> {
+    const channel = await this.#client.channels.fetch(channelId)
+    if (!channel?.isTextBased()) throw new BotError(`${channelId} isn't a text channel I can see.`)
+    const poll = (await channel.messages.fetch({ message: messageId, force: true })).poll
+    if (poll && !poll.resultsFinalized) await poll.end()
   }
 
   /** A poll's votes per answer, in the order posted, fetched fresh: no intents means no vote events. */
