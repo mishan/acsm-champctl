@@ -321,17 +321,20 @@ describe("GatewayTransport.post", () => {
     expect([...payload.files[0]!.attachment]).toEqual([...data])
   })
 
-  it("pings the users a message names, and still nobody else", async () => {
+  it("pings the users and roles a message names, and still nobody else", async () => {
     // An incident's decision tells both drivers; a name in its text that reads
     // "@everyone" still mustn't.
     const { client, sent } = fakeClient()
     const transport = GatewayTransport.wrapping(client)
     await transport.post({
       channelId: "444444444444444444",
-      content: "@everyone <@5>",
+      content: "@everyone <@5> <@&6>",
       pings: ["5"],
+      pingRoles: ["6"],
     })
-    expect(sent[0]?.payload).toMatchObject({ allowedMentions: { parse: [], users: ["5"] } })
+    expect(sent[0]?.payload).toMatchObject({
+      allowedMentions: { parse: [], users: ["5"], roles: ["6"] },
+    })
   })
 
   it("suppresses every mention in an admin announcement", async () => {

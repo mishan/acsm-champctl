@@ -28,6 +28,8 @@ export interface DiscordMessage {
    * incident. Everything else the bot posts pings no one.
    */
   pings?: readonly string[]
+  /** Roles it may notify, by id: the Racers, asked to an incident's vote. */
+  pingRoles?: readonly string[]
 }
 
 export interface DiscordFile {

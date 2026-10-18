@@ -37,12 +37,13 @@ import type { Incident, SqliteIncidentStore } from "./store.js"
 export interface IncidentChannels {
   /** A new private channel for the stewards and these Discord users; its id. */
   create(name: string, userIds: readonly string[]): Promise<string>
-  /** `pings` are the users it may notify; nobody else is, whatever the text says. */
+  /** `pings` and `pingRoles` are who it may notify; nobody else is, whatever the text says. */
   post(
     channelId: string,
     content: string,
     files?: readonly DiscordFile[],
     pings?: readonly string[],
+    pingRoles?: readonly string[],
   ): Promise<void>
   /** Nobody but the bot can post in it any more; everyone who could see it still can. Renamed `name`. */
   lock(channelId: string, name: string): Promise<void>
@@ -83,8 +84,9 @@ export interface IncidentRouterOptions {
   /**
    * The league decides by vote: a poll in each channel, open `hours`, whose
    * result is the decision when it closes. A tie is left to the stewards.
+   * `roleId`, the voters, is called to each channel as it opens.
    */
-  vote?: { hours: number }
+  vote?: { hours: number; roleId: string }
   now?: () => Date
   log?: (line: string) => void
 }
@@ -173,9 +175,11 @@ export class IncidentRouter {
         ...matching(choices).slice(0, MAX_CHOICES - 1),
         {
           name:
-            choices.length === 0
-              ? "Something else (no contact of yours was recorded): give the driver and the time below"
-              : "Something else: give the driver and the time below",
+            index.collisions.length === 0
+              ? "Something else (this session recorded no contacts): give the driver and the time below"
+              : choices.length === 0
+                ? "Something else (no contact of yours was recorded): give the driver and the time below"
+                : "Something else: give the driver and the time below",
           value: SOMETHING_ELSE,
         },
       ]
@@ -367,9 +371,11 @@ export class IncidentRouter {
           `${clock(atMs)} into the session.\n> ${description.replace(/\n/g, "\n> ")}` +
           (otherClaim
             ? ""
-            : `\n\n${otherEntrant} hasn't claimed their name with \`/livery claim\`, so they can't see this channel yet.`),
+            : `\n\n${otherEntrant} hasn't claimed their name with \`/livery claim\`, so they can't see this channel yet.`) +
+          (this.#o.vote ? `\n\n<@&${this.#o.vote.roleId}>: your vote decides this one.` : ""),
         [],
         otherClaim ? [otherClaim.discordUserId] : [],
+        this.#o.vote ? [this.#o.vote.roleId] : [],
       )
     } catch (e) {
       this.#o.log?.(`incident #${incident.number}: ${message(e)}`)
@@ -517,14 +523,18 @@ export class IncidentRouter {
     await this.#o.channels.post(channelId, `A replay clip to watch in the game: ${link}`)
     // On its own, last: an upload Discord is slow to take mustn't cost the
     // channel the rest, or be reported as evidence that couldn't be gathered.
+    const video = [
+      { name: "overhead.mp4", data: await readFile(e.video), description: "Both cars from above" },
+    ]
+    // Discord sometimes drops an upload partway ("other side closed"), which REST
+    // doesn't retry; a timeout it already has, and the video may have landed.
     await this.#o.channels
-      .post(channelId, "From above:", [
-        {
-          name: "overhead.mp4",
-          data: await readFile(e.video),
-          description: "Both cars from above",
-        },
-      ])
+      .post(channelId, "From above:", video)
+      .catch((err) =>
+        err instanceof Error && err.name === "AbortError"
+          ? Promise.reject(err)
+          : this.#o.channels.post(channelId, "From above:", video),
+      )
       .catch(async (err) => {
         this.#o.log?.(`overhead video for ${channelId}: ${message(err)}`)
         await this.#o.channels.post(

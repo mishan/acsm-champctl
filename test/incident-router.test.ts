@@ -26,6 +26,7 @@ const STEWARDS = "9".repeat(18)
 const ANA = "1".repeat(18)
 const BO = "2".repeat(18)
 const DEE = "4".repeat(18)
+const RACERS = "5".repeat(18)
 
 let dir: string
 /** The race option's value: the recorder's timestamp at the front of the journal's name. */
@@ -36,6 +37,7 @@ let channels: {
   created: [string, readonly string[]][]
   posts: [string, string, number][]
   pinged: (readonly string[])[]
+  pingedRoles: (readonly string[])[]
   locked: [string, string][]
 }
 let failGather: boolean
@@ -45,8 +47,11 @@ let failLock: boolean
 let failRead: boolean
 /** The report's own first message doesn't go through. */
 let failFirstPost: boolean
-/** The video's upload times out. */
-let failVideo: boolean
+/** How many times the video's upload fails before it goes through. */
+let failVideo: number
+let videoError: string
+let videoErrorName: string
+let videoTries: number
 let reads: number
 let gatheredInto: string | undefined
 /** Most evidence renders running at once. */
@@ -79,13 +84,16 @@ beforeEach(async () => {
   journal = stamp
   await writeFile(join(dir, "video.mp4"), "mp4")
   store = await SqliteIncidentStore.open(":memory:")
-  channels = { created: [], posts: [], pinged: [], locked: [] }
+  channels = { created: [], posts: [], pinged: [], pingedRoles: [], locked: [] }
   failGather = false
   failCreate = false
   failLock = false
   failRead = false
   failFirstPost = false
-  failVideo = false
+  failVideo = 0
+  videoError = "other side closed"
+  videoErrorName = "SocketError"
+  videoTries = 0
   polls = []
   ended = []
   pollResult = { finalized: true, counts: [0, 0, 0] }
@@ -135,11 +143,14 @@ function router(
       channels.created.push([name, users])
       return `chan-${channels.created.length}`
     },
-    post: async (id, content, files, pings) => {
+    post: async (id, content, files, pings, pingRoles) => {
       if (failFirstPost && content.startsWith("**Incident")) throw new Error("Unknown Channel")
-      if (failVideo && content === "From above:") throw new Error("This operation was aborted")
+      if (content === "From above:") videoTries++
+      if (failVideo > 0 && content === "From above:" && failVideo--)
+        throw Object.assign(new Error(videoError), { name: videoErrorName })
       channels.posts.push([id, content, files?.length ?? 0])
       channels.pinged.push(pings ?? [])
+      channels.pingedRoles.push(pingRoles ?? [])
     },
     lock: async (id, name) => {
       if (failLock) throw new Error("Missing Permissions")
@@ -334,16 +345,20 @@ describe("/incident autocomplete", () => {
     ])
   })
 
-  it("offers someone else only something else", async () => {
+  it.each([
+    ["someone else in a contact", "c", false, "no contact of yours was recorded"],
+    ["anyone in a session with no contacts", ANA, true, "this session recorded no contacts"],
+  ])("offers %s only something else", async (_, user, quiet, why) => {
+    const race = quiet
+      ? new Date(Date.now() - 7200_000).toISOString().replace(/[:.]/g, "-")
+      : journal
+    if (quiet) await writeScenario(dir, `${race}-loop-race`, track, [], undefined)
     const choices = await router({ [ANA]: "Ana", [BO]: "Bo", c: "Cy" }).autocomplete(
-      command("c", "report", { race: journal, what: "" }),
+      command(user, "report", { race, what: "" }),
       "what",
     )
     expect(choices).toEqual([
-      {
-        name: "Something else (no contact of yours was recorded): give the driver and the time below",
-        value: "other",
-      },
+      { name: `Something else (${why}): give the driver and the time below`, value: "other" },
     ])
   })
 })
@@ -384,8 +399,17 @@ describe("/incident report", () => {
     ])
   })
 
+  it("tries the video's upload again when Discord drops it once", async () => {
+    failVideo = 1
+    await router().handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    expect(channels.posts.at(-1)?.slice(1)).toEqual(["From above:", 1])
+  })
+
   it("keeps the rest of the evidence when the video won't upload, and says it was the video", async () => {
-    failVideo = true
+    // REST has already retried a timeout, and the video may have landed: no second go.
+    failVideo = Number.POSITIVE_INFINITY
+    videoError = "This operation was aborted"
+    videoErrorName = "AbortError"
     const reply = await router().handle(
       command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
     )
@@ -394,6 +418,7 @@ describe("/incident report", () => {
       "A replay clip to watch in the game: https://champctl.example/replays/incident-1.acreplay",
       "The overhead video didn't upload (This operation was aborted). The replay clip shows the same stretch.",
     ])
+    expect(videoTries).toBe(1)
   })
 
   it("finds a driver by GUID when their name in the game isn't the entry list's", async () => {
@@ -745,7 +770,8 @@ describe("indexJournal", () => {
 
 describe("deciding by vote", () => {
   const FILED = new Date("2026-10-15T05:00:00Z")
-  const voting = (now = FILED) => router(undefined, { vote: { hours: 48 }, now: () => now })
+  const voting = (now = FILED) =>
+    router(undefined, { vote: { hours: 48, roleId: RACERS }, now: () => now })
   const report = (r: IncidentRouter) =>
     r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
   const hoursIn = (hours: number) => new Date(FILED.getTime() + hours * 3600_000)
@@ -762,6 +788,8 @@ describe("deciding by vote", () => {
     ])
     expect(channels.posts.at(-1)![1]).toBe("From above:")
     expect(reply.content).toMatch(/The Racers vote on it there\.$/)
+    expect(channels.posts[0]![1]).toMatch(/\n\n<@&5{18}>: your vote decides this one\.$/)
+    expect(channels.pingedRoles[0]).toEqual([RACERS])
   })
 
   it.each([

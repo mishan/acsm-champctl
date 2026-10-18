@@ -1003,7 +1003,12 @@ async function serve(args: Args): Promise<number> {
             store: incidentStore,
             stewardRoleId: incidentSettings.stewardRoleId,
             ...(incidentSettings.vote
-              ? { vote: { hours: incidentSettings.vote.hours ?? 48 } }
+              ? {
+                  vote: {
+                    hours: incidentSettings.vote.hours ?? 48,
+                    roleId: incidentSettings.vote.roleId,
+                  },
+                }
               : {}),
             timeZone: profile.schedule.timezone,
             log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
@@ -1018,13 +1023,14 @@ async function serve(args: Args): Promise<number> {
                   ],
                   userIds,
                 }),
-              post: (channelId, content, files, pings) =>
+              post: (channelId, content, files, pings, pingRoles) =>
                 transport.post({
                   channelId,
                   content,
                   source: "an incident's channel",
                   ...(files?.length ? { files } : {}),
                   ...(pings?.length ? { pings } : {}),
+                  ...(pingRoles?.length ? { pingRoles } : {}),
                 }),
               lock: (channelId, name) =>
                 transport.lockChannel(channelId, name, incidentSettings.closedCategoryId),
