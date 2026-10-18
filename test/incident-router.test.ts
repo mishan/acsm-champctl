@@ -777,8 +777,8 @@ describe("deciding by vote", () => {
     ])
     expect(channels.posts.at(-1)![1]).toBe("From above:")
     expect(reply.content).toMatch(/The Racers vote on it there\.$/)
-    expect(channels.posts[0]![1]).toMatch(
-      new RegExp(`\n\n<@&${RACERS}>: your vote decides this one\.$`),
+    expect(channels.posts[0]![1].endsWith(`\n\n<@&${RACERS}>: your vote decides this one.`)).toBe(
+      true,
     )
     expect(channels.pingedRoles[0]).toEqual([RACERS])
   })
