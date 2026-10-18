@@ -39,8 +39,11 @@ export async function writeScenario(
   name: string,
   track: Track,
   cars: readonly ScriptedCar[],
-  /** `contactPoint: false` records none, as ACSM's live timing doesn't. */
-  collision: { at: number; carId: number; otherCarId: number; contactPoint?: false },
+  /**
+   * `contactPoint: false` records none, as ACSM's live timing doesn't;
+   * `undefined` is a session whose collision feed was down.
+   */
+  collision: { at: number; carId: number; otherCarId: number; contactPoint?: false } | undefined,
   durationMs = 12_000,
 ): Promise<string> {
   const records: JournalRecord[] = [
@@ -94,14 +97,16 @@ export async function writeScenario(
       })
     }
   }
-  const { contactPoint, ...hit } = collision
-  records.push({
-    t: "collision",
-    ...hit,
-    impactSpeed: 4,
-    worldPos: [0, 0, 0],
-    ...(contactPoint === false ? {} : { relPos: [0.7, 0, 0.8] }),
-  })
+  if (collision) {
+    const { contactPoint, ...hit } = collision
+    records.push({
+      t: "collision",
+      ...hit,
+      impactSpeed: 4,
+      worldPos: [0, 0, 0],
+      ...(contactPoint === false ? {} : { relPos: [0.7, 0, 0.8] }),
+    })
+  }
   const w = new JournalWriter(join(dir, `${name}.ndjson.gz`))
   for (const r of records.sort((a, b) => a.at - b.at)) w.write(r)
   await w.close()

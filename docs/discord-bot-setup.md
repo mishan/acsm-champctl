@@ -401,7 +401,9 @@ applied by hand.
 
 A league can decide by vote instead. With `vote`, its `roleId` role (the
 league's racers, say) is let into every incident channel to read, discuss and
-vote. After the evidence, GridMom posts a Discord poll, "who was at fault?",
+vote, and mentioned in its first post. Unless the role is set to let anyone
+mention it, that takes **Mention @everyone, @here, and All Roles** on the bot's
+server role; without it the mention shows but notifies nobody. After the evidence, GridMom posts a Discord poll, "who was at fault?",
 with each driver and "Racing incident (neither)", open for `hours` (48 by
 default, Discord allows 1 to 768). When it closes, the winner is the decision,
 posted and recorded the same way, and the channel is closed. A tie, or a poll

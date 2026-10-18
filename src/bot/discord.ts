@@ -176,6 +176,7 @@ export class GatewayTransport implements DiscordTransport {
       allowedMentions: {
         parse: [],
         ...(message.pings?.length ? { users: [...message.pings] } : {}),
+        ...(message.pingRoles?.length ? { roles: [...message.pingRoles] } : {}),
       },
       ...(message.files?.length
         ? {
