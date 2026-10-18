@@ -26,7 +26,7 @@ const STEWARDS = "9".repeat(18)
 const ANA = "1".repeat(18)
 const BO = "2".repeat(18)
 const DEE = "4".repeat(18)
-const RACERS = "9".repeat(18)
+const RACERS = "5".repeat(18)
 
 let dir: string
 /** The race option's value: the recorder's timestamp at the front of the journal's name. */
@@ -49,6 +49,9 @@ let failRead: boolean
 let failFirstPost: boolean
 /** How many times the video's upload fails before it goes through. */
 let failVideo: number
+let videoError: string
+let videoErrorName: string
+let videoTries: number
 let reads: number
 let gatheredInto: string | undefined
 /** Most evidence renders running at once. */
@@ -88,6 +91,9 @@ beforeEach(async () => {
   failRead = false
   failFirstPost = false
   failVideo = 0
+  videoError = "other side closed"
+  videoErrorName = "SocketError"
+  videoTries = 0
   polls = []
   ended = []
   pollResult = { finalized: true, counts: [0, 0, 0] }
@@ -139,8 +145,9 @@ function router(
     },
     post: async (id, content, files, pings, pingRoles) => {
       if (failFirstPost && content.startsWith("**Incident")) throw new Error("Unknown Channel")
+      if (content === "From above:") videoTries++
       if (failVideo > 0 && content === "From above:" && failVideo--)
-        throw new Error("This operation was aborted")
+        throw Object.assign(new Error(videoError), { name: videoErrorName })
       channels.posts.push([id, content, files?.length ?? 0])
       channels.pinged.push(pings ?? [])
       channels.pingedRoles.push(pingRoles ?? [])
@@ -399,7 +406,10 @@ describe("/incident report", () => {
   })
 
   it("keeps the rest of the evidence when the video won't upload, and says it was the video", async () => {
+    // REST has already retried a timeout, and the video may have landed: no second go.
     failVideo = Number.POSITIVE_INFINITY
+    videoError = "This operation was aborted"
+    videoErrorName = "AbortError"
     const reply = await router().handle(
       command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
     )
@@ -408,6 +418,7 @@ describe("/incident report", () => {
       "A replay clip to watch in the game: https://champctl.example/replays/incident-1.acreplay",
       "The overhead video didn't upload (This operation was aborted). The replay clip shows the same stretch.",
     ])
+    expect(videoTries).toBe(1)
   })
 
   it("finds a driver by GUID when their name in the game isn't the entry list's", async () => {
@@ -777,9 +788,7 @@ describe("deciding by vote", () => {
     ])
     expect(channels.posts.at(-1)![1]).toBe("From above:")
     expect(reply.content).toMatch(/The Racers vote on it there\.$/)
-    expect(channels.posts[0]![1].endsWith(`\n\n<@&${RACERS}>: your vote decides this one.`)).toBe(
-      true,
-    )
+    expect(channels.posts[0]![1]).toMatch(/\n\n<@&5{18}>: your vote decides this one\.$/)
     expect(channels.pingedRoles[0]).toEqual([RACERS])
   })
 

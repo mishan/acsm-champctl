@@ -526,10 +526,15 @@ export class IncidentRouter {
     const video = [
       { name: "overhead.mp4", data: await readFile(e.video), description: "Both cars from above" },
     ]
-    // Discord sometimes drops an upload partway ("other side closed"); try once more.
+    // Discord sometimes drops an upload partway ("other side closed"), which REST
+    // doesn't retry; a timeout it already has, and the video may have landed.
     await this.#o.channels
       .post(channelId, "From above:", video)
-      .catch(() => this.#o.channels.post(channelId, "From above:", video))
+      .catch((err) =>
+        err instanceof Error && err.name === "AbortError"
+          ? Promise.reject(err)
+          : this.#o.channels.post(channelId, "From above:", video),
+      )
       .catch(async (err) => {
         this.#o.log?.(`overhead video for ${channelId}: ${message(err)}`)
         await this.#o.channels.post(
