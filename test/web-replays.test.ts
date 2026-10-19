@@ -155,6 +155,17 @@ describe("/replays", () => {
     expect(old.statusCode).toBe(200)
   })
 
+  it("plays an incident's video where its link is posted", async () => {
+    const week = "2026-10-12-interlagos-1975"
+    await mkdir(join(dir, week), { recursive: true })
+    await writeFile(join(dir, week, "incident-3.mp4"), "mp4")
+    const video = await app.inject({ url: `/replays/${week}/incident-3.mp4` })
+    expect(video.statusCode).toBe(200)
+    expect(video.headers["content-type"]).toBe("video/mp4")
+    expect(video.headers["content-disposition"]).toBeUndefined()
+    expect(video.body).toBe("mp4")
+  })
+
   it("numbers the races on a night with two", async () => {
     const round = "2026-10-12-interlagos-1975"
     await recorded(`${round}/2026-10-15T03-24-29-113Z-interlagos-1975-race`, "Race", 1500)
