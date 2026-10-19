@@ -401,8 +401,15 @@ describe("/incident report", () => {
 
   it("tries the video's upload again when Discord drops it once", async () => {
     failVideo = 1
-    await router().handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    const logged: string[] = []
+    await router(undefined, { log: (l) => logged.push(l) }).handle(
+      command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
+    )
     expect(channels.posts.at(-1)?.slice(1)).toEqual(["From above:", 1])
+    expect(logged.filter((l) => l.startsWith("overhead video"))).toEqual([
+      expect.stringMatching(/: other side closed \(0 KB, [\d.]+ s\)$/),
+      expect.stringMatching(/: uploaded \(0 KB, [\d.]+ s\)$/),
+    ])
   })
 
   it("keeps the rest of the evidence when the video won't upload, and links the video instead", async () => {

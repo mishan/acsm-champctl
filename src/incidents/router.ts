@@ -524,20 +524,31 @@ export class IncidentRouter {
     await this.#o.channels.post(channelId, `A replay clip to watch in the game: ${link}`)
     // On its own, last: an upload Discord is slow to take mustn't cost the
     // channel the rest, or be reported as evidence that couldn't be gathered.
-    const video = [
-      { name: "overhead.mp4", data: await readFile(e.video), description: "Both cars from above" },
-    ]
+    const data = await readFile(e.video)
+    const video = [{ name: "overhead.mp4", data, description: "Both cars from above" }]
+    // Each try's time and error, to find why the bot's uploads fail when the
+    // same upload by hand goes through.
+    const upload = async () => {
+      const started = Date.now()
+      const took = () => `${Math.round(data.length / 1024)} KB, ${(Date.now() - started) / 1000} s`
+      try {
+        await this.#o.channels.post(channelId, "From above:", video)
+        this.#o.log?.(`overhead video for ${channelId}: uploaded (${took()})`)
+      } catch (err) {
+        const code = (err as { cause?: { code?: unknown } }).cause?.code
+        this.#o.log?.(
+          `overhead video for ${channelId}: ${message(err)}${code ? ` [${code}]` : ""} (${took()})`,
+        )
+        throw err
+      }
+    }
     // Discord sometimes drops an upload partway ("other side closed"), which REST
     // doesn't retry; a timeout it already has, and the video may have landed.
-    await this.#o.channels
-      .post(channelId, "From above:", video)
+    await upload()
       .catch((err) =>
-        err instanceof Error && err.name === "AbortError"
-          ? Promise.reject(err)
-          : this.#o.channels.post(channelId, "From above:", video),
+        err instanceof Error && err.name === "AbortError" ? Promise.reject(err) : upload(),
       )
       .catch(async (err) => {
-        this.#o.log?.(`overhead video for ${channelId}: ${message(err)}`)
         const there = url(basename(e.video))
         await this.#o.channels.post(
           channelId,
