@@ -12,7 +12,7 @@
  */
 
 import { readFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { basename, dirname, join } from "node:path"
 
 import type { AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
@@ -517,9 +517,10 @@ export class IncidentRouter {
           : [],
       )
     }
-    const link = this.#o.replayUrl
-      ? `${this.#o.replayUrl.replace(/\/+$/, "")}/${(round === "." ? [e.clip] : [round, e.clip]).map(encodeURIComponent).join("/")}`
-      : `\`${e.clip}\` on the replays page`
+    const url = (file: string) =>
+      this.#o.replayUrl &&
+      `${this.#o.replayUrl.replace(/\/+$/, "")}/${(round === "." ? [file] : [round, file]).map(encodeURIComponent).join("/")}`
+    const link = url(e.clip) ?? `\`${e.clip}\` on the replays page`
     await this.#o.channels.post(channelId, `A replay clip to watch in the game: ${link}`)
     // On its own, last: an upload Discord is slow to take mustn't cost the
     // channel the rest, or be reported as evidence that couldn't be gathered.
@@ -537,9 +538,12 @@ export class IncidentRouter {
       )
       .catch(async (err) => {
         this.#o.log?.(`overhead video for ${channelId}: ${message(err)}`)
+        const there = url(basename(e.video))
         await this.#o.channels.post(
           channelId,
-          `The overhead video didn't upload (${message(err)}). The replay clip shows the same stretch.`,
+          there
+            ? `From above (it didn't upload: ${message(err)}): ${there}`
+            : `The overhead video didn't upload (${message(err)}). The replay clip shows the same stretch.`,
         )
       })
   }

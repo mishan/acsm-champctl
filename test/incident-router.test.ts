@@ -405,7 +405,7 @@ describe("/incident report", () => {
     expect(channels.posts.at(-1)?.slice(1)).toEqual(["From above:", 1])
   })
 
-  it("keeps the rest of the evidence when the video won't upload, and says it was the video", async () => {
+  it("keeps the rest of the evidence when the video won't upload, and links the video instead", async () => {
     // REST has already retried a timeout, and the video may have landed: no second go.
     failVideo = Number.POSITIVE_INFINITY
     videoError = "This operation was aborted"
@@ -416,7 +416,7 @@ describe("/incident report", () => {
     expect(reply.content).toMatch(/^Filed as incident #1/)
     expect(channels.posts.slice(-2).map(([, t]) => t)).toEqual([
       "A replay clip to watch in the game: https://champctl.example/replays/incident-1.acreplay",
-      "The overhead video didn't upload (This operation was aborted). The replay clip shows the same stretch.",
+      "From above (it didn't upload: This operation was aborted): https://champctl.example/replays/video.mp4",
     ])
     expect(videoTries).toBe(1)
   })

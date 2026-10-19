@@ -181,7 +181,11 @@ export function registerReplays(app: FastifyInstance, dir: string, timeZone: str
     // Only a path the folder lists, so nothing outside it can be asked for. A
     // name alone is also found in its round: links posted before rounds have
     // no folder, and each name starts with its own millisecond timestamp.
-    const files = await listRecordings(dir, ".acreplay")
+    // An incident's overhead video too, for when Discord won't take its upload.
+    const files = [
+      ...(await listRecordings(dir, ".acreplay")),
+      ...(await listRecordings(dir, ".mp4")),
+    ]
     const file = files.includes(asked)
       ? asked
       : asked.includes("/")
@@ -190,6 +194,9 @@ export function registerReplays(app: FastifyInstance, dir: string, timeZone: str
     if (!file) {
       return reply.code(404).send({ error: { code: "not-found", message: "No such replay." } })
     }
+    // Inline, so Discord plays the video where its link is posted.
+    if (file.endsWith(".mp4"))
+      return reply.type("video/mp4").send(createReadStream(join(dir, file)))
     return reply
       .type("application/octet-stream")
       .header("Content-Disposition", `attachment; filename="${basename(file)}"`)
