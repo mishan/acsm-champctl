@@ -240,6 +240,19 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
       }
     }
 
+    const season = d["season"]
+    if (season !== undefined) {
+      const s = season as Record<string, unknown> | null
+      for (const key of ["channelId", "adminRoleId", "voterRoleId"] as const) {
+        if (typeof s?.[key] !== "string" || !/^\d{17,20}$/.test(s[key] as string)) {
+          bad(
+            `\`discord.season.${key}\` must be an id — 17 to 20 digits, the way "Copy ` +
+              `${key === "channelId" ? "Channel" : "Role"} ID" gives it`,
+          )
+        }
+      }
+    }
+
     // Same check, same reason: a channel *name* and a role *mention* both reach
     // Discord as an id it cannot find. Here the failure is worse than a missing
     // report — a clamp built from ids that match nothing refuses every driver,

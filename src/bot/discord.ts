@@ -31,12 +31,14 @@ import {
   ChannelType,
   type ChatInputCommandInteraction,
   Client,
+  ComponentType,
   Events,
   GatewayIntentBits,
   MessageFlags,
   type Interaction,
   OverwriteType,
   PermissionFlagsBits,
+  type StringSelectMenuInteraction,
 } from "discord.js"
 
 import type { CommandDefinition } from "./commands.js"
@@ -249,9 +251,81 @@ export class GatewayTransport implements DiscordTransport {
         void this.#suggest(interaction, router)
         return
       }
-      if (!interaction.isChatInputCommand()) return
-      void this.#dispatch(interaction, router, options.adminChannelId)
+      if (interaction.isChatInputCommand()) {
+        void this.#dispatch(interaction, router, options.adminChannelId)
+        return
+      }
+      if (interaction.isStringSelectMenu()) void this.#choose(interaction, router)
     })
+  }
+
+  /** Picks in a menu under one of the bot's posts, answered privately. */
+  async #choose(interaction: StringSelectMenuInteraction, router: CommandRouter): Promise<void> {
+    const line = `${new Date().toISOString()} menu ${interaction.customId} from ${interaction.user.username}`
+    try {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+      const reply = router.select
+        ? await router.select({
+            customId: interaction.customId,
+            values: interaction.values,
+            userId: interaction.user.id,
+            username: interaction.user.username,
+            roleIds: memberRoleIds(interaction.member),
+          })
+        : { content: "That menu isn't in use any more." }
+      await interaction.editReply({ content: reply.content })
+      process.stdout.write(`${line}: ${firstLine(reply.content)}\n`)
+    } catch (e) {
+      process.stderr.write(`${line} failed: ${message(e)}\n`)
+      await interaction
+        .editReply({ content: "Something went wrong at my end. Tell an admin." })
+        .catch(() => {})
+    }
+  }
+
+  /**
+   * A post with a menu under it, ticking any number of `options`: a season
+   * ballot. Its message id, to take the menu off when the vote closes.
+   */
+  async postBallot(
+    channelId: string,
+    content: string,
+    menu: {
+      customId: string
+      options: readonly { label: string; value: string; description?: string }[]
+    },
+    pingRoles: readonly string[] = [],
+  ): Promise<string> {
+    const channel = await this.#client.channels.fetch(channelId)
+    if (!channel?.isSendable()) throw new BotError(`Can't post in channel ${channelId}.`)
+    const m = await channel.send({
+      content,
+      allowedMentions: { parse: [], roles: [...pingRoles] },
+      components: [
+        {
+          type: ComponentType.ActionRow,
+          components: [
+            {
+              type: ComponentType.StringSelect,
+              customId: menu.customId,
+              placeholder: "Tick every one you'd race",
+              // Zero, so a ballot can be emptied again.
+              minValues: 0,
+              maxValues: menu.options.length,
+              options: menu.options.map((o) => ({ ...o })),
+            },
+          ],
+        },
+      ],
+    })
+    return m.id
+  }
+
+  /** Takes the menu off a post, leaving its text. */
+  async closeBallot(channelId: string, messageId: string): Promise<void> {
+    const channel = await this.#client.channels.fetch(channelId)
+    if (!channel?.isTextBased()) throw new BotError(`Can't read channel ${channelId}.`)
+    await channel.messages.edit(messageId, { components: [] })
   }
 
   /** Suggestions as an option is typed. Nothing, rather than an error, if the router fails. */
@@ -585,6 +659,8 @@ function stringOptions(
   const options: Record<string, string> = {}
   for (const option of data[0]?.options ?? data) {
     if (typeof option.value === "string") options[option.name] = option.value
+    // Whole numbers, such as how many cars a season vote picks.
+    else if (typeof option.value === "number") options[option.name] = String(option.value)
   }
   return options
 }

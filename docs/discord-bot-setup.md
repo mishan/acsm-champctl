@@ -442,6 +442,40 @@ The bot reads the recordings and the car and track files. In the compose
 deployment that's the shared data volume and `CHAMPCTL_AC_ROOT`, as for the
 recorder. Set `CHAMPCTL_REPLAY_URL` for the clip's link.
 
+## 14. Optional: choosing next season's cars and tracks
+
+With `discord.season`, `/season` lets the `voterRoleId` role choose next
+season. An `adminRoleId` member runs `/season start` with how many cars and
+tracks go through and how many days each window lasts, and four phases follow
+on their own: cars are nominated, then voted on, then tracks the same.
+
+- **Nominating.** Each voter nominates up to two with `/season nominate`: one
+  installed on the server, from the list, or a new one by name with a link to
+  the mod. `/season withdraw` takes one back. A ballot holds 25, so that's the
+  most a window takes.
+- **Voting.** When nominations close, GridMom posts a ballot in `channelId`: a
+  menu where each voter ticks every nominee they'd race, and can change their
+  picks until the vote closes. Counts stay hidden till then.
+- **The result.** The most-picked go through. A tie at the cut is left to the
+  admins, and a window with no more nominees than places needs no vote.
+
+`/season status` says where it is; `/season close` lets an admin end the
+current window early. Phases are checked every five minutes, so one can end
+that much after its time.
+
+```json
+"season": {
+  "channelId": "1234567890123456789",
+  "adminRoleId": "9876543210987654321",
+  "voterRoleId": "1234567890123456781"
+}
+```
+
+The bot needs **View Channel**, **Send Messages** and **Read Message History**
+in the channel, and **Mention @everyone, @here, and All Roles** to notify the
+voters when a window opens or closes, unless their role is set to let anyone
+mention it.
+
 ## When it doesn't work
 
 | What you see | What it is |

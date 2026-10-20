@@ -117,6 +117,17 @@ export interface CommandRouter {
    * so far in `command.options`. Discord waits three seconds for them.
    */
   autocomplete?(command: SlashCommand, focused: string): Promise<{ name: string; value: string }[]>
+  /** Someone's picks in a menu under one of the bot's posts: a season ballot. */
+  select?(selection: MenuSelection): Promise<CommandReply>
+}
+
+export interface MenuSelection {
+  /** The menu's own id, as the bot set it. */
+  customId: string
+  values: readonly string[]
+  userId: string
+  username: string
+  roleIds: readonly string[]
 }
 
 /**

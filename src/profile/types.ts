@@ -179,6 +179,16 @@ export interface DiscordSettings {
     closedCategoryId?: string
     vote?: { roleId: string; hours?: number }
   }
+  /**
+   * `/season`: the `voterRoleId` role nominates next season's cars and tracks
+   * and votes on them, with ballots and results in `channelId`. The
+   * `adminRoleId` role starts it and can end a phase early.
+   */
+  season?: {
+    channelId: string
+    adminRoleId: string
+    voterRoleId: string
+  }
 }
 
 export interface QualiVoiceMove {

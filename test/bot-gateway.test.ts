@@ -119,6 +119,87 @@ describe("GatewayTransport autocomplete", () => {
   })
 })
 
+describe("GatewayTransport season ballots", () => {
+  it("posts a menu that ticks any number of nominees, pinging only the role it names", async () => {
+    const sent: unknown[] = []
+    const client = {
+      channels: {
+        fetch: async () => ({
+          isSendable: () => true,
+          send: async (payload: unknown) => {
+            sent.push(payload)
+            return { id: "m1" }
+          },
+        }),
+      },
+    } as unknown as Client
+    const id = await GatewayTransport.wrapping(client).postBallot(
+      "c",
+      "@everyone vote",
+      {
+        customId: "season:1:cars",
+        options: [
+          { label: "A", value: "a" },
+          { label: "B", value: "b" },
+        ],
+      },
+      ["5"],
+    )
+    expect(id).toBe("m1")
+    expect(sent[0]).toMatchObject({
+      allowedMentions: { parse: [], roles: ["5"] },
+      components: [
+        {
+          components: [
+            {
+              customId: "season:1:cars",
+              minValues: 0,
+              maxValues: 2,
+              options: [{ value: "a" }, { value: "b" }],
+            },
+          ],
+        },
+      ],
+    })
+  })
+
+  it("answers a pick privately, passing the voter's roles to the router", async () => {
+    const { client, handlers } = fakeClient()
+    const picked: unknown[] = []
+    const calls: { deferred?: unknown; edited?: unknown } = {}
+    GatewayTransport.wrapping(client).listen({
+      handle: async () => ({ content: "" }),
+      select: async (s) => {
+        picked.push(s)
+        return { content: "Your ballot: **A**." }
+      },
+    })
+    await handlers.get("interactionCreate")?.({
+      isAutocomplete: () => false,
+      isChatInputCommand: () => false,
+      isStringSelectMenu: () => true,
+      customId: "season:1:cars",
+      values: ["a"],
+      user: { id: "1", username: "ana" },
+      member: { roles: ["5"] },
+      deferReply: async (o: unknown) => {
+        calls.deferred = o
+      },
+      editReply: async (o: unknown) => {
+        calls.edited = o
+      },
+    })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(picked).toEqual([
+      { customId: "season:1:cars", values: ["a"], userId: "1", username: "ana", roleIds: ["5"] },
+    ])
+    expect(calls).toEqual({
+      deferred: { flags: MessageFlags.Ephemeral },
+      edited: { content: "Your ballot: **A**." },
+    })
+  })
+})
+
 describe("GatewayTransport incident channels", () => {
   /** A channel's overwrites as discord.js holds them: everyone may view and send. */
   const VIEW_SEND = PermissionFlagsBits.ViewChannel | PermissionFlagsBits.SendMessages
