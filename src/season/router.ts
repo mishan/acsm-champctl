@@ -66,7 +66,7 @@ const clip = (s: string, n = 100) => (s.length > n ? `${s.slice(0, n - 1)}…` :
 export class SeasonRouter {
   readonly #o: SeasonRouterOptions
   #content: { at: number; value: Promise<InstalledContent> } | undefined
-  #advancing = false
+  #advancing: Promise<void> | undefined
 
   constructor(options: SeasonRouterOptions) {
     this.#o = options
@@ -96,7 +96,7 @@ export class SeasonRouter {
   async autocomplete(command: SlashCommand, focused: string): Promise<Choice[]> {
     if (focused !== "item") return []
     const v = this.#o.store.current()
-    const kind = v && nominating(v)
+    const kind = v && nominating(v, this.#now())
     if (!v || !kind) return []
     const typed = (command.options["item"] ?? "").toLowerCase()
     const matches = (c: Choice) =>
@@ -110,7 +110,7 @@ export class SeasonRouter {
         .slice(0, 25)
     }
     const taken = new Set(nominated.map((n) => n.item))
-    return (await this.#installed(kind))
+    return (await this.#installed(kind).catch(() => []))
       .filter((i) => !taken.has(i.id))
       .map((i) => ({ name: clip(i.name), value: i.id }))
       .filter(matches)
@@ -121,7 +121,7 @@ export class SeasonRouter {
   async select(s: MenuSelection): Promise<CommandReply> {
     const [, id, kind] = s.customId.split(":")
     const v = this.#o.store.current()
-    if (!v || String(v.id) !== id || v.phase !== `${kind}-vote`) {
+    if (!v || String(v.id) !== id || v.phase !== `${kind}-vote` || v.phaseEndsAt <= this.#now()) {
       return { content: "This vote has closed." }
     }
     if (!s.roleIds.includes(this.#o.voterRoleId)) {
@@ -152,7 +152,18 @@ export class SeasonRouter {
    */
   async advance(): Promise<void> {
     if (this.#advancing) return
-    this.#advancing = true
+    this.#advancing = this.#advance().finally(() => {
+      this.#advancing = undefined
+    })
+    return this.#advancing
+  }
+
+  /** Once any phase that's moving on has finished: the store mustn't close under it. */
+  async idle(): Promise<void> {
+    await this.#advancing
+  }
+
+  async #advance(): Promise<void> {
     try {
       const v = this.#o.store.current()
       if (!v || v.phaseEndsAt > this.#now()) return
@@ -161,8 +172,6 @@ export class SeasonRouter {
       else await this.#count(v, kind)
     } catch (e) {
       this.#o.log?.(`season vote: ${e instanceof Error ? e.message : String(e)}`)
-    } finally {
-      this.#advancing = false
     }
   }
 
@@ -184,8 +193,13 @@ export class SeasonRouter {
       },
       this.#now(),
     )
-    await this.#announceNominations(v, "cars")
-    return { content: `Started. Car nominations close ${when(v.phaseEndsAt)}.` }
+    // Started either way: a retry would be refused as already running.
+    const unposted = await this.#announceNominations(v, "cars").then(
+      () => "",
+      (e: unknown) =>
+        `, but the call to nominate didn't post in the season channel (${e instanceof Error ? e.message : String(e)})`,
+    )
+    return { content: `Started. Car nominations close ${when(v.phaseEndsAt)}${unposted}.` }
   }
 
   async #announceNominations(v: SeasonVote, kind: Kind): Promise<void> {
@@ -204,9 +218,18 @@ export class SeasonRouter {
       return { content: `Only <@&${this.#o.voterRoleId}> nominate for next season.` }
     }
     const v = this.#o.store.current()
-    const kind = v && nominating(v)
+    const kind = v && nominating(v, this.#now())
     if (!v || !kind) return { content: "Nominations aren't open right now." }
     const { one, many } = NOUN[kind]
+    let installed: InstalledItem[]
+    try {
+      installed = await this.#installed(kind)
+    } catch {
+      return {
+        content: `I couldn't read the ${many} installed on the server. Try again in a minute.`,
+      }
+    }
+    // Counted after the wait above, so two nominations at once can't both pass.
     const nominated = this.#o.store.nominations(v.id, kind)
     const mine = nominated.filter((n) => n.nominatedBy === command.userId)
     if (mine.length >= NOMINATIONS_EACH) {
@@ -222,7 +245,6 @@ export class SeasonRouter {
 
     const typed = (command.options["item"] ?? "").trim()
     const link = command.options["link"]?.trim()
-    const installed = await this.#installed(kind)
     const found =
       installed.find((i) => i.id === typed) ??
       installed.find((i) => i.name.toLowerCase() === typed.toLowerCase())
@@ -249,9 +271,11 @@ export class SeasonRouter {
         content: `**${nomination.label}** is nominated already${by ? `, by <@${by}>` : ""}.`,
       }
     }
-    await this.#o.channel.post(
-      `<@${command.userId}> nominated **${nomination.label}**${nomination.link ? `: <${nomination.link}>` : ""}`,
-    )
+    await this.#o.channel
+      .post(
+        `<@${command.userId}> nominated **${nomination.label}**${nomination.link ? `: <${nomination.link}>` : ""}`,
+      )
+      .catch((e: unknown) => this.#o.log?.(`season vote: posting a nomination: ${String(e)}`))
     const left = NOMINATIONS_EACH - mine.length - 1
     return {
       content: `Nominated **${nomination.label}**. ${left ? `You can nominate ${left} more.` : `That's your ${NOMINATIONS_EACH}.`}`,
@@ -260,7 +284,7 @@ export class SeasonRouter {
 
   async #withdraw(command: SlashCommand): Promise<CommandReply> {
     const v = this.#o.store.current()
-    const kind = v && nominating(v)
+    const kind = v && nominating(v, this.#now())
     if (!v || !kind) return { content: "Nominations aren't open right now." }
     const item = command.options["item"] ?? ""
     const n = this.#o.store.nominations(v.id, kind).find((x) => x.item === item)
@@ -294,6 +318,8 @@ export class SeasonRouter {
     }
     const v = this.#o.store.current()
     if (!v) return { content: "No season vote is running." }
+    // Whatever's moving on now would make this close the phase after it.
+    if (this.#advancing) return { content: "That phase is closing already: give it a minute." }
     this.#o.store.setPhase(v.id, v.phase, this.#now(), v.ballotMessageId)
     await this.advance()
     return { content: "Closed. The season channel has what comes next." }
@@ -311,10 +337,7 @@ export class SeasonRouter {
     const messageId = await this.#o.channel.postBallot(
       `**Vote for next season's ${many}.** <@&${this.#o.voterRoleId}>, tick every ${one} ` +
         `you'd race in the menu below; the top ${places} go through. Voting closes ` +
-        `${when(ends)}, and you can change your picks until then. The count stays hidden till it closes.\n\n` +
-        nominees
-          .map((n) => `- **${n.label}**${n.link ? " (a mod, linked where it was nominated)" : ""}`)
-          .join("\n"),
+        `${when(ends)}, and you can change your picks until then. The count stays hidden till it closes.`,
       `season:${v.id}:${kind}`,
       nominees.map((n) => ({
         label: clip(n.label),
@@ -347,9 +370,6 @@ export class SeasonRouter {
       lines.push(
         `${r.counts.length} nominated for ${r.places} ${r.places === 1 ? "place" : "places"}, so no vote was needed.`,
       )
-    } else {
-      lines.push(`${r.voters} Racers voted:`)
-      lines.push(...r.counts.map((c, i) => `${i + 1}. **${c.label}**: ${c.votes}`))
     }
     if (r.winners.length)
       lines.push(`Going through: ${r.winners.map((w) => `**${w}**`).join(", ")}.`)
@@ -358,6 +378,11 @@ export class SeasonRouter {
         `Tied for the last ${r.places - r.winners.length === 1 ? "place" : `${r.places - r.winners.length} places`}: ` +
           `${r.tied.map((w) => `**${w}**`).join(", ")}. <@&${this.#o.adminRoleId}> will choose.`,
       )
+    }
+    // The count last, so a long one is what's clipped, not who went through.
+    if (r.voted) {
+      lines.push(`${r.voters} Racers voted:`)
+      lines.push(...r.counts.map((c, i) => `${i + 1}. **${c.label}**: ${c.votes}`))
     }
     await this.#o.channel.post(clip(lines.join("\n"), 2000), [this.#o.voterRoleId])
     const after = { ...v, phase: next, phaseEndsAt: ends } as SeasonVote
@@ -413,14 +438,15 @@ export class SeasonRouter {
     if (!this.#content || now - this.#content.at > 10 * 60_000) {
       this.#content = { at: now, value: this.#o.content() }
     }
-    const c = await this.#content.value.catch(() => {
+    const c = await this.#content.value.catch((e: unknown) => {
       this.#content = undefined
-      return { cars: [], tracks: [] }
+      throw e
     })
     return c[kind]
   }
 }
 
-function nominating(v: SeasonVote): Kind | undefined {
+function nominating(v: SeasonVote, now: Date): Kind | undefined {
+  if (v.phaseEndsAt <= now) return undefined
   return v.phase === "cars-nominate" ? "cars" : v.phase === "tracks-nominate" ? "tracks" : undefined
 }

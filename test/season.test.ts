@@ -15,6 +15,8 @@ let posts: { content: string; pings: readonly string[] }[]
 let ballots: { content: string; customId: string; options: readonly BallotOption[] }[]
 let closed: string[]
 let failPosts: boolean
+let content: () => Promise<{ cars: typeof CARS; tracks: typeof TRACKS }>
+let ballotPosted: Promise<void>
 
 beforeEach(async () => {
   store = await SqliteSeasonStore.open(":memory:")
@@ -23,6 +25,8 @@ beforeEach(async () => {
   ballots = []
   closed = []
   failPosts = false
+  content = async () => ({ cars: CARS, tracks: TRACKS })
+  ballotPosted = Promise.resolve()
 })
 afterEach(() => store.close())
 
@@ -42,7 +46,7 @@ function router() {
     store,
     adminRoleId: ADMIN,
     voterRoleId: RACERS,
-    content: async () => ({ cars: CARS, tracks: TRACKS }),
+    content: () => content(),
     now: () => now,
     channel: {
       post: async (content, pings = []) => {
@@ -50,6 +54,7 @@ function router() {
         posts.push({ content, pings })
       },
       postBallot: async (content, customId, options) => {
+        await ballotPosted
         ballots.push({ content, customId, options })
         return `ballot-${ballots.length}`
       },
@@ -208,11 +213,11 @@ describe("/season", () => {
     expect(posts.at(-2)!.content).toBe(
       [
         "**Next season's cars.** <@&222222222222222222>",
+        "Going through: **Ferrari 488 GT3**, **Porsche 911 GT3 R**.",
         "3 Racers voted:",
         "1. **Ferrari 488 GT3**: 2",
         "2. **Porsche 911 GT3 R**: 2",
         "3. **Audi R8 LMS**: 0",
-        "Going through: **Ferrari 488 GT3**, **Porsche 911 GT3 R**.",
       ].join("\n"),
     )
     expect(posts.at(-1)!.content).toMatch(/^\*\*Next season: nominate the tracks\.\*\*/)
@@ -243,8 +248,116 @@ describe("/season", () => {
     await vote(r, "bo", ["ks_audi_r8_lms"])
     await r.handle(command("ana", "close", {}, [ADMIN]))
     expect(posts.at(-2)!.content).toMatch(
-      /\nTied for the last place: \*\*Ferrari 488 GT3\*\*, \*\*Audi R8 LMS\*\*\. <@&1+> will choose\.$/,
+      /\nTied for the last place: \*\*Ferrari 488 GT3\*\*, \*\*Audi R8 LMS\*\*\. <@&1+> will choose\.\n/,
     )
+  })
+
+  it("takes no nominations, withdrawals or ballots once a phase's time is up, before it's moved on", async () => {
+    const r = router()
+    await start(r)
+    await r.handle(command("ana", "nominate", { item: "ks_ferrari_488_gt3" }))
+    await r.handle(command("bo", "nominate", { item: "ks_audi_r8_lms" }))
+    await r.handle(command("cy", "nominate", { item: "ks_porsche_911_gt3_r" }))
+    now = new Date(START.getTime() + 7 * DAY)
+    for (const [user, sub, item] of [
+      ["dee", "nominate", "ks_mclaren_650s_gt3"],
+      ["ana", "withdraw", "ks_ferrari_488_gt3"],
+    ]) {
+      expect((await r.handle(command(user!, sub!, { item: item! }))).content).toBe(
+        "Nominations aren't open right now.",
+      )
+    }
+    await r.advance()
+    now = new Date(START.getTime() + 12 * DAY)
+    expect((await vote(r, "ana", ["ks_audi_r8_lms"])).content).toBe("This vote has closed.")
+  })
+
+  it("counts a nominator's earlier nominations even when two arrive at once", async () => {
+    const r = router()
+    await start(r)
+    await r.handle(command("ana", "nominate", { item: "ks_ferrari_488_gt3" }))
+    const replies = await Promise.all(
+      ["ks_audi_r8_lms", "ks_porsche_911_gt3_r"].map((item) =>
+        r.handle(command("ana", "nominate", { item })),
+      ),
+    )
+    expect(replies.map((x) => x.content)).toEqual([
+      expect.stringMatching(/^Nominated/),
+      expect.stringMatching(/^You've nominated 2 cars already/),
+    ])
+  })
+
+  it("refuses a nomination when it can't read what's installed, rather than call it a mod", async () => {
+    const r = router()
+    await start(r)
+    content = async () => {
+      throw new Error("ACSM is down")
+    }
+    const reply = await r.handle(
+      command("ana", "nominate", { item: "ks_ferrari_488_gt3", link: "https://mods.example/f" }),
+    )
+    expect(reply.content).toMatch(/couldn't read the cars installed/)
+    expect(store.nominations(store.current()!.id, "cars")).toEqual([])
+  })
+
+  it("starts, and takes nominations, even when the channel post fails", async () => {
+    const r = router()
+    failPosts = true
+    expect((await start(r)).content).toMatch(
+      /^Started\. .*didn't post in the season channel \(Missing Access\)/,
+    )
+    expect((await r.handle(command("ana", "nominate", { item: "ks_imola" }))).content).toMatch(
+      /isn't installed/,
+    )
+    expect(
+      (await r.handle(command("ana", "nominate", { item: "ks_ferrari_488_gt3" }))).content,
+    ).toMatch(/^Nominated/)
+  })
+
+  it("won't let a close land on the phase after the one that's closing", async () => {
+    const r = router()
+    await start(r, "1")
+    await r.handle(command("ana", "nominate", { item: "ks_ferrari_488_gt3" }))
+    await r.handle(command("bo", "nominate", { item: "ks_audi_r8_lms" }))
+    let post!: () => void
+    ballotPosted = new Promise((done) => {
+      post = done
+    })
+    const first = r.handle(command("admin", "close", {}, [ADMIN]))
+    expect((await r.handle(command("admin", "close", {}, [ADMIN]))).content).toMatch(
+      /closing already/,
+    )
+    let idle = false
+    const settled = r.idle().then(() => {
+      idle = true
+    })
+    await Promise.resolve()
+    expect(idle).toBe(false)
+    post()
+    await first
+    await settled
+    const v = store.current()!
+    expect(v.phase).toBe("cars-vote")
+    expect(v.phaseEndsAt.getTime()).toBe(START.getTime() + 5 * DAY)
+  })
+
+  it("posts a ballot, and who went through, within Discord's limit with a full list of long names", async () => {
+    const r = router()
+    await start(r, "1")
+    const long = (i: number) =>
+      `${String(i).padStart(2, "0")} ${"Lotus Type 72D Gold Leaf ".repeat(4)}`
+    for (let i = 0; i < 25; i++) {
+      await r.handle(
+        command(`u${i >> 1}`, "nominate", { item: long(i), link: `https://mods.example/${i}` }),
+      )
+    }
+    await r.handle(command("admin", "close", {}, [ADMIN]))
+    expect(ballots[0]!.content.length).toBeLessThanOrEqual(2000)
+    await vote(r, "ana", [`mod:${long(24).trim().toLowerCase()}`])
+    await r.handle(command("admin", "close", {}, [ADMIN]))
+    const result = posts.find((p) => /^\*\*Next season's cars/.test(p.content))!.content
+    expect(result.length).toBeLessThanOrEqual(2000)
+    expect(result).toMatch(/\nGoing through: \*\*24 Lotus/)
   })
 
   it("moves on rather than post a result again when its post fails", async () => {

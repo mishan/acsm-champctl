@@ -968,7 +968,7 @@ async function serve(args: Args): Promise<number> {
   const transport = await connect({ voice: voice !== undefined })
   let stopQualiCall = async () => {}
   let stopStandings = async () => {}
-  let stopPolls = () => {}
+  let stopPolls = async () => {}
 
   try {
     if (!(transport instanceof GatewayTransport)) {
@@ -1052,7 +1052,7 @@ async function serve(args: Args): Promise<number> {
       if (incidentSettings?.vote) {
         // Every five minutes: a closed vote waits that long at most to be counted.
         const timer = setInterval(() => void incidents.settlePolls(), 5 * 60_000)
-        stopPolls = () => clearInterval(timer)
+        stopPolls = async () => clearInterval(timer)
         void incidents.settlePolls()
         process.stderr.write("Counting incident votes when they close.\n")
       }
@@ -1090,9 +1090,10 @@ async function serve(args: Args): Promise<number> {
       // Every five minutes, like the incident votes: a phase moves on that long after it ends at most.
       const timer = setInterval(() => void season.advance(), 5 * 60_000)
       const stopIncidentPolls = stopPolls
-      stopPolls = () => {
-        stopIncidentPolls()
+      stopPolls = async () => {
+        await stopIncidentPolls()
         clearInterval(timer)
+        await season.idle()
       }
       void season.advance()
       process.stderr.write("Answering /season.\n")
@@ -1190,7 +1191,7 @@ async function serve(args: Args): Promise<number> {
     // reads short.
     await stopQualiCall()
     await stopStandings()
-    stopPolls()
+    await stopPolls()
     await transport.close()
     liveries.close()
     incidentStore?.close()
