@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import type { SlashCommand } from "../src/bot/transport.js"
-import { type BallotOption, SeasonRouter } from "../src/season/router.js"
+import { SeasonRouter } from "../src/season/router.js"
 import { SqliteSeasonStore } from "../src/season/store.js"
 
 const ADMIN = "1".repeat(18)
@@ -12,21 +12,23 @@ const START = new Date("2026-11-01T18:00:00Z")
 let store: SqliteSeasonStore
 let now: Date
 let posts: { content: string; pings: readonly string[] }[]
-let ballots: { content: string; customId: string; options: readonly BallotOption[] }[]
-let closed: string[]
+let polls: { content: string; answers: readonly string[]; hours: number; oneVote: boolean }[]
+let results: { finalized: boolean; counts: number[] }
+let ended: string[]
 let failPosts: boolean
 let content: () => Promise<{ cars: typeof CARS; tracks: typeof TRACKS }>
-let ballotPosted: Promise<void>
+let pollPosted: Promise<void>
 
 beforeEach(async () => {
   store = await SqliteSeasonStore.open(":memory:")
   now = START
   posts = []
-  ballots = []
-  closed = []
+  polls = []
+  results = { finalized: true, counts: [] }
+  ended = []
   failPosts = false
   content = async () => ({ cars: CARS, tracks: TRACKS })
-  ballotPosted = Promise.resolve()
+  pollPosted = Promise.resolve()
 })
 afterEach(() => store.close())
 
@@ -53,13 +55,14 @@ function router() {
         if (failPosts) throw new Error("Missing Access")
         posts.push({ content, pings })
       },
-      postBallot: async (content, customId, options) => {
-        await ballotPosted
-        ballots.push({ content, customId, options })
-        return `ballot-${ballots.length}`
+      postPoll: async (content, _question, answers, hours, oneVote) => {
+        await pollPosted
+        polls.push({ content, answers, hours, oneVote })
+        return `poll-${polls.length}`
       },
-      closeBallot: async (id) => {
-        closed.push(id)
+      pollResults: async () => results,
+      endPoll: async (id) => {
+        ended.push(id)
       },
     },
   })
@@ -83,9 +86,6 @@ const command = (
 
 const start = (r: SeasonRouter, cars = "2", tracks = "1") =>
   r.handle(command("admin", "start", { cars, tracks, nominate_days: "7", vote_days: "5" }, [ADMIN]))
-
-const vote = (r: SeasonRouter, userId: string, values: string[], roleIds = [RACERS]) =>
-  r.select({ customId: ballots.at(-1)!.customId, values, userId, username: userId, roleIds })
 
 describe("/season", () => {
   it.each([
@@ -168,7 +168,7 @@ describe("/season", () => {
     expect(await r.autocomplete(command("bo", "withdraw", { item: "" }), "item")).toEqual([])
   })
 
-  it("runs cars to their ballot, counts it when it closes, then opens tracks", async () => {
+  it("runs cars to their poll, counts it once Discord has, then opens tracks", async () => {
     const r = router()
     await start(r)
     for (const [user, item] of [
@@ -180,54 +180,48 @@ describe("/season", () => {
     }
     now = new Date(START.getTime() + 7 * DAY - 1)
     await r.advance()
-    expect(ballots).toEqual([])
+    expect(polls).toEqual([])
 
     now = new Date(START.getTime() + 7 * DAY)
     await r.advance()
-    expect(ballots).toHaveLength(1)
-    expect(ballots[0]!.options.map((o) => o.value)).toEqual([
-      "ks_ferrari_488_gt3",
-      "ks_audi_r8_lms",
-      "ks_porsche_911_gt3_r",
+    expect(polls).toEqual([
+      {
+        content: expect.stringMatching(
+          /^\*\*Vote for next season's cars\.\*\* <@&2+>, vote for every car/,
+        ),
+        answers: ["Ferrari 488 GT3", "Audi R8 LMS", "Porsche 911 GT3 R"],
+        hours: 120,
+        oneVote: false,
+      },
     ])
     expect(
       (await r.handle(command("dee", "nominate", { item: "ks_mclaren_650s_gt3" }))).content,
     ).toBe("Nominations aren't open right now.")
 
-    expect((await vote(r, "ana", ["ks_ferrari_488_gt3"], [ADMIN])).content).toMatch(
-      /^Only <@&2+> vote/,
-    )
-    await vote(r, "ana", ["ks_ferrari_488_gt3", "ks_audi_r8_lms"])
-    // A second ballot replaces the first.
-    await vote(r, "ana", ["ks_ferrari_488_gt3"])
-    await vote(r, "bo", ["ks_ferrari_488_gt3", "ks_porsche_911_gt3_r"])
-    expect((await vote(r, "cy", ["ks_porsche_911_gt3_r", "ks_mclaren_650s_gt3"])).content).toMatch(
-      /^Your ballot: \*\*Porsche 911 GT3 R\*\*\. You can change it/,
-    )
-    // Nothing's counted in the channel while it's open.
-    expect(posts.some((p) => /Racers voted/.test(p.content))).toBe(false)
-
     now = new Date(START.getTime() + 12 * DAY)
+    results = { finalized: false, counts: [2, 0, 2] }
     await r.advance()
-    expect(closed).toEqual(["ballot-1"])
+    expect(store.current()?.phase).toBe("cars-vote")
+
+    results = { finalized: true, counts: [2, 0, 2] }
+    await r.advance()
     expect(posts.at(-2)!.content).toBe(
       [
         "**Next season's cars.** <@&222222222222222222>",
         "Going through: **Ferrari 488 GT3**, **Porsche 911 GT3 R**.",
-        "3 Racers voted:",
+        "The poll's votes:",
         "1. **Ferrari 488 GT3**: 2",
         "2. **Porsche 911 GT3 R**: 2",
         "3. **Audi R8 LMS**: 0",
       ].join("\n"),
     )
     expect(posts.at(-1)!.content).toMatch(/^\*\*Next season: nominate the tracks\.\*\*/)
-    expect((await vote(r, "ana", ["ks_audi_r8_lms"])).content).toBe("This vote has closed.")
 
     // One track for one place: no vote needed, and the season vote is done.
     await r.handle(command("ana", "nominate", { item: "ks_imola" }))
     now = new Date(START.getTime() + 19 * DAY)
     await r.advance()
-    expect(ballots).toHaveLength(1)
+    expect(polls).toHaveLength(1)
     expect(posts.at(-1)!.content).toBe(
       [
         "**Next season's tracks.** <@&222222222222222222>",
@@ -238,21 +232,41 @@ describe("/season", () => {
     expect(store.current()).toBeUndefined()
   })
 
+  it("posts a one-vote poll when started that way", async () => {
+    const r = router()
+    await r.handle(
+      command(
+        "admin",
+        "start",
+        { cars: "1", tracks: "1", nominate_days: "7", vote_days: "5", one_vote: "true" },
+        [ADMIN],
+      ),
+    )
+    await r.handle(command("ana", "nominate", { item: "ks_ferrari_488_gt3" }))
+    await r.handle(command("bo", "nominate", { item: "ks_audi_r8_lms" }))
+    await r.handle(command("admin", "close", {}, [ADMIN]))
+    expect(polls[0]).toMatchObject({
+      content: expect.stringMatching(/vote for the car you'd most like to race/),
+      oneVote: true,
+    })
+  })
+
   it("leaves a tie at the cut to the admins", async () => {
     const r = router()
     await start(r, "1")
     await r.handle(command("ana", "nominate", { item: "ks_ferrari_488_gt3" }))
     await r.handle(command("bo", "nominate", { item: "ks_audi_r8_lms" }))
     await r.handle(command("ana", "close", {}, [ADMIN]))
-    await vote(r, "ana", ["ks_ferrari_488_gt3"])
-    await vote(r, "bo", ["ks_audi_r8_lms"])
+    results = { finalized: true, counts: [1, 1] }
     await r.handle(command("ana", "close", {}, [ADMIN]))
+    // Ended before it's counted, so the count is the final one.
+    expect(ended).toEqual(["poll-1"])
     expect(posts.at(-2)!.content).toMatch(
       /\nTied for the last place: \*\*Ferrari 488 GT3\*\*, \*\*Audi R8 LMS\*\*\. <@&1+> will choose\.\n/,
     )
   })
 
-  it("takes no nominations, withdrawals or ballots once a phase's time is up, before it's moved on", async () => {
+  it("takes no nominations or withdrawals once their time is up, before it's moved on", async () => {
     const r = router()
     await start(r)
     await r.handle(command("ana", "nominate", { item: "ks_ferrari_488_gt3" }))
@@ -267,9 +281,6 @@ describe("/season", () => {
         "Nominations aren't open right now.",
       )
     }
-    await r.advance()
-    now = new Date(START.getTime() + 12 * DAY)
-    expect((await vote(r, "ana", ["ks_audi_r8_lms"])).content).toBe("This vote has closed.")
   })
 
   it("counts a nominator's earlier nominations even when two arrive at once", async () => {
@@ -320,7 +331,7 @@ describe("/season", () => {
     await r.handle(command("ana", "nominate", { item: "ks_ferrari_488_gt3" }))
     await r.handle(command("bo", "nominate", { item: "ks_audi_r8_lms" }))
     let post!: () => void
-    ballotPosted = new Promise((done) => {
+    pollPosted = new Promise((done) => {
       post = done
     })
     const first = r.handle(command("admin", "close", {}, [ADMIN]))
@@ -341,23 +352,21 @@ describe("/season", () => {
     expect(v.phaseEndsAt.getTime()).toBe(START.getTime() + 5 * DAY)
   })
 
-  it("posts a ballot, and who went through, within Discord's limit with a full list of long names", async () => {
+  it("holds as many nominees as a poll does, its answers clipped to Discord's limit", async () => {
     const r = router()
     await start(r, "1")
-    const long = (i: number) =>
-      `${String(i).padStart(2, "0")} ${"Lotus Type 72D Gold Leaf ".repeat(4)}`
-    for (let i = 0; i < 25; i++) {
+    const long = (i: number) => `${i} ${"Lotus Type 72D Gold Leaf ".repeat(3)}`.trim()
+    for (let i = 0; i < 10; i++) {
       await r.handle(
-        command(`u${i >> 1}`, "nominate", { item: long(i), link: `https://mods.example/${i}` }),
+        command(`u${i}`, "nominate", { item: long(i), link: `https://mods.example/${i}` }),
       )
     }
+    expect(
+      (await r.handle(command("dee", "nominate", { item: "ks_ferrari_488_gt3" }))).content,
+    ).toMatch(/^Nominations are full: a poll holds 10 cars/)
     await r.handle(command("admin", "close", {}, [ADMIN]))
-    expect(ballots[0]!.content.length).toBeLessThanOrEqual(2000)
-    await vote(r, "ana", [`mod:${long(24).trim().toLowerCase()}`])
-    await r.handle(command("admin", "close", {}, [ADMIN]))
-    const result = posts.find((p) => /^\*\*Next season's cars/.test(p.content))!.content
-    expect(result.length).toBeLessThanOrEqual(2000)
-    expect(result).toMatch(/\nGoing through: \*\*24 Lotus/)
+    expect(polls[0]!.answers).toHaveLength(10)
+    expect(polls[0]!.answers.every((a) => a.length <= 55)).toBe(true)
   })
 
   it("moves on rather than post a result again when its post fails", async () => {

@@ -1,6 +1,6 @@
 /**
  * The next season's vote: what the Racers nominated, each phase's deadline, and
- * the ballots. In the shared database beside the claims and the incidents.
+ * its poll. In the shared database beside the claims and the incidents.
  *
  * One season vote runs at a time, through four phases in order: cars are
  * nominated, then voted on, then tracks the same.
@@ -27,7 +27,8 @@ const MIGRATIONS: Migration[] = [
           vote_days          INTEGER NOT NULL,
           phase              TEXT NOT NULL,
           phase_ends_at      TEXT NOT NULL,
-          ballot_message_id  TEXT
+          one_vote           INTEGER NOT NULL,
+          poll_message_id    TEXT
         ) STRICT;
         CREATE TABLE IF NOT EXISTS season_nominations (
           season_id     INTEGER NOT NULL REFERENCES season_votes(id),
@@ -38,14 +39,6 @@ const MIGRATIONS: Migration[] = [
           nominated_by  TEXT NOT NULL,
           nominated_at  TEXT NOT NULL,
           PRIMARY KEY (season_id, kind, item)
-        ) STRICT;
-        CREATE TABLE IF NOT EXISTS season_ballots (
-          season_id  INTEGER NOT NULL REFERENCES season_votes(id),
-          kind       TEXT NOT NULL,
-          voter      TEXT NOT NULL,
-          picks      TEXT NOT NULL,
-          voted_at   TEXT NOT NULL,
-          PRIMARY KEY (season_id, kind, voter)
         ) STRICT;
       `)
     },
@@ -63,9 +56,11 @@ export interface SeasonVote {
   tracks: number
   nominateDays: number
   voteDays: number
+  /** One vote each in a poll, rather than any number. */
+  oneVote: boolean
   phase: Phase
   phaseEndsAt: Date
-  ballotMessageId?: string
+  pollMessageId?: string
 }
 
 export interface Nomination {
@@ -84,9 +79,10 @@ interface VoteRow {
   tracks: number
   nominate_days: number
   vote_days: number
+  one_vote: number
   phase: Phase
   phase_ends_at: string
-  ballot_message_id: string | null
+  poll_message_id: string | null
 }
 
 const fromRow = (r: VoteRow): SeasonVote => ({
@@ -96,9 +92,10 @@ const fromRow = (r: VoteRow): SeasonVote => ({
   tracks: r.tracks,
   nominateDays: r.nominate_days,
   voteDays: r.vote_days,
+  oneVote: r.one_vote === 1,
   phase: r.phase,
   phaseEndsAt: new Date(r.phase_ends_at),
-  ...(r.ballot_message_id ? { ballotMessageId: r.ballot_message_id } : {}),
+  ...(r.poll_message_id ? { pollMessageId: r.poll_message_id } : {}),
 })
 
 export class SqliteSeasonStore {
@@ -131,14 +128,14 @@ export class SqliteSeasonStore {
   }
 
   start(
-    v: Pick<SeasonVote, "startedBy" | "cars" | "tracks" | "nominateDays" | "voteDays">,
+    v: Pick<SeasonVote, "startedBy" | "cars" | "tracks" | "nominateDays" | "voteDays" | "oneVote">,
     at: Date,
   ): SeasonVote {
     const r = this.#db
       .prepare(
         `INSERT INTO season_votes (started_at, started_by, cars, tracks, nominate_days, vote_days,
-           phase, phase_ends_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'cars-nominate', ?) RETURNING *`,
+           one_vote, phase, phase_ends_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'cars-nominate', ?) RETURNING *`,
       )
       .get(
         at.toISOString(),
@@ -147,17 +144,18 @@ export class SqliteSeasonStore {
         v.tracks,
         v.nominateDays,
         v.voteDays,
+        v.oneVote ? 1 : 0,
         new Date(at.getTime() + v.nominateDays * 86_400_000).toISOString(),
       ) as unknown as VoteRow
     return fromRow(r)
   }
 
-  setPhase(id: number, phase: Phase, endsAt: Date, ballotMessageId?: string): void {
+  setPhase(id: number, phase: Phase, endsAt: Date, pollMessageId?: string): void {
     this.#db
       .prepare(
-        "UPDATE season_votes SET phase = ?, phase_ends_at = ?, ballot_message_id = ? WHERE id = ?",
+        "UPDATE season_votes SET phase = ?, phase_ends_at = ?, poll_message_id = ? WHERE id = ?",
       )
-      .run(phase, endsAt.toISOString(), ballotMessageId ?? null, id)
+      .run(phase, endsAt.toISOString(), pollMessageId ?? null, id)
   }
 
   nominations(id: number, kind: Kind): Nomination[] {
@@ -194,22 +192,5 @@ export class SqliteSeasonStore {
       )
       .run(id, kind, item, by)
     return r.changes === 1
-  }
-
-  /** Replaces the voter's earlier ballot. */
-  vote(id: number, kind: Kind, voter: string, picks: readonly string[], at: Date): void {
-    this.#db
-      .prepare(
-        `INSERT INTO season_ballots (season_id, kind, voter, picks, voted_at) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT (season_id, kind, voter) DO UPDATE SET picks = excluded.picks, voted_at = excluded.voted_at`,
-      )
-      .run(id, kind, voter, JSON.stringify(picks), at.toISOString())
-  }
-
-  ballots(id: number, kind: Kind): string[][] {
-    const rows = this.#db
-      .prepare("SELECT picks FROM season_ballots WHERE season_id = ? AND kind = ?")
-      .all(id, kind) as { picks: string }[]
-    return rows.map((r) => JSON.parse(r.picks) as string[])
   }
 }

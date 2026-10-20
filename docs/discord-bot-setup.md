@@ -451,12 +451,14 @@ on their own: cars are nominated, then voted on, then tracks the same.
 
 - **Nominating.** Each voter nominates up to two with `/season nominate`: one
   installed on the server, from the list, or a new one by name with a link to
-  the mod. `/season withdraw` takes one back. A ballot holds 25, so that's the
-  most a window takes.
-- **Voting.** When nominations close, GridMom posts a ballot in `channelId`: a
-  menu where each voter ticks every nominee they'd race, and can change their
-  picks until the vote closes. Counts stay hidden till then.
-- **The result.** The most-picked go through. A tie at the cut is left to the
+  the mod. `/season withdraw` takes one back. A Discord poll holds 10, so
+  that's the most a window takes.
+- **Voting.** When nominations close, GridMom posts a Discord poll in
+  `channelId`. Each voter votes for as many as they'd race, or for one if
+  `/season start` was given `one_vote`. The counts show as people vote.
+  Discord can't limit a poll to a role, so anyone who can see the channel can
+  vote in it.
+- **The result.** The most-voted go through. A tie at the cut is left to the
   admins, and a window with no more nominees than places needs no vote.
 
 `/season status` says where it is; `/season close` lets an admin end the
@@ -471,8 +473,8 @@ that much after its time.
 }
 ```
 
-The bot needs **View Channel**, **Send Messages** and **Read Message History**
-in the channel, and **Mention @everyone, @here, and All Roles** to notify the
+The bot needs **View Channel**, **Send Messages**, **Send Polls** and **Read
+Message History** in the channel, and **Mention @everyone, @here, and All Roles** to notify the
 voters when a window opens or closes, unless their role is set to let anyone
 mention it.
 

@@ -1074,15 +1074,15 @@ async function serve(args: Args): Promise<number> {
                   source: "discord.season.channelId in the profile",
                   ...(pingRoles?.length ? { pingRoles } : {}),
                 }),
-              postBallot: (content, customId, options, pingRoles) =>
-                transport.postBallot(
-                  seasonSettings.channelId,
+              postPoll: (content, question, answers, hours, oneVote, pingRoles) =>
+                transport.postPoll(seasonSettings.channelId, question, answers, hours, {
+                  multiselect: !oneVote,
                   content,
-                  { customId, options },
-                  pingRoles,
-                ),
-              closeBallot: (messageId) =>
-                transport.closeBallot(seasonSettings.channelId, messageId),
+                  ...(pingRoles ? { pingRoles } : {}),
+                }),
+              pollResults: (messageId) =>
+                transport.pollResults(seasonSettings.channelId, messageId),
+              endPoll: (messageId) => transport.endPoll(seasonSettings.channelId, messageId),
             },
           })
         : undefined
@@ -1113,7 +1113,6 @@ async function serve(args: Args): Promise<number> {
             : c.name === "season" && season
               ? season.autocomplete(c, focused)
               : Promise.resolve([]),
-        ...(season ? { select: (s) => season.select(s) } : {}),
       },
       {
         ...(profile.discord.adminChannelId

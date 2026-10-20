@@ -17,8 +17,8 @@
 export interface CommandOptionDefinition {
   name: string
   description: string
-  /** Discord's numeric option types. 3 is STRING, 4 is INTEGER, 11 is ATTACHMENT. */
-  type: 3 | 4 | 11
+  /** Discord's numeric option types. 3 is STRING, 4 is INTEGER, 5 is BOOLEAN, 11 is ATTACHMENT. */
+  type: 3 | 4 | 5 | 11
   required: boolean
   /** Suggestions as it's typed, from the router's `autocomplete`. Strings only. */
   autocomplete?: boolean
@@ -237,10 +237,16 @@ export const SEASON_COMMAND: CommandDefinition = {
       description: "Admins: start choosing next season, cars then tracks",
       type: 1,
       options: [
-        count("cars", "How many cars go through", 25),
-        count("tracks", "How many tracks go through", 25),
+        count("cars", "How many cars go through", 10),
+        count("tracks", "How many tracks go through", 10),
         count("nominate_days", "Days each nomination window stays open", 30),
         count("vote_days", "Days each vote stays open", 30),
+        {
+          name: "one_vote",
+          description: "One vote each, instead of voting for as many as you like",
+          type: 5,
+          required: false,
+        },
       ],
     },
     {

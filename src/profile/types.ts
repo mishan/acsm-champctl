@@ -181,7 +181,7 @@ export interface DiscordSettings {
   }
   /**
    * `/season`: the `voterRoleId` role nominates next season's cars and tracks
-   * and votes on them, with ballots and results in `channelId`. The
+   * and votes on them, with polls and results in `channelId`. The
    * `adminRoleId` role starts it and can end a phase early.
    */
   season?: {

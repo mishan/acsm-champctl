@@ -1,40 +1,37 @@
 /**
  * `/season`: the Racers choose next season's cars, then its tracks. Each is
- * nominated, then voted on with a ballot under GridMom's post, where a Racer
- * ticks every nominee they'd race. The top few go through; a tie at the cut is
- * left to the admins.
- *
- * Tallies stay hidden until a vote closes, so early leaders don't sway it.
+ * nominated, then voted on in a Discord poll, where a Racer votes for as many
+ * as they'd race, or for one if the vote was started that way. The top few go
+ * through; a tie at the cut is left to the admins.
  */
 
 import type { InstalledContent, InstalledItem } from "../acsm/types.js"
-import type { CommandReply, MenuSelection, SlashCommand } from "../bot/transport.js"
+import type { CommandReply, SlashCommand } from "../bot/transport.js"
 import type { Kind, Nomination, SeasonVote, SqliteSeasonStore } from "./store.js"
 
 /** What each Racer may nominate in a phase. */
 export const NOMINATIONS_EACH = 2
-/** Discord's limit on a select menu's options, and so on a ballot. */
-export const MAX_NOMINEES = 25
+/** Discord's limit on a poll's answers. */
+export const MAX_NOMINEES = 10
+/** Discord's limit on a poll answer's length. */
+const ANSWER_CHARS = 55
 
-export interface BallotOption {
-  label: string
-  value: string
-  description?: string
-}
-
-/** The season channel: announcements, nominations, ballots and results. */
+/** The season channel: announcements, nominations, polls and results. */
 export interface SeasonChannel {
   /** `pingRoles` are the roles it may notify; nobody else is. */
   post(content: string, pingRoles?: readonly string[]): Promise<void>
-  /** A post with a ballot under it, ticking any number of `options`; its message id. */
-  postBallot(
+  /** A poll under `content`, with any number of answers each unless `oneVote`; its message id. */
+  postPoll(
     content: string,
-    customId: string,
-    options: readonly BallotOption[],
+    question: string,
+    answers: readonly string[],
+    hours: number,
+    oneVote: boolean,
     pingRoles?: readonly string[],
   ): Promise<string>
-  /** Takes the ballot off its post, once its vote has closed. */
-  closeBallot(messageId: string): Promise<void>
+  /** Votes per answer, in the order posted. Discord finalizes them a little after the poll ends. */
+  pollResults(messageId: string): Promise<{ finalized: boolean; counts: number[] }>
+  endPoll(messageId: string): Promise<void>
 }
 
 export interface SeasonRouterOptions {
@@ -117,38 +114,9 @@ export class SeasonRouter {
       .slice(0, 25)
   }
 
-  /** A Racer's picks on a ballot, replacing any earlier ones. */
-  async select(s: MenuSelection): Promise<CommandReply> {
-    const [, id, kind] = s.customId.split(":")
-    const v = this.#o.store.current()
-    if (!v || String(v.id) !== id || v.phase !== `${kind}-vote` || v.phaseEndsAt <= this.#now()) {
-      return { content: "This vote has closed." }
-    }
-    if (!s.roleIds.includes(this.#o.voterRoleId)) {
-      return { content: `Only <@&${this.#o.voterRoleId}> vote on next season.` }
-    }
-    const k = kind as Kind
-    const nominees = this.#o.store.nominations(v.id, k)
-    const picks = nominees.filter((n) => s.values.includes(n.item))
-    this.#o.store.vote(
-      v.id,
-      k,
-      s.userId,
-      picks.map((n) => n.item),
-      this.#now(),
-    )
-    return {
-      content:
-        (picks.length
-          ? `Your ballot: ${picks.map((n) => `**${n.label}**`).join(", ")}.`
-          : `Your ballot is empty: you're backing none of the ${NOUN[k].many}.`) +
-        ` You can change it until the vote closes, ${when(v.phaseEndsAt)}.`,
-    }
-  }
-
   /**
    * Moves a season vote on once its phase is over: a nomination phase to its
-   * ballot, a vote to its result and the next phase. Run every few minutes.
+   * poll, a vote to its result and the next phase. Run every few minutes.
    */
   async advance(): Promise<void> {
     if (this.#advancing) return
@@ -190,6 +158,7 @@ export class SeasonRouter {
         tracks: n("tracks"),
         nominateDays: n("nominate_days"),
         voteDays: n("vote_days"),
+        oneVote: command.options["one_vote"] === "true",
       },
       this.#now(),
     )
@@ -208,7 +177,7 @@ export class SeasonRouter {
       `**Next season: nominate the ${many}.** <@&${this.#o.voterRoleId}>, nominate up to ` +
         `${NOMINATIONS_EACH} ${many} with \`/season nominate\` until ${when(v.phaseEndsAt)}. ` +
         `Pick one installed on the server, or name a new ${one} and give a link to the mod. ` +
-        `Then everyone votes, and the top ${kind === "cars" ? v.cars : v.tracks} go through.`,
+        `Then everyone votes in a poll, and the top ${kind === "cars" ? v.cars : v.tracks} go through.`,
       [this.#o.voterRoleId],
     )
   }
@@ -239,7 +208,7 @@ export class SeasonRouter {
     }
     if (nominated.length >= MAX_NOMINEES) {
       return {
-        content: `The ballot is full: a vote can hold ${MAX_NOMINEES} ${many}, and that many are nominated.`,
+        content: `Nominations are full: a poll holds ${MAX_NOMINEES} ${many}, and that many are nominated.`,
       }
     }
 
@@ -320,7 +289,8 @@ export class SeasonRouter {
     if (!v) return { content: "No season vote is running." }
     // Whatever's moving on now would make this close the phase after it.
     if (this.#advancing) return { content: "That phase is closing already: give it a minute." }
-    this.#o.store.setPhase(v.id, v.phase, this.#now(), v.ballotMessageId)
+    if (v.pollMessageId) await this.#o.channel.endPoll(v.pollMessageId)
+    this.#o.store.setPhase(v.id, v.phase, this.#now(), v.pollMessageId)
     await this.advance()
     return { content: "Closed. The season channel has what comes next." }
   }
@@ -334,16 +304,16 @@ export class SeasonRouter {
     }
     const { one, many } = NOUN[kind]
     const ends = new Date(this.#now().getTime() + v.voteDays * 86_400_000)
-    const messageId = await this.#o.channel.postBallot(
-      `**Vote for next season's ${many}.** <@&${this.#o.voterRoleId}>, tick every ${one} ` +
-        `you'd race in the menu below; the top ${places} go through. Voting closes ` +
-        `${when(ends)}, and you can change your picks until then. The count stays hidden till it closes.`,
-      `season:${v.id}:${kind}`,
-      nominees.map((n) => ({
-        label: clip(n.label),
-        value: n.item,
-        ...(n.link ? { description: "A mod, not on the server yet" } : {}),
-      })),
+    const messageId = await this.#o.channel.postPoll(
+      `**Vote for next season's ${many}.** <@&${this.#o.voterRoleId}>, ` +
+        (v.oneVote
+          ? `vote for the ${one} you'd most like to race`
+          : `vote for every ${one} you'd race`) +
+        `; the top ${places} go through. Voting closes ${when(ends)}.`,
+      `Next season's ${many}: which would you race?`,
+      nominees.map((n) => clip(n.label, ANSWER_CHARS)),
+      v.voteDays * 24,
+      v.oneVote,
       [this.#o.voterRoleId],
     )
     this.#o.store.setPhase(v.id, `${kind}-vote`, ends, messageId)
@@ -351,17 +321,14 @@ export class SeasonRouter {
 
   /** The result of a phase's vote, posted, and the next phase begun. */
   async #count(v: SeasonVote, kind: Kind): Promise<void> {
-    const r = this.outcome(v, kind)
+    const poll = v.pollMessageId ? await this.#o.channel.pollResults(v.pollMessageId) : undefined
+    if (poll && !poll.finalized) return
+    const r = this.outcome(v, kind, poll?.counts)
     // Moved on before anything's posted: a post that fails mustn't have the
     // result announced again every few minutes.
     const next = kind === "cars" ? "tracks-nominate" : "done"
     const ends = new Date(this.#now().getTime() + v.nominateDays * 86_400_000)
     this.#o.store.setPhase(v.id, next, ends)
-    if (v.ballotMessageId) {
-      await this.#o.channel
-        .closeBallot(v.ballotMessageId)
-        .catch((e: unknown) => this.#o.log?.(`season vote: closing the ballot: ${String(e)}`))
-    }
     const { many } = NOUN[kind]
     const lines = [`**Next season's ${many}.** <@&${this.#o.voterRoleId}>`]
     if (r.counts.length === 0) {
@@ -381,7 +348,7 @@ export class SeasonRouter {
     }
     // The count last, so a long one is what's clipped, not who went through.
     if (r.voted) {
-      lines.push(`${r.voters} Racers voted:`)
+      lines.push("The poll's votes:")
       lines.push(...r.counts.map((c, i) => `${i + 1}. **${c.label}**: ${c.votes}`))
     }
     await this.#o.channel.post(clip(lines.join("\n"), 2000), [this.#o.voterRoleId])
@@ -389,41 +356,35 @@ export class SeasonRouter {
     if (next === "tracks-nominate") await this.#announceNominations(after, "tracks")
   }
 
-  /** Who goes through on a phase's vote: everyone nominated, when there are no more than the places. */
+  /**
+   * Who goes through on a phase's poll, its `votes` per nominee in nominated
+   * order: everyone nominated, when there are no more than the places.
+   */
   outcome(
     v: SeasonVote,
     kind: Kind,
+    votes: readonly number[] = [],
   ): {
     counts: { label: string; votes: number }[]
     voted: boolean
-    voters: number
     places: number
     winners: string[]
     tied: string[]
   } {
     const places = kind === "cars" ? v.cars : v.tracks
     const nominees = this.#o.store.nominations(v.id, kind)
-    const ballots = this.#o.store.ballots(v.id, kind)
     const counts = nominees
-      .map((n) => ({ label: n.label, votes: ballots.filter((b) => b.includes(n.item)).length }))
+      .map((n, i) => ({ label: n.label, votes: votes[i] ?? 0 }))
       // Stable: equal counts keep the order they were nominated in.
       .sort((a, b) => b.votes - a.votes)
     if (nominees.length <= places) {
-      return {
-        counts,
-        voted: false,
-        voters: 0,
-        places,
-        winners: nominees.map((n) => n.label),
-        tied: [],
-      }
+      return { counts, voted: false, places, winners: nominees.map((n) => n.label), tied: [] }
     }
     const cut = counts[places - 1]!.votes
     const tiedAtCut = counts[places]!.votes === cut
     return {
       counts,
       voted: true,
-      voters: ballots.filter((b) => b.length > 0).length,
       places,
       winners: counts
         .filter((c, i) => (tiedAtCut ? c.votes > cut : i < places))
