@@ -17,13 +17,16 @@
 export interface CommandOptionDefinition {
   name: string
   description: string
-  /** Discord's numeric option types. 3 is STRING, 11 is ATTACHMENT. */
-  type: 3 | 11
+  /** Discord's numeric option types. 3 is STRING, 4 is INTEGER, 5 is BOOLEAN, 11 is ATTACHMENT. */
+  type: 3 | 4 | 5 | 11
   required: boolean
   /** Suggestions as it's typed, from the router's `autocomplete`. Strings only. */
   autocomplete?: boolean
   /** Strings only. Discord refuses longer before the bot sees it. */
   max_length?: number
+  /** Integers only: Discord refuses outside these before the bot sees it. */
+  min_value?: number
+  max_value?: number
 }
 
 export interface SubcommandDefinition {
@@ -168,6 +171,89 @@ export const INCIDENT_COMMAND: CommandDefinition = {
           max_length: 1500,
         },
       ],
+    },
+  ],
+}
+
+const count = (name: string, description: string, max: number): CommandOptionDefinition => ({
+  name,
+  description,
+  type: 4,
+  required: true,
+  min_value: 1,
+  max_value: max,
+})
+
+/** `/season` (docs/discord-bot-setup.md, step 14): the Racers choose next season's cars, then its tracks. */
+export const SEASON_COMMAND: CommandDefinition = {
+  name: "season",
+  description: "Nominate and vote on next season's cars and tracks",
+  dmPermission: false,
+  options: [
+    {
+      name: "nominate",
+      description: "Nominate a car or track for next season, whichever is open",
+      type: 1,
+      options: [
+        {
+          name: "item",
+          description: "One installed on the server, or the name of a new one",
+          type: 3,
+          required: true,
+          autocomplete: true,
+          max_length: 80,
+        },
+        {
+          name: "link",
+          description: "For one not on the server: a link to the mod",
+          type: 3,
+          required: false,
+          max_length: 500,
+        },
+      ],
+    },
+    {
+      name: "withdraw",
+      description: "Take back one of your nominations",
+      type: 1,
+      options: [
+        {
+          name: "item",
+          description: "Your nomination",
+          type: 3,
+          required: true,
+          autocomplete: true,
+        },
+      ],
+    },
+    {
+      name: "status",
+      description: "Where the season vote is, and what's nominated",
+      type: 1,
+      options: [],
+    },
+    {
+      name: "start",
+      description: "Admins: start choosing next season, cars then tracks",
+      type: 1,
+      options: [
+        count("cars", "How many cars go through", 10),
+        count("tracks", "How many tracks go through", 10),
+        count("nominate_days", "Days each nomination window stays open", 30),
+        count("vote_days", "Days each vote stays open", 30),
+        {
+          name: "one_vote",
+          description: "One vote each, instead of voting for as many as you like",
+          type: 5,
+          required: false,
+        },
+      ],
+    },
+    {
+      name: "close",
+      description: "Admins: end the current nomination window or vote now",
+      type: 1,
+      options: [],
     },
   ],
 }

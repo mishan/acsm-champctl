@@ -775,6 +775,13 @@ describe("the profile's Discord settings", () => {
     expect(() => withDiscord({ incidents })).toThrow(/discord\.incidents/)
   })
 
+  it.each([
+    [{ channelId: "#season", adminRoleId: "1".repeat(18), voterRoleId: "1".repeat(18) }],
+    [{ channelId: "1".repeat(18), adminRoleId: "1".repeat(18) }],
+  ])("checks the season vote's channel and roles: %j", (season) => {
+    expect(() => withDiscord({ season })).toThrow(/discord\.season/)
+  })
+
   it("rejects a channel link", () => {
     expect(() =>
       withDiscord({ adminChannelId: "https://discord.com/channels/1/1234567890123456789" }),

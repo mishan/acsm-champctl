@@ -84,6 +84,32 @@ function fakeInteraction(name = "livery") {
   }
 }
 
+describe("GatewayTransport options", () => {
+  it("passes whole-number and yes-or-no options to the router as text", async () => {
+    const { client, handlers } = fakeClient()
+    const got: Record<string, string>[] = []
+    GatewayTransport.wrapping(client).listen({
+      handle: async (c) => {
+        got.push(c.options)
+        return { content: "" }
+      },
+    })
+    const { interaction } = fakeInteraction("season")
+    interaction.options.data = [
+      {
+        name: "start",
+        options: [
+          { name: "cars", value: 3 },
+          { name: "one_vote", value: true },
+        ],
+      },
+    ] as never
+    await handlers.get("interactionCreate")?.(interaction)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(got).toEqual([{ cars: "3", one_vote: "true" }])
+  })
+})
+
 describe("GatewayTransport autocomplete", () => {
   it("asks the router for the focused option's suggestions and answers with them", async () => {
     const { client, handlers } = fakeClient()
@@ -296,6 +322,16 @@ describe("GatewayTransport incident votes", () => {
       },
     })
     expect(await t.pollResults("c", "m")).toEqual({ finalized: true, counts: [5, 0, 1] })
+    await t.postPoll("c", "Cars?", ["A", "B"], 120, {
+      multiselect: true,
+      content: "<@&5> vote",
+      pingRoles: ["5"],
+    })
+    expect(sent[1]).toMatchObject({
+      content: "<@&5> vote",
+      poll: { allowMultiselect: true },
+      allowedMentions: { parse: [], roles: ["5"] },
+    })
   })
 })
 

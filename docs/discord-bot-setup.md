@@ -442,6 +442,42 @@ The bot reads the recordings and the car and track files. In the compose
 deployment that's the shared data volume and `CHAMPCTL_AC_ROOT`, as for the
 recorder. Set `CHAMPCTL_REPLAY_URL` for the clip's link.
 
+## 14. Optional: choosing next season's cars and tracks
+
+With `discord.season`, `/season` lets the `voterRoleId` role choose next
+season. An `adminRoleId` member runs `/season start` with how many cars and
+tracks go through and how many days each window lasts, and four phases follow
+on their own: cars are nominated, then voted on, then tracks the same.
+
+- **Nominating.** Each voter nominates up to two with `/season nominate`: one
+  installed on the server, from the list, or a new one by name with a link to
+  the mod. `/season withdraw` takes one back. A Discord poll holds 10, so
+  that's the most a window takes.
+- **Voting.** When nominations close, GridMom posts a Discord poll in
+  `channelId`. Each voter votes for as many as they'd race, or for one if
+  `/season start` was given `one_vote`. The counts show as people vote.
+  Discord can't limit a poll to a role, so anyone who can see the channel can
+  vote in it.
+- **The result.** The most-voted go through. A tie at the cut is left to the
+  admins, and a window with no more nominees than places needs no vote.
+
+`/season status` says where it is; `/season close` lets an admin end the
+current window early. Phases are checked every five minutes, so one can end
+that much after its time.
+
+```json
+"season": {
+  "channelId": "1234567890123456789",
+  "adminRoleId": "9876543210987654321",
+  "voterRoleId": "1234567890123456781"
+}
+```
+
+The bot needs **View Channel**, **Send Messages**, **Send Polls** and **Read
+Message History** in the channel, and **Mention @everyone, @here, and All Roles** to notify the
+voters when a window opens or closes, unless their role is set to let anyone
+mention it.
+
 ## When it doesn't work
 
 | What you see | What it is |

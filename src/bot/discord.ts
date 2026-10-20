@@ -334,23 +334,25 @@ export class GatewayTransport implements DiscordTransport {
     return channel.id
   }
 
-  /** A poll, one answer each; its message id. */
+  /** A poll, one answer each unless `multiselect`; its message id. */
   async postPoll(
     channelId: string,
     question: string,
     answers: readonly string[],
     hours: number,
+    post: { multiselect?: boolean; content?: string; pingRoles?: readonly string[] } = {},
   ): Promise<string> {
     const channel = await this.#client.channels.fetch(channelId)
     if (!channel?.isSendable()) throw new BotError(`${channelId} isn't a channel I can post in.`)
     const sent = await channel.send({
+      ...(post.content ? { content: post.content } : {}),
       poll: {
         question: { text: question },
         answers: answers.map((text) => ({ text })),
         duration: hours,
-        allowMultiselect: false,
+        allowMultiselect: post.multiselect ?? false,
       },
-      allowedMentions: { parse: [] },
+      allowedMentions: { parse: [], roles: [...(post.pingRoles ?? [])] },
     })
     return sent.id
   }
@@ -585,6 +587,9 @@ function stringOptions(
   const options: Record<string, string> = {}
   for (const option of data[0]?.options ?? data) {
     if (typeof option.value === "string") options[option.name] = option.value
+    // Numbers and yes-or-no, such as how many cars a season vote picks.
+    else if (typeof option.value === "number" || typeof option.value === "boolean")
+      options[option.name] = String(option.value)
   }
   return options
 }

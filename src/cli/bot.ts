@@ -22,7 +22,7 @@ import { SqliteCache } from "../acsm/cache.js"
 import { AcsmNotJsonError, asMessage, HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { announce, NothingToAnnounce, RoundRefused, type Announcement } from "../bot/announce.js"
-import { INCIDENT_COMMAND, LIVERY_COMMANDS } from "../bot/commands.js"
+import { INCIDENT_COMMAND, LIVERY_COMMANDS, SEASON_COMMAND } from "../bot/commands.js"
 import { GatewayTransport } from "../bot/discord.js"
 import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
 import { nightlyMessages, standingsMessage } from "../bot/message.js"
@@ -48,6 +48,8 @@ import {
 import { SqliteTrophyStore } from "../bot/trophy-store.js"
 import { IncidentRouter } from "../incidents/router.js"
 import { SqliteIncidentStore } from "../incidents/store.js"
+import { SeasonRouter } from "../season/router.js"
+import { SqliteSeasonStore } from "../season/store.js"
 import type { Severity } from "../gridmom/finding.js"
 import { DEFAULT_MIN_SEVERITY } from "../gridmom/report.js"
 import { SqliteClaimStore } from "../liveries/claims.js"
@@ -960,11 +962,13 @@ async function serve(args: Args): Promise<number> {
     )
   }
   const incidentStore = incidentSettings ? await SqliteIncidentStore.open(storePath) : undefined
+  const seasonSettings = profile.discord.season
+  const seasonStore = seasonSettings ? await SqliteSeasonStore.open(storePath) : undefined
   const voice = profile.discord.qualiVoiceMove
   const transport = await connect({ voice: voice !== undefined })
   let stopQualiCall = async () => {}
   let stopStandings = async () => {}
-  let stopPolls = () => {}
+  let stopPolls = async () => {}
 
   try {
     if (!(transport instanceof GatewayTransport)) {
@@ -973,6 +977,7 @@ async function serve(args: Args): Promise<number> {
     await transport.registerCommands(guildId, [
       ...LIVERY_COMMANDS,
       ...(incidentSettings ? [INCIDENT_COMMAND] : []),
+      ...(seasonSettings ? [SEASON_COMMAND] : []),
     ])
     process.stderr.write(`Registered /livery in ${guildId}.\n`)
     if (args.registerOnly) return 0
@@ -1047,20 +1052,68 @@ async function serve(args: Args): Promise<number> {
       if (incidentSettings?.vote) {
         // Every five minutes: a closed vote waits that long at most to be counted.
         const timer = setInterval(() => void incidents.settlePolls(), 5 * 60_000)
-        stopPolls = () => clearInterval(timer)
+        stopPolls = async () => clearInterval(timer)
         void incidents.settlePolls()
         process.stderr.write("Counting incident votes when they close.\n")
       }
     }
 
+    const season =
+      seasonSettings && seasonStore
+        ? new SeasonRouter({
+            store: seasonStore,
+            adminRoleId: seasonSettings.adminRoleId,
+            voterRoleId: seasonSettings.voterRoleId,
+            content: () => reader.listContent(),
+            log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
+            channel: {
+              post: (content, pingRoles) =>
+                transport.post({
+                  channelId: seasonSettings.channelId,
+                  content,
+                  source: "discord.season.channelId in the profile",
+                  ...(pingRoles?.length ? { pingRoles } : {}),
+                }),
+              postPoll: (content, question, answers, hours, oneVote, pingRoles) =>
+                transport.postPoll(seasonSettings.channelId, question, answers, hours, {
+                  multiselect: !oneVote,
+                  content,
+                  ...(pingRoles ? { pingRoles } : {}),
+                }),
+              pollResults: (messageId) =>
+                transport.pollResults(seasonSettings.channelId, messageId),
+              endPoll: (messageId) => transport.endPoll(seasonSettings.channelId, messageId),
+            },
+          })
+        : undefined
+    if (season) {
+      // Every five minutes, like the incident votes: a phase moves on that long after it ends at most.
+      const timer = setInterval(() => void season.advance(), 5 * 60_000)
+      const stopIncidentPolls = stopPolls
+      stopPolls = async () => {
+        await stopIncidentPolls()
+        clearInterval(timer)
+        await season.idle()
+      }
+      void season.advance()
+      process.stderr.write("Answering /season.\n")
+    }
+
     transport.listen(
-      incidents
-        ? {
-            handle: (c) => (c.name === "incident" ? incidents.handle(c) : router.handle(c)),
-            autocomplete: (c, focused) =>
-              c.name === "incident" ? incidents.autocomplete(c, focused) : Promise.resolve([]),
-          }
-        : router,
+      {
+        handle: (c) =>
+          c.name === "incident" && incidents
+            ? incidents.handle(c)
+            : c.name === "season" && season
+              ? season.handle(c)
+              : router.handle(c),
+        autocomplete: (c, focused) =>
+          c.name === "incident" && incidents
+            ? incidents.autocomplete(c, focused)
+            : c.name === "season" && season
+              ? season.autocomplete(c, focused)
+              : Promise.resolve([]),
+      },
       {
         ...(profile.discord.adminChannelId
           ? { adminChannelId: profile.discord.adminChannelId }
@@ -1137,10 +1190,11 @@ async function serve(args: Args): Promise<number> {
     // reads short.
     await stopQualiCall()
     await stopStandings()
-    stopPolls()
+    await stopPolls()
     await transport.close()
     liveries.close()
     incidentStore?.close()
+    seasonStore?.close()
     tokens.close()
     queue.close()
     claims.close()
