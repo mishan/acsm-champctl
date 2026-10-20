@@ -151,6 +151,9 @@ export class SeasonRouter {
       return { content: "A season vote is already running: `/season status` shows where it is." }
     }
     const n = (key: string) => Number(command.options[key])
+    if (!n("cars") && !n("tracks"))
+      return { content: "With no cars and no tracks, there's nothing to vote on." }
+    const kind: Kind = n("cars") ? "cars" : "tracks"
     const v = this.#o.store.start(
       {
         startedBy: command.userId,
@@ -160,15 +163,18 @@ export class SeasonRouter {
         voteDays: n("vote_days"),
         oneVote: command.options["one_vote"] === "true",
       },
+      `${kind}-nominate`,
       this.#now(),
     )
     // Started either way: a retry would be refused as already running.
-    const unposted = await this.#announceNominations(v, "cars").then(
+    const unposted = await this.#announceNominations(v, kind).then(
       () => "",
       (e: unknown) =>
         `, but the call to nominate didn't post in the season channel (${e instanceof Error ? e.message : String(e)})`,
     )
-    return { content: `Started. Car nominations close ${when(v.phaseEndsAt)}${unposted}.` }
+    return {
+      content: `Started. ${kind === "cars" ? "Car" : "Track"} nominations close ${when(v.phaseEndsAt)}${unposted}.`,
+    }
   }
 
   async #announceNominations(v: SeasonVote, kind: Kind): Promise<void> {
@@ -326,7 +332,7 @@ export class SeasonRouter {
     const r = this.outcome(v, kind, poll?.counts)
     // Moved on before anything's posted: a post that fails mustn't have the
     // result announced again every few minutes.
-    const next = kind === "cars" ? "tracks-nominate" : "done"
+    const next = kind === "cars" && v.tracks ? "tracks-nominate" : "done"
     const ends = new Date(this.#now().getTime() + v.nominateDays * 86_400_000)
     this.#o.store.setPhase(v.id, next, ends)
     const { many } = NOUN[kind]

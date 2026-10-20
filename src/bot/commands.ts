@@ -175,12 +175,17 @@ export const INCIDENT_COMMAND: CommandDefinition = {
   ],
 }
 
-const count = (name: string, description: string, max: number): CommandOptionDefinition => ({
+const count = (
+  name: string,
+  description: string,
+  max: number,
+  min = 1,
+): CommandOptionDefinition => ({
   name,
   description,
   type: 4,
   required: true,
-  min_value: 1,
+  min_value: min,
   max_value: max,
 })
 
@@ -237,8 +242,8 @@ export const SEASON_COMMAND: CommandDefinition = {
       description: "Admins: start choosing next season, cars then tracks",
       type: 1,
       options: [
-        count("cars", "How many cars go through", 10),
-        count("tracks", "How many tracks go through", 10),
+        count("cars", "How many cars go through; 0 to choose only tracks", 10, 0),
+        count("tracks", "How many tracks go through; 0 to choose only cars", 10, 0),
         count("nominate_days", "Days each nomination window stays open", 30),
         count("vote_days", "Days each vote stays open", 30),
         {

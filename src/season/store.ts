@@ -129,13 +129,14 @@ export class SqliteSeasonStore {
 
   start(
     v: Pick<SeasonVote, "startedBy" | "cars" | "tracks" | "nominateDays" | "voteDays" | "oneVote">,
+    phase: Phase,
     at: Date,
   ): SeasonVote {
     const r = this.#db
       .prepare(
         `INSERT INTO season_votes (started_at, started_by, cars, tracks, nominate_days, vote_days,
            one_vote, phase, phase_ends_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'cars-nominate', ?) RETURNING *`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
       )
       .get(
         at.toISOString(),
@@ -145,6 +146,7 @@ export class SqliteSeasonStore {
         v.nominateDays,
         v.voteDays,
         v.oneVote ? 1 : 0,
+        phase,
         new Date(at.getTime() + v.nominateDays * 86_400_000).toISOString(),
       ) as unknown as VoteRow
     return fromRow(r)

@@ -232,6 +232,35 @@ describe("/season", () => {
     expect(store.current()).toBeUndefined()
   })
 
+  it.each([
+    [
+      "only tracks, from track nominations",
+      "0",
+      "1",
+      /^Started\. Track nominations close/,
+      "tracks-nominate",
+    ],
+    [
+      "only cars, done once they're chosen",
+      "1",
+      "0",
+      /^Started\. Car nominations close/,
+      undefined,
+    ],
+    ["nothing, so refuses", "0", "0", /nothing to vote on/, undefined],
+  ])("chooses %s", async (_, cars, tracks, reply, after) => {
+    const r = router()
+    expect((await start(r, cars, tracks)).content).toMatch(reply)
+    if (cars === "0") {
+      expect(store.current()?.phase).toBe(after)
+      return
+    }
+    await r.handle(command("ana", "nominate", { item: "ks_ferrari_488_gt3" }))
+    await r.handle(command("admin", "close", {}, [ADMIN]))
+    expect(posts.at(-1)!.content).toMatch(/^\*\*Next season's cars\.\*\*/)
+    expect(store.current()?.phase).toBe(after)
+  })
+
   it("posts a one-vote poll when started that way", async () => {
     const r = router()
     await r.handle(
