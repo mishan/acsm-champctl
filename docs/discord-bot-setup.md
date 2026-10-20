@@ -449,6 +449,8 @@ season. An `adminRoleId` member runs `/season start` with how many cars and
 tracks go through and how many days each window lasts, and four phases follow
 on their own: cars are nominated, then voted on, then tracks the same.
 
+- **Just one.** Give `cars:0` to choose only tracks, or `tracks:0` for only
+  cars.
 - **Nominating.** Each voter nominates up to two with `/season nominate`: one
   installed on the server, from the list, or a new one by name with a link to
   the mod. `/season withdraw` takes one back. A Discord poll holds 10, so
