@@ -75,7 +75,7 @@
     "@fontsource/roboto": "^5.3.0",
     "@napi-rs/canvas": "^1.0.10",
     "ac-ai-line": "^0.1.0",
-    "ac-dds": "^0.1.0",
+    "ac-dds": "^0.1.1",
     "ac-spectator": "^0.1.0",
     "acreplay": "^0.1.1",
     "acsm-race-control": "^0.1.0",
