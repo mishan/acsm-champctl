@@ -46,6 +46,7 @@ import {
   type UploadGrant,
   uploadUrl,
 } from "../liveries/upload-token.js"
+import { MESSAGE_LIMIT } from "./transport.js"
 
 export { uploadReply, type ReplyFacts } from "../liveries/accept.js"
 
@@ -177,6 +178,7 @@ export async function handleUpload(options: HandleUploadOptions): Promise<Upload
     limits,
     autoApply: options.autoApply ?? false,
     unreachableRounds: planned.unreachableRounds,
+    replyLimit: MESSAGE_LIMIT,
   })
 
   return accepted.ok

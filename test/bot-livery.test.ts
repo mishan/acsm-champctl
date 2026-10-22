@@ -17,7 +17,9 @@ import { DEFAULT_LIMITS } from "../src/liveries/pack.js"
 import { autoApplyPromised, DRAIN_STALE_AFTER_MS } from "../src/liveries/accept.js"
 import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
 import { SqliteTokenStore } from "../src/liveries/upload-token.js"
-import { championship, championshipClass, entryList } from "./support/build.js"
+import { MESSAGE_LIMIT } from "../src/bot/transport.js"
+import { championship, championshipClass, entryList, raceEvent } from "./support/build.js"
+import { dds } from "./support/dds.js"
 
 const CAR = "rss_formula_hybrid_2021"
 const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -29,7 +31,7 @@ const RACER_ROLE = "666666666666666666"
 
 const bytes = (s: string) => new TextEncoder().encode(s)
 const skin = (extra: Record<string, Uint8Array> = {}) =>
-  zipSync({ "livery.dds": bytes("dds"), "preview.jpg": bytes("jpg"), ...extra })
+  zipSync({ "livery.dds": dds(), "preview.jpg": bytes("jpg"), ...extra })
 
 const person = (over: Partial<Entrant>): Partial<Entrant> => ({ Model: CAR, Skin: "", ...over })
 
@@ -287,6 +289,33 @@ describe("handleUpload", () => {
     )
   })
 
+  it("accepts a texture with no mipmaps, and tells the driver it will shimmer", async () => {
+    const noMips = dds(64)
+    new DataView(noMips.buffer, noMips.byteOffset).setUint32(28, 1, true)
+    const result = await upload({ body: skin({ "livery.dds": noMips }) })
+    expect(result).toMatchObject({ ok: true })
+    expect(result.reply).toMatch(/Heads up about livery\.dds: It has no mipmaps .* shimmers/)
+  })
+
+  it("replies within Discord's limit with everything it could have to say", async () => {
+    const noMips = dds(64)
+    new DataView(noMips.buffer, noMips.byteOffset).setUint32(28, 1, true)
+    const files: Record<string, Uint8Array> = { "ui_skin.json": bytes("{}") }
+    for (let i = 0; i < 5; i++) {
+      files[`${"t".repeat(58)}${i}.dds`] = noMips
+      files[`${"w".repeat(200)}${i}.psd`] = bytes("x")
+    }
+    const entrants = entryList([person({ Name: "Misha", InternalUUID: "entrant-misha" })])
+    const championship_ = championship({
+      Classes: [championshipClass({ Entrants: entrants })],
+      Events: Array.from({ length: 30 }, () => raceEvent({ EntryList: entrants })),
+    })
+    const result = await upload({ body: zipSync(files), championship: championship_ })
+    expect(result.reply).toMatch(/^Got it — 6 files for Misha's /)
+    expect(result.reply).toMatch(/rounds 1, 2, .*, 30 have/)
+    expect(result.reply.length).toBeLessThanOrEqual(MESSAGE_LIMIT)
+  })
+
   it("refuses a zip with no .dds, so it isn't a livery", async () => {
     const result = await upload({ body: zipSync({ "readme.txt": bytes("hi") }) })
     expect(result.reply).toMatch(/no .dds file/)
@@ -419,6 +448,40 @@ describe("what the driver is told", () => {
 
   it("counts one file without pluralising it", () => {
     expect(uploadReply({ ...facts, fileCount: 1 })).toMatch(/1 file for/)
+  })
+
+  const warning = (i: number) => ({
+    // As long as a file name may be.
+    name: `${"livery_details_".repeat(4).slice(0, 59)}${i}.dds`,
+    message: "It has no mipmaps where 4096x4096 needs 13, so it shimmers badly at a distance.",
+  })
+
+  it("names five texture problems and counts the rest", () => {
+    const reply = uploadReply({ ...facts, warnings: [1, 2, 3, 4, 5, 6, 7].map(warning) })
+    expect(reply.match(/Heads up about /g)).toHaveLength(5)
+    expect(reply).toMatch(/And 2 more like that\./)
+  })
+
+  it("fits in one Discord message however much there is to say", () => {
+    // editReply is refused over the limit, after the submission is already
+    // queued, so the driver is told something went wrong and sends it again.
+    const reply = uploadReply(
+      {
+        ...facts,
+        driverName: "A driver with a name as long as an entry list allows",
+        hasPreview: false,
+        warnings: [1, 2, 3, 4, 5].map(warning),
+        dropped: [1, 2, 3, 4, 5].map((i) => ({
+          name: `${"a_photoshop_working_file_nobody_deleted_".repeat(3).slice(0, 115)}${i}.psd`,
+          why: "a Photoshop file, which the game never reads",
+        })),
+        unreachableRounds: Array.from({ length: 30 }, (_, i) => i + 1),
+      },
+      MESSAGE_LIMIT,
+    )
+    expect(reply.length).toBeLessThanOrEqual(MESSAGE_LIMIT)
+    expect(reply).toMatch(/^Got it — 2 files for /)
+    expect(reply).toMatch(/queued for an admin/)
   })
 })
 

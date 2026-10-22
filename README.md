@@ -327,6 +327,13 @@ than accumulating one per week. Only its `preview.jpg`, `livery.png` and
 `ui_skin.json` go to the server, since that is all ACSM shows; drivers get the
 textures from the carset. A skin with none of the three is refused.
 
+So is one Assetto Corsa would draw wrong with no error anywhere: a
+DXT-compressed `.dds` cut short, a `.dds` that isn't a DDS at all, or two files
+whose names differ only in case, which are one file on Windows. A texture short
+of mipmaps or not a power of two goes through, with a note that it will shimmer,
+and so does one with a DX10 header, with a note that it needs Custom Shaders
+Patch and shows plain white without it.
+
 That is also why re-running with the same pack uploads everything again. There
 is no way to ask ACSM what is already sitting in a skin folder, so a driver who
 fixed a wrong sponsor and sent the zip back is indistinguishable from one who
