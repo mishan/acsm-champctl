@@ -29,6 +29,7 @@
  * be sure of them.
  */
 
+import { caseCollisions, ddsProblems } from "ac-dds"
 import { unzipSync } from "fflate"
 
 export class LiveryPackError extends Error {
@@ -209,6 +210,12 @@ export interface SkinFile {
   bytes: Uint8Array
 }
 
+/** A file name, and a sentence from `ac-dds` saying what the game will make of it. */
+export interface TextureWarning {
+  name: string
+  message: string
+}
+
 export interface Livery {
   /** The outer directory: the ACSM car model this skin belongs to. */
   carModel: string
@@ -220,6 +227,8 @@ export interface Livery {
   totalBytes: number
   /** Files in the zip a skin doesn't use, left out of the upload. */
   dropped?: { name: string; why: string }[]
+  /** Textures the game will draw, but not well. See `textureWarnings`. */
+  warnings?: TextureWarning[]
 }
 
 export interface LiveryPack {
@@ -840,6 +849,8 @@ function readOneLivery(
     )
   }
 
+  const warnings = textureWarnings(`${carModel}/${driverName}`, files)
+
   const dropped = skipped.map((path) => {
     const base = path.split(/[/\\]/).pop() ?? path
     return {
@@ -854,7 +865,47 @@ function readOneLivery(
     files,
     totalBytes,
     ...(dropped.length > 0 ? { dropped } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
   }
+}
+
+/**
+ * Refuses the textures Assetto Corsa cannot use, and returns the ones it will
+ * use badly.
+ *
+ * Every problem here installs and loads with no error anywhere, and the only
+ * symptom is a car that looks wrong in the game — so nobody finds out until
+ * race night, and then can't tell why.
+ *
+ * The split is whether the game draws the texture at all. A DX10 header, a file
+ * that isn't a DDS, or one cut short is never drawn right, and two names that
+ * differ only in case are one file on Windows, where whichever unzips second
+ * wins. A missing mip chain or an odd size still draws the livery and only
+ * shimmers at a distance, which a driver should hear about and not be turned
+ * away for.
+ */
+function textureWarnings(where: string, files: readonly SkinFile[]): TextureWarning[] {
+  const collision = caseCollisions(files.map((f) => f.name))[0]
+  if (collision) {
+    throw new LiveryPackError(
+      `Refusing ${where}: ${collision.map((n) => `"${n}"`).join(" and ")} differ only in case, ` +
+        `so on Windows they are one file and whichever unzips second replaces the other. Keep one.`,
+    )
+  }
+  const warnings: TextureWarning[] = []
+  for (const file of files) {
+    if (extensionOf(file.name) !== ".dds") continue
+    for (const problem of ddsProblems(file.bytes)) {
+      if (problem.code === "mip-chain" || problem.code === "not-power-of-two") {
+        warnings.push({ name: file.name, message: problem.message })
+      } else {
+        throw new LiveryPackError(
+          `Refusing ${where}: "${file.name}" won't work in Assetto Corsa. ${problem.message}`,
+        )
+      }
+    }
+  }
+  return warnings
 }
 
 function firstDuplicate(values: readonly string[]): string | undefined {

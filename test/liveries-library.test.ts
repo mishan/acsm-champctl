@@ -13,11 +13,12 @@ import {
   zipSource,
 } from "../src/liveries/library.js"
 import { DEFAULT_LIMITS } from "../src/liveries/pack.js"
+import { dds } from "./support/dds.js"
 
 const bytes = (s: string): Uint8Array => new TextEncoder().encode(s)
 const CAR = "ac_legends_gt_nissan_gtr"
 
-const skin = { "livery.dds": bytes("DDS"), "ui_skin.json": bytes("{}") }
+const skin = { "livery.dds": dds(), "ui_skin.json": bytes("{}") }
 
 /** What an import came to, one line per skin. */
 async function outcomes(source: SkinSource, stock?: Map<string, Set<string>>) {
@@ -38,14 +39,14 @@ describe("importing a zip of skins", () => {
   // The shape a shared folder downloads as: one wrapping folder, then cars.
   const collection = zipSync({
     "acl skins/": new Uint8Array(0),
-    [`acl skins/${CAR}/skins/669_Slipshod/livery.dds`]: bytes("DDS"),
+    [`acl skins/${CAR}/skins/669_Slipshod/livery.dds`]: dds(),
     [`acl skins/${CAR}/skins/669_Slipshod/ui_skin.json`]: bytes("{}"),
     [`acl skins/${CAR}/skins/669_Slipshod/desktop.ini`]: bytes("[x]"),
     [`acl skins/${CAR}/skins/669_Slipshod/work.psd`]: bytes("PSD"),
-    [`acl skins/${CAR}/skins/21New/livery.dds`]: bytes("DDS"),
+    [`acl skins/${CAR}/skins/21New/livery.dds`]: dds(),
     [`acl skins/${CAR}/skins/21New/ui_skin.json`]: bytes("{}"),
     [`acl skins/${CAR}/skins/broken/readme.txt`]: bytes("hi"),
-    [`acl skins/ks_other/skins/Mine/livery.dds`]: bytes("DDS"),
+    [`acl skins/ks_other/skins/Mine/livery.dds`]: dds(),
     [`acl skins/ks_other/skins/Mine/ui_skin.json`]: bytes("{}"),
   })
 
@@ -86,9 +87,9 @@ describe("importing a folder of skins", () => {
     for (const [name, body] of Object.entries(skin)) {
       await put(`content/cars/${CAR}/skins/Buckmark/${name}`, body)
     }
-    await put(`content/cars/${CAR}/skins/Buckmark/4K/livery.dds`, bytes("DDS"))
+    await put(`content/cars/${CAR}/skins/Buckmark/4K/livery.dds`, dds())
     await put(`content/cars/${CAR}/data.acd`, bytes("car"))
-    await put(`content/cars/${CAR}/skins/MISF1T/livery.dds`, bytes("DDS"))
+    await put(`content/cars/${CAR}/skins/MISF1T/livery.dds`, dds())
     await put(`content/cars/${CAR}/skins/MISF1T/ui_skin.json`, bytes("{}"))
     await put(`content/cars/${CAR}/skins/MISF1T/notes.psd`, bytes("PSD"))
 
@@ -116,9 +117,9 @@ describe("importing awkward sources", () => {
 
   it("reads a folder and not its sibling with a longer name", async () => {
     const zip = zipSync({
-      [`${CAR}/skins/Foo/livery.dds`]: bytes("DDS"),
+      [`${CAR}/skins/Foo/livery.dds`]: dds(),
       [`${CAR}/skins/Foo/ui_skin.json`]: bytes("{}"),
-      [`${CAR}/skins/Foobar/livery.dds`]: bytes("DDS"),
+      [`${CAR}/skins/Foobar/livery.dds`]: dds(),
       [`${CAR}/skins/Foobar/preview.jpg`]: bytes("JPG"),
     })
     expect(await outcomes(zipSource(zip))).toEqual([
@@ -143,7 +144,7 @@ describe("importing awkward sources", () => {
     root = await mkdtemp(join(tmpdir(), "champctl-library-"))
     const skins = join(root, CAR, "skins")
     await mkdir(join(skins, "Good"), { recursive: true })
-    await writeFile(join(skins, "Good", "livery.dds"), bytes("DDS"))
+    await writeFile(join(skins, "Good", "livery.dds"), dds())
     await writeFile(join(skins, "Good", "ui_skin.json"), bytes("{}"))
     const bad = Buffer.concat([
       Buffer.from(`${skins}/Ricky H`),
@@ -151,7 +152,7 @@ describe("importing awkward sources", () => {
       Buffer.from("kkinen"),
     ])
     await mkdir(bad)
-    await writeFile(Buffer.concat([bad, Buffer.from("/livery.dds")]), bytes("DDS"))
+    await writeFile(Buffer.concat([bad, Buffer.from("/livery.dds")]), dds())
 
     const source = await dirSource(root)
     expect(await outcomes(source)).toEqual([
@@ -164,7 +165,7 @@ describe("importing awkward sources", () => {
     root = await mkdtemp(join(tmpdir(), "champctl-library-"))
     const folder = join(root, CAR, "skins", "Mac")
     await mkdir(folder, { recursive: true })
-    await writeFile(join(folder, "livery.dds"), bytes("DDS"))
+    await writeFile(join(folder, "livery.dds"), dds())
     await writeFile(join(folder, "._livery.dds"), bytes("fork"))
     await writeFile(join(folder, "ui_skin.json"), bytes("{}"))
     expect(await outcomes(await dirSource(root))).toEqual([`${CAR}/Mac: livery.dds,ui_skin.json`])

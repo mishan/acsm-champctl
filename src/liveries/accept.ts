@@ -16,7 +16,13 @@
  * sentence whichever way they sent the file.
  */
 
-import { DEFAULT_LIMITS, LiveryPackError, type PackLimits, readSingleLivery } from "./pack.js"
+import {
+  DEFAULT_LIMITS,
+  LiveryPackError,
+  type PackLimits,
+  readSingleLivery,
+  type TextureWarning,
+} from "./pack.js"
 import type { SubmitResult } from "./queue.js"
 
 /**
@@ -191,6 +197,7 @@ async function acceptOne(input: AcceptInput): Promise<AcceptOutcome> {
       fileCount: livery.files.length,
       hasPreview: livery.files.some((f) => f.name.toLowerCase() === "preview.jpg"),
       dropped: livery.dropped ?? [],
+      warnings: livery.warnings ?? [],
       replaced: submission.superseded !== undefined,
       autoApply: input.autoApply ?? false,
       unreachableRounds: input.unreachableRounds ?? [],
@@ -243,6 +250,8 @@ export interface ReplyFacts {
   unreachableRounds?: number[]
   /** Files left out of the upload because a skin doesn't use them. */
   dropped?: { name: string; why: string }[]
+  /** Textures the game will draw, but not well. */
+  warnings?: TextureWarning[]
 }
 
 /**
@@ -297,6 +306,12 @@ export function uploadReply(facts: ReplyFacts): string {
         `${shown.join(", ")}${more}. Nothing to fix — the rest went through.`,
     )
   }
+
+  // Taken anyway, because the game still draws these. Said now, because in the
+  // game nothing says why one car shimmers and the rest don't.
+  const warnings = facts.warnings ?? []
+  for (const w of warnings.slice(0, 5)) lines.push(`Heads up about ${w.name}: ${w.message}`)
+  if (warnings.length > 5) lines.push(`And ${warnings.length - 5} more like that.`)
 
   if (!facts.hasPreview) {
     // Races fine, looks broken. Worth one line now rather than a question on

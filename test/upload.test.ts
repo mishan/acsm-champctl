@@ -23,6 +23,7 @@ import {
 } from "../src/liveries/upload-token.js"
 import { LIBRARY, SqliteLiveryStore } from "../src/liveries/store.js"
 import { carsetSlugFromPath, createUploadServer, isSeasonCarset } from "../src/upload/server.js"
+import { dds } from "./support/dds.js"
 import { importsOf, reachesAny, resolveSpecifier } from "./support/imports.js"
 
 const CAR = "rss_formula_hybrid_2021"
@@ -31,7 +32,7 @@ const MISHA = "111111111111111111"
 
 const bytes = (s: string) => new TextEncoder().encode(s)
 const skin = (extra: Record<string, Uint8Array> = {}) =>
-  zipSync({ "livery.dds": bytes("dds"), "preview.jpg": bytes("jpg"), ...extra })
+  zipSync({ "livery.dds": dds(), "preview.jpg": bytes("jpg"), ...extra })
 
 const grant = () => ({
   discordUserId: MISHA,

@@ -18,6 +18,7 @@ import { autoApplyPromised, DRAIN_STALE_AFTER_MS } from "../src/liveries/accept.
 import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
 import { SqliteTokenStore } from "../src/liveries/upload-token.js"
 import { championship, championshipClass, entryList } from "./support/build.js"
+import { dds } from "./support/dds.js"
 
 const CAR = "rss_formula_hybrid_2021"
 const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -29,7 +30,7 @@ const RACER_ROLE = "666666666666666666"
 
 const bytes = (s: string) => new TextEncoder().encode(s)
 const skin = (extra: Record<string, Uint8Array> = {}) =>
-  zipSync({ "livery.dds": bytes("dds"), "preview.jpg": bytes("jpg"), ...extra })
+  zipSync({ "livery.dds": dds(), "preview.jpg": bytes("jpg"), ...extra })
 
 const person = (over: Partial<Entrant>): Partial<Entrant> => ({ Model: CAR, Skin: "", ...over })
 
@@ -285,6 +286,14 @@ describe("handleUpload", () => {
     expect(result.reply).toMatch(
       /Left out 1 file a skin doesn't use: work\.psd \(a Photoshop source file\)\. Nothing to fix/,
     )
+  })
+
+  it("accepts a texture with no mipmaps, and tells the driver it will shimmer", async () => {
+    const noMips = dds(64)
+    new DataView(noMips.buffer, noMips.byteOffset).setUint32(28, 1, true)
+    const result = await upload({ body: skin({ "livery.dds": noMips }) })
+    expect(result).toMatchObject({ ok: true })
+    expect(result.reply).toMatch(/Heads up about livery\.dds: It has no mipmaps .* shimmers/)
   })
 
   it("refuses a zip with no .dds, so it isn't a livery", async () => {

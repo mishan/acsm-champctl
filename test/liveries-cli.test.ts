@@ -31,10 +31,11 @@ import { LiveryPackError, readLiveryPack } from "../src/liveries/pack.js"
 import { LiveryPlanError, planLiveries } from "../src/liveries/plan.js"
 import { acsmStub } from "./support/acsm-stub.js"
 import { championship, championshipClass, entryList, raceEvent } from "./support/build.js"
+import { dds } from "./support/dds.js"
 
 const CAR = "rss_formula_hybrid_2021"
 const bytes = (s: string) => new TextEncoder().encode(s)
-const skin = () => zipSync({ "livery.dds": bytes("x"), "ui_skin.json": bytes("{}") })
+const skin = () => zipSync({ "livery.dds": dds(), "ui_skin.json": bytes("{}") })
 
 const person = (over: Partial<Entrant>): Partial<Entrant> => ({ Model: CAR, Skin: "", ...over })
 
@@ -107,6 +108,18 @@ describe("rendering a livery plan", () => {
     const out = renderPlan(plan)
     expect(out).toContain("September 2026 — liveries")
     expect(out).toContain("misha_old → Misha")
+  })
+
+  it("passes on what the driver was told about a texture", () => {
+    const noMips = dds(64)
+    new DataView(noMips.buffer).setUint32(28, 1, true)
+    const pack = readLiveryPack(
+      zipSync({
+        [`${CAR}/Misha.zip`]: zipSync({ "livery.dds": noMips, "ui_skin.json": bytes("{}") }),
+      }),
+    )
+    const plan = planLiveries(champ([person({ Name: "Misha" })]), "champ-1", pack)
+    expect(renderPlan(plan)).toMatch(/livery\.dds: It has no mipmaps where 64x64 needs 7/)
   })
 
   it("says (no skin) rather than printing nothing", () => {
@@ -368,7 +381,7 @@ describe("champctl-liveries --import", () => {
     await writeFile(
       zip,
       zipSync({
-        [`skins/${CAR}/skins/Collected/livery.dds`]: bytes("pixels"),
+        [`skins/${CAR}/skins/Collected/livery.dds`]: dds(),
         [`skins/${CAR}/skins/Collected/ui_skin.json`]: bytes("{}"),
       }),
     )

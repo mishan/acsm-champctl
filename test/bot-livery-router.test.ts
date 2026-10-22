@@ -13,6 +13,7 @@ import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
 import { LIBRARY, SqliteLiveryStore } from "../src/liveries/store.js"
 import { SqliteTokenStore } from "../src/liveries/upload-token.js"
 import { championship, championshipClass, entryList, raceEvent } from "./support/build.js"
+import { dds } from "./support/dds.js"
 
 const CAR = "rss_formula_hybrid_2021"
 const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -24,7 +25,7 @@ const RACER_ROLE = "666666666666666666"
 
 const bytes = (s: string) => new TextEncoder().encode(s)
 const skin = (extra: Record<string, Uint8Array> = {}) =>
-  zipSync({ "livery.dds": bytes("dds"), "preview.jpg": bytes("jpg"), ...extra })
+  zipSync({ "livery.dds": dds(), "preview.jpg": bytes("jpg"), ...extra })
 
 const person = (over: Partial<Entrant>): Partial<Entrant> => ({ Model: CAR, Skin: "", ...over })
 

@@ -324,6 +324,7 @@ export function renderPlan(plan: LiveryPlan, restartRound?: number): string {
     lines.push(
       `  ${a.driverName.padEnd(18)} ${change}   ${a.livery.files.length} files, ${a.carModel}`,
     )
+    for (const w of a.livery.warnings ?? []) lines.push(`    ${w.name}: ${w.message}`)
   }
 
   lines.push("")

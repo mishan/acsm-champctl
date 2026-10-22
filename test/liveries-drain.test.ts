@@ -23,13 +23,14 @@ import { main } from "../src/cli/liveries.js"
 import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
 import { acsmStub, type AcsmStub } from "./support/acsm-stub.js"
 import { championship, championshipClass, driver, entryList, raceEvent } from "./support/build.js"
+import { dds } from "./support/dds.js"
 
 const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 const CAR = "rss_formula_hybrid_2021"
 const NOW = new Date("2026-09-02T20:00:00.000Z")
 
 const bytes = (s: string) => new TextEncoder().encode(s)
-const skinZip = () => zipSync({ "livery.dds": bytes("dds"), "preview.jpg": bytes("jpg") })
+const skinZip = () => zipSync({ "livery.dds": dds(), "preview.jpg": bytes("jpg") })
 
 const oneClass = (names: string[]): Championship =>
   championship({

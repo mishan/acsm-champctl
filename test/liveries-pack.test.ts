@@ -9,12 +9,13 @@ import {
   readLiveryPack,
   readSingleLivery,
 } from "../src/liveries/pack.js"
+import { dds, ddsOfSize } from "./support/dds.js"
 
 const bytes = (s: string): Uint8Array => new TextEncoder().encode(s)
 
 /** The minimum that counts as a livery: a .dds and nothing objectionable. */
 const skin = (extra: Record<string, Uint8Array> = {}): Uint8Array =>
-  zipSync({ "livery.dds": bytes("DDS pixels"), "ui_skin.json": bytes("{}"), ...extra })
+  zipSync({ "livery.dds": dds(), "ui_skin.json": bytes("{}"), ...extra })
 
 const pack = (entries: Record<string, Uint8Array>): Uint8Array => zipSync(entries)
 
@@ -43,8 +44,8 @@ describe("readLiveryPack", () => {
 
   it("keeps the file bytes intact", () => {
     const result = readLiveryPack(onePack())
-    const dds = result.liveries[0]?.files.find((f) => f.name === "livery.dds")
-    expect(new TextDecoder().decode(dds?.bytes)).toBe("DDS pixels")
+    const texture = result.liveries[0]?.files.find((f) => f.name === "livery.dds")
+    expect(texture?.bytes).toEqual(dds())
   })
 
   it("orders liveries the same way whatever order the zip lists them", () => {
@@ -72,7 +73,7 @@ describe("readLiveryPack", () => {
   it("unwraps a skin whose files sit in one folder inside the zip", () => {
     // Both shapes turn up depending on how the person zipped it.
     const wrapped = zipSync({
-      "Misha/livery.dds": bytes("x"),
+      "Misha/livery.dds": dds(),
       "Misha/ui_skin.json": bytes("{}"),
     })
     const result = readLiveryPack(pack({ [`${CAR}/Misha.zip`]: wrapped }))
@@ -133,7 +134,7 @@ describe("names from an actual entry list", () => {
     const result = readLiveryPack(
       pack({
         [`${CAR}/Misha.zip`]: zipSync({
-          "he\u0301llo.dds": bytes("x"),
+          "he\u0301llo.dds": dds(),
           "ui_skin.json": bytes("{}"),
         }),
       }),
@@ -388,8 +389,8 @@ describe("readLiveryPack and the archiver's own files", () => {
     // as ignoring anything unrecognised.
     const p = pack({
       [`${CAR}/Misha.zip`]: zipSync({
-        "livery.dds": bytes("DDS"),
-        "extra/other.dds": bytes("DDS"),
+        "livery.dds": dds(),
+        "extra/other.dds": dds(),
       }),
     })
     expect(() => readLiveryPack(p)).toThrowError(/is in a subfolder/)
@@ -441,7 +442,7 @@ describe("readLiveryPack and a zip that lies about its size", () => {
   })
 
   /** A livery-sized file, so a truncating claim is a lie by orders of magnitude. */
-  const realDds = (): Uint8Array => new Uint8Array(1024 * 1024)
+  const realDds = (): Uint8Array => ddsOfSize(1024 * 1024, 512)
 
   /**
    * Incompressible bytes, for the cases that need the *compressed* size to stay
@@ -546,8 +547,14 @@ describe("readLiveryPack limits", () => {
     // size — a limit on the file on disk would pass this happily.
     const bomb: PackLimits = { ...DEFAULT_LIMITS, maxTotalBytes: 1024 * 1024 }
     const p = pack({
-      [`${CAR}/A.zip`]: zipSync({ "a.dds": big(900 * 1024), "ui_skin.json": bytes("{}") }),
-      [`${CAR}/B.zip`]: zipSync({ "b.dds": big(900 * 1024), "ui_skin.json": bytes("{}") }),
+      [`${CAR}/A.zip`]: zipSync({
+        "a.dds": ddsOfSize(900 * 1024, 256),
+        "ui_skin.json": bytes("{}"),
+      }),
+      [`${CAR}/B.zip`]: zipSync({
+        "b.dds": ddsOfSize(900 * 1024, 256),
+        "ui_skin.json": bytes("{}"),
+      }),
     })
     expect(p.length).toBeLessThan(bomb.maxTotalBytes / 10)
     expect(() => readLiveryPack(p, bomb)).toThrowError(/zip bomb/)
@@ -596,8 +603,8 @@ describe("readLiveryPack limits", () => {
     // reject a real 4K livery on race night.
     const p = pack({
       [`${CAR}/Misha.zip`]: zipSync({
-        "livery.dds": big(16 * 1024 * 1024),
-        "livery_map.dds": big(4 * 1024 * 1024),
+        "livery.dds": ddsOfSize(16 * 1024 * 1024, 2048),
+        "livery_map.dds": ddsOfSize(4 * 1024 * 1024, 1024),
         "preview.jpg": big(200 * 1024),
         "ui_skin.json": bytes('{"skinname":"Misha"}'),
       }),
@@ -611,14 +618,14 @@ describe("readLiveryPack limits", () => {
     // so halving DEFAULT_LIMITS back again fails here rather than on race night.
     const p = pack({
       [`${CAR}/Laplal.zip`]: zipSync({
-        "livery.dds": big(20 * 1024 * 1024),
+        "livery.dds": ddsOfSize(20 * 1024 * 1024, 2048),
         "Alpha for carbon.png": big(33 * 1024 * 1024),
         "ui_skin.json": bytes("{}"),
       }),
       [`${CAR}/ily.zip`]: zipSync({
-        "livery.dds": big(40 * 1024 * 1024),
-        "livery_map.dds": big(30 * 1024 * 1024),
-        "livery_details.dds": big(20 * 1024 * 1024),
+        "livery.dds": ddsOfSize(40 * 1024 * 1024, 4096),
+        "livery_map.dds": ddsOfSize(30 * 1024 * 1024, 4096),
+        "livery_details.dds": ddsOfSize(20 * 1024 * 1024, 2048),
         "ui_skin.json": bytes("{}"),
       }),
     })
@@ -668,7 +675,7 @@ describe("readSingleLivery", () => {
     // The shape you get from zipping the folder rather than its contents, which
     // is what most people do.
     const wrapped = zipSync({
-      "MyLivery/livery.dds": bytes("DDS pixels"),
+      "MyLivery/livery.dds": dds(),
       "MyLivery/ui_skin.json": bytes("{}"),
     })
     expect(
@@ -692,7 +699,7 @@ describe("readSingleLivery", () => {
   it("takes an 85 MB texture, which is what an 8K skin with mipmaps weighs", () => {
     // A real submission: Buckmark's skinbase.dds, refused at the old 48 MB.
     const eightK = zipSync({
-      "skinbase.dds": new Uint8Array(85 * 1024 * 1024),
+      "skinbase.dds": ddsOfSize(85 * 1024 * 1024, 8192),
       "preview.jpg": bytes("jpg"),
     })
     expect(readSingleLivery(eightK, identity).files.map((f) => f.name)).toContain("skinbase.dds")
@@ -701,8 +708,8 @@ describe("readSingleLivery", () => {
   it("takes a skin folder of several 8K maps, up to 256 MB in all", () => {
     // The driver with the 85 MB skinbase.dds had more maps beside it.
     const folder = zipSync({
-      "skinbase.dds": new Uint8Array(90 * 1024 * 1024),
-      "skin_details.dds": new Uint8Array(90 * 1024 * 1024),
+      "skinbase.dds": ddsOfSize(90 * 1024 * 1024, 8192),
+      "skin_details.dds": ddsOfSize(90 * 1024 * 1024, 8192),
       "preview.jpg": bytes("jpg"),
     })
     expect(readSingleLivery(folder, identity).totalBytes).toBeGreaterThan(128 * 1024 * 1024)
@@ -757,6 +764,54 @@ describe("readSingleLivery", () => {
     expect(() =>
       readSingleLivery(skin(), { carModel: "../etc", driverName: "Misha" }),
     ).toThrowError(/Can't upload for car model/)
+  })
+})
+
+/**
+ * Textures that install, load, and look wrong in the game, with no error
+ * anywhere to say why.
+ */
+describe("readSingleLivery and textures Assetto Corsa would mishandle", () => {
+  const identity = { carModel: CAR, driverName: "Misha" }
+  const read = (files: Record<string, Uint8Array>) =>
+    readSingleLivery(zipSync({ "ui_skin.json": bytes("{}"), ...files }), identity)
+
+  const edited = (texture: Uint8Array, edit: (view: DataView) => void): Uint8Array => {
+    const copy = texture.slice()
+    edit(new DataView(copy.buffer, copy.byteOffset, copy.byteLength))
+    return copy
+  }
+  const dx10 = edited(dds(64), (v) => v.setUint32(84, 0x30315844, true)) // "DX10"
+  const noMips = edited(dds(64), (v) => v.setUint32(28, 1, true))
+  const truncated = dds(64).slice(0, -8)
+
+  it.each([
+    ["a .dds that is something else", bytes("a PNG, renamed"), /not a DDS texture/],
+    ["a DX10 header", dx10, /DX10 header/],
+    ["a texture cut short", truncated, /mip levels need/],
+  ])("refuses %s, naming the file", (_, texture, match) => {
+    expect(() => read({ "livery.dds": texture })).toThrowError(LiveryPackError)
+    expect(() => read({ "livery.dds": texture })).toThrowError(/"livery\.dds" won't work/)
+    expect(() => read({ "livery.dds": texture })).toThrowError(match)
+  })
+
+  it("refuses two files that are one file on Windows", () => {
+    const twice = () => read({ "livery.dds": dds(), "Livery.dds": dds() })
+    expect(twice).toThrowError(LiveryPackError)
+    expect(twice).toThrowError(/"Livery\.dds" and "livery\.dds"|"livery\.dds" and "Livery\.dds"/)
+  })
+
+  it.each([
+    ["no mipmaps", noMips, "It has no mipmaps where 64x64 needs 7"],
+    ["a size that isn't a power of two", dds(12, 8), "Its size, 12x8, is not a power of two"],
+  ])("takes a texture with %s, and says what's wrong with it", (_, texture, message) => {
+    expect(read({ "livery.dds": texture }).warnings).toEqual([
+      { name: "livery.dds", message: expect.stringContaining(message) },
+    ])
+  })
+
+  it("has nothing to say about a texture the game reads correctly", () => {
+    expect(read({ "livery.dds": dds(64) }).warnings).toBeUndefined()
   })
 })
 
