@@ -877,12 +877,16 @@ function readOneLivery(
  * symptom is a car that looks wrong in the game — so nobody finds out until
  * race night, and then can't tell why.
  *
- * The split is whether the game draws the texture at all. A DX10 header, a file
- * that isn't a DDS, or one cut short is never drawn right, and two names that
- * differ only in case are one file on Windows, where whichever unzips second
- * wins. A missing mip chain or an odd size still draws the livery and only
- * shimmers at a distance, which a driver should hear about and not be turned
- * away for.
+ * The split is whether the game draws the texture at all. A file that isn't a
+ * DDS, or one cut short, is never drawn right, and two names that differ only in
+ * case are one file on Windows, where whichever unzips second wins. A missing
+ * mip chain or an odd size still draws the livery and only shimmers at a
+ * distance, which a driver should hear about and not be turned away for.
+ *
+ * A DX10 header is a warning too, though plain Assetto Corsa draws the surface
+ * white: the league runs Custom Shaders Patch, which loads them, BC7 especially.
+ * The sentence is champctl's own, so it says what a driver here will see
+ * rather than what plain Assetto Corsa does.
  */
 function textureWarnings(where: string, files: readonly SkinFile[]): TextureWarning[] {
   const collision = caseCollisions(files.map((f) => f.name))[0]
@@ -896,7 +900,13 @@ function textureWarnings(where: string, files: readonly SkinFile[]): TextureWarn
   for (const file of files) {
     if (extensionOf(file.name) !== ".dds") continue
     for (const problem of ddsProblems(file.bytes)) {
-      if (problem.code === "mip-chain" || problem.code === "not-power-of-two") {
+      if (problem.code === "dx10") {
+        warnings.push({
+          name: file.name,
+          message:
+            "It has a DX10 header, so it needs Custom Shaders Patch, and shows plain white without it.",
+        })
+      } else if (problem.code === "mip-chain" || problem.code === "not-power-of-two") {
         warnings.push({ name: file.name, message: problem.message })
       } else {
         throw new LiveryPackError(

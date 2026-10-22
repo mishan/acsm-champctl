@@ -1247,6 +1247,9 @@ async function importLibrary(args: Args, from: string, originals: string): Promi
           `  ${forMessage(`${r.livery.carModel}/${r.livery.skinFolder}`)}   ` +
             `${r.livery.files.length} files, ${(r.livery.totalBytes / 2 ** 20).toFixed(1)} MB\n`,
         )
+        for (const w of r.livery.warnings ?? []) {
+          process.stdout.write(`    ${w.name}: ${w.message}\n`)
+        }
         await store?.record(LIBRARY, [r.livery], new Date(), "import")
       } else if (r.kind === "stock") {
         stockSkins += 1

@@ -93,6 +93,12 @@ export interface AcceptInput {
    * where the same check runs.
    */
   unreachableRounds?: number[]
+  /**
+   * The longest reply the route can deliver: Discord's message limit for the
+   * bot, none for the upload link. Passed in because nothing here may import
+   * `src/bot/`.
+   */
+  replyLimit?: number
 }
 
 export type AcceptOutcome =
@@ -191,17 +197,20 @@ async function acceptOne(input: AcceptInput): Promise<AcceptOutcome> {
   return {
     ok: true,
     submission,
-    reply: uploadReply({
-      driverName: input.driverName,
-      carModel: input.carModel,
-      fileCount: livery.files.length,
-      hasPreview: livery.files.some((f) => f.name.toLowerCase() === "preview.jpg"),
-      dropped: livery.dropped ?? [],
-      warnings: livery.warnings ?? [],
-      replaced: submission.superseded !== undefined,
-      autoApply: input.autoApply ?? false,
-      unreachableRounds: input.unreachableRounds ?? [],
-    }),
+    reply: uploadReply(
+      {
+        driverName: input.driverName,
+        carModel: input.carModel,
+        fileCount: livery.files.length,
+        hasPreview: livery.files.some((f) => f.name.toLowerCase() === "preview.jpg"),
+        dropped: livery.dropped ?? [],
+        warnings: livery.warnings ?? [],
+        replaced: submission.superseded !== undefined,
+        autoApply: input.autoApply ?? false,
+        unreachableRounds: input.unreachableRounds ?? [],
+      },
+      input.replyLimit,
+    ),
   }
 }
 
@@ -268,7 +277,18 @@ export interface ReplyFacts {
  * a cosmetic change — so the livery appears at the *next* practice start, and
  * that is a surprise unless it is said.
  */
-export function uploadReply(facts: ReplyFacts): string {
+export function uploadReply(facts: ReplyFacts, limit = Number.POSITIVE_INFINITY): string {
+  // Over Discord's limit, `editReply` is refused after the submission is already
+  // queued, so the driver is told something went wrong and sends it again,
+  // superseding the one that worked. The texture detail is what they need least.
+  let shown = Math.min(facts.warnings?.length ?? 0, 5)
+  let reply = replyShowing(facts, shown)
+  while (reply.length > limit && shown > 0) reply = replyShowing(facts, --shown)
+  // Still too long only on file names; the front says it was accepted, so keep that.
+  return reply.length <= limit ? reply : `${reply.slice(0, limit - 1)}…`
+}
+
+function replyShowing(facts: ReplyFacts, shown: number): string {
   const files = `${facts.fileCount} file${facts.fileCount === 1 ? "" : "s"}`
   const lines: string[] = [
     facts.replaced
@@ -310,8 +330,15 @@ export function uploadReply(facts: ReplyFacts): string {
   // Taken anyway, because the game still draws these. Said now, because in the
   // game nothing says why one car shimmers and the rest don't.
   const warnings = facts.warnings ?? []
-  for (const w of warnings.slice(0, 5)) lines.push(`Heads up about ${w.name}: ${w.message}`)
-  if (warnings.length > 5) lines.push(`And ${warnings.length - 5} more like that.`)
+  for (const w of warnings.slice(0, shown)) lines.push(`Heads up about ${w.name}: ${w.message}`)
+  if (warnings.length > shown) {
+    lines.push(
+      shown > 0
+        ? `And ${warnings.length - shown} more like that.`
+        : `Heads up: ${warnings.length} texture${warnings.length === 1 ? "" : "s"} will draw, ` +
+            `but not well, and there's no room here to say which.`,
+    )
+  }
 
   if (!facts.hasPreview) {
     // Races fine, looks broken. Worth one line now rather than a question on

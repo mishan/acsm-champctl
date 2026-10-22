@@ -371,6 +371,35 @@ describe("champctl-liveries --carset", () => {
 describe("champctl-liveries --import", () => {
   const CHAMP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
+  it("says what's wrong with a texture it imports anyway", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-import-"))
+    const zip = join(dir, "skins.zip")
+    const stock = join(dir, "originals")
+    await mkdir(join(stock, CAR, "skins", "21New"), { recursive: true })
+    const noMips = dds(64)
+    new DataView(noMips.buffer).setUint32(28, 1, true)
+    await writeFile(
+      zip,
+      zipSync({
+        [`skins/${CAR}/skins/Collected/livery.dds`]: noMips,
+        [`skins/${CAR}/skins/Collected/ui_skin.json`]: bytes("{}"),
+      }),
+    )
+
+    const written: string[] = []
+    const capture = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      written.push(String(chunk))
+      return true
+    })
+    try {
+      expect(await main(["--import", zip, "--stock", stock, "--store", join(dir, "l.db")])).toBe(0)
+    } finally {
+      capture.mockRestore()
+      await rm(dir, { recursive: true, force: true })
+    }
+    expect(written.join("")).toMatch(/livery\.dds: It has no mipmaps where 64x64 needs 7/)
+  })
+
   it("adds collected skins to the carset of every championship racing the car, only with --push", async () => {
     const dir = await mkdtemp(join(tmpdir(), "champctl-import-"))
     const db = join(dir, "liveries.db")

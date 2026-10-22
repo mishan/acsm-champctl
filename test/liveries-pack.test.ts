@@ -787,7 +787,6 @@ describe("readSingleLivery and textures Assetto Corsa would mishandle", () => {
 
   it.each([
     ["a .dds that is something else", bytes("a PNG, renamed"), /not a DDS texture/],
-    ["a DX10 header", dx10, /DX10 header/],
     ["a texture cut short", truncated, /mip levels need/],
   ])("refuses %s, naming the file", (_, texture, match) => {
     expect(() => read({ "livery.dds": texture })).toThrowError(LiveryPackError)
@@ -804,6 +803,11 @@ describe("readSingleLivery and textures Assetto Corsa would mishandle", () => {
   it.each([
     ["no mipmaps", noMips, "It has no mipmaps where 64x64 needs 7"],
     ["a size that isn't a power of two", dds(12, 8), "Its size, 12x8, is not a power of two"],
+    [
+      "a DX10 header",
+      dx10,
+      "It has a DX10 header, so it needs Custom Shaders Patch, and shows plain white without it.",
+    ],
   ])("takes a texture with %s, and says what's wrong with it", (_, texture, message) => {
     expect(read({ "livery.dds": texture }).warnings).toEqual([
       { name: "livery.dds", message: expect.stringContaining(message) },
