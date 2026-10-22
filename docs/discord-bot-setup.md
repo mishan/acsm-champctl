@@ -7,7 +7,7 @@ it.
 This is the operator's runbook. Why the design is shaped this way — the identity
 mapping, the size limits, the credential split — is
 [`docs/discord-livery-upload.md`](discord-livery-upload.md). Full flag lists are
-in the [README](../README.md).
+in [commands.md](commands.md#champctl-bot).
 
 ## What you end up running
 
@@ -298,7 +298,7 @@ weekly entry doesn't start failing after the last race. It exits `2` for a
 round given by number that has been raced, has gone by or doesn't exist, and
 for a championship it can't read. ACSM has its own Discord integration and
 may already say some of this; `discord.announce` in the profile turns parts
-off, and the README lists them.
+off, and [configuration.md](configuration.md) lists them.
 
 `champctl-bot standings <championship-id>` posts the championship table into
 `announceChannelId` — ACSM's own numbers where the manager serves them, worked
@@ -306,7 +306,7 @@ out from the export where it doesn't. It exits `0` when it posts or nobody has
 scored yet, `1` when it posted but ACSM's numbers and champctl's disagree —
 worth a look, since one of them is wrong — and `2` when there is nothing it can
 honestly post. The export fallback refuses the parts of ACSM's scoring nobody
-has measured; the README lists which, and why.
+has measured; [commands.md](commands.md#standings) lists which, and why.
 
 `champctl-bot trophies` posts a finished championship's top three into
 `trophyChannelId` — BATL's #trophy-room — as an image of ACSM's own podium
