@@ -121,7 +121,7 @@ export class LiveryRouter implements CommandRouter {
       const made = results.find((r) => r.ok)
       const refused = results.find((r) => !r.ok)
       return {
-        content: (refused ?? made ?? { reply: "" }).reply,
+        content: [made, refused].flatMap((r) => (r ? [r.reply] : [])).join("\n\n"),
         ...(made?.ok ? { announcement: made.announcement } : {}),
       }
     }
@@ -221,7 +221,7 @@ export class LiveryRouter implements CommandRouter {
    * puts a livery on the wrong car — a failure nobody would look for, because
    * the upload succeeded.
    */
-  async #championship(): Promise<Live | { problem: string }> {
+  async #championship(read?: Live[] | { problem: string }): Promise<Live | { problem: string }> {
     const pinned = this.#options.championshipId
     if (pinned) {
       try {
@@ -239,7 +239,7 @@ export class LiveryRouter implements CommandRouter {
       }
     }
 
-    const live = await this.#live()
+    const live = read ?? (await this.#live())
     if ("problem" in live) return live
     if (live.length === 1) return live[0] as Live
     if (live.length === 0) {
@@ -271,7 +271,7 @@ export class LiveryRouter implements CommandRouter {
         ? []
         : live.filter((l) => rosterOf(l.championship).some((r) => r.name === wanted))
     if (named.length > 0) return named
-    const fallback = await this.#championship()
+    const fallback = await this.#championship(live)
     return "problem" in fallback ? fallback : [fallback]
   }
 

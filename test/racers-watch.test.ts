@@ -109,20 +109,48 @@ function harness(
     cancelLast: () => {
       september.Events = [raceEvent({ CompletedTime: "2026-09-24T05:00:00Z" }), raceEvent()]
     },
+    reschedule: () => {
+      september.Events = [
+        raceEvent({ CompletedTime: "2026-09-24T05:00:00Z" }),
+        raceEvent({ Scheduled: "2026-11-01T03:00:00Z" }),
+      ]
+    },
   }
 }
+
+const gt3 = () =>
+  championship({
+    ID: "00000000-0000-0000-0000-000000000003",
+    Name: "GT3",
+    Created: "2026-08-01T00:00:00Z",
+    Classes: roster(["d"]),
+    Events: [
+      raceEvent({ StartedTime: "2026-09-30T03:00:00Z", CompletedTime: "2026-09-30T05:00:00Z" }),
+      raceEvent({ Scheduled: "2026-10-30T05:00:00Z" }),
+    ],
+  })
 
 describe("RacersWatch", () => {
   it("gives the role to someone claimed who signs up, and tells the admins", async () => {
     const h = harness()
     const DEE = "444444444444444444"
     h.links.set(DEE, new Set(["d"]))
+    h.open()
     await h.watch.tick(at(-3))
     expect(h.holders.has(DEE)).toBe(false)
     h.signUp("d")
     await h.watch.tick(at(-2))
     expect(h.holders.has(DEE)).toBe(true)
     expect(h.told).toEqual([`Gave <@&${ROLE}> to <@${DEE}> who signed up.`])
+  })
+
+  it("gives nothing for a draft that hasn't opened or started", async () => {
+    const h = harness()
+    const DEE = "444444444444444444"
+    h.links.set(DEE, new Set(["d"]))
+    h.signUp("d")
+    await h.watch.tick(at(-2))
+    expect(h.holders.has(DEE)).toBe(false)
   })
 
   it("pings the role once when sign-ups open, then names who hasn't signed up every few days", async () => {
@@ -220,11 +248,13 @@ describe("RacersWatch", () => {
     const h = harness({ october: ["a"] })
     await h.watch.tick(at(-1))
     h.finish()
-    h.start()
     await h.watch.tick(at(0))
-    await h.watch.tick(at(6.9))
-    expect(h.holders.size).toBe(3)
+    // October's first round starts at 2026-10-08T03:00Z, a week after September ends.
+    h.start()
     await h.watch.tick(at(7))
+    await h.watch.tick(at(13.8))
+    expect(h.holders.size).toBe(3)
+    await h.watch.tick(at(14))
     expect(h.holders).toEqual(new Set([ANN]))
   })
 
@@ -241,19 +271,21 @@ describe("RacersWatch", () => {
     expect(h.holders).toEqual(new Set([ANN]))
   })
 
+  it("brings back a season gone quiet once its round is rescheduled", async () => {
+    const h = harness({ october: ["a"] })
+    await h.watch.tick(at(-8))
+    h.cancelLast()
+    h.open()
+    await h.watch.tick(at(-7))
+    await h.watch.tick(at(15))
+    h.reschedule()
+    await h.watch.tick(at(21))
+    expect(h.holders.size).toBe(3)
+  })
+
   it("keeps the role for a series still racing that began before the last one ended", async () => {
     const DEE = "444444444444444444"
-    const gt3 = championship({
-      ID: "00000000-0000-0000-0000-000000000003",
-      Name: "GT3",
-      Created: "2026-08-01T00:00:00Z",
-      Classes: roster(["d"]),
-      Events: [
-        raceEvent({ CompletedTime: "2026-09-30T05:00:00Z" }),
-        raceEvent({ Scheduled: "2026-10-30T05:00:00Z" }),
-      ],
-    })
-    const h = harness({ october: ["a"], also: [gt3] })
+    const h = harness({ october: ["a"], also: [gt3()] })
     h.links.set(DEE, new Set(["d"]))
     h.holders.add(DEE)
     await h.watch.tick(at(-1))
@@ -262,5 +294,13 @@ describe("RacersWatch", () => {
     await h.watch.tick(at(0))
     await h.watch.tick(at(7))
     expect(h.holders).toEqual(new Set([ANN, DEE]))
+  })
+
+  it("waits for the next season, not a series running alongside the last", async () => {
+    const h = harness({ also: [gt3()] })
+    await h.watch.tick(at(-1))
+    h.finish()
+    await h.watch.tick(at(20))
+    expect(h.holders.size).toBe(3)
   })
 })

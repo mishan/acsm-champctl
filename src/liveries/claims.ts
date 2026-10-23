@@ -551,17 +551,23 @@ export class SqliteClaimStore {
   }
 
   /**
-   * Fills in the Steam id of claims made before it was kept: this
-   * championship's, and carried-forward ones, which belong to none.
+   * Keeps this championship's claims' Steam ids to its entry list, which an
+   * admin may correct, and fills in carried-forward claims', which belong to
+   * no championship, from the first with their name.
    */
   async fillGuids(championshipId: string, championship: Championship): Promise<void> {
-    const update = this.#db.prepare(
+    const own = this.#db.prepare(
+      "UPDATE driver_discord SET guid = ? WHERE championship_id = ? AND entrant_name = ?",
+    )
+    const legacy = this.#db.prepare(
       `UPDATE driver_discord SET guid = ?
-       WHERE championship_id IN (?, ?) AND entrant_name = ? AND guid IS NULL`,
+       WHERE championship_id = ? AND entrant_name = ? AND guid IS NULL`,
     )
     for (const r of rosterOf(championship)) {
       const guid = normGuid(r.entrant.GUID)
-      if (r.name && guid) update.run(guid, championshipId, LEGACY_CLAIM, r.name)
+      if (!r.name || !guid) continue
+      own.run(guid, championshipId, r.name)
+      legacy.run(guid, LEGACY_CLAIM, r.name)
     }
   }
 

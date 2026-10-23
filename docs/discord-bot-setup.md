@@ -485,8 +485,8 @@ mention it.
 With `discord.racers`, `serve` looks after the `roleId` role every 15
 minutes:
 
-- **Signing up gives it.** Anyone on the entry list of a season running or
-  the next is given the role, and the admin channel is told who.
+- **Signing up gives it.** Anyone on the entry list of a season running, or
+  of the next once it takes sign-ups, is given the role, and the admin channel is told who.
 - **Sign-ups opening pings it.** When a championship starts taking sign-ups,
   GridMom pings the role in `channelId` once. Then every three days, until the
   first round starts or registration closes, it names the holders who
@@ -514,7 +514,8 @@ left alone.
 }
 ```
 
-The bot needs **Manage Roles**, with its own role above this one in the
+It needs `adminChannelId` set, since that's the only warning anyone gets
+before the role goes. The bot needs **Manage Roles**, with its own role above this one in the
 server's role list, and **Mention @everyone, @here, and All Roles** in
 `channelId` unless the role lets anyone mention it. Listing who holds the role
 needs the **Server Members Intent**: turn it on under **Bot** in the Developer

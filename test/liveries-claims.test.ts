@@ -261,6 +261,18 @@ describe("SqliteClaimStore", () => {
     store.close()
   })
 
+  it("follows a Steam id an admin corrects on the entry list", async () => {
+    const store = await open()
+    const withGuid = (GUID: string) =>
+      championship({
+        Classes: [championshipClass({ Entrants: entryList([person({ Name: "Misha", GUID })]) })],
+      })
+    await store.claim(CHAMP, withGuid("7656111"), "Misha", MISHA)
+    await store.fillGuids(CHAMP, withGuid("7656999"))
+    expect(await store.guidsByUser()).toEqual(new Map([[MISHA, new Set(["7656999"])]]))
+    store.close()
+  })
+
   it("fills in the Steam ids of claims made without them, a shared car's each", async () => {
     const store = await open()
     await store.claim(CHAMP, champ(), "Misha", MISHA)

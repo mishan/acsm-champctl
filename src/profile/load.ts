@@ -264,6 +264,11 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
           )
         }
       }
+      // It tells the admins a day before it takes the role, and that is the
+      // only warning anyone gets.
+      if (d["adminChannelId"] === undefined) {
+        bad("`discord.racers` needs `discord.adminChannelId`, where it says whose role it takes")
+      }
       const days = r?.["graceDays"]
       if (days !== undefined && !(Number.isInteger(days) && (days as number) >= 0)) {
         bad("`discord.racers.graceDays` must be a whole number of days")

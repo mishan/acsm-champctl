@@ -2,8 +2,8 @@
  * Keeps the Racers role to the people racing (`discord.racers`).
  *
  * Signed up means a Steam id on the entry list of a championship that isn't
- * finished and has raced a round or was created after the last one that is:
- * the seasons running and the next. A Discord account is matched to Steam ids through its claims, so a
+ * finished and has started or taken sign-ups: the seasons running and the
+ * next. One that has done neither is a draft. A Discord account is matched to Steam ids through its claims, so a
  * racer who claimed in any season is known when they sign up for the next one.
  *
  * Each tick:
@@ -70,9 +70,8 @@ interface Season {
   name: string
   created: number
   finishedAt?: number
-  /** When it last raced a round, if it has. */
-  raced?: number
-  started: boolean
+  /** When its first round started, if one has. */
+  startedAt?: number
   guids: Set<string>
   /** Taking sign-ups, with no round started yet. */
   open: boolean
@@ -134,13 +133,11 @@ export class RacersWatch {
         (a, s) => (a && (a.finishedAt as number) >= (s.finishedAt as number) ? a : s),
         undefined,
       )
-    // A season created before the last ended counts only once it has raced:
-    // a series running alongside it, not a draft left behind.
     const next = seasons.filter(
       (s) =>
-        s.finishedAt === undefined && (!last || s.created > last.created || s.raced !== undefined),
+        s.finishedAt === undefined &&
+        (s.startedAt !== undefined || s.open || marks.get(`open:${s.id}`) !== undefined),
     )
-    for (const s of next) if (!marks.get(`seen:${s.id}`)) marks.set(`seen:${s.id}`, now)
     const signedUp = new Set(next.flatMap((s) => [...s.guids]))
     const links = await this.#o.links.guidsByUser()
     const on = (user: string, guids: Set<string>) =>
@@ -184,17 +181,14 @@ export class RacersWatch {
     }
 
     if (!last || marks.get(`done:${last.id}`)) return
-    const opens = next.flatMap(
-      (s) =>
-        (
-          marks.get(`open:${s.id}`) ?? (s.started ? marks.get(`seen:${s.id}`) : undefined)
-        )?.getTime() ?? [],
-    )
+    // The seasons after the last, not a series running alongside it.
+    const after = next.filter((s) => s.created > last.created)
+    const opens = after.flatMap((s) => marks.get(`open:${s.id}`)?.getTime() ?? s.startedAt ?? [])
     if (opens.length === 0) return
     const deadline =
       Math.max(last.finishedAt as number, Math.min(...opens)) + this.#o.graceDays * DAY
     const missing = [...holders].filter((u) => !on(u, signedUp))
-    const nextNames = next.map((s) => `**${s.name}**`).join(" or ")
+    const nextNames = after.map((s) => `**${s.name}**`).join(" or ")
     if (t >= deadline - DAY && !marks.get(`warned:${last.id}`)) {
       if (missing.length) {
         await this.#tell(
@@ -249,9 +243,20 @@ export class RacersWatch {
           !isZeroTime(ev.Scheduled) &&
           Date.parse(ev.Scheduled as string) > t,
       )
+      const complete = finishedAt(c)?.getTime()
       const done =
-        finishedAt(c)?.getTime() ??
+        complete ??
         (Number.isFinite(raced) && !scheduled && t - raced > STALE ? raced + STALE : undefined)
+      const started = Math.min(
+        Number.POSITIVE_INFINITY,
+        ...rounds.flatMap((ev) =>
+          [
+            ev.StartedTime,
+            ev.CompletedTime,
+            ...Object.values(ev.Sessions ?? {}).map((x) => x?.StartedTime),
+          ].flatMap((at) => (isZeroTime(at) ? [] : [Date.parse(at as string)])),
+        ),
+      )
       const form = c.SignUpForm
       const closes = form?.RegistrationClosesAt
       const link = signUpLink(c, this.#o.baseUrl)
@@ -260,8 +265,7 @@ export class RacersWatch {
         name: c.Name?.trim() || id,
         created: Date.parse(c.Created ?? "") || 0,
         ...(done !== undefined ? { finishedAt: done } : {}),
-        ...(Number.isFinite(raced) ? { raced } : {}),
-        started: rounds.some(eventHasStarted),
+        ...(Number.isFinite(started) ? { startedAt: started } : {}),
         guids: rosterGuids(c),
         open:
           form?.Enabled === true &&
@@ -269,7 +273,8 @@ export class RacersWatch {
           (isZeroTime(closes) || Date.parse(closes as string) > t),
         ...(link ? { link } : {}),
       }
-      if (done !== undefined) this.#finished.set(id, s)
+      // Not one only gone quiet: a round rescheduled brings it back.
+      if (complete !== undefined) this.#finished.set(id, s)
       seasons.push(s)
     }
     return seasons

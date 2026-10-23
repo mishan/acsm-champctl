@@ -401,6 +401,30 @@ describe("choosing the championship", () => {
     claims.close()
   })
 
+  it("says both when a claim is made on one championship and refused on the other", async () => {
+    const claims = await SqliteClaimStore.open(":memory:")
+    const queue = await SqliteSubmissionQueue.open(":memory:")
+    const tokens = await SqliteTokenStore.open(":memory:")
+    const [september, gt3] = twoRunning()
+    await claims.claim(CHAMP, september as Championship, "Misha", "222222222222222222")
+    const r = new LiveryRouter({
+      reader: new StaticAcsmReader([september as Championship, gt3 as Championship]),
+      claims,
+      queue,
+      tokens,
+      clamp: {},
+      now: () => NOW,
+    })
+    const reply = await r.handle(
+      command({ name: "racer", subcommand: "claim", options: { name: "Misha" } }),
+    )
+    expect(reply.content).toMatch(/claimed as "Misha"[\s\S]*already been claimed/)
+    expect(reply.announcement).toMatch(/claimed the entry list name/)
+    tokens.close()
+    queue.close()
+    claims.close()
+  })
+
   it("says there is nowhere to put a livery when nothing is running", async () => {
     const claims = await SqliteClaimStore.open(":memory:")
     const queue = await SqliteSubmissionQueue.open(":memory:")
