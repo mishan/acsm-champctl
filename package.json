@@ -81,7 +81,7 @@
     "acsm-race-control": "^0.1.0",
     "cheerio": "^1.2.0",
     "discord.js": "^14.27.0",
-    "fastify": "^5.12.5",
+    "fastify": "^5.12.7",
     "fflate": "0.8.3",
     "ipaddr.js": "^2.5.0",
     "luxon": "^3.5.0",
@@ -104,7 +104,7 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^8.3.5",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "allowScripts": {
     "esbuild@0.28.2": true
