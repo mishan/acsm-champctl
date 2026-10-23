@@ -162,7 +162,7 @@ export class RacersWatch {
       for (const content of mentioning(
         `Still to sign up for **${s.name}**:`,
         missing,
-        `${link}\nSigned up and still named here? Run \`/livery claim\` with your name on the entry list, so I know it's you.`,
+        `${link}\nSigned up and still named here? Run \`/racer claim\` with your name on the entry list, so I know it's you.`,
       )) {
         await this.#o.post(content, { users: missing })
       }

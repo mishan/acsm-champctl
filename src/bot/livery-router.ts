@@ -85,7 +85,8 @@ export class LiveryRouter implements CommandRouter {
   }
 
   async handle(command: SlashCommand): Promise<CommandReply> {
-    if (command.name !== "livery") {
+    const claiming = command.name === "racer" && command.subcommand === "claim"
+    if (command.name !== "livery" && !claiming) {
       return { content: `I don't know the command /${command.name}.` }
     }
 
@@ -98,27 +99,27 @@ export class LiveryRouter implements CommandRouter {
       roleIds: command.roleIds,
     }
 
-    const resolved = await this.#championship(
-      command.subcommand === "claim" ? command.options["name"] : undefined,
-    )
+    const resolved = await this.#championship(claiming ? command.options["name"] : undefined)
     if ("problem" in resolved) return { content: resolved.problem }
     const { championship, championshipId } = resolved
 
-    switch (command.subcommand) {
-      case "claim": {
-        const name = command.options["name"] ?? ""
-        const result = await handleClaim(
-          { context, clamp: this.#options.clamp, championship, championshipId, entrantName: name },
-          this.#options.claims,
-          now,
-        )
-        // The announcement rides back rather than being posted here, so this
-        // module keeps having no way to talk to Discord.
-        return result.ok
-          ? { content: result.reply, announcement: result.announcement }
-          : { content: result.reply }
-      }
+    if (claiming) {
+      const name = command.options["name"] ?? ""
+      // Not clamped to the livery role: someone new claims to be given the
+      // Racers role, so they won't have it yet.
+      const result = await handleClaim(
+        { context, clamp: {}, championship, championshipId, entrantName: name },
+        this.#options.claims,
+        now,
+      )
+      // The announcement rides back rather than being posted here, so this
+      // module keeps having no way to talk to Discord.
+      return result.ok
+        ? { content: result.reply, announcement: result.announcement }
+        : { content: result.reply }
+    }
 
+    switch (command.subcommand) {
       case "upload": {
         const attachment = command.attachment
         if (!attachment) {

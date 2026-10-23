@@ -6,7 +6,7 @@
  * Plain data in and out, like the livery router: Discord stays in
  * `bot/discord.ts`, and every refusal and reply here is tested with objects.
  *
- * A driver is who `/livery claim` says they are. Their car in a recording is
+ * A driver is who `/racer claim` says they are. Their car in a recording is
  * found by the GUID the entry list gives that name, or by the name itself in
  * a recording made before the recorder kept GUIDs.
  */
@@ -205,7 +205,7 @@ export class IncidentRouter {
     if (!claim) {
       return {
         content:
-          "First tell champctl which driver you are, with `/livery claim` and your name as it " +
+          "First tell champctl which driver you are, with `/racer claim` and your name as it " +
           "appears on the entry list. Then report the incident.",
       }
     }
@@ -371,7 +371,7 @@ export class IncidentRouter {
           `${clock(atMs)} into the session.\n> ${description.replace(/\n/g, "\n> ")}` +
           (otherClaim
             ? ""
-            : `\n\n${otherEntrant} hasn't claimed their name with \`/livery claim\`, so they can't see this channel yet.`) +
+            : `\n\n${otherEntrant} hasn't claimed their name with \`/racer claim\`, so they can't see this channel yet.`) +
           (this.#o.vote ? `\n\n<@&${this.#o.vote.roleId}>: your vote decides this one.` : ""),
         [],
         otherClaim ? [otherClaim.discordUserId] : [],

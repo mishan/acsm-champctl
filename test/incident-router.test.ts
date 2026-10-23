@@ -368,7 +368,7 @@ describe("/incident report", () => {
     const reply = await router({}).handle(
       command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
     )
-    expect(reply.content).toMatch(/\/livery claim/)
+    expect(reply.content).toMatch(/\/racer claim/)
     expect(channels.created).toEqual([])
   })
 

@@ -399,9 +399,10 @@ already have the rest.
 `champctl-liveries <championship-id> --coverage` lists the custom skins the
 server has for the championship's cars that its carset still lacks.
 
-**Drivers send their own with `/livery`.** `champctl-bot serve` registers four
-subcommands in one guild — `claim`, `upload`, `upload-url` and `carset` — and
-answers them. It asks Discord for **no intents**: an attachment option puts the file in
+**Drivers send their own with `/livery`.** `champctl-bot serve` registers
+`/racer claim`, which tells it who a driver is, and three `/livery`
+subcommands — `upload`, `upload-url` and `carset` — in one guild, and answers
+them. It asks Discord for **no intents**: an attachment option puts the file in
 the interaction payload, along with the roles and channel the clamp needs, where
 taking a zip off an ordinary message would have needed `MessageContent` and let
 the token read every message it can see. Replies are ephemeral, because a

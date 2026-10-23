@@ -294,7 +294,7 @@ describe("resolveUploader", () => {
   it("tells an unclaimed driver exactly what to run", async () => {
     const result = resolveUploader(champ(), undefined)
     expect(result).toMatchObject({ ok: false })
-    expect((result as { reason: string }).reason).toMatch(/\/livery claim/)
+    expect((result as { reason: string }).reason).toMatch(/\/racer claim/)
     expect((result as { reason: string }).reason).toMatch(/"misha" won't do/)
   })
 

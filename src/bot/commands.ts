@@ -58,21 +58,6 @@ export const LIVERY_COMMAND: CommandDefinition = {
   dmPermission: false,
   options: [
     {
-      name: "claim",
-      description: "Tell champctl which driver on the entry list you are",
-      type: 1,
-      options: [
-        {
-          name: "name",
-          // Says "exactly" here as well as in the refusal, because the place to
-          // prevent the mistake is where they are typing it.
-          description: "Your name exactly as it appears on the entry list",
-          type: 3,
-          required: true,
-        },
-      ],
-    },
-    {
       name: "upload",
       description: "Send a zip of your skin folder",
       type: 1,
@@ -104,7 +89,31 @@ export const LIVERY_COMMAND: CommandDefinition = {
   ],
 }
 
-export const LIVERY_COMMANDS: CommandDefinition[] = [LIVERY_COMMAND]
+/** `/racer claim`: who a Discord account is on the entry list, for liveries, incidents and the Racers role. */
+export const RACER_COMMAND: CommandDefinition = {
+  name: "racer",
+  description: "Tell GridMom which driver on the entry list you are",
+  dmPermission: false,
+  options: [
+    {
+      name: "claim",
+      description: "Tell GridMom which driver on the entry list you are",
+      type: 1,
+      options: [
+        {
+          name: "name",
+          // Says "exactly" here as well as in the refusal, because the place to
+          // prevent the mistake is where they are typing it.
+          description: "Your name exactly as it appears on the entry list",
+          type: 3,
+          required: true,
+        },
+      ],
+    },
+  ],
+}
+
+export const LIVERY_COMMANDS: CommandDefinition[] = [LIVERY_COMMAND, RACER_COMMAND]
 
 /**
  * `/incident` (docs/discord-bot-setup.md, step 13). Report and decide are subcommands of one

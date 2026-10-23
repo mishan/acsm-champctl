@@ -1191,7 +1191,7 @@ async function manageClaims(args: Args, championshipId: string): Promise<number>
     if (claims.length === 0) {
       process.stdout.write(
         `Nobody has claimed a driver yet, so nobody can upload a livery through Discord. ` +
-          `Drivers claim themselves with /livery claim.\n`,
+          `Drivers claim themselves with /racer claim.\n`,
       )
       return 1
     }

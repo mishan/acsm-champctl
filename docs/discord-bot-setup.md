@@ -255,7 +255,7 @@ matches the links it minted under it.
 
 As a driver, in a channel the clamp allows:
 
-1. `/livery claim` with your name **exactly** as the entry list spells it. The
+1. `/racer claim` with your name **exactly** as the entry list spells it. The
    admin channel gets a line saying who claimed what, and whether the sign-up
    form agrees. That announcement is the whole verification story — read it.
 2. `/livery upload` with a zip of your skin folder: a `.dds`, its
@@ -379,7 +379,7 @@ report an incident with `/incident report`:
   and **other_driver** takes a typed name, or enough of one to be only theirs.
 - **description**: what happened, in their own words.
 
-A driver has to have claimed their name with `/livery claim` first: that's how
+A driver has to have claimed their name with `/racer claim` first: that's how
 the bot knows which car was theirs, and who the other driver is in Discord.
 
 Each report gets its own channel in a category, which only the stewards, the
@@ -497,11 +497,11 @@ minutes:
   before, and again once it's done.
 
 GridMom knows who someone is from their Steam id on the entry list, matched to
-their Discord account through `/livery claim`. A racer who claimed in any
+their Discord account through `/racer claim`. A racer who claimed in any
 season is known in every later one. Someone who never has must run
-`/livery claim` once with their entry list name, or they count as not signed
-up, so keep `discord.livery.roleIds` from shutting out people without the role.
-The reminders say so too. Seasons already finished when the bot first runs are
+`/racer claim` once with their entry list name, or they count as not signed
+up. The reminders say so too, and `discord.livery`'s channel and role limits
+don't apply to `/racer claim`. Seasons already finished when the bot first runs are
 left alone.
 
 ```json

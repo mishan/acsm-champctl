@@ -377,7 +377,7 @@ describe("GatewayTransport.post", () => {
     // The claim announcement is the only non-ephemeral message the livery path
     // produces, and its text carries an entry list name. On a league with open
     // sign-ups that name is attacker-supplied, and `@` passes SAFE_COMPONENT —
-    // so signing up as "@everyone" and running /livery claim was a guild-wide
+    // so signing up as "@everyone" and running /racer claim was a guild-wide
     // ping, on demand, from the bot's own token.
     const { client, sent } = fakeClient()
     const transport = GatewayTransport.wrapping(client)

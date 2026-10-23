@@ -198,7 +198,7 @@ export interface DiscordSettings {
    * holders not yet on its entry list are named there.
    *
    * Someone counts as signed up by the Steam id on the entry list, matched to
-   * Discord through `/livery claim`: a returning racer is known from any
+   * Discord through `/racer claim`: a returning racer is known from any
    * season they claimed in, and a new one claims once.
    */
   racers?: {

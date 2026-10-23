@@ -80,7 +80,7 @@ export function claimProblem(
 ): string | undefined {
   const wanted = normalise(entrantName.trim())
   if (!wanted) {
-    return `Which driver are you? Run /livery claim with the name exactly as it appears on the entry list.`
+    return `Which driver are you? Run /racer claim with the name exactly as it appears on the entry list.`
   }
 
   const roster = rosterOf(championship)
@@ -195,7 +195,7 @@ export function resolveUploader(
     return {
       ok: false,
       reason:
-        `I don't know which driver you are. Run /livery claim with your entry list name — it ` +
+        `I don't know which driver you are. Run /racer claim with your entry list name — it ` +
         `has to match exactly, so if you're "Misha" there, "misha" won't do.`,
     }
   }

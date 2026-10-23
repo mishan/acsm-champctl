@@ -172,7 +172,7 @@ export class GatewayTransport implements DiscordTransport {
     // is the only message on the livery path that is not ephemeral, and its
     // text carries an entry list name — which is attacker-supplied on a league
     // with open sign-ups, and `@` passes SAFE_COMPONENT. Signing up as
-    // "@everyone" and running /livery claim was a guild-wide ping on demand.
+    // "@everyone" and running /racer claim was a guild-wide ping on demand.
     // `pings` names users outright, by id: nothing in the text can widen it.
     await channel.send({
       content: message.content,
