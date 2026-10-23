@@ -1,7 +1,7 @@
 # Deploying champctl
 
 How to run champctl for a league on a Docker host, behind a reverse proxy you
-already have. For what each program does, see the [README](../README.md); for
+already have. For what each program does, see [commands.md](commands.md); for
 the Discord side, [discord-bot-setup.md](discord-bot-setup.md).
 
 Everything lives in `deploy/`: a `compose.yml`, and examples of the three files
@@ -53,7 +53,7 @@ cp ../data/track-pits.example.json config/track-pits.json
 - **`config/track-pits.json`** is the pit-box count per track, which gridmom
   checks grids against. It must exist: a configured pit table that can't be
   read stops champctl at start rather than letting every grid check pass
-  without pit counts. See the README's Configuration section for the format.
+  without pit counts. See [configuration.md](configuration.md) for the format.
 - **`.env`** is read by Compose, for the listen addresses below and the
   championship the livery drain works on. None of it is put in a container's
   environment.

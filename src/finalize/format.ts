@@ -274,7 +274,7 @@ export interface FormatOverrides {
  *
  * Starting from the current format rather than from defaults is the point:
  * "18 laps" means "make it 18 laps", not "make it 18 laps and reset everything
- * I didn't mention". That rule is documented in the README as CLI behaviour,
+ * I didn't mention". That rule is documented in docs/commands.md as CLI behavior,
  * but it is not a CLI concern — the web UI sends exactly the same kind of
  * partial answer, and two implementations of "only the fields you name change"
  * is one that gets fixed and one that doesn't.

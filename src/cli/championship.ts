@@ -48,7 +48,7 @@ Usage:
   champctl-championship clone <championship-id> [options]
 
 Options:
-  --spec <path>         championship spec JSON (see README). Required for build.
+  --spec <path>         championship spec JSON (see docs/commands.md). Required for build.
   --template <path>     golden template export. Required for build.
   --name <name>         override the championship name. For clone, without this the
                         new championship reuses the previous championship's name.
