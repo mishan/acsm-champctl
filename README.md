@@ -5,7 +5,7 @@
 Championship creation, validation and stats for Assetto Corsa Server Manager.
 Built for BATL, usable by any league.
 
-Ten commands:
+The commands:
 
 | | |
 |---|---|
