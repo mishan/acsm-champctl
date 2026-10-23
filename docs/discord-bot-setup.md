@@ -485,15 +485,17 @@ mention it.
 With `discord.racers`, `serve` looks after the `roleId` role every 15
 minutes:
 
-- **Signing up gives it.** Anyone on the entry list of the season running or
+- **Signing up gives it.** Anyone on the entry list of a season running or
   the next is given the role, and the admin channel is told who.
 - **Sign-ups opening pings it.** When a championship starts taking sign-ups,
   GridMom pings the role in `channelId` once. Then every three days, until the
   first round starts or registration closes, it names the holders who
   aren't on the entry list yet.
 - **Not signing up takes it.** Once a season has finished and the next has
-  opened, holders not signed up lose the role `graceDays` (default 7) later,
-  counted from whichever happened last. The admin channel hears who a day
+  opened for sign-ups (or started, if it never took any), holders not signed
+  up lose the role `graceDays` (default 7) later, counted from whichever
+  happened last. A season with a round that's never raced counts as finished
+  three weeks after its last race, unless a round is still scheduled. The admin channel hears who a day
   before, and again once it's done.
 
 GridMom knows who someone is from their Steam id on the entry list, matched to

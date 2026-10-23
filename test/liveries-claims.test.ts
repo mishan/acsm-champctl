@@ -448,6 +448,24 @@ describe("migrating a database written before claims were per championship", () 
     await rm(dir, { recursive: true, force: true })
   })
 
+  it("fills in a carried-forward claim's Steam id from any championship with the name", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
+    await openGlobal(dir)
+
+    const store = await SqliteClaimStore.open(join(dir, "liveries.db"))
+    await store.fillGuids(
+      CHAMP,
+      championship({
+        Classes: [
+          championshipClass({ Entrants: entryList([person({ Name: "Misha", GUID: "7656111" })]) }),
+        ],
+      }),
+    )
+    expect(await store.guidsByUser()).toEqual(new Map([[MISHA, new Set(["7656111"])]]))
+    store.close()
+    await rm(dir, { recursive: true, force: true })
+  })
+
   it("lists a driver who re-claimed once, not once per row", async () => {
     // The carried-forward row survives a re-claim on purpose — it still answers
     // for other championships — so this championship had both. The operator's

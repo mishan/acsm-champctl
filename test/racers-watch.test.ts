@@ -23,7 +23,9 @@ const roster = (guids: string[]) => [
  * sign-ups once `open` is called. Ann, Bea and Cal hold the role; each has
  * claimed with the Steam id of their own initial.
  */
-function harness(o: { finished?: boolean; october?: string[]; failRead?: boolean } = {}) {
+function harness(
+  o: { finished?: boolean; october?: string[]; failRead?: boolean; also?: Championship[] } = {},
+) {
   const september: Championship = championship({
     ID: "00000000-0000-0000-0000-000000000009",
     Name: "September",
@@ -41,7 +43,7 @@ function harness(o: { finished?: boolean; october?: string[]; failRead?: boolean
     Classes: roster(o.october ?? []),
     SignUpForm: { Enabled: false },
   })
-  const inner = new StaticAcsmReader([september, october])
+  const inner = new StaticAcsmReader([september, october, ...(o.also ?? [])])
   const reader = {
     listChampionships: () => inner.listChampionships(),
     exportChampionship: async (id: string) => {
@@ -103,6 +105,9 @@ function harness(o: { finished?: boolean; october?: string[]; failRead?: boolean
     },
     start: () => {
       october.Events = [raceEvent({ StartedTime: "2026-10-08T03:00:00Z" })]
+    },
+    cancelLast: () => {
+      september.Events = [raceEvent({ CompletedTime: "2026-09-24T05:00:00Z" }), raceEvent()]
     },
   }
 }
@@ -193,5 +198,69 @@ describe("RacersWatch", () => {
     h.finish()
     await expect(h.watch.tick(at(30))).rejects.toThrow(/timed out/)
     expect(h.holders.size).toBe(3)
+  })
+
+  it("pings only the people each reminder names", async () => {
+    const h = harness()
+    for (let i = 0; i < 150; i++) h.holders.add(String(10n ** 17n + BigInt(i)))
+    await h.watch.tick(at(-5))
+    h.open()
+    await h.watch.tick(at(-4))
+    await h.watch.tick(at(-1))
+    const reminders = h.posts.slice(1)
+    expect(reminders.length).toBeGreaterThan(1)
+    for (const { content, ping } of reminders) {
+      expect(ping.users?.length).toBeLessThanOrEqual(100)
+      expect(ping.users).toEqual([...content.matchAll(/<@(\d+)>/g)].map((m) => m[1]))
+    }
+    expect(reminders.flatMap((r) => r.ping.users)).toHaveLength(153)
+  })
+
+  it("counts the grace from when the next season started, if it never took sign-ups", async () => {
+    const h = harness({ october: ["a"] })
+    await h.watch.tick(at(-1))
+    h.finish()
+    h.start()
+    await h.watch.tick(at(0))
+    await h.watch.tick(at(6.9))
+    expect(h.holders.size).toBe(3)
+    await h.watch.tick(at(7))
+    expect(h.holders).toEqual(new Set([ANN]))
+  })
+
+  it("ends a season with a round that will never be raced, three weeks after its last", async () => {
+    const h = harness({ october: ["a"] })
+    await h.watch.tick(at(-8))
+    h.cancelLast()
+    h.open()
+    // Last raced 2026-09-24, so over on 10-15, and the grace runs to 10-22.
+    await h.watch.tick(at(-7))
+    await h.watch.tick(at(20.9))
+    expect(h.holders.size).toBe(3)
+    await h.watch.tick(at(21))
+    expect(h.holders).toEqual(new Set([ANN]))
+  })
+
+  it("keeps the role for a series still racing that began before the last one ended", async () => {
+    const DEE = "444444444444444444"
+    const gt3 = championship({
+      ID: "00000000-0000-0000-0000-000000000003",
+      Name: "GT3",
+      Created: "2026-08-01T00:00:00Z",
+      Classes: roster(["d"]),
+      Events: [
+        raceEvent({ CompletedTime: "2026-09-30T05:00:00Z" }),
+        raceEvent({ Scheduled: "2026-10-30T05:00:00Z" }),
+      ],
+    })
+    const h = harness({ october: ["a"], also: [gt3] })
+    h.links.set(DEE, new Set(["d"]))
+    h.holders.add(DEE)
+    await h.watch.tick(at(-1))
+    h.open()
+    h.finish()
+    await h.watch.tick(at(0))
+    await h.watch.tick(at(7))
+    expect(h.holders).toEqual(new Set([ANN, DEE]))
   })
 })

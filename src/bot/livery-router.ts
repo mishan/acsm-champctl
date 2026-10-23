@@ -99,25 +99,36 @@ export class LiveryRouter implements CommandRouter {
       roleIds: command.roleIds,
     }
 
-    const resolved = await this.#championship(claiming ? command.options["name"] : undefined)
-    if ("problem" in resolved) return { content: resolved.problem }
-    const { championship, championshipId } = resolved
-
     if (claiming) {
       const name = command.options["name"] ?? ""
-      // Not clamped to the livery role: someone new claims to be given the
-      // Racers role, so they won't have it yet.
-      const result = await handleClaim(
-        { context, clamp: {}, championship, championshipId, entrantName: name },
-        this.#options.claims,
-        now,
-      )
+      const targets = await this.#claimTargets(name)
+      if ("problem" in targets) return { content: targets.problem }
+      const results = []
+      for (const { championship, championshipId } of targets) {
+        // Not clamped to the livery role: someone new claims to be given the
+        // Racers role, so they won't have it yet.
+        results.push(
+          await handleClaim(
+            { context, clamp: {}, championship, championshipId, entrantName: name },
+            this.#options.claims,
+            now,
+          ),
+        )
+      }
       // The announcement rides back rather than being posted here, so this
-      // module keeps having no way to talk to Discord.
-      return result.ok
-        ? { content: result.reply, announcement: result.announcement }
-        : { content: result.reply }
+      // module keeps having no way to talk to Discord. It goes out even when
+      // another championship refused, since the claims that stood are made.
+      const made = results.find((r) => r.ok)
+      const refused = results.find((r) => !r.ok)
+      return {
+        content: (refused ?? made ?? { reply: "" }).reply,
+        ...(made?.ok ? { announcement: made.announcement } : {}),
+      }
     }
+
+    const resolved = await this.#championship()
+    if ("problem" in resolved) return { content: resolved.problem }
+    const { championship, championshipId } = resolved
 
     switch (command.subcommand) {
       case "upload": {
@@ -210,9 +221,7 @@ export class LiveryRouter implements CommandRouter {
    * puts a livery on the wrong car — a failure nobody would look for, because
    * the upload succeeded.
    */
-  async #championship(
-    claiming?: string,
-  ): Promise<{ championship: Championship; championshipId: string } | { problem: string }> {
+  async #championship(): Promise<Live | { problem: string }> {
     const pinned = this.#options.championshipId
     if (pinned) {
       try {
@@ -230,42 +239,9 @@ export class LiveryRouter implements CommandRouter {
       }
     }
 
-    let summaries: Awaited<ReturnType<AcsmReader["listChampionships"]>>
-    try {
-      summaries = await this.#options.reader.listChampionships()
-    } catch (e) {
-      return {
-        problem:
-          `I can't reach Server Manager to work out which championship this is for. ` +
-          `Try again in a minute; if it keeps happening, tell an admin. ` +
-          `(${e instanceof Error ? e.message : String(e)})`,
-      }
-    }
-
-    const live: { championship: Championship; championshipId: string }[] = []
-    for (const summary of summaries) {
-      const id = summary.ID
-      if (!id) continue
-      try {
-        const championship = await this.#options.reader.exportChampionship(id)
-        // A finished championship cannot be acted on — the same test the
-        // nightly report uses to decide there is nothing left to say about one.
-        if (!isFinished(championship)) live.push({ championship, championshipId: id })
-      } catch {
-        // One unreadable championship should not stop an upload for a different
-        // one. If it was the only one, the count below says so anyway.
-      }
-    }
-
-    // A claim is for whichever has the name: next season's sign-ups open
-    // while this one is still racing.
-    const wanted = claiming?.trim().normalize("NFC")
-    const named = wanted
-      ? live.filter((l) => rosterOf(l.championship).some((r) => r.name === wanted))
-      : []
-    if (named.length === 1)
-      return named[0] as { championship: Championship; championshipId: string }
-    if (live.length === 1) return live[0] as { championship: Championship; championshipId: string }
+    const live = await this.#live()
+    if ("problem" in live) return live
+    if (live.length === 1) return live[0] as Live
     if (live.length === 0) {
       return {
         problem:
@@ -280,6 +256,61 @@ export class LiveryRouter implements CommandRouter {
         `to pin one with discord.livery.championshipId.`,
     }
   }
+
+  /**
+   * Every running championship with this name on its entry list, pinned or
+   * not: a racer on this season's and next season's is claimed on both, and
+   * one signed up for next season can claim while this one races. With none,
+   * the one an upload would use, so the refusal says what's wrong with it.
+   */
+  async #claimTargets(name: string): Promise<Live[] | { problem: string }> {
+    const live = await this.#live()
+    const wanted = name.trim().normalize("NFC")
+    const named =
+      "problem" in live
+        ? []
+        : live.filter((l) => rosterOf(l.championship).some((r) => r.name === wanted))
+    if (named.length > 0) return named
+    const fallback = await this.#championship()
+    return "problem" in fallback ? fallback : [fallback]
+  }
+
+  /** The championships that aren't finished. */
+  async #live(): Promise<Live[] | { problem: string }> {
+    let summaries: Awaited<ReturnType<AcsmReader["listChampionships"]>>
+    try {
+      summaries = await this.#options.reader.listChampionships()
+    } catch (e) {
+      return {
+        problem:
+          `I can't reach Server Manager to work out which championship this is for. ` +
+          `Try again in a minute; if it keeps happening, tell an admin. ` +
+          `(${e instanceof Error ? e.message : String(e)})`,
+      }
+    }
+
+    const live: Live[] = []
+    for (const summary of summaries) {
+      const id = summary.ID
+      if (!id) continue
+      try {
+        const championship = await this.#options.reader.exportChampionship(id)
+        // A finished championship cannot be acted on — the same test the
+        // nightly report uses to decide there is nothing left to say about one.
+        if (!isFinished(championship)) live.push({ championship, championshipId: id })
+      } catch {
+        // One unreadable championship should not stop an upload for a different
+        // one. If it was the only one, the count below says so anyway.
+      }
+    }
+
+    return live
+  }
+}
+
+interface Live {
+  championship: Championship
+  championshipId: string
 }
 
 function mb(bytes: number): string {

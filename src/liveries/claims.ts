@@ -550,15 +550,18 @@ export class SqliteClaimStore {
     return out
   }
 
-  /** Fills in the Steam id of this championship's claims made before it was kept. */
+  /**
+   * Fills in the Steam id of claims made before it was kept: this
+   * championship's, and carried-forward ones, which belong to none.
+   */
   async fillGuids(championshipId: string, championship: Championship): Promise<void> {
     const update = this.#db.prepare(
       `UPDATE driver_discord SET guid = ?
-       WHERE championship_id = ? AND entrant_name = ? AND guid IS NULL`,
+       WHERE championship_id IN (?, ?) AND entrant_name = ? AND guid IS NULL`,
     )
     for (const r of rosterOf(championship)) {
       const guid = normGuid(r.entrant.GUID)
-      if (r.name && guid) update.run(guid, championshipId, r.name)
+      if (r.name && guid) update.run(guid, championshipId, LEGACY_CLAIM, r.name)
     }
   }
 

@@ -2,8 +2,8 @@
  * Keeps the Racers role to the people racing (`discord.racers`).
  *
  * Signed up means a Steam id on the entry list of a championship that isn't
- * finished and was created after the last one that is: the season running and
- * the next. A Discord account is matched to Steam ids through its claims, so a
+ * finished and has raced a round or was created after the last one that is:
+ * the seasons running and the next. A Discord account is matched to Steam ids through its claims, so a
  * racer who claimed in any season is known when they sign up for the next one.
  *
  * Each tick:
@@ -11,15 +11,16 @@
  * - A season opening for sign-ups pings the role once; after that, every
  *   REMIND, the holders not on its entry list are named, until it stops
  *   taking sign-ups.
- * - Once the last season has finished and the next has opened, holders not
- *   signed up lose the role `graceDays` after whichever came later. The
+ * - Once the last season has finished and the next has opened (or, if it
+ *   never took sign-ups, started), holders not signed up lose the role
+ *   `graceDays` after whichever came later. The
  *   admins hear who a day before, and again once it's done.
  *
  * The seasons already finished when it first runs are left alone: their grace
  * ran out before anyone was told about it.
  */
 
-import type { AcsmReader } from "../acsm/client.js"
+import { type AcsmReader, asMessage } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { eventHasStarted, events, isZeroTime, rosterGuids } from "../acsm/view.js"
 import { signUpLink } from "../bot/announce.js"
@@ -31,6 +32,12 @@ const MINUTE = 60_000
 const DAY = 24 * 60 * MINUTE
 /** How often the Racers who haven't signed up are named. */
 const REMIND = 3 * DAY
+/**
+ * A season with a round never raced, none scheduled, and nothing raced for
+ * this long is over: a cancelled round would otherwise keep it running for
+ * good, and its entrants signed up.
+ */
+const STALE = 21 * DAY
 
 export interface RacerRole {
   /** Who holds the role, bots aside. */
@@ -63,6 +70,9 @@ interface Season {
   name: string
   created: number
   finishedAt?: number
+  /** When it last raced a round, if it has. */
+  raced?: number
+  started: boolean
   guids: Set<string>
   /** Taking sign-ups, with no round started yet. */
   open: boolean
@@ -91,7 +101,7 @@ export class RacersWatch {
           this.#told = ""
         })
         .catch(async (e: unknown) => {
-          const why = message(e)
+          const why = asMessage(e)
           this.#o.log(`racers: ${why}`)
           if (why === this.#told) return
           this.#told = why
@@ -124,9 +134,13 @@ export class RacersWatch {
         (a, s) => (a && (a.finishedAt as number) >= (s.finishedAt as number) ? a : s),
         undefined,
       )
+    // A season created before the last ended counts only once it has raced:
+    // a series running alongside it, not a draft left behind.
     const next = seasons.filter(
-      (s) => s.finishedAt === undefined && (!last || s.created > last.created),
+      (s) =>
+        s.finishedAt === undefined && (!last || s.created > last.created || s.raced !== undefined),
     )
+    for (const s of next) if (!marks.get(`seen:${s.id}`)) marks.set(`seen:${s.id}`, now)
     const signedUp = new Set(next.flatMap((s) => [...s.guids]))
     const links = await this.#o.links.guidsByUser()
     const on = (user: string, guids: Set<string>) =>
@@ -159,18 +173,23 @@ export class RacersWatch {
       }
       if (t - (marks.get(`remind:${s.id}`) ?? opened).getTime() < REMIND) continue
       const missing = [...holders].filter((u) => !on(u, s.guids))
-      for (const content of mentioning(
+      for (const { content, users } of mentioning(
         `Still to sign up for **${s.name}**:`,
         missing,
         `${link}\nSigned up and still named here? Run \`/racer claim\` with your name on the entry list, so I know it's you.`,
       )) {
-        await this.#o.post(content, { users: missing })
+        await this.#o.post(content, { users })
       }
       marks.set(`remind:${s.id}`, now)
     }
 
     if (!last || marks.get(`done:${last.id}`)) return
-    const opens = next.flatMap((s) => marks.get(`open:${s.id}`)?.getTime() ?? [])
+    const opens = next.flatMap(
+      (s) =>
+        (
+          marks.get(`open:${s.id}`) ?? (s.started ? marks.get(`seen:${s.id}`) : undefined)
+        )?.getTime() ?? [],
+    )
     if (opens.length === 0) return
     const deadline =
       Math.max(last.finishedAt as number, Math.min(...opens)) + this.#o.graceDays * DAY
@@ -205,7 +224,7 @@ export class RacersWatch {
   }
 
   async #tell(head: string, users: string[], tail: string): Promise<void> {
-    for (const content of mentioning(head, users, ` ${tail}`)) await this.#o.notify(content)
+    for (const { content } of mentioning(head, users, ` ${tail}`)) await this.#o.notify(content)
   }
 
   async #read(t: number): Promise<Season[]> {
@@ -217,7 +236,22 @@ export class RacersWatch {
       // would take the role from everyone signed up for it.
       const c = await this.#o.reader.exportChampionship(id)
       await this.#o.links.fillGuids(id, c)
-      const done = finishedAt(c)
+      const rounds = events(c)
+      const raced = Math.max(
+        Number.NEGATIVE_INFINITY,
+        ...rounds.flatMap((ev) =>
+          isZeroTime(ev.CompletedTime) ? [] : [Date.parse(ev.CompletedTime as string)],
+        ),
+      )
+      const scheduled = rounds.some(
+        (ev) =>
+          !eventHasStarted(ev) &&
+          !isZeroTime(ev.Scheduled) &&
+          Date.parse(ev.Scheduled as string) > t,
+      )
+      const done =
+        finishedAt(c)?.getTime() ??
+        (Number.isFinite(raced) && !scheduled && t - raced > STALE ? raced + STALE : undefined)
       const form = c.SignUpForm
       const closes = form?.RegistrationClosesAt
       const link = signUpLink(c, this.#o.baseUrl)
@@ -225,38 +259,45 @@ export class RacersWatch {
         id,
         name: c.Name?.trim() || id,
         created: Date.parse(c.Created ?? "") || 0,
-        ...(done ? { finishedAt: done.getTime() } : {}),
+        ...(done !== undefined ? { finishedAt: done } : {}),
+        ...(Number.isFinite(raced) ? { raced } : {}),
+        started: rounds.some(eventHasStarted),
         guids: rosterGuids(c),
         open:
           form?.Enabled === true &&
-          !events(c).some(eventHasStarted) &&
+          !rounds.some(eventHasStarted) &&
           (isZeroTime(closes) || Date.parse(closes as string) > t),
         ...(link ? { link } : {}),
       }
-      if (done) this.#finished.set(id, s)
+      if (done !== undefined) this.#finished.set(id, s)
       seasons.push(s)
     }
     return seasons
   }
 }
 
-/** `head`, the users as mentions, and `tail`, in as few messages as fit. */
-function mentioning(head: string, users: readonly string[], tail: string): string[] {
+/**
+ * `head`, the users as mentions, and `tail`, in as few messages as fit, each
+ * with the users it mentions: Discord notifies at most 100 a message.
+ */
+function mentioning(
+  head: string,
+  users: readonly string[],
+  tail: string,
+): { content: string; users: string[] }[] {
   if (users.length === 0) return []
-  const out: string[] = []
-  let line = head
+  const out: { content: string; users: string[] }[] = []
+  let line = { content: head, users: [] as string[] }
   for (const u of users) {
     const add = ` <@${u}>`
-    if (line.length + add.length + tail.length > MESSAGE_LIMIT) {
+    if (line.content.length + add.length + tail.length > MESSAGE_LIMIT) {
       out.push(line)
-      line = ""
+      line = { content: "", users: [] }
     }
-    line += add
+    line.content += add
+    line.users.push(u)
   }
-  out.push(line + tail)
+  line.content += tail
+  out.push(line)
   return out
-}
-
-function message(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
 }
