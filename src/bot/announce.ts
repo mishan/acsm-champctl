@@ -263,7 +263,7 @@ function formatLine(ev: ChampionshipEvent, profile: LeagueProfile): string {
   return unset ? "Format not set yet." : `Format: ${describeFormat(format, profile)}.`
 }
 
-function signUpLink(c: Championship, baseUrl: string | undefined): string | undefined {
+export function signUpLink(c: Championship, baseUrl: string | undefined): string | undefined {
   if (!baseUrl || !c.ID) return undefined
   return `${baseUrl.replace(/\/+$/, "")}${championshipPath(c.ID)}`
 }

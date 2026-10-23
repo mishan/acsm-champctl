@@ -782,6 +782,20 @@ describe("the profile's Discord settings", () => {
     expect(() => withDiscord({ season })).toThrow(/discord\.season/)
   })
 
+  it.each([
+    [{ roleId: "@Racers", channelId: "1".repeat(18) }],
+    [{ roleId: "1".repeat(18) }],
+    [{ roleId: "1".repeat(18), channelId: "1".repeat(18), graceDays: "7" }],
+  ])("checks the Racers role, its channel and grace days: %j", (racers) => {
+    expect(() => withDiscord({ racers })).toThrow(/discord\.racers/)
+  })
+
+  it("takes the Racers role only with an admin channel to warn", () => {
+    const racers = { roleId: "1".repeat(18), channelId: "1".repeat(18) }
+    expect(() => withDiscord({ racers })).toThrow(/adminChannelId/)
+    expect(withDiscord({ racers, adminChannelId: "2".repeat(18) }).discord?.racers).toEqual(racers)
+  })
+
   it("rejects a channel link", () => {
     expect(() =>
       withDiscord({ adminChannelId: "https://discord.com/channels/1/1234567890123456789" }),

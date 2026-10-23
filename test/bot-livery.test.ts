@@ -270,7 +270,7 @@ describe("handleUpload", () => {
   it("tells an unclaimed driver what to run", async () => {
     const result = await upload({ claim: undefined })
     expect(result).toMatchObject({ ok: false, reason: "identity" })
-    expect(result.reply).toMatch(/\/livery claim/)
+    expect(result.reply).toMatch(/\/racer claim/)
   })
 
   it("passes the pack refusal through in the driver's own terms", async () => {
@@ -542,7 +542,7 @@ describe("handleClaim", () => {
     const store = await SqliteClaimStore.open(":memory:")
     const queue = await SqliteSubmissionQueue.open(":memory:")
 
-    expect((await upload({ claim: undefined })).reply).toMatch(/\/livery claim/)
+    expect((await upload({ claim: undefined })).reply).toMatch(/\/racer claim/)
     await handleClaim(request(), store, NOW)
     const result = await upload({ claim: await store.forDiscordUser(CHAMP, MISHA), queue })
 
@@ -628,7 +628,7 @@ describe("handleUploadUrl", () => {
   it("won't mint for someone who hasn't claimed a driver", async () => {
     const tokens = await SqliteTokenStore.open(":memory:")
     const result = await handleUploadUrl(request({ claim: undefined }), tokens, NOW)
-    expect(result.reply).toMatch(/\/livery claim/)
+    expect(result.reply).toMatch(/\/racer claim/)
     tokens.close()
   })
 

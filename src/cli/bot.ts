@@ -50,6 +50,8 @@ import { IncidentRouter } from "../incidents/router.js"
 import { SqliteIncidentStore } from "../incidents/store.js"
 import { SeasonRouter } from "../season/router.js"
 import { SqliteSeasonStore } from "../season/store.js"
+import { SqliteRacersStore } from "../racers/store.js"
+import { RacersWatch } from "../racers/watch.js"
 import type { Severity } from "../gridmom/finding.js"
 import { DEFAULT_MIN_SEVERITY } from "../gridmom/report.js"
 import { SqliteClaimStore } from "../liveries/claims.js"
@@ -964,11 +966,14 @@ async function serve(args: Args): Promise<number> {
   const incidentStore = incidentSettings ? await SqliteIncidentStore.open(storePath) : undefined
   const seasonSettings = profile.discord.season
   const seasonStore = seasonSettings ? await SqliteSeasonStore.open(storePath) : undefined
+  const racers = profile.discord.racers
+  const racersStore = racers ? await SqliteRacersStore.open(storePath) : undefined
   const voice = profile.discord.qualiVoiceMove
   const transport = await connect({ voice: voice !== undefined })
   let stopQualiCall = async () => {}
   let stopStandings = async () => {}
   let stopPolls = async () => {}
+  let stopRacers = async () => {}
 
   try {
     if (!(transport instanceof GatewayTransport)) {
@@ -1145,6 +1150,44 @@ async function serve(args: Args): Promise<number> {
       process.stderr.write("Moving Pit Lane to Race Control when qualifying starts.\n")
     }
 
+    if (racers && racersStore) {
+      const adminChannelId = profile.discord.adminChannelId
+      stopRacers = new RacersWatch({
+        reader,
+        links: claims,
+        role: {
+          holders: () => transport.roleHolders(guildId, racers.roleId),
+          add: (userId) => transport.setRole(guildId, userId, racers.roleId, true),
+          remove: async (userId) => {
+            await transport.setRole(guildId, userId, racers.roleId, false)
+          },
+        },
+        roleId: racers.roleId,
+        marks: racersStore,
+        graceDays: racers.graceDays ?? 7,
+        baseUrl,
+        post: (content, ping) =>
+          transport.post({
+            channelId: racers.channelId,
+            content,
+            source: "discord.racers.channelId in the profile",
+            ...(ping.users?.length ? { pings: ping.users } : {}),
+            ...(ping.roles?.length ? { pingRoles: ping.roles } : {}),
+          }),
+        notify: async (content) => {
+          if (adminChannelId) {
+            await transport.post({
+              channelId: adminChannelId,
+              content,
+              source: "discord.adminChannelId in the profile",
+            })
+          }
+        },
+        log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
+      }).start()
+      process.stderr.write("Looking after the Racers role.\n")
+    }
+
     const announceChannelId = profile.discord.announceChannelId
     if (profile.discord.postStandingsWhenRaced && announceChannelId) {
       stopStandings = new StandingsWatch({
@@ -1191,10 +1234,12 @@ async function serve(args: Args): Promise<number> {
     await stopQualiCall()
     await stopStandings()
     await stopPolls()
+    await stopRacers()
     await transport.close()
     liveries.close()
     incidentStore?.close()
     seasonStore?.close()
+    racersStore?.close()
     tokens.close()
     queue.close()
     claims.close()

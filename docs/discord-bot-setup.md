@@ -255,7 +255,7 @@ matches the links it minted under it.
 
 As a driver, in a channel the clamp allows:
 
-1. `/livery claim` with your name **exactly** as the entry list spells it. The
+1. `/racer claim` with your name **exactly** as the entry list spells it. The
    admin channel gets a line saying who claimed what, and whether the sign-up
    form agrees. That announcement is the whole verification story — read it.
 2. `/livery upload` with a zip of your skin folder: a `.dds`, its
@@ -379,7 +379,7 @@ report an incident with `/incident report`:
   and **other_driver** takes a typed name, or enough of one to be only theirs.
 - **description**: what happened, in their own words.
 
-A driver has to have claimed their name with `/livery claim` first: that's how
+A driver has to have claimed their name with `/racer claim` first: that's how
 the bot knows which car was theirs, and who the other driver is in Discord.
 
 Each report gets its own channel in a category, which only the stewards, the
@@ -480,6 +480,47 @@ Message History** in the channel, and **Mention @everyone, @here, and All Roles*
 voters when a window opens or closes, unless their role is set to let anyone
 mention it.
 
+## 15. Optional: keeping the Racers role to who's racing
+
+With `discord.racers`, `serve` looks after the `roleId` role every 15
+minutes:
+
+- **Signing up gives it.** Anyone on the entry list of a season running, or
+  of the next once it takes sign-ups, is given the role, and the admin channel is told who.
+- **Sign-ups opening pings it.** When a championship starts taking sign-ups,
+  GridMom pings the role in `channelId` once. Then every three days, until the
+  first round starts or registration closes, it names the holders who
+  aren't on the entry list yet.
+- **Not signing up takes it.** Once a season has finished and the next has
+  opened for sign-ups (or started, if it never took any), holders not signed
+  up lose the role `graceDays` (default 7) later, counted from whichever
+  happened last. A season with a round that's never raced counts as finished
+  six weeks after its last race, unless a round is still scheduled. The admin
+  channel hears who at least a day before, and again once it's done.
+
+GridMom knows who someone is from their Steam id on the entry list, matched to
+their Discord account through `/racer claim`. A racer who claimed in any
+season is known in every later one. Someone who never has must run
+`/racer claim` once with their entry list name, or they count as not signed
+up. The reminders say so too. `/racer claim` keeps to `discord.livery`'s
+channels but not its roles, which someone new won't have yet. Seasons already finished when the bot first runs are
+left alone.
+
+```json
+"racers": {
+  "roleId": "1234567890123456781",
+  "channelId": "1234567890123456789",
+  "graceDays": 7
+}
+```
+
+It needs `adminChannelId` set, since that's the only warning anyone gets
+before the role goes. The bot needs **Manage Roles**, with its own role above this one in the
+server's role list, and **Mention @everyone, @here, and All Roles** in
+`channelId` unless the role lets anyone mention it. Listing who holds the role
+needs the **Server Members Intent**: turn it on under **Bot** in the Developer
+Portal.
+
 ## When it doesn't work
 
 | What you see | What it is |
@@ -502,5 +543,6 @@ Worth knowing before you give it a permission it does not need. `champctl-bot`
 holds no ACSM credentials on any code path, and `src/bot/` importing anything
 from the write path is a failing test rather than a code review note. Everything
 it can do to a league is say something in a channel, write a driver's zip to
-a local queue, and move people between voice channels at quali. Applying that queue is a separate process, run by you, holding
+a local queue, move people between voice channels at quali, and give or take
+the Racers role. Applying that queue is a separate process, run by you, holding
 credentials you gave it.

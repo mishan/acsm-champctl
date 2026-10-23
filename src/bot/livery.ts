@@ -210,7 +210,7 @@ export type ClaimOutcome =
   | { ok: false; reply: string }
 
 /**
- * `/livery claim`.
+ * `/racer claim`.
  *
  * The announcement is not decoration: nothing here verifies that a driver is
  * who they say, so being named in the admin channel *is* the check. It goes out

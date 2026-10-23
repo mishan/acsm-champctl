@@ -33,6 +33,7 @@ import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import type { Championship } from "../acsm/types.js"
+import { normGuid, splitGuids } from "../acsm/view.js"
 import { migrate, type Migration, openForReading, restrictToOwner } from "../sqlite.js"
 import { usableAsFolder } from "./pack.js"
 import { nearbyNames, rosterOf } from "./plan.js"
@@ -79,7 +80,7 @@ export function claimProblem(
 ): string | undefined {
   const wanted = normalise(entrantName.trim())
   if (!wanted) {
-    return `Which driver are you? Run /livery claim with the name exactly as it appears on the entry list.`
+    return `Which driver are you? Run /racer claim with the name exactly as it appears on the entry list.`
   }
 
   const roster = rosterOf(championship)
@@ -194,7 +195,7 @@ export function resolveUploader(
     return {
       ok: false,
       reason:
-        `I don't know which driver you are. Run /livery claim with your entry list name — it ` +
+        `I don't know which driver you are. Run /racer claim with your entry list name — it ` +
         `has to match exactly, so if you're "Misha" there, "misha" won't do.`,
     }
   }
@@ -299,6 +300,12 @@ const MIGRATIONS: Migration[] = [
 
         DROP TABLE driver_discord_global;
       `)
+    },
+  },
+  {
+    name: "claims: the claimed entrant's Steam id",
+    up: (db) => {
+      db.exec("ALTER TABLE driver_discord ADD COLUMN guid TEXT")
     },
   },
 ]
@@ -453,13 +460,21 @@ export class SqliteClaimStore {
       this.#db
         .prepare("DELETE FROM driver_discord WHERE championship_id = ? AND discord_user_id = ?")
         .run(championshipId, discordUserId)
+      const guid = normGuid(rosterOf(championship).find((r) => r.name === wanted)?.entrant.GUID)
       this.#db
         .prepare(
           `INSERT INTO driver_discord
-             (championship_id, discord_user_id, entrant_name, discord_handle, claimed_at)
-           VALUES (?, ?, ?, ?, ?)`,
+             (championship_id, discord_user_id, entrant_name, discord_handle, claimed_at, guid)
+           VALUES (?, ?, ?, ?, ?, ?)`,
         )
-        .run(championshipId, discordUserId, wanted, options.discordHandle ?? null, when)
+        .run(
+          championshipId,
+          discordUserId,
+          wanted,
+          options.discordHandle ?? null,
+          when,
+          guid || null,
+        )
       this.#db.exec("COMMIT")
 
       const claim: DriverClaim = {
@@ -516,6 +531,44 @@ export class SqliteClaimStore {
       )
       .all(championshipId, LEGACY_CLAIM, championshipId, championshipId) as unknown as ClaimRow[]
     return rows.map(toClaim)
+  }
+
+  /**
+   * Every Discord account's Steam ids, from the entrants it has claimed in any
+   * championship: what knows a returning racer on next season's entry list.
+   */
+  async guidsByUser(): Promise<Map<string, Set<string>>> {
+    const rows = this.#db
+      .prepare("SELECT discord_user_id, guid FROM driver_discord WHERE guid IS NOT NULL")
+      .all() as { discord_user_id: string; guid: string }[]
+    const out = new Map<string, Set<string>>()
+    for (const r of rows) {
+      const ids = out.get(r.discord_user_id) ?? new Set<string>()
+      for (const g of splitGuids(r.guid)) ids.add(g)
+      out.set(r.discord_user_id, ids)
+    }
+    return out
+  }
+
+  /**
+   * Keeps this championship's claims' Steam ids to its entry list, which an
+   * admin may correct, and fills in carried-forward claims', which belong to
+   * no championship, from the first with their name.
+   */
+  async fillGuids(championshipId: string, championship: Championship): Promise<void> {
+    const own = this.#db.prepare(
+      "UPDATE driver_discord SET guid = ? WHERE championship_id = ? AND entrant_name = ?",
+    )
+    const legacy = this.#db.prepare(
+      `UPDATE driver_discord SET guid = ?
+       WHERE championship_id = ? AND entrant_name = ? AND guid IS NULL`,
+    )
+    for (const r of rosterOf(championship)) {
+      const guid = normGuid(r.entrant.GUID)
+      if (!r.name || !guid) continue
+      own.run(guid, championshipId, r.name)
+      legacy.run(guid, LEGACY_CLAIM, r.name)
+    }
   }
 
   /**

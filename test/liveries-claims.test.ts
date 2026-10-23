@@ -260,6 +260,36 @@ describe("SqliteClaimStore", () => {
     expect(await store.handleHint("Misha")).toBeUndefined()
     store.close()
   })
+
+  it("follows a Steam id an admin corrects on the entry list", async () => {
+    const store = await open()
+    const withGuid = (GUID: string) =>
+      championship({
+        Classes: [championshipClass({ Entrants: entryList([person({ Name: "Misha", GUID })]) })],
+      })
+    await store.claim(CHAMP, withGuid("7656111"), "Misha", MISHA)
+    await store.fillGuids(CHAMP, withGuid("7656999"))
+    expect(await store.guidsByUser()).toEqual(new Map([[MISHA, new Set(["7656999"])]]))
+    store.close()
+  })
+
+  it("fills in the Steam ids of claims made without them, a shared car's each", async () => {
+    const store = await open()
+    await store.claim(CHAMP, champ(), "Misha", MISHA)
+    expect(await store.guidsByUser()).toEqual(new Map())
+    const withGuids = championship({
+      Classes: [
+        championshipClass({
+          Entrants: entryList([person({ Name: "Misha", GUID: "7656111; 7656222" })]),
+        }),
+      ],
+    })
+    await store.fillGuids("some other championship", withGuids)
+    expect(await store.guidsByUser()).toEqual(new Map())
+    await store.fillGuids(CHAMP, withGuids)
+    expect(await store.guidsByUser()).toEqual(new Map([[MISHA, new Set(["7656111", "7656222"])]]))
+    store.close()
+  })
 })
 
 describe("resolveUploader", () => {
@@ -276,7 +306,7 @@ describe("resolveUploader", () => {
   it("tells an unclaimed driver exactly what to run", async () => {
     const result = resolveUploader(champ(), undefined)
     expect(result).toMatchObject({ ok: false })
-    expect((result as { reason: string }).reason).toMatch(/\/livery claim/)
+    expect((result as { reason: string }).reason).toMatch(/\/racer claim/)
     expect((result as { reason: string }).reason).toMatch(/"misha" won't do/)
   })
 
@@ -426,6 +456,24 @@ describe("migrating a database written before claims were per championship", () 
       ok: false,
       reason: expect.stringContaining("already claimed"),
     })
+    store.close()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it("fills in a carried-forward claim's Steam id from any championship with the name", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
+    await openGlobal(dir)
+
+    const store = await SqliteClaimStore.open(join(dir, "liveries.db"))
+    await store.fillGuids(
+      CHAMP,
+      championship({
+        Classes: [
+          championshipClass({ Entrants: entryList([person({ Name: "Misha", GUID: "7656111" })]) }),
+        ],
+      }),
+    )
+    expect(await store.guidsByUser()).toEqual(new Map([[MISHA, new Set(["7656111"])]]))
     store.close()
     await rm(dir, { recursive: true, force: true })
   })

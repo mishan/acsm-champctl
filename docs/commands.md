@@ -399,9 +399,10 @@ already have the rest.
 `champctl-liveries <championship-id> --coverage` lists the custom skins the
 server has for the championship's cars that its carset still lacks.
 
-**Drivers send their own with `/livery`.** `champctl-bot serve` registers four
-subcommands in one guild — `claim`, `upload`, `upload-url` and `carset` — and
-answers them. It asks Discord for **no intents**: an attachment option puts the file in
+**Drivers send their own with `/livery`.** `champctl-bot serve` registers
+`/racer claim`, which tells it who a driver is, and three `/livery`
+subcommands — `upload`, `upload-url` and `carset` — in one guild, and answers
+them. It asks Discord for **no intents**: an attachment option puts the file in
 the interaction payload, along with the roles and channel the clamp needs, where
 taking a zip off an ordinary message would have needed `MessageContent` and let
 the token read every message it can see. Replies are ephemeral, because a
@@ -620,8 +621,9 @@ What champctl says in Discord: the nightly gridmom report, the week's round
 announcement, the championship standings and the trophy room. `serve` stays
 connected and answers the slash commands — `/livery`, `/incident` for incident
 reports and their votes, `/season` for choosing next season's cars and tracks —
-and, where the profile asks for them, moves voice at qualifying and posts the
-standings once a round has been raced.
+and, where the profile asks for them, moves voice at qualifying, posts the
+standings once a round has been raced, and keeps the Racers role to who's
+signed up.
 
 Getting it running end to end — application, invite, profile, and the drain that
 applies what drivers send — is

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 
 import { StaticAcsmReader } from "../src/acsm/client.js"
 import type { Championship, Entrant } from "../src/acsm/types.js"
-import { LIVERY_COMMAND, LIVERY_COMMANDS } from "../src/bot/commands.js"
+import { LIVERY_COMMAND, LIVERY_COMMANDS, RACER_COMMAND } from "../src/bot/commands.js"
 import { toSlashCommand } from "../src/bot/discord.js"
 import { LiveryRouter, liveryRouterSettings } from "../src/bot/livery-router.js"
 import type { SlashCommand } from "../src/bot/transport.js"
@@ -102,17 +102,15 @@ describe("the /livery command definition", () => {
   })
 
   it("tells a driver the entry list name has to match exactly, where they type it", () => {
-    const claim = LIVERY_COMMAND.options.find((o) => o.name === "claim")
+    const claim = RACER_COMMAND.options.find((o) => o.name === "claim")
     expect(claim?.options[0]?.description).toMatch(/exactly/)
   })
 
-  it("offers the four subcommands and nothing else", () => {
+  it("offers the three subcommands and nothing else", () => {
     // `carset` is here because the upload half alone is not the feature: a
     // livery on the server does nothing for the drivers who cannot see it.
-    expect(LIVERY_COMMANDS).toHaveLength(1)
     expect(LIVERY_COMMAND.options.map((o) => o.name).sort()).toEqual([
       "carset",
-      "claim",
       "upload",
       "upload-url",
     ])
@@ -121,7 +119,7 @@ describe("the /livery command definition", () => {
   it("keeps every name and description within Discord's limits", () => {
     // Discord rejects the whole registration for one over-long description, so
     // the first sign would be a bot that starts and answers nothing.
-    for (const sub of LIVERY_COMMAND.options) {
+    for (const sub of LIVERY_COMMANDS.flatMap((c) => c.options)) {
       expect(sub.name).toMatch(/^[a-z-]{1,32}$/)
       expect(sub.description.length).toBeLessThanOrEqual(100)
       for (const option of sub.options) {
@@ -136,7 +134,7 @@ describe("LiveryRouter", () => {
   it("claims, and hands back an announcement for the admin channel", async () => {
     const r = await router()
     const reply = await r.router.handle(
-      command({ subcommand: "claim", options: { name: "Misha" } }),
+      command({ name: "racer", subcommand: "claim", options: { name: "Misha" } }),
     )
     expect(reply.content).toMatch(/You're claimed as "Misha"/)
     // Carried back rather than posted here, so the router keeps having no way
@@ -148,7 +146,7 @@ describe("LiveryRouter", () => {
   it("passes a claim refusal through and announces nothing", async () => {
     const r = await router()
     const reply = await r.router.handle(
-      command({ subcommand: "claim", options: { name: "Nobody" } }),
+      command({ name: "racer", subcommand: "claim", options: { name: "Nobody" } }),
     )
     expect(reply.content).toMatch(/isn't on the entry list/)
     expect(reply.announcement).toBeUndefined()
@@ -157,7 +155,9 @@ describe("LiveryRouter", () => {
 
   it("queues an upload once the driver has claimed", async () => {
     const r = await router()
-    await r.router.handle(command({ subcommand: "claim", options: { name: "Misha" } }))
+    await r.router.handle(
+      command({ name: "racer", subcommand: "claim", options: { name: "Misha" } }),
+    )
     const reply = await r.router.handle(
       command({ subcommand: "upload", attachment: attachment(skin()) }),
     )
@@ -167,12 +167,12 @@ describe("LiveryRouter", () => {
     r.close()
   })
 
-  it("sends an unclaimed driver to /livery claim", async () => {
+  it("sends an unclaimed driver to /racer claim", async () => {
     const r = await router()
     const reply = await r.router.handle(
       command({ subcommand: "upload", attachment: attachment(skin()) }),
     )
-    expect(reply.content).toMatch(/\/livery claim/)
+    expect(reply.content).toMatch(/\/racer claim/)
     r.close()
   })
 
@@ -183,7 +183,9 @@ describe("LiveryRouter", () => {
    */
   it("refuses an oversized attachment without downloading it", async () => {
     const r = await router()
-    await r.router.handle(command({ subcommand: "claim", options: { name: "Misha" } }))
+    await r.router.handle(
+      command({ name: "racer", subcommand: "claim", options: { name: "Misha" } }),
+    )
 
     let downloaded = false
     const reply = await r.router.handle(
@@ -212,22 +214,31 @@ describe("LiveryRouter", () => {
     r.close()
   })
 
-  it("obeys the clamp before anything else", async () => {
-    const r = await router({ clamp: { channelIds: [LIVERY_CHANNEL] } })
-    const reply = await r.router.handle(
-      command({
-        subcommand: "claim",
-        options: { name: "Misha" },
-        channelId: "777777777777777777",
-      }),
-    )
-    expect(reply.content).toMatch(/Not here/)
+  it("holds claims to the livery channel but not its role, which someone new doesn't have yet", async () => {
+    const r = await router({ clamp: { channelIds: [LIVERY_CHANNEL], roleIds: [RACER_ROLE] } })
+    const claim = (channelId: string) =>
+      r.router.handle(
+        command({
+          name: "racer",
+          subcommand: "claim",
+          options: { name: "Misha" },
+          channelId,
+          roleIds: [],
+        }),
+      )
+    expect(
+      (await r.router.handle(command({ subcommand: "upload-url", roleIds: [] }))).content,
+    ).toMatch(/limited to a role/)
+    expect((await claim("777777777777777777")).content).toMatch(/Not here/)
+    expect((await claim(LIVERY_CHANNEL)).content).toMatch(/claimed as "Misha"/)
     r.close()
   })
 
   it("hands out an upload link when the league has one", async () => {
     const r = await router({ uploadBaseUrl: "https://liveries.example.com" })
-    await r.router.handle(command({ subcommand: "claim", options: { name: "Misha" } }))
+    await r.router.handle(
+      command({ name: "racer", subcommand: "claim", options: { name: "Misha" } }),
+    )
     const reply = await r.router.handle(command({ subcommand: "upload-url" }))
     expect(reply.content).toMatch(/https:\/\/liveries\.example\.com\/u\//)
     r.close()
@@ -235,7 +246,9 @@ describe("LiveryRouter", () => {
 
   it("says so when the league has no upload server", async () => {
     const r = await router()
-    await r.router.handle(command({ subcommand: "claim", options: { name: "Misha" } }))
+    await r.router.handle(
+      command({ name: "racer", subcommand: "claim", options: { name: "Misha" } }),
+    )
     const reply = await r.router.handle(command({ subcommand: "upload-url" }))
     expect(reply.content).toMatch(/hasn't set up upload links/)
     r.close()
@@ -256,7 +269,9 @@ describe("LiveryRouter", () => {
    */
   it("does not promise self-serve when no drain has run", async () => {
     const r = await router({ autoApply: true })
-    await r.router.handle(command({ subcommand: "claim", options: { name: "Misha" } }))
+    await r.router.handle(
+      command({ name: "racer", subcommand: "claim", options: { name: "Misha" } }),
+    )
     const reply = await r.router.handle(
       command({ subcommand: "upload", attachment: attachment(skin()) }),
     )
@@ -267,7 +282,9 @@ describe("LiveryRouter", () => {
   it("promises self-serve once the watcher has been seen", async () => {
     const r = await router({ autoApply: true })
     await r.queue.recordDrainRun(CHAMP, NOW)
-    await r.router.handle(command({ subcommand: "claim", options: { name: "Misha" } }))
+    await r.router.handle(
+      command({ name: "racer", subcommand: "claim", options: { name: "Misha" } }),
+    )
     const reply = await r.router.handle(
       command({ subcommand: "upload", attachment: attachment(skin()) }),
     )
@@ -299,7 +316,8 @@ describe("choosing the championship", () => {
       now: () => NOW,
     })
     expect(
-      (await r.handle(command({ subcommand: "claim", options: { name: "Misha" } }))).content,
+      (await r.handle(command({ name: "racer", subcommand: "claim", options: { name: "Misha" } })))
+        .content,
     ).toMatch(/claimed as "Misha"/)
     tokens.close()
     queue.close()
@@ -318,7 +336,7 @@ describe("choosing the championship", () => {
       clamp: {},
       now: () => NOW,
     })
-    const reply = await r.handle(command({ subcommand: "claim", options: { name: "Misha" } }))
+    const reply = await r.handle(command({ subcommand: "upload-url" }))
     expect(reply.content).toMatch(/2 championships running/)
     expect(reply.content).toMatch(/September 2026, GT3 Series/)
     expect(reply.content).toMatch(/championshipId/)
@@ -327,7 +345,43 @@ describe("choosing the championship", () => {
     claims.close()
   })
 
-  it("takes the pinned one without asking, when a league has set it", async () => {
+  it.each([[undefined], [CHAMP]])(
+    "claims on the one running championship with that name on its entry list, pinned to %s",
+    async (pinned) => {
+      const claims = await SqliteClaimStore.open(":memory:")
+      const queue = await SqliteSubmissionQueue.open(":memory:")
+      const tokens = await SqliteTokenStore.open(":memory:")
+      const next = champ({
+        ID: OTHER,
+        Name: "October 2026",
+        Classes: [
+          championshipClass({
+            Entrants: entryList([person({ Name: "Newcomer", GUID: "76561198000000001" })]),
+          }),
+        ],
+      })
+      const r = new LiveryRouter({
+        reader: new StaticAcsmReader([champ(), next]),
+        claims,
+        queue,
+        tokens,
+        clamp: {},
+        ...(pinned ? { championshipId: pinned } : {}),
+        now: () => NOW,
+      })
+      const reply = await r.handle(
+        command({ name: "racer", subcommand: "claim", options: { name: "Newcomer" } }),
+      )
+      expect(reply.content).toMatch(/claimed as "Newcomer"/)
+      expect((await claims.forDiscordUser(OTHER, MISHA))?.entrantName).toBe("Newcomer")
+      expect(await claims.guidsByUser()).toEqual(new Map([[MISHA, new Set(["76561198000000001"])]]))
+      tokens.close()
+      queue.close()
+      claims.close()
+    },
+  )
+
+  it("claims on every running championship with the name, whichever is pinned", async () => {
     const claims = await SqliteClaimStore.open(":memory:")
     const queue = await SqliteSubmissionQueue.open(":memory:")
     const tokens = await SqliteTokenStore.open(":memory:")
@@ -341,8 +395,57 @@ describe("choosing the championship", () => {
       now: () => NOW,
     })
     expect(
-      (await r.handle(command({ subcommand: "claim", options: { name: "Misha" } }))).content,
+      (await r.handle(command({ name: "racer", subcommand: "claim", options: { name: "Misha" } })))
+        .content,
     ).toMatch(/claimed as "Misha"/)
+    expect((await claims.forDiscordUser(CHAMP, MISHA))?.championshipId).toBe(CHAMP)
+    expect((await claims.forDiscordUser(OTHER, MISHA))?.championshipId).toBe(OTHER)
+    tokens.close()
+    queue.close()
+    claims.close()
+  })
+
+  it("says both when a claim is made on one championship and refused on the other", async () => {
+    const claims = await SqliteClaimStore.open(":memory:")
+    const queue = await SqliteSubmissionQueue.open(":memory:")
+    const tokens = await SqliteTokenStore.open(":memory:")
+    const [september, gt3] = twoRunning()
+    await claims.claim(CHAMP, september as Championship, "Misha", "222222222222222222")
+    const r = new LiveryRouter({
+      reader: new StaticAcsmReader([september as Championship, gt3 as Championship]),
+      claims,
+      queue,
+      tokens,
+      clamp: {},
+      now: () => NOW,
+    })
+    const reply = await r.handle(
+      command({ name: "racer", subcommand: "claim", options: { name: "Misha" } }),
+    )
+    expect(reply.content).toMatch(/already been claimed/)
+    expect(reply.content).toMatch(/claimed as "Misha"/)
+    expect(reply.announcement).toMatch(/claimed the entry list name/)
+    tokens.close()
+    queue.close()
+    claims.close()
+  })
+
+  it("suggests the near misses on each running championship for a name on neither", async () => {
+    const claims = await SqliteClaimStore.open(":memory:")
+    const queue = await SqliteSubmissionQueue.open(":memory:")
+    const tokens = await SqliteTokenStore.open(":memory:")
+    const r = new LiveryRouter({
+      reader: new StaticAcsmReader(twoRunning()),
+      claims,
+      queue,
+      tokens,
+      clamp: {},
+      now: () => NOW,
+    })
+    const reply = await r.handle(
+      command({ name: "racer", subcommand: "claim", options: { name: "misha" } }),
+    )
+    expect(reply.content).toMatch(/September 2026[\s\S]*"Misha"[\s\S]*GT3 Series/)
     tokens.close()
     queue.close()
     claims.close()
@@ -361,7 +464,8 @@ describe("choosing the championship", () => {
       now: () => NOW,
     })
     expect(
-      (await r.handle(command({ subcommand: "claim", options: { name: "Misha" } }))).content,
+      (await r.handle(command({ name: "racer", subcommand: "claim", options: { name: "Misha" } })))
+        .content,
     ).toMatch(/nowhere to put a livery/)
     tokens.close()
     queue.close()

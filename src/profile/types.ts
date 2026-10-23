@@ -189,6 +189,23 @@ export interface DiscordSettings {
     adminRoleId: string
     voterRoleId: string
   }
+  /**
+   * Keeps the `roleId` role to the people racing. Someone on the entry list of
+   * a championship not yet finished is given it; a holder who hasn't signed up
+   * for the next season loses it `graceDays` (default 7) after the last one
+   * ends, or after the next one opens if that's later. When a season opens for
+   * sign-ups the role is pinged once in `channelId`, then every few days the
+   * holders not yet on its entry list are named there.
+   *
+   * Someone counts as signed up by the Steam id on the entry list, matched to
+   * Discord through `/racer claim`: a returning racer is known from any
+   * season they claimed in, and a new one claims once.
+   */
+  racers?: {
+    roleId: string
+    channelId: string
+    graceDays?: number
+  }
 }
 
 export interface QualiVoiceMove {

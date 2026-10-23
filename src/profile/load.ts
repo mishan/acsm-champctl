@@ -253,6 +253,28 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
       }
     }
 
+    const racers = d["racers"]
+    if (racers !== undefined) {
+      const r = racers as Record<string, unknown> | null
+      for (const key of ["roleId", "channelId"] as const) {
+        if (typeof r?.[key] !== "string" || !/^\d{17,20}$/.test(r[key] as string)) {
+          bad(
+            `\`discord.racers.${key}\` must be an id — 17 to 20 digits, the way "Copy ` +
+              `${key === "channelId" ? "Channel" : "Role"} ID" gives it`,
+          )
+        }
+      }
+      // It tells the admins a day before it takes the role, and that is the
+      // only warning anyone gets.
+      if (d["adminChannelId"] === undefined) {
+        bad("`discord.racers` needs `discord.adminChannelId`, where it says whose role it takes")
+      }
+      const days = r?.["graceDays"]
+      if (days !== undefined && !(Number.isInteger(days) && (days as number) >= 0)) {
+        bad("`discord.racers.graceDays` must be a whole number of days")
+      }
+    }
+
     // Same check, same reason: a channel *name* and a role *mention* both reach
     // Discord as an id it cannot find. Here the failure is worse than a missing
     // report — a clamp built from ids that match nothing refuses every driver,
