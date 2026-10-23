@@ -214,19 +214,23 @@ describe("LiveryRouter", () => {
     r.close()
   })
 
-  it("clamps uploads but not claims, which someone new makes before they have the role", async () => {
+  it("holds claims to the livery channel but not its role, which someone new doesn't have yet", async () => {
     const r = await router({ clamp: { channelIds: [LIVERY_CHANNEL], roleIds: [RACER_ROLE] } })
-    const elsewhere = { channelId: "777777777777777777", roleIds: [] }
+    const claim = (channelId: string) =>
+      r.router.handle(
+        command({
+          name: "racer",
+          subcommand: "claim",
+          options: { name: "Misha" },
+          channelId,
+          roleIds: [],
+        }),
+      )
     expect(
-      (await r.router.handle(command({ subcommand: "upload-url", ...elsewhere }))).content,
-    ).toMatch(/Not here/)
-    expect(
-      (
-        await r.router.handle(
-          command({ name: "racer", subcommand: "claim", options: { name: "Misha" }, ...elsewhere }),
-        )
-      ).content,
-    ).toMatch(/claimed as "Misha"/)
+      (await r.router.handle(command({ subcommand: "upload-url", roleIds: [] }))).content,
+    ).toMatch(/limited to a role/)
+    expect((await claim("777777777777777777")).content).toMatch(/Not here/)
+    expect((await claim(LIVERY_CHANNEL)).content).toMatch(/claimed as "Misha"/)
     r.close()
   })
 
@@ -418,8 +422,30 @@ describe("choosing the championship", () => {
     const reply = await r.handle(
       command({ name: "racer", subcommand: "claim", options: { name: "Misha" } }),
     )
-    expect(reply.content).toMatch(/claimed as "Misha"[\s\S]*already been claimed/)
+    expect(reply.content).toMatch(/already been claimed/)
+    expect(reply.content).toMatch(/claimed as "Misha"/)
     expect(reply.announcement).toMatch(/claimed the entry list name/)
+    tokens.close()
+    queue.close()
+    claims.close()
+  })
+
+  it("suggests the near misses on each running championship for a name on neither", async () => {
+    const claims = await SqliteClaimStore.open(":memory:")
+    const queue = await SqliteSubmissionQueue.open(":memory:")
+    const tokens = await SqliteTokenStore.open(":memory:")
+    const r = new LiveryRouter({
+      reader: new StaticAcsmReader(twoRunning()),
+      claims,
+      queue,
+      tokens,
+      clamp: {},
+      now: () => NOW,
+    })
+    const reply = await r.handle(
+      command({ name: "racer", subcommand: "claim", options: { name: "misha" } }),
+    )
+    expect(reply.content).toMatch(/September 2026[\s\S]*"Misha"[\s\S]*GT3 Series/)
     tokens.close()
     queue.close()
     claims.close()

@@ -35,9 +35,9 @@ const REMIND = 3 * DAY
 /**
  * A season with a round never raced, none scheduled, and nothing raced for
  * this long is over: a cancelled round would otherwise keep it running for
- * good, and its entrants signed up.
+ * good, and its entrants signed up. Long enough for a break over the holidays.
  */
-const STALE = 21 * DAY
+const STALE = 42 * DAY
 
 export interface RacerRole {
   /** Who holds the role, bots aside. */
@@ -82,6 +82,8 @@ export class RacersWatch {
   readonly #o: RacersWatchOptions
   /** Finished seasons, which don't change, so they're read once. */
   readonly #finished = new Map<string, Season>()
+  /** Claimants no longer in the server, not asked about again until a restart. */
+  readonly #gone = new Set<string>()
   /** The last failure the admins were told about, so each tick doesn't repeat it. */
   #told = ""
   #stopped = false
@@ -147,8 +149,11 @@ export class RacersWatch {
     const given: string[] = []
     for (const user of links.keys()) {
       if (this.#stopped) return
-      if (holders.has(user) || !on(user, signedUp)) continue
-      if (!(await this.#o.role.add(user))) continue
+      if (holders.has(user) || this.#gone.has(user) || !on(user, signedUp)) continue
+      if (!(await this.#o.role.add(user))) {
+        this.#gone.add(user)
+        continue
+      }
       holders.add(user)
       given.push(user)
     }
@@ -189,17 +194,22 @@ export class RacersWatch {
       Math.max(last.finishedAt as number, Math.min(...opens)) + this.#o.graceDays * DAY
     const missing = [...holders].filter((u) => !on(u, signedUp))
     const nextNames = after.map((s) => `**${s.name}**`).join(" or ")
-    if (t >= deadline - DAY && !marks.get(`warned:${last.id}`)) {
+    const warned = marks.get(`warned:${last.id}`)
+    if (!warned) {
+      if (t < deadline - DAY) return
+      // A day's notice even when the bot was down for the day before.
+      const when = Math.max(deadline, t + DAY)
       if (missing.length) {
         await this.#tell(
-          `<t:${Math.floor(deadline / 1000)}:R> I'll take <@&${this.#o.roleId}> from`,
+          `<t:${Math.floor(when / 1000)}:R> I'll take <@&${this.#o.roleId}> from`,
           missing,
           `who aren't signed up for ${nextNames}.`,
         )
       }
       marks.set(`warned:${last.id}`, now)
+      return
     }
-    if (t < deadline) return
+    if (t < Math.max(deadline, warned.getTime() + DAY)) return
     const taken: string[] = []
     for (const user of missing) {
       if (this.#stopped) return

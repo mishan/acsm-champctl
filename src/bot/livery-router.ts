@@ -107,9 +107,12 @@ export class LiveryRouter implements CommandRouter {
       for (const { championship, championshipId } of targets) {
         // Not clamped to the livery role: someone new claims to be given the
         // Racers role, so they won't have it yet.
+        const clamp = this.#options.clamp.channelIds
+          ? { channelIds: this.#options.clamp.channelIds }
+          : {}
         results.push(
           await handleClaim(
-            { context, clamp: {}, championship, championshipId, entrantName: name },
+            { context, clamp, championship, championshipId, entrantName: name },
             this.#options.claims,
             now,
           ),
@@ -118,11 +121,10 @@ export class LiveryRouter implements CommandRouter {
       // The announcement rides back rather than being posted here, so this
       // module keeps having no way to talk to Discord. It goes out even when
       // another championship refused, since the claims that stood are made.
-      const made = results.find((r) => r.ok)
-      const refused = results.find((r) => !r.ok)
+      const announcement = results.find((r) => r.ok)?.announcement
       return {
-        content: [made, refused].flatMap((r) => (r ? [r.reply] : [])).join("\n\n"),
-        ...(made?.ok ? { announcement: made.announcement } : {}),
+        content: [...new Set(results.map((r) => r.reply))].join("\n\n"),
+        ...(announcement ? { announcement } : {}),
       }
     }
 
@@ -261,7 +263,7 @@ export class LiveryRouter implements CommandRouter {
    * Every running championship with this name on its entry list, pinned or
    * not: a racer on this season's and next season's is claimed on both, and
    * one signed up for next season can claim while this one races. With none,
-   * the one an upload would use, so the refusal says what's wrong with it.
+   * every running one, so each refusal can suggest the names it nearly matched.
    */
   async #claimTargets(name: string): Promise<Live[] | { problem: string }> {
     const live = await this.#live()
@@ -271,6 +273,7 @@ export class LiveryRouter implements CommandRouter {
         ? []
         : live.filter((l) => rosterOf(l.championship).some((r) => r.name === wanted))
     if (named.length > 0) return named
+    if (!("problem" in live) && live.length > 1) return live
     const fallback = await this.#championship(live)
     return "problem" in fallback ? fallback : [fallback]
   }

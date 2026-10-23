@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { Championship } from "../src/acsm/types.js"
-import { RacersWatch } from "../src/racers/watch.js"
+import { type RacerRole, RacersWatch } from "../src/racers/watch.js"
 import { championship, championshipClass, driver, entryList, raceEvent } from "./support/build.js"
 
 const ROLE = "555555555555555555"
@@ -58,21 +58,22 @@ function harness(
     [CAL, new Set(["c"])],
   ])
   const marks = new Map<string, Date>()
+  const role: RacerRole = {
+    holders: async () => [...holders],
+    add: async (u) => {
+      holders.add(u)
+      return true
+    },
+    remove: async (u) => {
+      holders.delete(u)
+    },
+  }
   const posts: { content: string; ping: { users?: string[]; roles?: string[] } }[] = []
   const told: string[] = []
   const watch = new RacersWatch({
     reader,
     links: { guidsByUser: async () => links, fillGuids: async () => {} },
-    role: {
-      holders: async () => [...holders],
-      add: async (u) => {
-        holders.add(u)
-        return true
-      },
-      remove: async (u) => {
-        holders.delete(u)
-      },
-    },
+    role,
     roleId: ROLE,
     marks: { get: (k) => marks.get(k), set: (k, v) => void marks.set(k, v) },
     graceDays: 7,
@@ -87,6 +88,7 @@ function harness(
   })
   return {
     watch,
+    role,
     holders,
     links,
     posts,
@@ -112,7 +114,7 @@ function harness(
     reschedule: () => {
       september.Events = [
         raceEvent({ CompletedTime: "2026-09-24T05:00:00Z" }),
-        raceEvent({ Scheduled: "2026-11-01T03:00:00Z" }),
+        raceEvent({ Scheduled: "2026-11-20T03:00:00Z" }),
       ]
     },
   }
@@ -206,6 +208,7 @@ describe("RacersWatch", () => {
     await h.watch.tick(at(9))
     h.open()
     await h.watch.tick(at(10))
+    await h.watch.tick(at(16))
     await h.watch.tick(at(16.9))
     expect(h.holders.size).toBe(3)
     await h.watch.tick(at(17))
@@ -252,22 +255,24 @@ describe("RacersWatch", () => {
     // October's first round starts at 2026-10-08T03:00Z, a week after September ends.
     h.start()
     await h.watch.tick(at(7))
+    await h.watch.tick(at(13))
     await h.watch.tick(at(13.8))
     expect(h.holders.size).toBe(3)
     await h.watch.tick(at(14))
     expect(h.holders).toEqual(new Set([ANN]))
   })
 
-  it("ends a season with a round that will never be raced, three weeks after its last", async () => {
+  it("ends a season with a round that will never be raced, six weeks after its last", async () => {
     const h = harness({ october: ["a"] })
     await h.watch.tick(at(-8))
     h.cancelLast()
     h.open()
-    // Last raced 2026-09-24, so over on 10-15, and the grace runs to 10-22.
+    // Last raced 2026-09-24, so over on 11-05, and the grace runs to 11-12.
     await h.watch.tick(at(-7))
-    await h.watch.tick(at(20.9))
+    await h.watch.tick(at(41))
+    await h.watch.tick(at(41.9))
     expect(h.holders.size).toBe(3)
-    await h.watch.tick(at(21))
+    await h.watch.tick(at(42))
     expect(h.holders).toEqual(new Set([ANN]))
   })
 
@@ -277,9 +282,9 @@ describe("RacersWatch", () => {
     h.cancelLast()
     h.open()
     await h.watch.tick(at(-7))
-    await h.watch.tick(at(15))
+    await h.watch.tick(at(36))
     h.reschedule()
-    await h.watch.tick(at(21))
+    await h.watch.tick(at(42))
     expect(h.holders.size).toBe(3)
   })
 
@@ -292,6 +297,7 @@ describe("RacersWatch", () => {
     h.open()
     h.finish()
     await h.watch.tick(at(0))
+    await h.watch.tick(at(6))
     await h.watch.tick(at(7))
     expect(h.holders).toEqual(new Set([ANN, DEE]))
   })
@@ -302,5 +308,37 @@ describe("RacersWatch", () => {
     h.finish()
     await h.watch.tick(at(20))
     expect(h.holders.size).toBe(3)
+  })
+
+  it("gives a day's notice even when the bot was down for the day before", async () => {
+    const h = harness({ october: ["a"] })
+    await h.watch.tick(at(-1))
+    h.open()
+    h.finish()
+    await h.watch.tick(at(0))
+    await h.watch.tick(at(10))
+    expect(h.told).toHaveLength(1)
+    expect(h.holders.size).toBe(3)
+    await h.watch.tick(at(10.9))
+    expect(h.holders.size).toBe(3)
+    await h.watch.tick(at(11))
+    expect(h.holders).toEqual(new Set([ANN]))
+  })
+
+  it("asks once about someone who signed up and has left the server", async () => {
+    const h = harness({ october: ["a"] })
+    const GONE = "444444444444444444"
+    h.links.set(GONE, new Set(["a"]))
+    let asked = 0
+    const add = h.role.add
+    h.role.add = async (u) => {
+      if (u !== GONE) return add(u)
+      asked++
+      return false
+    }
+    h.open()
+    await h.watch.tick(at(-3))
+    await h.watch.tick(at(-2))
+    expect(asked).toBe(1)
   })
 })

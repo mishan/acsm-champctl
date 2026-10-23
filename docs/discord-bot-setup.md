@@ -495,15 +495,15 @@ minutes:
   opened for sign-ups (or started, if it never took any), holders not signed
   up lose the role `graceDays` (default 7) later, counted from whichever
   happened last. A season with a round that's never raced counts as finished
-  three weeks after its last race, unless a round is still scheduled. The admin channel hears who a day
-  before, and again once it's done.
+  six weeks after its last race, unless a round is still scheduled. The admin
+  channel hears who at least a day before, and again once it's done.
 
 GridMom knows who someone is from their Steam id on the entry list, matched to
 their Discord account through `/racer claim`. A racer who claimed in any
 season is known in every later one. Someone who never has must run
 `/racer claim` once with their entry list name, or they count as not signed
-up. The reminders say so too, and `discord.livery`'s channel and role limits
-don't apply to `/racer claim`. Seasons already finished when the bot first runs are
+up. The reminders say so too. `/racer claim` keeps to `discord.livery`'s
+channels but not its roles, which someone new won't have yet. Seasons already finished when the bot first runs are
 left alone.
 
 ```json
