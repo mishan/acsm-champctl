@@ -260,6 +260,24 @@ describe("SqliteClaimStore", () => {
     expect(await store.handleHint("Misha")).toBeUndefined()
     store.close()
   })
+
+  it("fills in the Steam ids of claims made without them, a shared car's each", async () => {
+    const store = await open()
+    await store.claim(CHAMP, champ(), "Misha", MISHA)
+    expect(await store.guidsByUser()).toEqual(new Map())
+    const withGuids = championship({
+      Classes: [
+        championshipClass({
+          Entrants: entryList([person({ Name: "Misha", GUID: "7656111; 7656222" })]),
+        }),
+      ],
+    })
+    await store.fillGuids("some other championship", withGuids)
+    expect(await store.guidsByUser()).toEqual(new Map())
+    await store.fillGuids(CHAMP, withGuids)
+    expect(await store.guidsByUser()).toEqual(new Map([[MISHA, new Set(["7656111", "7656222"])]]))
+    store.close()
+  })
 })
 
 describe("resolveUploader", () => {

@@ -620,8 +620,9 @@ What champctl says in Discord: the nightly gridmom report, the week's round
 announcement, the championship standings and the trophy room. `serve` stays
 connected and answers the slash commands — `/livery`, `/incident` for incident
 reports and their votes, `/season` for choosing next season's cars and tracks —
-and, where the profile asks for them, moves voice at qualifying and posts the
-standings once a round has been raced.
+and, where the profile asks for them, moves voice at qualifying, posts the
+standings once a round has been raced, and keeps the Racers role to who's
+signed up.
 
 Getting it running end to end — application, invite, profile, and the drain that
 applies what drivers send — is

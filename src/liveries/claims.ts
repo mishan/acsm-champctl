@@ -33,6 +33,7 @@ import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import type { Championship } from "../acsm/types.js"
+import { normGuid, splitGuids } from "../acsm/view.js"
 import { migrate, type Migration, openForReading, restrictToOwner } from "../sqlite.js"
 import { usableAsFolder } from "./pack.js"
 import { nearbyNames, rosterOf } from "./plan.js"
@@ -301,6 +302,12 @@ const MIGRATIONS: Migration[] = [
       `)
     },
   },
+  {
+    name: "claims: the claimed entrant's Steam id",
+    up: (db) => {
+      db.exec("ALTER TABLE driver_discord ADD COLUMN guid TEXT")
+    },
+  },
 ]
 
 interface ClaimRow {
@@ -453,13 +460,21 @@ export class SqliteClaimStore {
       this.#db
         .prepare("DELETE FROM driver_discord WHERE championship_id = ? AND discord_user_id = ?")
         .run(championshipId, discordUserId)
+      const guid = normGuid(rosterOf(championship).find((r) => r.name === wanted)?.entrant.GUID)
       this.#db
         .prepare(
           `INSERT INTO driver_discord
-             (championship_id, discord_user_id, entrant_name, discord_handle, claimed_at)
-           VALUES (?, ?, ?, ?, ?)`,
+             (championship_id, discord_user_id, entrant_name, discord_handle, claimed_at, guid)
+           VALUES (?, ?, ?, ?, ?, ?)`,
         )
-        .run(championshipId, discordUserId, wanted, options.discordHandle ?? null, when)
+        .run(
+          championshipId,
+          discordUserId,
+          wanted,
+          options.discordHandle ?? null,
+          when,
+          guid || null,
+        )
       this.#db.exec("COMMIT")
 
       const claim: DriverClaim = {
@@ -516,6 +531,35 @@ export class SqliteClaimStore {
       )
       .all(championshipId, LEGACY_CLAIM, championshipId, championshipId) as unknown as ClaimRow[]
     return rows.map(toClaim)
+  }
+
+  /**
+   * Every Discord account's Steam ids, from the entrants it has claimed in any
+   * championship: what knows a returning racer on next season's entry list.
+   */
+  async guidsByUser(): Promise<Map<string, Set<string>>> {
+    const rows = this.#db
+      .prepare("SELECT discord_user_id, guid FROM driver_discord WHERE guid IS NOT NULL")
+      .all() as { discord_user_id: string; guid: string }[]
+    const out = new Map<string, Set<string>>()
+    for (const r of rows) {
+      const ids = out.get(r.discord_user_id) ?? new Set<string>()
+      for (const g of splitGuids(r.guid)) ids.add(g)
+      out.set(r.discord_user_id, ids)
+    }
+    return out
+  }
+
+  /** Fills in the Steam id of this championship's claims made before it was kept. */
+  async fillGuids(championshipId: string, championship: Championship): Promise<void> {
+    const update = this.#db.prepare(
+      `UPDATE driver_discord SET guid = ?
+       WHERE championship_id = ? AND entrant_name = ? AND guid IS NULL`,
+    )
+    for (const r of rosterOf(championship)) {
+      const guid = normGuid(r.entrant.GUID)
+      if (r.name && guid) update.run(guid, championshipId, r.name)
+    }
   }
 
   /**

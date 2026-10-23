@@ -327,6 +327,36 @@ describe("choosing the championship", () => {
     claims.close()
   })
 
+  it("claims on the one running championship with that name on its entry list", async () => {
+    const claims = await SqliteClaimStore.open(":memory:")
+    const queue = await SqliteSubmissionQueue.open(":memory:")
+    const tokens = await SqliteTokenStore.open(":memory:")
+    const next = champ({
+      ID: OTHER,
+      Name: "October 2026",
+      Classes: [
+        championshipClass({
+          Entrants: entryList([person({ Name: "Newcomer", GUID: "76561198000000001" })]),
+        }),
+      ],
+    })
+    const r = new LiveryRouter({
+      reader: new StaticAcsmReader([champ(), next]),
+      claims,
+      queue,
+      tokens,
+      clamp: {},
+      now: () => NOW,
+    })
+    const reply = await r.handle(command({ subcommand: "claim", options: { name: "Newcomer" } }))
+    expect(reply.content).toMatch(/claimed as "Newcomer"/)
+    expect((await claims.forDiscordUser(OTHER, MISHA))?.entrantName).toBe("Newcomer")
+    expect(await claims.guidsByUser()).toEqual(new Map([[MISHA, new Set(["76561198000000001"])]]))
+    tokens.close()
+    queue.close()
+    claims.close()
+  })
+
   it("takes the pinned one without asking, when a league has set it", async () => {
     const claims = await SqliteClaimStore.open(":memory:")
     const queue = await SqliteSubmissionQueue.open(":memory:")

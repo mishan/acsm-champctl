@@ -30,6 +30,7 @@ import {
 import type { LiveryClamp, UploadContext, UploadLimits } from "./livery.js"
 import { isFinished } from "./nightly.js"
 import { racedCars } from "../liveries/coverage.js"
+import { rosterOf } from "../liveries/plan.js"
 import type { CommandReply, CommandRouter, SlashCommand } from "./transport.js"
 
 export interface LiveryRouterOptions {
@@ -97,7 +98,9 @@ export class LiveryRouter implements CommandRouter {
       roleIds: command.roleIds,
     }
 
-    const resolved = await this.#championship()
+    const resolved = await this.#championship(
+      command.subcommand === "claim" ? command.options["name"] : undefined,
+    )
     if ("problem" in resolved) return { content: resolved.problem }
     const { championship, championshipId } = resolved
 
@@ -206,9 +209,9 @@ export class LiveryRouter implements CommandRouter {
    * puts a livery on the wrong car — a failure nobody would look for, because
    * the upload succeeded.
    */
-  async #championship(): Promise<
-    { championship: Championship; championshipId: string } | { problem: string }
-  > {
+  async #championship(
+    claiming?: string,
+  ): Promise<{ championship: Championship; championshipId: string } | { problem: string }> {
     const pinned = this.#options.championshipId
     if (pinned) {
       try {
@@ -253,6 +256,14 @@ export class LiveryRouter implements CommandRouter {
       }
     }
 
+    // A claim is for whichever has the name: next season's sign-ups open
+    // while this one is still racing.
+    const wanted = claiming?.trim().normalize("NFC")
+    const named = wanted
+      ? live.filter((l) => rosterOf(l.championship).some((r) => r.name === wanted))
+      : []
+    if (named.length === 1)
+      return named[0] as { championship: Championship; championshipId: string }
     if (live.length === 1) return live[0] as { championship: Championship; championshipId: string }
     if (live.length === 0) {
       return {

@@ -641,3 +641,47 @@ describe("reading the member's roles", () => {
     await client.destroy()
   })
 })
+
+describe("GatewayTransport roles", () => {
+  it("lists a role's holders across pages, bots aside", async () => {
+    const member = (id: string, roles: string[], bot = false) => ({ user: { id, bot }, roles })
+    const asked: string[] = []
+    const pages = [
+      [
+        ...Array.from({ length: 998 }, (_, i) => member(`${i + 10}`, [])),
+        member("1", ["r"]),
+        member("2", ["r"], true),
+      ],
+      [member("3", ["r", "x"]), member("4", ["x"])],
+    ]
+    const client = {
+      rest: {
+        get: async (_route: string, o: { query: URLSearchParams }) => {
+          asked.push(o.query.get("after") ?? "")
+          return pages[asked.length - 1]
+        },
+      },
+    }
+    const t = GatewayTransport.wrapping(client as unknown as Client)
+    expect(await t.roleHolders("g", "r")).toEqual(["1", "3"])
+    expect(asked).toEqual(["0", "2"])
+  })
+
+  it("gives nothing to someone who has left the server, and says why anything else failed", async () => {
+    const client = {
+      rest: {
+        put: async (route: string) => {
+          throw Object.assign(
+            new Error(route.includes("/gone/") ? "Unknown Member" : "Missing Permissions"),
+            {
+              code: route.includes("/gone/") ? 10007 : 50013,
+            },
+          )
+        },
+      },
+    }
+    const t = GatewayTransport.wrapping(client as unknown as Client)
+    expect(await t.setRole("g", "gone", "r", true)).toBe(false)
+    await expect(t.setRole("g", "here", "r", true)).rejects.toThrow(/Manage Roles/)
+  })
+})

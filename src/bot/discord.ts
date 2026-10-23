@@ -37,6 +37,9 @@ import {
   type Interaction,
   OverwriteType,
   PermissionFlagsBits,
+  RESTJSONErrorCodes,
+  Routes,
+  type APIGuildMember,
 } from "discord.js"
 
 import type { CommandDefinition } from "./commands.js"
@@ -486,6 +489,49 @@ export class GatewayTransport implements DiscordTransport {
             "Something went wrong at my end rather than with anything you did. Tell an admin.",
         })
         .catch(() => {})
+    }
+  }
+
+  /**
+   * Who holds a role, bots aside. Read over REST, which needs the Server
+   * Members intent switched on in the Developer Portal but no subscription to
+   * member events.
+   */
+  async roleHolders(guildId: string, roleId: string): Promise<string[]> {
+    const holders: string[] = []
+    let after = "0"
+    for (;;) {
+      const page = (await this.#client.rest
+        .get(Routes.guildMembers(guildId), {
+          query: new URLSearchParams({ limit: "1000", after }),
+        })
+        .catch((e: unknown) => {
+          throw new BotError(
+            `Couldn't list the server's members: ${message(e)}. Turn on the Server Members ` +
+              "intent under Bot in the Discord Developer Portal.",
+          )
+        })) as APIGuildMember[]
+      for (const m of page) {
+        if (m.user && !m.user.bot && m.roles.includes(roleId)) holders.push(m.user.id)
+      }
+      const last = page.at(-1)?.user?.id
+      if (page.length < 1000 || !last) return holders
+      after = last
+    }
+  }
+
+  /** Gives or takes a role; false when the member has left the server. */
+  async setRole(guildId: string, userId: string, roleId: string, on: boolean): Promise<boolean> {
+    const route = Routes.guildMemberRole(guildId, userId, roleId)
+    try {
+      await (on ? this.#client.rest.put(route) : this.#client.rest.delete(route))
+      return true
+    } catch (e) {
+      if ((e as { code?: unknown }).code === RESTJSONErrorCodes.UnknownMember) return false
+      throw new BotError(
+        `Couldn't ${on ? "give" : "take"} <@&${roleId}> ${on ? "to" : "from"} <@${userId}>: ` +
+          `${message(e)}. The bot needs Manage Roles, and its own role above that one.`,
+      )
     }
   }
 

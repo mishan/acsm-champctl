@@ -320,3 +320,18 @@ export function spectatorModels(c: Championship | undefined): Set<string> {
 export function normGuid(g: string | undefined | null): string {
   return (g ?? "").trim()
 }
+
+/** Every Steam id on a championship's entry list. */
+export function rosterGuids(c: Championship | undefined): Set<string> {
+  return new Set(
+    classes(c).flatMap((cls) => slots(cls.Entrants).flatMap((s) => splitGuids(s.entrant.GUID))),
+  )
+}
+
+/** The Steam ids in an entrant's `GUID`, which holds several, `;`-separated, for a shared car. */
+export function splitGuids(g: string | undefined | null): string[] {
+  return (g ?? "")
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
