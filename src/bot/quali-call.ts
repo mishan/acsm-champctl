@@ -18,6 +18,7 @@ import type { Championship } from "../acsm/types.js"
 import { eventHasResults, eventSession, events, isZeroTime } from "../acsm/view.js"
 import type { LeagueProfile, QualiVoiceMove } from "../profile/types.js"
 import { qualiStart } from "./announce.js"
+import type { FinishedChampionships } from "./finished.js"
 import type { VoiceMover } from "./transport.js"
 
 const MINUTE = 60_000
@@ -54,6 +55,7 @@ export interface QualiCallOptions {
   log: (line: string) => void
   /** Tells the admins. A failed move on race night is otherwise a log line nobody reads. */
   notify: (content: string) => Promise<void>
+  finished?: FinishedChampionships
 }
 
 export class QualiCall {
@@ -67,6 +69,7 @@ export class QualiCall {
 
   constructor(options: QualiCallOptions) {
     this.#o = options
+    for (const id of options.finished?.all().keys() ?? []) this.#finished.add(id)
   }
 
   /**
@@ -159,7 +162,10 @@ export class QualiCall {
       try {
         const c = await this.#o.reader.exportChampionship(id)
         const all = events(c)
-        if (all.length > 0 && all.every((ev) => eventHasResults(ev))) this.#finished.add(id)
+        if (all.length > 0 && all.every((ev) => eventHasResults(ev))) {
+          this.#finished.add(id)
+          this.#o.finished?.add(id)
+        }
         all.forEach((ev, index) => {
           const quali = qualiStart(ev, this.#o.profile)
           if (!quali?.isValid || eventHasResults(ev) || quali.toMillis() + GRACE < t) return

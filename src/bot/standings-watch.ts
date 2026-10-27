@@ -17,6 +17,7 @@
 import type { AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { eventHasResults, events, isZeroTime } from "../acsm/view.js"
+import type { FinishedChampionships } from "./finished.js"
 
 const MINUTE = 60_000
 /** How often the championship list is re-read, for one created mid-season. */
@@ -36,6 +37,7 @@ export interface StandingsWatchOptions {
   /** Tells the admins: a post that failed or needs checking is otherwise a log line. */
   notify: (content: string) => Promise<void>
   log: (line: string) => void
+  finished?: FinishedChampionships
 }
 
 export class StandingsWatch {
@@ -54,6 +56,7 @@ export class StandingsWatch {
 
   constructor(options: StandingsWatchOptions) {
     this.#o = options
+    for (const id of options.finished?.all().keys() ?? []) this.#finished.add(id)
   }
 
   /** Ticks until the returned function is called; never two at once. */
@@ -178,6 +181,7 @@ export class StandingsWatch {
       // A championship with no rounds yet has them all still to come.
       if (all.length > 0 && all.every((ev) => eventHasResults(ev)) && !(t - last <= RECENT)) {
         this.#finished.add(id)
+        this.#o.finished?.add(id)
         if (!this.#primed.has(id)) continue
       } else active.push(id)
       await this.#check(id, c, t)
