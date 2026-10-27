@@ -125,8 +125,8 @@ export class ChampionshipInfo {
    */
   async #featured(): Promise<{ id: string; c: Championship } | undefined> {
     // When each was created never changes, and kept in the store it spares a
-    // restart reading all of them again: at five requests in twenty seconds, minutes for a
-    // league's history, with /championship info waiting behind it.
+    // restart reading all of them again: at five requests in twenty seconds,
+    // minutes for a league's history, with /championship info waiting behind it.
     const known = (id: string) => {
       const at = this.#o.store.get(`created:${id}`)
       return at === undefined ? undefined : Number(at)
