@@ -45,8 +45,6 @@ export interface ChampionshipInfoOptions {
 export class ChampionshipInfo {
   readonly #o: ChampionshipInfoOptions
   #names: { at: number; map: ReadonlyMap<string, string> } | undefined
-  /** When each championship was created, which never changes, to skip reading the old ones. */
-  readonly #created = new Map<string, number>()
   /** One refresh at a time, so a command and a tick can't both post. */
   #running: Promise<unknown> = Promise.resolve()
 
@@ -126,13 +124,20 @@ export class ChampionshipInfo {
    * be the one to show instead: then the message is left as it is.
    */
   async #featured(): Promise<{ id: string; c: Championship } | undefined> {
+    // When each was created never changes, and kept in the store it spares a
+    // restart reading all of them again: at five requests in twenty seconds,
+    // minutes for a league's history, with /championship info waiting behind it.
+    const known = (id: string) => {
+      const at = this.#o.store.get(`created:${id}`)
+      return at === undefined ? undefined : Number(at)
+    }
     const shownId = this.#o.store.get("championship")
-    const floor = (shownId && this.#created.get(shownId)) || Number.NEGATIVE_INFINITY
+    const floor = (shownId && known(shownId)) || Number.NEGATIVE_INFINITY
     let best: { id: string; c: Championship; created: number } | undefined
     let unread: unknown
     for (const summary of await this.#o.reader.listChampionships()) {
       const id = summary.ID
-      if (!id || (this.#created.get(id) ?? floor) < floor) continue
+      if (!id || (known(id) ?? floor) < floor) continue
       let c: Championship
       try {
         c = await this.#o.reader.exportChampionship(id)
@@ -141,7 +146,7 @@ export class ChampionshipInfo {
         continue
       }
       const created = Date.parse(c.Created ?? "") || 0
-      this.#created.set(id, created)
+      this.#o.store.set(`created:${id}`, String(created))
       if (!events(c).some(eventHasStarted) && c.SignUpForm?.Enabled !== true) continue
       if (!best || created > best.created) best = { id, c, created }
     }
