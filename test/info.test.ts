@@ -165,7 +165,11 @@ describe("infoEmbed", () => {
   })
 })
 
-function harness(championships: Championship[], unreadable: string[] = []) {
+function harness(
+  championships: Championship[],
+  unreadable: string[] = [],
+  store = new Map<string, string>(),
+) {
   const inner = new StaticAcsmReader(championships)
   const exported: string[] = []
   const reader = {
@@ -177,7 +181,6 @@ function harness(championships: Championship[], unreadable: string[] = []) {
       return inner.exportChampionship(id)
     },
   } as unknown as AcsmReader
-  const store = new Map<string, string>()
   const posted: InfoEmbed[] = []
   const edited: { id: string; embed: InfoEmbed }[] = []
   const removed: string[] = []
@@ -261,15 +264,19 @@ describe("ChampionshipInfo", () => {
     expect(h.posted.map((e) => e.title)).toEqual([open.Name])
   })
 
-  it("reads only the championship shown and newer ones once it knows when each was made", async () => {
+  it("reads only the championship shown and newer ones once it knows when each was made, restarted or not", async () => {
     const old = season("00000000-0000-0000-0000-000000000001", "2025-01-01T00:00:00Z", {
       Events: [raceEvent({ StartedTime: "2025-01-08T03:00:00Z" })],
     })
-    const h = harness([old, running])
+    const store = new Map<string, string>()
+    const h = harness([old, running], [], store)
     await h.info.refresh()
     h.exported.length = 0
     await h.info.refresh()
     expect(h.exported).toEqual([running.ID])
+    const restarted = harness([old, running], [], store)
+    await restarted.info.refresh()
+    expect(restarted.exported).toEqual([running.ID])
   })
 
   it("skips an old championship it can't read, but won't guess past a new one", async () => {
