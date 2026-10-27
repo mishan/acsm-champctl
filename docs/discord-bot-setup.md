@@ -527,7 +527,8 @@ With `discord.info`, GridMom keeps one message about the current championship
 in `channelId`, as an embed:
 
 - **The story** is the championship's info text in ACSM, with its first
-  heading as the title. Images and videos are left out.
+  heading as the title and its first picture under it. Other pictures and
+  videos are left out.
 - **The rounds** come from its events: raced ones struck out, the rest with
   qualifying's start in each reader's own time zone.
 - **The links** are the sign-up page, then `links` from the profile in order,

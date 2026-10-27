@@ -707,4 +707,33 @@ describe("GatewayTransport embeds", () => {
     code = 50013
     await expect(t.editEmbed("c", "m", embed)).rejects.toThrow(/nope/)
   })
+
+  it("replaces the picture on an edit rather than adding one", async () => {
+    const edits: unknown[] = []
+    const client = {
+      channels: {
+        fetch: async () => ({
+          isTextBased: () => true,
+          messages: { edit: async (_id: string, body: unknown) => void edits.push(body) },
+        }),
+      },
+    }
+    const t = GatewayTransport.wrapping(client as unknown as Client)
+    const file = { name: "picture.png", data: Buffer.from("png!") }
+    await t.editEmbed("c", "m", {
+      title: "T",
+      description: "",
+      fields: [],
+      footer: "",
+      image: "attachment://picture.png",
+      file,
+    })
+    expect(edits).toMatchObject([
+      {
+        embeds: [{ image: { url: "attachment://picture.png" } }],
+        files: [{ name: "picture.png", attachment: file.data }],
+        attachments: [],
+      },
+    ])
+  })
 })

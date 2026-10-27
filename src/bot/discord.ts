@@ -525,7 +525,7 @@ export class GatewayTransport implements DiscordTransport {
   async postEmbed(channelId: string, embed: InfoEmbed): Promise<string> {
     const channel = await this.#client.channels.fetch(channelId)
     if (!channel?.isSendable()) throw new BotError(`${channelId} isn't a channel I can post in.`)
-    return (await channel.send({ embeds: [toEmbed(embed)], allowedMentions: { parse: [] } })).id
+    return (await channel.send({ ...toEmbed(embed), allowedMentions: { parse: [] } })).id
   }
 
   /** Replaces one of the bot's embeds; false when the message is gone. */
@@ -533,7 +533,8 @@ export class GatewayTransport implements DiscordTransport {
     const channel = await this.#client.channels.fetch(channelId)
     if (!channel?.isTextBased()) throw new BotError(`${channelId} isn't a text channel I can see.`)
     try {
-      await channel.messages.edit(messageId, { embeds: [toEmbed(embed)] })
+      // Without `attachments: []` an edit keeps the old picture beside the new.
+      await channel.messages.edit(messageId, { ...toEmbed(embed), attachments: [] })
       return true
     } catch (e) {
       if ((e as { code?: unknown }).code === RESTJSONErrorCodes.UnknownMessage) return false
@@ -677,12 +678,18 @@ const INFO_COLOR = 0xf7a8c8
 
 function toEmbed(e: InfoEmbed) {
   return {
-    title: e.title,
-    ...(e.url ? { url: e.url } : {}),
-    description: e.description,
-    fields: e.fields,
-    footer: { text: e.footer },
-    color: INFO_COLOR,
+    embeds: [
+      {
+        title: e.title,
+        ...(e.url ? { url: e.url } : {}),
+        description: e.description,
+        fields: e.fields,
+        footer: { text: e.footer },
+        ...(e.image ? { image: { url: e.image } } : {}),
+        color: INFO_COLOR,
+      },
+    ],
+    files: e.file ? [{ attachment: Buffer.from(e.file.data), name: e.file.name }] : [],
   }
 }
 
