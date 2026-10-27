@@ -525,7 +525,11 @@ export class GatewayTransport implements DiscordTransport {
   async postEmbed(channelId: string, embed: InfoEmbed): Promise<string> {
     const channel = await this.#client.channels.fetch(channelId)
     if (!channel?.isSendable()) throw new BotError(`${channelId} isn't a channel I can post in.`)
-    return (await channel.send({ ...toEmbed(embed), allowedMentions: { parse: [] } })).id
+    try {
+      return (await channel.send({ ...toEmbed(embed), allowedMentions: { parse: [] } })).id
+    } catch (e) {
+      throw new BotError(message(e))
+    }
   }
 
   /** Replaces one of the bot's embeds; false when the message is gone. */
@@ -538,7 +542,7 @@ export class GatewayTransport implements DiscordTransport {
       return true
     } catch (e) {
       if ((e as { code?: unknown }).code === RESTJSONErrorCodes.UnknownMessage) return false
-      throw e
+      throw new BotError(message(e))
     }
   }
 
@@ -747,5 +751,12 @@ function firstLine(text: string): string {
 }
 
 function message(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
+  if (!(e instanceof Error)) return String(e)
+  // undici's "other side closed" doesn't say how far the request got. How much
+  // went each way does: a refused upload has sent little of itself, and a
+  // connection already dead when it was reused has read nothing.
+  const socket = (e as { socket?: { bytesWritten?: number; bytesRead?: number } }).socket
+  return socket
+    ? `${e.message} (sent ${socket.bytesWritten} bytes, received ${socket.bytesRead})`
+    : e.message
 }
