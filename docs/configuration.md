@@ -73,7 +73,7 @@ without either, since a committed channel id is a channel every fork posts into.
 }
 ```
 
-The bot's optional features — `incidents`, `season`, `racers`, standings after a round —
+The bot's optional features — `incidents`, `season`, `racers`, `info`, standings after a round —
 have their own keys under `discord`, each described with its step in
 [`discord-bot-setup.md`](discord-bot-setup.md).
 

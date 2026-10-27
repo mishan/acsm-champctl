@@ -42,6 +42,7 @@ import {
   type APIGuildMember,
 } from "discord.js"
 
+import type { InfoEmbed } from "../info/embed.js"
 import type { CommandDefinition } from "./commands.js"
 import {
   BotError,
@@ -520,6 +521,43 @@ export class GatewayTransport implements DiscordTransport {
     }
   }
 
+  /** An embed, mentioning nobody; its message id. */
+  async postEmbed(channelId: string, embed: InfoEmbed): Promise<string> {
+    const channel = await this.#client.channels.fetch(channelId)
+    if (!channel?.isSendable()) throw new BotError(`${channelId} isn't a channel I can post in.`)
+    return (await channel.send({ embeds: [toEmbed(embed)], allowedMentions: { parse: [] } })).id
+  }
+
+  /** Replaces one of the bot's embeds; false when the message is gone. */
+  async editEmbed(channelId: string, messageId: string, embed: InfoEmbed): Promise<boolean> {
+    const channel = await this.#client.channels.fetch(channelId)
+    if (!channel?.isTextBased()) throw new BotError(`${channelId} isn't a text channel I can see.`)
+    try {
+      await channel.messages.edit(messageId, { embeds: [toEmbed(embed)] })
+      return true
+    } catch (e) {
+      if ((e as { code?: unknown }).code === RESTJSONErrorCodes.UnknownMessage) return false
+      throw e
+    }
+  }
+
+  /** Deletes a message, anyone's: the bot needs Manage Messages for someone else's. */
+  async deleteMessage(channelId: string, messageId: string): Promise<void> {
+    const channel = await this.#client.channels.fetch(channelId)
+    if (!channel?.isTextBased()) throw new BotError(`${channelId} isn't a text channel I can see.`)
+    try {
+      await channel.messages.delete(messageId)
+    } catch (e) {
+      const code = (e as { code?: unknown }).code
+      if (code === RESTJSONErrorCodes.UnknownMessage) return
+      throw new BotError(
+        code === RESTJSONErrorCodes.MissingPermissions
+          ? "the bot needs Manage Messages in that channel to delete someone else's message."
+          : message(e),
+      )
+    }
+  }
+
   /** Gives or takes a role; false when the member has left the server. */
   async setRole(guildId: string, userId: string, roleId: string, on: boolean): Promise<boolean> {
     const route = Routes.guildMemberRole(guildId, userId, roleId)
@@ -619,6 +657,20 @@ export function toSlashCommand(interaction: ChatInputCommandInteraction): SlashC
     ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
     channelId: interaction.channelId,
     roleIds,
+  }
+}
+
+/** The info message's pink, from GridMom's avatar. */
+const INFO_COLOR = 0xf7a8c8
+
+function toEmbed(e: InfoEmbed) {
+  return {
+    title: e.title,
+    ...(e.url ? { url: e.url } : {}),
+    description: e.description,
+    fields: e.fields,
+    footer: { text: e.footer },
+    color: INFO_COLOR,
   }
 }
 

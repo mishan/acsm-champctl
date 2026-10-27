@@ -16,7 +16,7 @@ The commands:
 | [`champctl-liveries`](docs/commands.md#champctl-liveries) | upload drivers' custom liveries and assign them |
 | [`champctl-serve`](docs/commands.md#champctl-serve) | the finalize and create-a-championship flows as a web UI, for people without a terminal |
 | [`champctl-upload`](docs/commands.md#champctl-upload) | take drivers' livery uploads from one-time links, holding no credentials |
-| [`champctl-bot`](docs/commands.md#champctl-bot) | GridMom in Discord: reports, announcements, standings, liveries, incident votes, the season vote and the Racers role |
+| [`champctl-bot`](docs/commands.md#champctl-bot) | GridMom in Discord: reports, announcements, standings, liveries, incident votes, the season vote, the Racers role and the championship info |
 | [`champctl-spectator`](docs/commands.md#champctl-spectator) | record every race, and find the incidents in it |
 | [`champctl-mcp`](docs/commands.md#champctl-mcp) | answer questions about the league for an MCP client, read-only |
 

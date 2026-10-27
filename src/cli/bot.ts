@@ -22,9 +22,10 @@ import { SqliteCache } from "../acsm/cache.js"
 import { AcsmNotJsonError, asMessage, HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { announce, NothingToAnnounce, RoundRefused, type Announcement } from "../bot/announce.js"
-import { INCIDENT_COMMAND, LIVERY_COMMANDS, SEASON_COMMAND } from "../bot/commands.js"
+import { INCIDENT_COMMAND, INFO_COMMAND, LIVERY_COMMANDS, SEASON_COMMAND } from "../bot/commands.js"
 import { GatewayTransport } from "../bot/discord.js"
 import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
+import { carsetUrl } from "../bot/livery.js"
 import { nightlyMessages, standingsMessage } from "../bot/message.js"
 import { QualiCall } from "../bot/quali-call.js"
 import { StandingsWatch } from "../bot/standings-watch.js"
@@ -50,11 +51,14 @@ import { IncidentRouter } from "../incidents/router.js"
 import { SqliteIncidentStore } from "../incidents/store.js"
 import { SeasonRouter } from "../season/router.js"
 import { SqliteSeasonStore } from "../season/store.js"
+import { ChampionshipInfo, InfoRouter } from "../info/post.js"
+import { SqliteInfoStore } from "../info/store.js"
 import { SqliteRacersStore } from "../racers/store.js"
 import { RacersWatch } from "../racers/watch.js"
 import type { Severity } from "../gridmom/finding.js"
 import { DEFAULT_MIN_SEVERITY } from "../gridmom/report.js"
 import { SqliteClaimStore } from "../liveries/claims.js"
+import { racedCars } from "../liveries/coverage.js"
 import { defaultStorePath } from "../sqlite.js"
 import { SqliteSubmissionQueue } from "../liveries/queue.js"
 import { SqliteLiveryStore } from "../liveries/store.js"
@@ -968,12 +972,15 @@ async function serve(args: Args): Promise<number> {
   const seasonStore = seasonSettings ? await SqliteSeasonStore.open(storePath) : undefined
   const racers = profile.discord.racers
   const racersStore = racers ? await SqliteRacersStore.open(storePath) : undefined
+  const infoSettings = profile.discord.info
+  const infoStore = infoSettings ? await SqliteInfoStore.open(storePath) : undefined
   const voice = profile.discord.qualiVoiceMove
   const transport = await connect({ voice: voice !== undefined })
   let stopQualiCall = async () => {}
   let stopStandings = async () => {}
   let stopPolls = async () => {}
   let stopRacers = async () => {}
+  let stopInfo = async () => {}
 
   try {
     if (!(transport instanceof GatewayTransport)) {
@@ -983,6 +990,7 @@ async function serve(args: Args): Promise<number> {
       ...LIVERY_COMMANDS,
       ...(incidentSettings ? [INCIDENT_COMMAND] : []),
       ...(seasonSettings ? [SEASON_COMMAND] : []),
+      ...(infoSettings ? [INFO_COMMAND] : []),
     ])
     process.stderr.write(`Registered /livery in ${guildId}.\n`)
     if (args.registerOnly) return 0
@@ -1104,14 +1112,51 @@ async function serve(args: Args): Promise<number> {
       process.stderr.write("Answering /season.\n")
     }
 
+    let info: InfoRouter | undefined
+    if (infoSettings && infoStore) {
+      const uploadBaseUrl = livery.uploadBaseUrl
+      const championshipInfo = new ChampionshipInfo({
+        reader,
+        profile,
+        baseUrl,
+        links: infoSettings.links ?? [],
+        ...(uploadBaseUrl
+          ? {
+              carsetUrl: async (id: string, c: Championship) => {
+                await liveries.setCars(id, racedCars(c))
+                if ((await liveries.carset(id)).length === 0) return undefined
+                return carsetUrl(liveries, id, uploadBaseUrl, new Date())
+              },
+            }
+          : {}),
+        store: infoStore,
+        channel: {
+          post: (embed) => transport.postEmbed(infoSettings.channelId, embed),
+          edit: (id, embed) => transport.editEmbed(infoSettings.channelId, id, embed),
+          remove: (id) => transport.deleteMessage(infoSettings.channelId, id),
+        },
+        log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
+      })
+      stopInfo = championshipInfo.start()
+      info = new InfoRouter({
+        info: championshipInfo,
+        adminRoleId: infoSettings.adminRoleId,
+        guildId,
+        channelId: infoSettings.channelId,
+      })
+      process.stderr.write("Keeping the championship info up to date.\n")
+    }
+
     transport.listen(
       {
         handle: (c) =>
-          c.name === "incident" && incidents
-            ? incidents.handle(c)
-            : c.name === "season" && season
-              ? season.handle(c)
-              : router.handle(c),
+          c.name === "championship" && info
+            ? info.handle(c)
+            : c.name === "incident" && incidents
+              ? incidents.handle(c)
+              : c.name === "season" && season
+                ? season.handle(c)
+                : router.handle(c),
         autocomplete: (c, focused) =>
           c.name === "incident" && incidents
             ? incidents.autocomplete(c, focused)
@@ -1235,11 +1280,13 @@ async function serve(args: Args): Promise<number> {
     await stopStandings()
     await stopPolls()
     await stopRacers()
+    await stopInfo()
     await transport.close()
     liveries.close()
     incidentStore?.close()
     seasonStore?.close()
     racersStore?.close()
+    infoStore?.close()
     tokens.close()
     queue.close()
     claims.close()

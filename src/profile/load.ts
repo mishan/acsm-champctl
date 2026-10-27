@@ -275,6 +275,35 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
       }
     }
 
+    const info = d["info"]
+    if (info !== undefined) {
+      const i = info as Record<string, unknown> | null
+      for (const key of ["channelId", "adminRoleId"] as const) {
+        if (typeof i?.[key] !== "string" || !/^\d{17,20}$/.test(i[key] as string)) {
+          bad(
+            `\`discord.info.${key}\` must be an id — 17 to 20 digits, the way "Copy ` +
+              `${key === "channelId" ? "Channel" : "Role"} ID" gives it`,
+          )
+        }
+      }
+      const links = i?.["links"]
+      if (
+        links !== undefined &&
+        !(
+          Array.isArray(links) &&
+          links.every(
+            (l) =>
+              typeof l?.label === "string" &&
+              l.label.trim() !== "" &&
+              typeof l?.url === "string" &&
+              /^https?:\/\/\S+$/.test(l.url),
+          )
+        )
+      ) {
+        bad("`discord.info.links` must be a list of { label, url }, each url starting https://")
+      }
+    }
+
     // Same check, same reason: a channel *name* and a role *mention* both reach
     // Discord as an id it cannot find. Here the failure is worse than a missing
     // report — a clamp built from ids that match nothing refuses every driver,
