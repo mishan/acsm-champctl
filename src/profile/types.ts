@@ -206,6 +206,17 @@ export interface DiscordSettings {
     channelId: string
     graceDays?: number
   }
+  /**
+   * One message in `channelId` about the current championship, built from
+   * ACSM: its info text, its rounds and its links, with `links` after them.
+   * Kept up to date by itself; the `adminRoleId` role can refresh it with
+   * `/championship info`, and have it replace another message.
+   */
+  info?: {
+    channelId: string
+    adminRoleId: string
+    links?: { label: string; url: string }[]
+  }
 }
 
 export interface QualiVoiceMove {

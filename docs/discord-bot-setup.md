@@ -521,6 +521,39 @@ server's role list, and **Mention @everyone, @here, and All Roles** in
 needs the **Server Members Intent**: turn it on under **Bot** in the Developer
 Portal.
 
+## 16. Optional: the championship info message
+
+With `discord.info`, GridMom keeps one message about the current championship
+in `channelId`, as an embed:
+
+- **The story** is the championship's info text in ACSM, with its first
+  heading as the title. Images and videos are left out.
+- **The rounds** come from its events: raced ones struck out, the rest with
+  qualifying's start in each reader's own time zone.
+- **The links** are the sign-up page, then `links` from the profile in order,
+  then the carset download once it has liveries in it.
+
+It shows the newest championship that has started racing or is taking
+sign-ups, so next season takes over the moment it opens, and it's edited
+within 15 minutes of anything it shows changing. An `adminRoleId` member can
+refresh it now with `/championship info`. Give that a message's link as
+`replace` and GridMom deletes that message once its own is up, which is how
+an info message someone posted by hand gets taken over.
+
+```json
+"info": {
+  "channelId": "790738391469654038",
+  "adminRoleId": "9876543210987654321",
+  "links": [
+    { "label": "Live timing", "url": "https://acsm.example.com/live-timing?server=0" },
+    { "label": "Twitch", "url": "https://www.twitch.tv/example" }
+  ]
+}
+```
+
+The bot needs **View Channel**, **Send Messages** and **Embed Links** in the
+channel, and **Manage Messages** to delete a message it's replacing.
+
 ## When it doesn't work
 
 | What you see | What it is |
@@ -543,6 +576,6 @@ Worth knowing before you give it a permission it does not need. `champctl-bot`
 holds no ACSM credentials on any code path, and `src/bot/` importing anything
 from the write path is a failing test rather than a code review note. Everything
 it can do to a league is say something in a channel, write a driver's zip to
-a local queue, move people between voice channels at quali, and give or take
-the Racers role. Applying that queue is a separate process, run by you, holding
+a local queue, move people between voice channels at quali, give or take
+the Racers role, and delete the message the championship info replaces. Applying that queue is a separate process, run by you, holding
 credentials you gave it.

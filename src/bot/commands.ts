@@ -271,3 +271,26 @@ export const SEASON_COMMAND: CommandDefinition = {
     },
   ],
 }
+
+/** `/championship info` (docs/discord-bot-setup.md, step 16): refreshes the info message. */
+export const INFO_COMMAND: CommandDefinition = {
+  name: "championship",
+  description: "The championship info message in the announcements channel",
+  dmPermission: false,
+  options: [
+    {
+      name: "info",
+      description: "Admins: post or refresh it now",
+      type: 1,
+      options: [
+        {
+          name: "replace",
+          description: "A message for it to replace, which is deleted: its link or id",
+          type: 3,
+          required: false,
+          max_length: 200,
+        },
+      ],
+    },
+  ],
+}

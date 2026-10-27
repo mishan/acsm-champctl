@@ -790,6 +790,21 @@ describe("the profile's Discord settings", () => {
     expect(() => withDiscord({ racers })).toThrow(/discord\.racers/)
   })
 
+  it.each([
+    [{ channelId: "#announcements", adminRoleId: "1".repeat(18) }],
+    [{ channelId: "1".repeat(18) }],
+    [{ channelId: "1".repeat(18), adminRoleId: "1".repeat(18), links: [{ label: "Twitch" }] }],
+    [
+      {
+        channelId: "1".repeat(18),
+        adminRoleId: "1".repeat(18),
+        links: [{ label: "Twitch", url: "twitch.tv/x" }],
+      },
+    ],
+  ])("checks the info message's channel, role and links: %j", (info) => {
+    expect(() => withDiscord({ info })).toThrow(/discord\.info/)
+  })
+
   it("takes the Racers role only with an admin channel to warn", () => {
     const racers = { roleId: "1".repeat(18), channelId: "1".repeat(18) }
     expect(() => withDiscord({ racers })).toThrow(/adminChannelId/)

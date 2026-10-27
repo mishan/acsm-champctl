@@ -622,8 +622,8 @@ announcement, the championship standings and the trophy room. `serve` stays
 connected and answers the slash commands — `/livery`, `/incident` for incident
 reports and their votes, `/season` for choosing next season's cars and tracks —
 and, where the profile asks for them, moves voice at qualifying, posts the
-standings once a round has been raced, and keeps the Racers role to who's
-signed up.
+standings once a round has been raced, keeps the Racers role to who's
+signed up, and keeps the championship info message up to date.
 
 Getting it running end to end — application, invite, profile, and the drain that
 applies what drivers send — is

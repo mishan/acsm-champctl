@@ -685,3 +685,26 @@ describe("GatewayTransport roles", () => {
     await expect(t.setRole("g", "here", "r", true)).rejects.toThrow(/Manage Roles/)
   })
 })
+
+describe("GatewayTransport embeds", () => {
+  it("says a deleted message is gone, so it's posted again, and passes other failures on", async () => {
+    let code = 10008
+    const client = {
+      channels: {
+        fetch: async () => ({
+          isTextBased: () => true,
+          messages: {
+            edit: async () => {
+              throw Object.assign(new Error("nope"), { code })
+            },
+          },
+        }),
+      },
+    }
+    const t = GatewayTransport.wrapping(client as unknown as Client)
+    const embed = { title: "T", description: "", fields: [], footer: "" }
+    expect(await t.editEmbed("c", "m", embed)).toBe(false)
+    code = 50013
+    await expect(t.editEmbed("c", "m", embed)).rejects.toThrow(/nope/)
+  })
+})

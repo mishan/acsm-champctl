@@ -394,6 +394,19 @@ export interface CarsetLinkStore {
   setCars(championshipId: string, cars: readonly string[]): Promise<void>
 }
 
+/** Where the championship's carset downloads from, under `uploadBaseUrl`. */
+export async function carsetUrl(
+  store: CarsetLinkStore,
+  championshipId: string,
+  uploadBaseUrl: string,
+  now: Date,
+): Promise<string> {
+  const slug = await store.carsetLink(championshipId, now)
+  const base = new URL(uploadBaseUrl)
+  const path = base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`
+  return new URL(`${path}c/${slug}`, base).toString()
+}
+
 /**
  * `/livery carset` — where to get everyone else's liveries.
  *
@@ -433,10 +446,7 @@ export async function handleCarsetLink(
     }
   }
 
-  const slug = await store.carsetLink(request.championshipId, now)
-  const base = new URL(request.uploadBaseUrl)
-  const path = base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`
-  const url = new URL(`${path}c/${slug}`, base).toString()
+  const url = await carsetUrl(store, request.championshipId, request.uploadBaseUrl, now)
   const season = await store.list(request.championshipId)
   const counted = (rows: readonly unknown[]) =>
     `${rows.length} ${rows.length === 1 ? "livery" : "liveries"}`
