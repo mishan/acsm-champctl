@@ -24,7 +24,7 @@ import type { Championship } from "../acsm/types.js"
 import { announce, NothingToAnnounce, RoundRefused, type Announcement } from "../bot/announce.js"
 import { INCIDENT_COMMAND, INFO_COMMAND, LIVERY_COMMANDS, SEASON_COMMAND } from "../bot/commands.js"
 import { GatewayTransport } from "../bot/discord.js"
-import { SqliteFinishedStore } from "../bot/finished.js"
+import { type FinishedChampionships, SqliteFinishedStore } from "../bot/finished.js"
 import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
 import { carsetUrl } from "../bot/livery.js"
 import { nightlyMessages, standingsMessage } from "../bot/message.js"
@@ -915,6 +915,11 @@ function requireChampionshipId(args: Args, command: string): string {
   return args.championshipId
 }
 
+/** Shows at startup that a restart isn't reading every finished championship again. */
+function skipping(finished: FinishedChampionships): string {
+  return `Skipping ${finished.all().size} finished championships.`
+}
+
 /**
  * Answers `/livery` until something stops the process
  * (docs/discord-livery-upload.md §3).
@@ -1203,7 +1208,9 @@ async function serve(args: Args): Promise<number> {
           }
         },
       }).start()
-      process.stderr.write("Moving Pit Lane to Race Control when qualifying starts.\n")
+      process.stderr.write(
+        `Moving Pit Lane to Race Control when qualifying starts. ${skipping(finished.for("quali-call"))}\n`,
+      )
     }
 
     if (racers && racersStore) {
@@ -1242,7 +1249,7 @@ async function serve(args: Args): Promise<number> {
         },
         log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
       }).start()
-      process.stderr.write("Looking after the Racers role.\n")
+      process.stderr.write(`Looking after the Racers role. ${skipping(finished.for("racers"))}\n`)
     }
 
     const announceChannelId = profile.discord.announceChannelId
@@ -1276,7 +1283,9 @@ async function serve(args: Args): Promise<number> {
           }
         },
       }).start()
-      process.stderr.write("Posting the standings when each round has been raced.\n")
+      process.stderr.write(
+        `Posting the standings when each round has been raced. ${skipping(finished.for("standings"))}\n`,
+      )
     }
 
     await new Promise<void>((done) => {
