@@ -20,6 +20,8 @@ const TITLE_LIMIT = 256
 const DESCRIPTION_LIMIT = 4096
 const FIELD_LIMIT = 1024
 const EMBED_LIMIT = 6000
+/** The most a bot can upload in one message. */
+const FILE_LIMIT = 10 * 1024 * 1024
 
 export interface InfoEmbed {
   title: string
@@ -27,6 +29,9 @@ export interface InfoEmbed {
   description: string
   fields: { name: string; value: string }[]
   footer: string
+  /** A picture's address: a link, or `attachment://` naming `file`. */
+  image?: string
+  file?: { name: string; data: Uint8Array }
 }
 
 export interface InfoOptions {
@@ -94,16 +99,34 @@ export function infoEmbed(c: Championship, o: InfoOptions): InfoEmbed {
     description: clip(story.body, Math.min(DESCRIPTION_LIMIT, EMBED_LIMIT - rest)),
     fields,
     footer,
+    ...picture(story.image),
   }
 }
 
 /**
- * ACSM's championship info, an HTML page edited in its rich text box, as
- * Discord markdown. Its first heading is the title. Images and videos are
- * left out: an embed can't hold them inline.
+ * The info's picture. ACSM's rich text box keeps a pasted one inside the page
+ * as a data URL, which an embed can't show, so it goes up as an attachment.
  */
-export function infoText(html: string): { title?: string; body: string } {
+function picture(src: string | undefined): Pick<InfoEmbed, "image" | "file"> {
+  if (!src) return {}
+  if (/^https?:\/\//.test(src)) return { image: src }
+  const m = /^data:image\/(png|jpeg|gif|webp);base64,/.exec(src)
+  if (!m?.[1]) return {}
+  const data = Buffer.from(src.slice(m[0].length), "base64")
+  if (!data.length || data.length > FILE_LIMIT) return {}
+  const name = `picture.${m[1] === "jpeg" ? "jpg" : m[1]}`
+  return { image: `attachment://${name}`, file: { name, data } }
+}
+
+/**
+ * ACSM's championship info, an HTML page edited in its rich text box, as
+ * Discord markdown. Its first heading is the title, and its first picture
+ * the embed's. The rest of the pictures and the videos are left out: an embed
+ * can't hold them inline.
+ */
+export function infoText(html: string): { title?: string; body: string; image?: string } {
   const $ = load(html)
+  const image = $("img[src]").first().attr("src")?.trim()
   $("img, iframe, script, style").remove()
   let title: string | undefined
   const blocks: { text: string; item: boolean }[] = []
@@ -140,7 +163,7 @@ export function infoText(html: string): { title?: string; body: string } {
   const body = blocks
     .map((b, i) => (i === 0 ? "" : b.item && blocks[i - 1]?.item ? "\n" : "\n\n") + b.text)
     .join("")
-  return { ...(title ? { title } : {}), body }
+  return { ...(title ? { title } : {}), body, ...(image ? { image } : {}) }
 }
 
 /** Tags that sit inside a line of text rather than starting one. */

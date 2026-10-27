@@ -29,6 +29,7 @@ describe("infoText", () => {
         "Race Dates:\n\n" +
         "• October 7: Fuji\n• October 14: Interlagos\n\n" +
         "AC Server: https://ac.example/live  and [our Discord](https://x.example)",
+      image: "data:image/jpeg;base64,AAAA",
     })
   })
 
@@ -108,6 +109,26 @@ describe("infoEmbed", () => {
     expect(e.fields[0]?.value).toMatch(
       /^1\. Fuji Speedway 1968 \(gp\):.*\n2\. Fuji Speedway 1968 \(short\):/,
     )
+  })
+
+  it.each([
+    ["a link", `<img src="https://img.example/a.png">`, "https://img.example/a.png", undefined],
+    [
+      "one pasted in, as an attachment",
+      `<p><img src="data:image/png;base64,${Buffer.from("png!").toString("base64")}"></p>`,
+      "attachment://picture.png",
+      { name: "picture.png", data: Buffer.from("png!") },
+    ],
+    [
+      "none for a file that isn't a picture",
+      `<img src="data:text/html;base64,PGI+">`,
+      undefined,
+      undefined,
+    ],
+  ])("shows the info's picture: %s", (_, Info, image, file) => {
+    const e = infoEmbed(c({ Info }), options)
+    expect(e.image).toBe(image)
+    expect(e.file).toEqual(file)
   })
 
   it("keeps within Discord's limits on a title and a whole embed", () => {
@@ -214,6 +235,20 @@ describe("ChampionshipInfo", () => {
     expect(h.edited.map((e) => e.embed.title)).toEqual(["Renamed"])
     h.deleteIt()
     expect(await h.info.refresh()).toBe("m2")
+  })
+
+  it("edits when only the picture changes", async () => {
+    const pictured = (bytes: string) =>
+      season("00000000-0000-0000-0000-00000000000a", "2026-09-30T00:00:00Z", {
+        Info: `<img src="data:image/png;base64,${Buffer.from(bytes).toString("base64")}">`,
+        Events: [raceEvent({ StartedTime: "2026-10-08T03:00:00Z" })],
+      })
+    const first = pictured("one")
+    const h = harness([first])
+    await h.info.refresh()
+    first.Info = pictured("two").Info
+    await h.info.refresh()
+    expect(h.edited.map((e) => Buffer.from(e.embed.file?.data ?? []).toString())).toEqual(["two"])
   })
 
   it("shows the newest season racing or taking sign-ups, not a draft", async () => {

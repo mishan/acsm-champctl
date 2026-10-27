@@ -8,6 +8,8 @@
  * neither is a draft, and isn't shown.
  */
 
+import { createHash } from "node:crypto"
+
 import { type AcsmReader, asMessage } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { eventHasStarted, events } from "../acsm/view.js"
@@ -98,7 +100,10 @@ export class ChampionshipInfo {
       links: this.#o.links,
       ...(carsetUrl ? { carsetUrl } : {}),
     })
-    const said = JSON.stringify(embed)
+    // The picture's hash stands in for its bytes, a megabyte or more, in the store.
+    const said = JSON.stringify(embed, (_k, v: unknown) =>
+      v instanceof Uint8Array ? createHash("sha256").update(v).digest("hex") : v,
+    )
     const id = this.#o.store.get("message")
     this.#o.store.set("championship", shown.id)
     if (id && !force && this.#o.store.get("said") === said && (await this.#o.channel.exists(id))) {
