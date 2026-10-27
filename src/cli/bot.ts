@@ -24,6 +24,7 @@ import type { Championship } from "../acsm/types.js"
 import { announce, NothingToAnnounce, RoundRefused, type Announcement } from "../bot/announce.js"
 import { INCIDENT_COMMAND, INFO_COMMAND, LIVERY_COMMANDS, SEASON_COMMAND } from "../bot/commands.js"
 import { GatewayTransport } from "../bot/discord.js"
+import { SqliteFinishedStore } from "../bot/finished.js"
 import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
 import { carsetUrl } from "../bot/livery.js"
 import { nightlyMessages, standingsMessage } from "../bot/message.js"
@@ -972,6 +973,7 @@ async function serve(args: Args): Promise<number> {
   const seasonStore = seasonSettings ? await SqliteSeasonStore.open(storePath) : undefined
   const racers = profile.discord.racers
   const racersStore = racers ? await SqliteRacersStore.open(storePath) : undefined
+  const finished = await SqliteFinishedStore.open(storePath)
   const infoSettings = profile.discord.info
   const infoStore = infoSettings ? await SqliteInfoStore.open(storePath) : undefined
   const voice = profile.discord.qualiVoiceMove
@@ -1186,6 +1188,7 @@ async function serve(args: Args): Promise<number> {
       const adminChannelId = profile.discord.adminChannelId
       stopQualiCall = new QualiCall({
         reader,
+        finished: finished.for("quali-call"),
         profile,
         channels: voice,
         mover: { move: (from, to) => transport.moveVoiceMembers(guildId, from, to) },
@@ -1207,6 +1210,7 @@ async function serve(args: Args): Promise<number> {
       const adminChannelId = profile.discord.adminChannelId
       stopRacers = new RacersWatch({
         reader,
+        finished: finished.for("racers"),
         links: claims,
         role: {
           holders: () => transport.roleHolders(guildId, racers.roleId),
@@ -1245,6 +1249,7 @@ async function serve(args: Args): Promise<number> {
     if (profile.discord.postStandingsWhenRaced && announceChannelId) {
       stopStandings = new StandingsWatch({
         reader,
+        finished: finished.for("standings"),
         log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
         post: async (id, name, sent) => {
           const championship = await reader.exportChampionship(id)
@@ -1295,6 +1300,7 @@ async function serve(args: Args): Promise<number> {
     seasonStore?.close()
     racersStore?.close()
     infoStore?.close()
+    finished.close()
     tokens.close()
     queue.close()
     claims.close()

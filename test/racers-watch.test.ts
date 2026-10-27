@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { Championship } from "../src/acsm/types.js"
+import { type FinishedChampionships, SqliteFinishedStore } from "../src/bot/finished.js"
 import { type RacerRole, RacersWatch } from "../src/racers/watch.js"
 import { championship, championshipClass, driver, entryList, raceEvent } from "./support/build.js"
 
@@ -24,7 +25,13 @@ const roster = (guids: string[]) => [
  * claimed with the Steam id of their own initial.
  */
 function harness(
-  o: { finished?: boolean; october?: string[]; failRead?: boolean; also?: Championship[] } = {},
+  o: {
+    finished?: boolean
+    october?: string[]
+    failRead?: boolean
+    also?: Championship[]
+    store?: FinishedChampionships
+  } = {},
 ) {
   const september: Championship = championship({
     ID: "00000000-0000-0000-0000-000000000009",
@@ -44,9 +51,11 @@ function harness(
     SignUpForm: { Enabled: false },
   })
   const inner = new StaticAcsmReader([september, october, ...(o.also ?? [])])
+  const read: string[] = []
   const reader = {
     listChampionships: () => inner.listChampionships(),
     exportChampionship: async (id: string) => {
+      read.push(id)
       if (o.failRead && id === october.ID) throw new Error("timed out")
       return inner.exportChampionship(id)
     },
@@ -70,24 +79,31 @@ function harness(
   }
   const posts: { content: string; ping: { users?: string[]; roles?: string[] } }[] = []
   const told: string[] = []
-  const watch = new RacersWatch({
-    reader,
-    links: { guidsByUser: async () => links, fillGuids: async () => {} },
-    role,
-    roleId: ROLE,
-    marks: { get: (k) => marks.get(k), set: (k, v) => void marks.set(k, v) },
-    graceDays: 7,
-    baseUrl: "https://acsm.example",
-    post: async (content, ping) => {
-      posts.push({ content, ping })
+  const build = () =>
+    new RacersWatch({
+      reader,
+      ...(o.store ? { finished: o.store } : {}),
+      links: { guidsByUser: async () => links, fillGuids: async () => {} },
+      role,
+      roleId: ROLE,
+      marks: { get: (k) => marks.get(k), set: (k, v) => void marks.set(k, v) },
+      graceDays: 7,
+      baseUrl: "https://acsm.example",
+      post: async (content, ping) => {
+        posts.push({ content, ping })
+      },
+      notify: async (content) => {
+        told.push(content)
+      },
+      log: () => {},
+    })
+  const h = {
+    watch: build(),
+    read,
+    /** A new watch over the same server, store and role, as after a deploy. */
+    restart: () => {
+      h.watch = build()
     },
-    notify: async (content) => {
-      told.push(content)
-    },
-    log: () => {},
-  })
-  return {
-    watch,
     role,
     holders,
     links,
@@ -118,6 +134,7 @@ function harness(
       ]
     },
   }
+  return h
 }
 
 const gt3 = () =>
@@ -199,6 +216,23 @@ describe("RacersWatch", () => {
     h.holders.add(CAL)
     await h.watch.tick(at(8))
     expect(h.holders.has(CAL)).toBe(true)
+  })
+
+  it("takes the role after a restart without reading the finished season again", async () => {
+    const h = harness({
+      october: ["a", "b"],
+      store: (await SqliteFinishedStore.open(":memory:")).for("racers"),
+    })
+    await h.watch.tick(at(-1))
+    h.open()
+    h.finish()
+    await h.watch.tick(at(0))
+    await h.watch.tick(at(6))
+    h.restart()
+    h.read.length = 0
+    await h.watch.tick(at(7))
+    expect(h.holders).toEqual(new Set([ANN, BEA]))
+    expect(h.read).not.toContain("00000000-0000-0000-0000-000000000009")
   })
 
   it("counts the grace from when the next season opens, if that's after the last one ends", async () => {

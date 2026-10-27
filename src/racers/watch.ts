@@ -24,6 +24,7 @@ import { type AcsmReader, asMessage } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { eventHasStarted, events, isZeroTime, rosterGuids } from "../acsm/view.js"
 import { signUpLink } from "../bot/announce.js"
+import type { FinishedChampionships } from "../bot/finished.js"
 import { MESSAGE_LIMIT } from "../bot/transport.js"
 import { finishedAt } from "../bot/trophies.js"
 import type { RacerMarks } from "./store.js"
@@ -63,6 +64,7 @@ export interface RacersWatchOptions {
   /** Tells the admins, notifying nobody. */
   notify: (content: string) => Promise<void>
   log: (line: string) => void
+  finished?: FinishedChampionships
 }
 
 interface Season {
@@ -90,6 +92,10 @@ export class RacersWatch {
 
   constructor(options: RacersWatchOptions) {
     this.#o = options
+    for (const [id, kept] of options.finished?.all() ?? []) {
+      const s = JSON.parse(kept) as Omit<Season, "guids"> & { guids: string[] }
+      this.#finished.set(id, { ...s, guids: new Set(s.guids) })
+    }
   }
 
   /** Ticks until the returned function is called; never two at once. */
@@ -284,7 +290,10 @@ export class RacersWatch {
         ...(link ? { link } : {}),
       }
       // Not one only gone quiet: a round rescheduled brings it back.
-      if (complete !== undefined) this.#finished.set(id, s)
+      if (complete !== undefined) {
+        this.#finished.set(id, s)
+        this.#o.finished?.add(id, JSON.stringify({ ...s, guids: [...s.guids] }))
+      }
       seasons.push(s)
     }
     return seasons

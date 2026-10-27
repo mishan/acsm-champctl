@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { Championship, ChampionshipEvent } from "../src/acsm/types.js"
+import { type FinishedChampionships, SqliteFinishedStore } from "../src/bot/finished.js"
 import { QualiCall } from "../src/bot/quali-call.js"
 import type { VoiceMover } from "../src/bot/transport.js"
 import { championship, raceEvent, testProfile } from "./support/build.js"
@@ -16,7 +17,9 @@ const stamp = (minutesFromQuali: number) => at(minutesFromQuali).toISOString()
 
 const BROKEN = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 
-function harness(options: { mover?: VoiceMover; broken?: boolean } = {}) {
+function harness(
+  options: { mover?: VoiceMover; broken?: boolean; finished?: FinishedChampionships } = {},
+) {
   const event: ChampionshipEvent = raceEvent()
   const c: Championship = championship({ Events: [event] })
   // Hands back the same object every time, so a stamp set on `event` is what
@@ -24,10 +27,15 @@ function harness(options: { mover?: VoiceMover; broken?: boolean } = {}) {
   const inner = new StaticAcsmReader(
     options.broken ? [championship({ ID: BROKEN, Events: [raceEvent()] }), c] : [c],
   )
-  const reads = { failing: new Set<string>(), gate: undefined as Promise<void> | undefined }
+  const reads = {
+    failing: new Set<string>(),
+    gate: undefined as Promise<void> | undefined,
+    n: 0,
+  }
   const reader = {
     listChampionships: () => inner.listChampionships(),
     exportChampionship: async (id: string) => {
+      reads.n++
       await reads.gate
       if (reads.failing.has(id)) throw new Error(`no championship ${id}`)
       return inner.exportChampionship(id)
@@ -37,6 +45,7 @@ function harness(options: { mover?: VoiceMover; broken?: boolean } = {}) {
   const notices: string[] = []
   const call = new QualiCall({
     reader,
+    ...(options.finished ? { finished: options.finished } : {}),
     mover: options.mover ?? {
       move: async (from, to) => {
         moves.push([from, to])
@@ -151,5 +160,16 @@ describe("QualiCall", () => {
     release()
     await stopping
     expect(moves).toEqual([])
+  })
+
+  it("doesn't read a finished championship again after a restart", async () => {
+    const finished = (await SqliteFinishedStore.open(":memory:")).for("quali-call")
+    const first = harness({ finished })
+    first.event.CompletedTime = stamp(120)
+    await first.call.tick(at(180))
+    const restarted = harness({ finished })
+    restarted.event.CompletedTime = stamp(120)
+    await restarted.call.tick(at(180))
+    expect(restarted.reads.n).toBe(0)
   })
 })

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest"
 
 import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { Championship, ChampionshipEvent } from "../src/acsm/types.js"
+import type { FinishedChampionships } from "../src/bot/finished.js"
+import { SqliteFinishedStore } from "../src/bot/finished.js"
 import { StandingsWatch } from "../src/bot/standings-watch.js"
 import { championship, raceEvent } from "./support/build.js"
 
@@ -12,6 +14,7 @@ const at = (minutes: number) => new Date(NIGHT + minutes * 60_000)
 function harness(
   rounds: { completed?: string }[] = [{}, {}],
   fail: { reads?: number; posts?: number; partly?: boolean } = {},
+  finished?: FinishedChampionships,
 ) {
   const evs: ChampionshipEvent[] = rounds.map((r) =>
     r.completed ? { ...raceEvent(), CompletedTime: r.completed } : raceEvent(),
@@ -33,6 +36,7 @@ function harness(
   const told: string[] = []
   const watch = new StandingsWatch({
     reader,
+    ...(finished ? { finished } : {}),
     log: () => {},
     post: async (_id, name, sent) => {
       if (failPosts-- > 0) {
@@ -150,5 +154,14 @@ describe("StandingsWatch", () => {
     await watch.tick(at(2))
     await watch.tick(at(4))
     expect(reads.n).toBe(afterRefresh)
+  })
+
+  it("doesn't read a finished championship again after a restart", async () => {
+    const finished = (await SqliteFinishedStore.open(":memory:")).for("standings")
+    const raced = [{ completed: at(-600).toISOString() }]
+    await harness(raced, {}, finished).watch.tick(at(0))
+    const restarted = harness(raced, {}, finished)
+    await restarted.watch.tick(at(2))
+    expect(restarted.reads.n).toBe(0)
   })
 })
