@@ -300,7 +300,9 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
           )
         )
       ) {
-        bad("`discord.info.links` must be a list of { label, url }, each url starting https://")
+        bad(
+          "`discord.info.links` must be a list of { label, url }, each url starting http:// or https://",
+        )
       }
     }
 

@@ -1115,6 +1115,7 @@ async function serve(args: Args): Promise<number> {
     let info: InfoRouter | undefined
     if (infoSettings && infoStore) {
       const uploadBaseUrl = livery.uploadBaseUrl
+      const carsets = new Map<string, string>()
       const championshipInfo = new ChampionshipInfo({
         reader,
         profile,
@@ -1122,10 +1123,16 @@ async function serve(args: Args): Promise<number> {
         links: infoSettings.links ?? [],
         ...(uploadBaseUrl
           ? {
+              // Once a championship has a link it keeps it, so it's found once
+              // rather than written for on every refresh.
               carsetUrl: async (id: string, c: Championship) => {
+                const known = carsets.get(id)
+                if (known) return known
                 await liveries.setCars(id, racedCars(c))
                 if ((await liveries.carset(id)).length === 0) return undefined
-                return carsetUrl(liveries, id, uploadBaseUrl, new Date())
+                const url = await carsetUrl(liveries, id, uploadBaseUrl, new Date())
+                carsets.set(id, url)
+                return url
               },
             }
           : {}),
@@ -1134,6 +1141,7 @@ async function serve(args: Args): Promise<number> {
           post: (embed) => transport.postEmbed(infoSettings.channelId, embed),
           edit: (id, embed) => transport.editEmbed(infoSettings.channelId, id, embed),
           remove: (id) => transport.deleteMessage(infoSettings.channelId, id),
+          exists: (id) => transport.messageExists(infoSettings.channelId, id),
         },
         log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
       })

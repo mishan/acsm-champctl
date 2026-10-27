@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { StaticAcsmReader } from "../src/acsm/client.js"
+import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { Championship } from "../src/acsm/types.js"
 import { type InfoEmbed, infoEmbed, infoText } from "../src/info/embed.js"
 import { ChampionshipInfo, InfoRouter } from "../src/info/post.js"
@@ -30,6 +30,15 @@ describe("infoText", () => {
         "• October 7: Fuji\n• October 14: Interlagos\n\n" +
         "AC Server: https://ac.example/live  and [our Discord](https://x.example)",
     })
+  })
+
+  it("keeps text outside paragraphs, and markdown in it reading as itself", () => {
+    const html =
+      `<body>Rules first.<br/>Be kind.<div>Track: <a href="https://w.example/Spa_(circuit)">Spa [GP]</a></div>` +
+      `<div># not a heading</div></body>`
+    expect(infoText(html).body).toBe(
+      "Rules first.\nBe kind.\n\nTrack: [Spa \\[GP\\]](https://w.example/Spa_%28circuit%29)\n\n\\# not a heading",
+    )
   })
 
   it("is empty for a championship with no info", () => {
@@ -71,7 +80,8 @@ describe("infoEmbed", () => {
   })
 
   it("links the sign-up, the profile's links and the carset", () => {
-    const e = infoEmbed(c(), {
+    expect(infoEmbed(c(), options).fields[1]?.value).toMatch(/^\[Details\]/)
+    const e = infoEmbed(c({ SignUpForm: { Enabled: true } }), {
       ...options,
       profile: testProfile({ discord: { livery: {} } }),
       carsetUrl: "https://up.example/c/abc",
@@ -85,6 +95,46 @@ describe("infoEmbed", () => {
     )
   })
 
+  it("tells two layouts of one track apart", () => {
+    const e = infoEmbed(
+      c({
+        Events: [
+          raceEvent({ RaceSetup: { Track: "fuji68", TrackLayout: "gp" } }),
+          raceEvent({ RaceSetup: { Track: "fuji68", TrackLayout: "short" } }),
+        ],
+      }),
+      options,
+    )
+    expect(e.fields[0]?.value).toMatch(
+      /^1\. Fuji Speedway 1968 \(gp\):.*\n2\. Fuji Speedway 1968 \(short\):/,
+    )
+  })
+
+  it("keeps within Discord's limits on a title and a whole embed", () => {
+    const e = infoEmbed(
+      c({
+        Info: `<h1>${"T".repeat(300)}</h1>${`<p>${"word ".repeat(150)}</p>`.repeat(10)}`,
+        Events: Array.from({ length: 40 }, () =>
+          raceEvent({ RaceSetup: { Track: "x".repeat(40) } }),
+        ),
+      }),
+      {
+        ...options,
+        links: Array.from({ length: 30 }, () => ({
+          label: "L".repeat(20),
+          url: "https://x.example/abc",
+        })),
+      },
+    )
+    expect(e.title.length).toBeLessThanOrEqual(256)
+    const total =
+      e.title.length +
+      e.description.length +
+      e.footer.length +
+      e.fields.reduce((n, f) => n + f.name.length + f.value.length, 0)
+    expect(total).toBeLessThanOrEqual(6000)
+  })
+
   it("cuts a story too long for an embed at a line", () => {
     const para = `<p>${"word ".repeat(150)}</p>`
     const e = infoEmbed(c({ Info: `<h1>T</h1>${para.repeat(10)}` }), options)
@@ -94,8 +144,18 @@ describe("infoEmbed", () => {
   })
 })
 
-function harness(championships: Championship[]) {
-  const reader = new StaticAcsmReader(championships)
+function harness(championships: Championship[], unreadable: string[] = []) {
+  const inner = new StaticAcsmReader(championships)
+  const exported: string[] = []
+  const reader = {
+    listChampionships: () => inner.listChampionships(),
+    listContent: () => inner.listContent(),
+    exportChampionship: async (id: string) => {
+      exported.push(id)
+      if (unreadable.includes(id)) throw new Error("timed out")
+      return inner.exportChampionship(id)
+    },
+  } as unknown as AcsmReader
   const store = new Map<string, string>()
   const posted: InfoEmbed[] = []
   const edited: { id: string; embed: InfoEmbed }[] = []
@@ -120,11 +180,13 @@ function harness(championships: Championship[]) {
       remove: async (id) => {
         removed.push(id)
       },
+      exists: async () => !gone,
     },
     log: () => {},
   })
   return {
     info,
+    exported,
     posted,
     edited,
     removed,
@@ -151,7 +213,7 @@ describe("ChampionshipInfo", () => {
     await h.info.refresh()
     expect(h.edited.map((e) => e.embed.title)).toEqual(["Renamed"])
     h.deleteIt()
-    expect(await h.info.refresh({ force: true })).toBe("m2")
+    expect(await h.info.refresh()).toBe("m2")
   })
 
   it("shows the newest season racing or taking sign-ups, not a draft", async () => {
@@ -162,6 +224,31 @@ describe("ChampionshipInfo", () => {
     const h = harness([running, open, draft])
     await h.info.refresh()
     expect(h.posted.map((e) => e.title)).toEqual([open.Name])
+  })
+
+  it("reads only the championship shown and newer ones once it knows when each was made", async () => {
+    const old = season("00000000-0000-0000-0000-000000000001", "2025-01-01T00:00:00Z", {
+      Events: [raceEvent({ StartedTime: "2025-01-08T03:00:00Z" })],
+    })
+    const h = harness([old, running])
+    await h.info.refresh()
+    h.exported.length = 0
+    await h.info.refresh()
+    expect(h.exported).toEqual([running.ID])
+  })
+
+  it("skips an old championship it can't read, but won't guess past a new one", async () => {
+    const newer = "00000000-0000-0000-0000-00000000000d"
+    const h = harness(
+      [
+        season("00000000-0000-0000-0000-000000000001", "2025-01-01T00:00:00Z"),
+        running,
+        season(newer, "2026-10-25T00:00:00Z"),
+      ],
+      ["00000000-0000-0000-0000-000000000001", newer],
+    )
+    await expect(h.info.refresh()).rejects.toThrow(/couldn't read every championship/)
+    expect(h.posted).toEqual([])
   })
 
   it("posts nothing with nothing to show", async () => {

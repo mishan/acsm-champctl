@@ -24,6 +24,7 @@ export interface InfoChannel {
   post(embed: InfoEmbed): Promise<string>
   /** False when the message is gone. */
   edit(messageId: string, embed: InfoEmbed): Promise<boolean>
+  exists(messageId: string): Promise<boolean>
   remove(messageId: string): Promise<void>
 }
 
@@ -42,6 +43,8 @@ export interface ChampionshipInfoOptions {
 export class ChampionshipInfo {
   readonly #o: ChampionshipInfoOptions
   #names: { at: number; map: ReadonlyMap<string, string> } | undefined
+  /** When each championship was created, which never changes, to skip reading the old ones. */
+  readonly #created = new Map<string, number>()
   /** One refresh at a time, so a command and a tick can't both post. */
   #running: Promise<unknown> = Promise.resolve()
 
@@ -97,7 +100,10 @@ export class ChampionshipInfo {
     })
     const said = JSON.stringify(embed)
     const id = this.#o.store.get("message")
-    if (id && !force && this.#o.store.get("said") === said) return id
+    this.#o.store.set("championship", shown.id)
+    if (id && !force && this.#o.store.get("said") === said && (await this.#o.channel.exists(id))) {
+      return id
+    }
     if (id && (await this.#o.channel.edit(id, embed))) {
       this.#o.store.set("said", said)
       return id
@@ -109,14 +115,35 @@ export class ChampionshipInfo {
     return posted
   }
 
+  /**
+   * Reads only the championship shown and any created since, once it knows
+   * when each was created. One that can't be read is skipped, unless it might
+   * be the one to show instead: then the message is left as it is.
+   */
   async #featured(): Promise<{ id: string; c: Championship } | undefined> {
+    const shownId = this.#o.store.get("championship")
+    const floor = (shownId && this.#created.get(shownId)) || Number.NEGATIVE_INFINITY
     let best: { id: string; c: Championship; created: number } | undefined
+    let unread: unknown
     for (const summary of await this.#o.reader.listChampionships()) {
-      if (!summary.ID) continue
-      const c = await this.#o.reader.exportChampionship(summary.ID)
-      if (!events(c).some(eventHasStarted) && c.SignUpForm?.Enabled !== true) continue
+      const id = summary.ID
+      if (!id || (this.#created.get(id) ?? floor) < floor) continue
+      let c: Championship
+      try {
+        c = await this.#o.reader.exportChampionship(id)
+      } catch (e) {
+        unread = e
+        continue
+      }
       const created = Date.parse(c.Created ?? "") || 0
-      if (!best || created > best.created) best = { id: summary.ID, c, created }
+      this.#created.set(id, created)
+      if (!events(c).some(eventHasStarted) && c.SignUpForm?.Enabled !== true) continue
+      if (!best || created > best.created) best = { id, c, created }
+    }
+    if (unread !== undefined) {
+      this.#o.log(`info: couldn't read a championship: ${asMessage(unread)}`)
+      if (best?.id !== shownId)
+        throw new Error(`couldn't read every championship: ${asMessage(unread)}`)
     }
     return best
   }

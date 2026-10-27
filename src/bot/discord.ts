@@ -541,6 +541,18 @@ export class GatewayTransport implements DiscordTransport {
     }
   }
 
+  async messageExists(channelId: string, messageId: string): Promise<boolean> {
+    const channel = await this.#client.channels.fetch(channelId)
+    if (!channel?.isTextBased()) throw new BotError(`${channelId} isn't a text channel I can see.`)
+    try {
+      await channel.messages.fetch({ message: messageId, force: true })
+      return true
+    } catch (e) {
+      if ((e as { code?: unknown }).code === RESTJSONErrorCodes.UnknownMessage) return false
+      throw e
+    }
+  }
+
   /** Deletes a message, anyone's: the bot needs Manage Messages for someone else's. */
   async deleteMessage(channelId: string, messageId: string): Promise<void> {
     const channel = await this.#client.channels.fetch(channelId)
