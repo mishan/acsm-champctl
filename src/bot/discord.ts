@@ -25,6 +25,8 @@
  * the bot read a message.
  */
 
+import { createRequire } from "node:module"
+
 import {
   type ApplicationCommandDataResolvable,
   type AutocompleteInteraction,
@@ -96,9 +98,7 @@ export class GatewayTransport implements DiscordTransport {
   static async login(options: GatewayOptions): Promise<GatewayTransport> {
     const client = new Client({
       intents: options.voice ? [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] : [],
-      // discord.js's 15 s is too short for an incident's video on a slow
-      // moment: one timed out four times over and the upload was lost.
-      rest: { timeout: 60_000 },
+      rest: restOptions(),
     })
     const timeoutMs = options.readyTimeoutMs ?? 30_000
 
@@ -674,6 +674,24 @@ export function toSlashCommand(interaction: ChatInputCommandInteraction): SlashC
     ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
     channelId: interaction.channelId,
     roleIds,
+  }
+}
+
+/**
+ * discord.js's REST options, with a connection pool of its own.
+ *
+ * discord.js sends through undici 6 and, given no pool, uses the process's
+ * shared one. cheerio's undici 7 makes itself that on import, and can't send
+ * undici 6's multipart body: every upload, an incident's video or the info
+ * message's picture, closed before a byte went out ("other side closed").
+ */
+export function restOptions() {
+  const fromDiscord = createRequire(createRequire(import.meta.url).resolve("discord.js"))
+  return {
+    // discord.js's 15 s is too short for an incident's video on a slow
+    // moment: one timed out four times over and the upload was lost.
+    timeout: 60_000,
+    agent: new (fromDiscord("undici").Agent)(),
   }
 }
 

@@ -11,6 +11,12 @@
  * `GatewayTransport.wrapping` exists for this: a fake client is enough to drive
  * `post` and the interaction handler, without a token or a socket.
  */
+import { readFileSync } from "node:fs"
+import { createServer } from "node:https"
+import type { AddressInfo } from "node:net"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
+
 import {
   ChannelType,
   ChatInputCommandInteraction,
@@ -18,10 +24,12 @@ import {
   Events,
   MessageFlags,
   PermissionFlagsBits,
+  REST,
 } from "discord.js"
+import { Agent, getGlobalDispatcher, setGlobalDispatcher } from "undici"
 import { describe, expect, it, vi } from "vitest"
 
-import { GatewayTransport, toSlashCommand } from "../src/bot/discord.js"
+import { GatewayTransport, restOptions, toSlashCommand } from "../src/bot/discord.js"
 import type { CommandRouter } from "../src/bot/transport.js"
 
 interface Sent {
@@ -756,5 +764,47 @@ describe("GatewayTransport embeds", () => {
         attachments: [],
       },
     ])
+  })
+})
+
+describe("restOptions", () => {
+  it("sends a whole upload while cheerio's undici is the process's pool", async () => {
+    const tls = join(dirname(fileURLToPath(import.meta.url)), "tls")
+    const received: number[] = []
+    const server = createServer(
+      {
+        key: readFileSync(join(tls, "localhost.key")),
+        cert: readFileSync(join(tls, "localhost.crt")),
+      },
+      (req, res) => {
+        let n = 0
+        req.on("data", (c: Buffer) => {
+          n += c.length
+        })
+        req.on("end", () => {
+          received.push(n)
+          res.writeHead(200, { "content-type": "application/json" }).end("{}")
+        })
+      },
+    )
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r))
+    const shared = getGlobalDispatcher()
+    setGlobalDispatcher(new Agent())
+    // The fixture's certificate is self-signed.
+    vi.stubEnv("NODE_TLS_REJECT_UNAUTHORIZED", "0")
+    const { port } = server.address() as AddressInfo
+    const rest = new REST({ ...restOptions(), timeout: 5_000, api: `https://127.0.0.1:${port}` })
+    try {
+      await rest.setToken("t").post("/channels/1/messages", {
+        body: {},
+        files: [{ name: "picture.jpg", data: Buffer.alloc(1_600_000, 7) }],
+      })
+      expect(received).toHaveLength(1)
+      expect(received[0]).toBeGreaterThan(1_600_000)
+    } finally {
+      vi.unstubAllEnvs()
+      setGlobalDispatcher(shared)
+      server.close()
+    }
   })
 })
