@@ -708,6 +708,27 @@ describe("GatewayTransport embeds", () => {
     await expect(t.editEmbed("c", "m", embed)).rejects.toThrow(/nope/)
   })
 
+  it("says how far an upload got when the connection drops", async () => {
+    const closed = Object.assign(new Error("other side closed"), {
+      code: "UND_ERR_SOCKET",
+      socket: { bytesWritten: 65_536, bytesRead: 0 },
+    })
+    const client = {
+      channels: {
+        fetch: async () => ({
+          isSendable: () => true,
+          send: async () => {
+            throw closed
+          },
+        }),
+      },
+    }
+    const t = GatewayTransport.wrapping(client as unknown as Client)
+    await expect(
+      t.postEmbed("c", { title: "T", description: "", fields: [], footer: "" }),
+    ).rejects.toThrow("other side closed (sent 65536 bytes, received 0)")
+  })
+
   it("replaces the picture on an edit rather than adding one", async () => {
     const edits: unknown[] = []
     const client = {
