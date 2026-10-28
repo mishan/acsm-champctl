@@ -289,6 +289,23 @@ export interface AnnounceParts {
   signUp?: boolean
 }
 
+/** The web UI's colors a league can set, each one of the stylesheet's variables. */
+export const THEME_COLORS = [
+  "bg",
+  "surface",
+  "surface2",
+  "line",
+  "text",
+  "muted",
+  "accent",
+  "onAccent",
+  "error",
+  "warn",
+  "info",
+  "ok",
+] as const
+export type ThemeColor = (typeof THEME_COLORS)[number]
+
 export interface LeagueProfile {
   id: string
   name: string
@@ -301,6 +318,8 @@ export interface LeagueProfile {
   formats?: FormatPreset[]
   /** Where `champctl-bot` posts. Absent means the league has no bot. */
   discord?: DiscordSettings
+  /** The web UI's colors, as `#rgb` or `#rrggbb`. Unset ones keep the defaults. */
+  theme?: Partial<Record<ThemeColor, string>>
   /**
    * League furniture: cars that are always there and never worth a finding.
    *

@@ -403,6 +403,11 @@ describe("authentication", () => {
     expect(res.json().baseUrl).toBe(BASE_URL)
   })
 
+  it("sends a theme even when the profile sets none, since the client reads one", async () => {
+    const res = await harness().app.inject({ method: "GET", url: "/api/config" })
+    expect(res.json().theme).toEqual({})
+  })
+
   it("keeps health probes out of the request log", async () => {
     // A container health check hits this every thirty seconds, which is
     // thousands of lines a day burying the requests anyone reads the log for.

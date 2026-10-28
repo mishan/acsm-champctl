@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 
 import { api, isAuthFailure, type Config, type SessionState } from "./api"
 import { ChampionshipList } from "./components/ChampionshipList"
+import { applyTheme } from "./theme"
 import { EventEditor } from "./components/EventEditor"
 import { Login } from "./components/Login"
 import { NewChampionship } from "./components/NewChampionship"
@@ -30,6 +31,7 @@ export function App(): React.JSX.Element {
     void (async () => {
       try {
         const [cfg, s] = await Promise.all([api.config(), api.session()])
+        applyTheme(cfg.theme)
         setConfig(cfg)
         setSession(s)
       } catch (e) {

@@ -39,6 +39,15 @@ should be a config change, not a fork.
 ]
 ```
 
+`theme` sets the web UI's colors, as `#rgb` or `#rrggbb`. Any of `bg`,
+`surface`, `surface2`, `line`, `text`, `muted`, `accent`, `onAccent` (text on
+an accent background), `error`, `warn`, `info` and `ok`; unset ones keep the
+defaults.
+
+```json
+"theme": { "accent": "#f7a8c8", "onAccent": "#2a0614" }
+```
+
 **Track pit counts.** `data/track-pits.json`, an array of records — see
 [`data/track-pits.example.json`](../data/track-pits.example.json). Three sources,
 with `manual` always winning, because mod tracks routinely lie in their ui file.

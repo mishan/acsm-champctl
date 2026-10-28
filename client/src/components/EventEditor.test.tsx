@@ -111,6 +111,7 @@ function planView(over: Partial<PlanView> = {}): PlanView {
 
 const config: Config = {
   league: { id: "batl", name: "BATL" },
+  theme: {},
   baseUrl: "https://acsm.example",
   timezone: "America/Los_Angeles",
   qualiStart: "19:00",

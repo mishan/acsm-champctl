@@ -8,13 +8,16 @@
  */
 
 :root {
-  --bg: #111318;
-  --surface: #191c23;
-  --surface-2: #21252e;
-  --line: #2c313c;
-  --text: #e7e9ee;
-  --muted: #949bab;
-  --accent: #4c8dff;
+  /* The defaults. A league's profile can set any of these under `theme`. */
+  --bg: #0b0f17;
+  --surface: #151b27;
+  --surface-2: #1f2737;
+  --line: #31405b;
+  --text: #f2f5fa;
+  --muted: #a7b1c6;
+  --accent: #4d9fff;
+  /* Text on an accent background: buttons, the highlighted suggestion. */
+  --on-accent: #04101f;
   --error: #ff6b6b;
   --warn: #ffb454;
   --info: #7aa2f7;
@@ -75,7 +78,7 @@ main {
 .bar-title {
   background: none;
   border: 0;
-  color: var(--text);
+  color: var(--accent);
   font-weight: 650;
   font-size: 1rem;
   padding: 0;
@@ -107,7 +110,7 @@ h2 {
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--muted);
+  color: var(--accent);
   margin: 1.5rem 0 0.5rem;
   display: flex;
   align-items: center;
@@ -149,10 +152,15 @@ h2 {
   height: 1.7rem;
   padding: 0 0.35rem;
   border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--muted);
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+  color: var(--text);
   font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
+}
+
+.row-done .round-number {
+  background: var(--surface-2);
+  color: var(--muted);
 }
 
 /* --- lists and rows ----------------------------------------------------- */
@@ -183,6 +191,10 @@ h2 {
   cursor: pointer;
 }
 
+.row:hover {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+}
+
 .row:active {
   background: var(--surface-2);
 }
@@ -194,6 +206,10 @@ h2 {
 
 .row-static:active {
   background: var(--surface);
+}
+
+.row-static:hover {
+  border-color: var(--line);
 }
 
 .row-main {
@@ -421,7 +437,7 @@ button.secondary {
 
 button.primary {
   background: var(--accent);
-  color: #06101f;
+  color: var(--on-accent);
 }
 
 button.primary:disabled {
@@ -879,7 +895,7 @@ a.link:hover {
 
 .picker-list [role="option"].active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 /* The folder name, alongside the name people know. Quieter, because it is the
@@ -907,7 +923,7 @@ a.link:hover {
 }
 
 .picker-list [role="option"].active .picker-id {
-  color: rgb(255 255 255 / 80%);
+  color: color-mix(in srgb, var(--on-accent) 80%, transparent);
 }
 
 .picker-empty {

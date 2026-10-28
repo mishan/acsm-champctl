@@ -428,6 +428,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
       { config: { public: true } },
       async (): Promise<ConfigResponse> => ({
         league: { id: ctx.profile.id, name: ctx.profile.name },
+        theme: ctx.profile.theme ?? {},
         baseUrl: ctx.baseUrl,
         timezone: ctx.profile.schedule.timezone,
         qualiStart: ctx.profile.schedule.qualiStart,

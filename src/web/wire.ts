@@ -35,6 +35,8 @@ export type { Change, CheckReport, FormatPreset, FormFieldChange, InstalledItem,
 /** `GET /api/config`. Public — a login screen has to render before there is one. */
 export interface ConfigResponse {
   league: { id: string; name: string }
+  /** The league's colors over the defaults, keyed as the profile's `theme` is. */
+  theme: Record<string, string>
   /** The ACSM these credentials will be forwarded to. Shown on the login form. */
   baseUrl: string
   /** IANA zone. Every wall clock in these types is expressed in it. */
