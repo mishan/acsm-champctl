@@ -394,8 +394,13 @@ summary:focus-visible {
   font-size: 0.8rem;
 }
 
-.preset:active {
+.preset:active,
+.preset.on {
   border-color: var(--accent);
+}
+
+.preset.on {
+  background: var(--surface-2);
 }
 
 /* --- buttons ------------------------------------------------------------ */
