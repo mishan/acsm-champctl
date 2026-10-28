@@ -872,24 +872,32 @@ button.link:hover {
   cursor: default;
 }
 
-/* One picked car, in the list under the Cars field. */
+/*
+ * One picked car per line, under the Cars field. A row each rather than
+ * wrapped chips so every remove button sits at the same right edge: a clone
+ * brings ten cars, and chips put each × somewhere different.
+ */
 .chips {
   list-style: none;
   margin: 0 0 0.5rem;
   padding: 0;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 0.4rem;
 }
 
 .chips li {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 0.4rem;
   padding: 0.3rem 0.3rem 0.3rem 0.6rem;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+}
+
+.chips li > span:first-child {
+  flex: 1;
+  min-width: 0;
 }
 
 .chips .picker-id {
