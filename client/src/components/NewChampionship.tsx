@@ -341,7 +341,9 @@ export function NewChampionship({
 
       <section>
         <h2>Clone from</h2>
-        <label htmlFor="source">Clone from</label>
+        <label htmlFor="source" className="visually-hidden">
+          Clone from
+        </label>
         <select
           id="source"
           value={draft?.sourceId ?? ""}
@@ -792,10 +794,12 @@ function Review({ plan }: { plan: NewChampionshipPlan }): React.JSX.Element {
     <>
       <ol className="list">
         {plan.rounds.map((r) => (
-          <li key={r.round}>
+          <li key={r.round} className="row row-static">
             <span className="row-main">
-              <span className="round-number">{r.round}</span>
-              <span className="row-title">{r.label}</span>
+              <span className="row-title">
+                <span className="round-number">{r.round}</span>
+                {r.label}
+              </span>
               <span className="row-sub">
                 {r.quali.display}
                 {r.moved && r.note ? ` · moved: ${r.note}` : r.moved ? " · moved" : ""}

@@ -437,11 +437,13 @@ function Reorder({
         {plan && !plan.noop && (
           <ul className="list">
             {plan.moves.map((m) => (
-              <li key={m.round}>
+              <li key={m.round} className="row row-static">
                 <span className="row-main">
-                  <span className="round-number">{m.round}</span>
                   <span className="row-title">
-                    {m.changes.map((c) => `${c.label}: ${c.before} → ${c.after}`).join(" · ")}
+                    <span className="round-number">{m.round}</span>
+                    <span className="row-sub">
+                      {m.changes.map((c) => `${c.label}: ${c.before} → ${c.after}`).join(" · ")}
+                    </span>
                   </span>
                 </span>
               </li>
