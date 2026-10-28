@@ -6,7 +6,7 @@ import { dirname, isAbsolute, resolve } from "node:path"
 import { IANAZone } from "luxon"
 
 import { DEFAULT_THRESHOLDS, type IncidentThresholds } from "../spectator/thresholds.js"
-import type { LeagueProfile, Weekday } from "./types.js"
+import { type LeagueProfile, THEME_COLORS, type Weekday } from "./types.js"
 
 const here = dirname(fileURLToPath(import.meta.url))
 /** Repo root, from `src/profile/` or `dist/profile/`. */
@@ -148,6 +148,23 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
       const problem = presetProblem(f, `\`formats[${i}]\``)
       if (problem) bad(problem)
     })
+  }
+
+  // Hex only, so a typo is refused at startup: in the browser, a color CSS
+  // can't parse is dropped without a word and the default shows instead.
+  const theme = p["theme"]
+  if (theme !== undefined) {
+    if (typeof theme !== "object" || theme === null || Array.isArray(theme)) {
+      bad("`theme` must be an object")
+    }
+    for (const [key, value] of Object.entries(theme as Record<string, unknown>)) {
+      if (!(THEME_COLORS as readonly string[]).includes(key)) {
+        bad(`\`theme.${key}\` isn't a color champctl knows. Known: ${THEME_COLORS.join(", ")}`)
+      }
+      if (typeof value !== "string" || !/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(value)) {
+        bad(`\`theme.${key}\` must be a hex color, like "#4c8dff"`)
+      }
+    }
   }
 
   // A snowflake: 17 to 20 decimal digits, which is what Discord's "Copy ID"

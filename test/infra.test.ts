@@ -419,6 +419,31 @@ describe("profile validation", () => {
     expect(withPreset({ ...ok, length: { kind: "laps", laps: 0 } })).toThrow(/between 1 and/)
   })
 
+  it.each([
+    [{ accent: "#f7a8c8", surface2: "#222" }, null],
+    [{ accnet: "#f7a8c8" }, /isn't a color champctl knows/],
+    [{ accent: "pink" }, /must be a hex color/],
+    [{ accent: "#f7a8c8; display: none" }, /must be a hex color/],
+    [["#f7a8c8"], /must be an object/],
+  ])("checks the theme %j", (theme, problem) => {
+    const load = () =>
+      validateProfile({
+        id: "x",
+        name: "X",
+        schedule: {
+          weekday: 3,
+          qualiStart: "20:00",
+          timezone: "UTC",
+          practiceMinutes: 60,
+          qualiMinutes: 20,
+        },
+        entryList: { targetSlots: 10 },
+        theme,
+      })
+    if (problem) expect(load).toThrow(problem)
+    else expect(load).not.toThrow()
+  })
+
   it("rejects a timezone this system doesn't know", () => {
     // Luxon doesn't throw on an unknown zone — setZone returns an invalid
     // DateTime and every method on it answers politely, so a transposed letter

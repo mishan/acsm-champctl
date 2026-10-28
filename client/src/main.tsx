@@ -1,7 +1,10 @@
 import { createRoot } from "react-dom/client"
 
 import { App } from "./App"
+import { applyTheme, rememberedTheme } from "./theme"
 import "./styles.css"
+
+applyTheme(rememberedTheme())
 
 const root = document.getElementById("root")
 if (!root) throw new Error("No #root element; index.html and main.tsx disagree.")
