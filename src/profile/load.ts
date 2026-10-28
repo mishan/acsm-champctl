@@ -60,7 +60,7 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
   if (typeof p["id"] !== "string" || !p["id"]) bad("missing `id`")
   if (typeof p["name"] !== "string" || !p["name"]) bad("missing `name`")
   const template = p["newChampionshipTemplate"]
-  if (template !== undefined && (typeof template !== "string" || !template.trim())) {
+  if (template !== undefined && (typeof template !== "string" || !/^\S+$/.test(template))) {
     bad("`newChampionshipTemplate` must be a championship id")
   }
 

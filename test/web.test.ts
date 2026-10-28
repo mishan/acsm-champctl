@@ -83,6 +83,8 @@ const champ = (over: Partial<Championship> = {}): Championship =>
 
 interface HarnessOptions {
   baseUrl?: string
+  /** Over the test profile. */
+  newChampionshipTemplate?: string
   championship?: Championship
   /** Event HTML per GET, in order; the last is reused. */
   eventPages?: string[]
@@ -219,7 +221,12 @@ function harness(options: HarnessOptions = {}): Harness {
   }
 
   const app = buildServer({
-    profile: testProfile(),
+    profile: {
+      ...testProfile(),
+      ...(options.newChampionshipTemplate
+        ? { newChampionshipTemplate: options.newChampionshipTemplate }
+        : {}),
+    },
     baseUrl: options.baseUrl ?? BASE_URL,
     reader: options.reader ?? new StaticAcsmReader([options.championship ?? champ()]),
     pits: pitTable([suzukaPits]),
@@ -1640,6 +1647,14 @@ describe("previewing a new championship", () => {
       })
       expect(importedChampionship(h).Info).toBe(info)
     })
+  })
+
+  it("names the profile setting when the league's template can't be built on", async () => {
+    const h = harness({ newChampionshipTemplate: "gone" })
+    await h.login()
+    const res = await planChampionship(h, { sourceId: "gone", cars: ["rss_formula_hybrid_2021"] })
+    expect(res.statusCode).toBe(422)
+    expect(res.json().error.message).toMatch(/`newChampionshipTemplate` in the profile/)
   })
 
   it("refuses an empty car list rather than reading it as 'inherit'", async () => {

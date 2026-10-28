@@ -327,7 +327,10 @@ export interface ReorderResponse {
 
 /** What the browser asks for when cloning a past championship into a new one. */
 export interface NewChampionshipRequest {
-  /** The championship to clone. Both the template and the source of the spec. */
+  /**
+   * The championship to clone, or the league's template for a blank start.
+   * Both the template and the source of the spec.
+   */
   sourceId: string
   /** The new championship's name. Without one, the source's name is reused. */
   name?: string

@@ -447,6 +447,7 @@ describe("profile validation", () => {
   it.each([
     ["be7446cd-b2c0-4157-8094-4d16add5be9d", null],
     ["  ", /must be a championship id/],
+    [" be7446cd-b2c0-4157-8094-4d16add5be9d", /must be a championship id/],
     [42, /must be a championship id/],
   ])("checks the new-championship template %j", (template, problem) => {
     const load = () =>
