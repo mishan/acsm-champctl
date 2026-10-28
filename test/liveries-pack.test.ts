@@ -641,7 +641,9 @@ describe("readLiveryPack limits", () => {
     expect(() => readLiveryPack(p)).toThrowError(/over the 90.0 MB limit for one file/)
   })
 
-  it("still refuses a skin past the doubled folder limit", () => {
+  // At the real limit, so 270 MB gets zipped: about five seconds on a CI
+  // runner, which timed out at vitest's default of five.
+  it("still refuses a skin past the doubled folder limit", { timeout: 30_000 }, () => {
     const p = pack({
       [`${CAR}/Misha.zip`]: zipSync({
         "a.dds": big(90 * 1024 * 1024),
