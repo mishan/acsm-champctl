@@ -40,6 +40,8 @@ import { Venue } from "./Venue"
  */
 
 interface NewChampionshipProps {
+  /** The league's template, when it has one, for a championship started blank. */
+  template: string | null
   onCreated: (championshipId: string) => void
   onAuthLost: () => void
 }
@@ -47,16 +49,17 @@ interface NewChampionshipProps {
 /** The form's own state. Tracks are held as text so a half-typed row is legal. */
 interface Draft {
   sourceId: string
+  /** Built on the league's template with none of its cars or description, not cloned. */
+  blank: boolean
   name: string
   startDate: string
   /**
    * The class car list, as folder names.
    *
-   * Empty means "whatever the source ran", which is what cloning always did.
-   * The screen fills this in from the source instead of leaving it empty, so
-   * the cars are on screen rather than inherited silently — that invisibility
-   * is why the form could ask which tracks a season runs at and never mention
-   * what anyone would be driving.
+   * A clone starts with the source's, so the cars are on screen rather than
+   * inherited silently — that invisibility is why the form could ask which
+   * tracks a season runs at and never mention what anyone would be driving. A
+   * blank start has none until some are added, and empty previews nothing.
    */
   cars: string[]
   /**
@@ -87,7 +90,11 @@ interface TrackRow {
 /** Long enough to finish typing a track name, short enough to feel live. */
 const PREVIEW_DEBOUNCE_MS = 350
 
+/** The source picker's value for a blank championship; never a championship id. */
+const BLANK = "blank"
+
 export function NewChampionship({
+  template,
   onCreated,
   onAuthLost,
 }: NewChampionshipProps): React.JSX.Element {
@@ -127,6 +134,8 @@ export function NewChampionship({
 
   /** What was last asked for, so seeding the form doesn't ask for it again. */
   const lastSent = useRef<string | null>(null)
+  /** Which pick of the source is current, so an earlier pick's read lands nowhere. */
+  const sourcePick = useRef(0)
   const generation = useRef(0)
 
   useEffect(() => {
@@ -245,6 +254,8 @@ export function NewChampionship({
     setDone(null)
     setError(null)
     lastSent.current = null
+    const pick = ++sourcePick.current
+    setSourceCarsPending(false)
 
     // Back to "Pick a championship…". Without clearing the draft the rest of
     // the form stayed on screen with nothing selected, which reads as though a
@@ -256,8 +267,10 @@ export function NewChampionship({
       return
     }
 
+    const blank = id === BLANK && template !== null
     setDraft({
-      sourceId: id,
+      sourceId: blank ? template : id,
+      blank,
       // Blank rather than the source's name. "August 2026" sitting in a
       // September field is the kind of default that gets pushed.
       name: "",
@@ -266,6 +279,7 @@ export function NewChampionship({
       description: "",
       tracks: [],
     })
+    if (blank) return
 
     // The source's cars, so the field shows what would be inherited rather
     // than leaving it to be discovered after the championship exists. Unlike
@@ -275,18 +289,18 @@ export function NewChampionship({
     void (async () => {
       try {
         const { championship } = await api.championship(id)
-        // Only if they are still on the same source. Picking one, changing
-        // your mind, and having the first one's cars land a moment later is
-        // the exact shape of bug the preview effect's `generation` exists for.
+        // Only if this is still the current pick. Picking one, changing your
+        // mind, and having the first one's cars land a moment later is the
+        // exact shape of bug the preview effect's `generation` exists for —
+        // and comparing ids isn't enough, since Blank uses the template's.
+        if (pick !== sourcePick.current) return
         setDraft((d) =>
-          d && d.sourceId === id
-            ? { ...d, cars: championship.cars, description: championship.description }
-            : d,
+          d ? { ...d, cars: championship.cars, description: championship.description } : d,
         )
       } catch (e) {
-        setError(describe(e))
+        if (pick === sourcePick.current) setError(describe(e))
       } finally {
-        setSourceCarsPending(false)
+        if (pick === sourcePick.current) setSourceCarsPending(false)
       }
     })()
   }
@@ -344,28 +358,36 @@ export function NewChampionship({
     <>
       <h1>New championship</h1>
       <p className="muted">
-        Built from a past championship: same cars, same class, same format. Name it, say when it
-        starts, and list the tracks.
+        {template
+          ? "Start blank, or from a past championship with its cars, class and format."
+          : "Built from a past championship: same cars, same class, same format."}{" "}
+        Name it, say when it starts, and list the tracks.
       </p>
 
       <section>
-        <h2>Clone from</h2>
+        <h2>Start from</h2>
         <label htmlFor="source" className="visually-hidden">
-          Clone from
+          Start from
         </label>
         <select
           id="source"
-          value={draft?.sourceId ?? ""}
+          value={draft?.blank ? BLANK : (draft?.sourceId ?? "")}
           onChange={(e) => chooseSource(e.target.value)}
         >
           <option value="">Pick a championship…</option>
+          {template && <option value={BLANK}>Blank</option>}
           {sources.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
             </option>
           ))}
         </select>
-        {sources.length === 0 && (
+        {draft?.blank && (
+          <p className="fineprint">
+            The league's template's settings and sessions, and nothing of what it raced.
+          </p>
+        )}
+        {sources.length === 0 && !template && (
           <p className="fineprint">
             This manager has no championships yet, so there is nothing to clone. Build the first one
             with `champctl-championship build`.
@@ -405,15 +427,18 @@ export function NewChampionship({
               placeholder="Shown on the championship page in Server Manager."
               onChange={(e) => set({ description: e.target.value })}
             />
-            <p className="fineprint">
-              Cloned from the championship above. Clear it for no description at all. Change it and
-              its formatting and pictures go, leaving plain paragraphs.
-            </p>
+            {!draft.blank && (
+              <p className="fineprint">
+                Cloned from the championship above. Clear it for no description at all. Change it
+                and its formatting and pictures go, leaving plain paragraphs.
+              </p>
+            )}
           </section>
 
           <CarList
             // A fresh list per source, so "Put the cars back" can't restore another championship's.
-            key={draft.sourceId}
+            key={draft.blank ? BLANK : draft.sourceId}
+            cloned={!draft.blank}
             chosen={draft.cars}
             installed={installed?.cars ?? []}
             loading={installed === null}
@@ -443,7 +468,9 @@ export function NewChampionship({
           <p className="muted">
             {draft?.sourceId
               ? "Name it and add at least one track."
-              : "Pick a championship to clone."}
+              : template
+                ? "Start blank, or pick a championship to clone."
+                : "Pick a championship to clone."}
           </p>
         )}
       </section>
@@ -514,6 +541,7 @@ function CarList({
   installed,
   loading,
   pending,
+  cloned,
   onChange,
 }: {
   chosen: readonly string[]
@@ -521,6 +549,8 @@ function CarList({
   loading: boolean
   /** The source's cars have not arrived yet, which is not the same as none. */
   pending: boolean
+  /** The list came from a championship, rather than starting empty. */
+  cloned: boolean
   onChange: (cars: string[]) => void
 }): React.JSX.Element {
   const nameOf = (id: string): string => installed.find((c) => c.id === id)?.name ?? id
@@ -531,7 +561,8 @@ function CarList({
     <section>
       <h2>Cars</h2>
       <p className="fineprint">
-        Everything the class can drive. Cloned from the championship above; change it here.
+        Everything the class can drive.
+        {cloned && " Cloned from the championship above; change it here."}
       </p>
 
       {chosen.length > 0 && (

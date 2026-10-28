@@ -24,7 +24,7 @@ import type { Championship } from "../../src/acsm/types.js"
 import { importChampionship } from "../../src/acsm/write.js"
 import { deleteChampionship, loadFixture, SEED } from "../live/harness.js"
 
-/** Where the spec reads the name to pick out of the "Clone from" list. */
+/** Where the spec reads the name to pick out of the "Start from" list. */
 export const SOURCE_NAME_VAR = "CHAMPCTL_E2E_SOURCE_NAME"
 
 export default async function globalSetup(): Promise<() => Promise<void>> {

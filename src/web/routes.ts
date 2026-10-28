@@ -29,6 +29,7 @@
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify"
 
 import type { AcsmReader } from "../acsm/client.js"
+import type { Championship } from "../acsm/types.js"
 import { AcsmAuthError, AcsmSession } from "../acsm/session.js"
 import { ContentCache } from "./content-cache.js"
 import { readTrackLayouts, type TrackLayouts } from "./layouts.js"
@@ -428,6 +429,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
       { config: { public: true } },
       async (): Promise<ConfigResponse> => ({
         league: { id: ctx.profile.id, name: ctx.profile.name },
+        newChampionshipTemplate: ctx.profile.newChampionshipTemplate ?? null,
         theme: ctx.profile.theme ?? {},
         baseUrl: ctx.baseUrl,
         timezone: ctx.profile.schedule.timezone,
@@ -825,7 +827,21 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
         const s = requireSession(ctx, req)
         const body = req.body
 
-        const source = await ctx.reader.exportChampionship(body.sourceId)
+        // A template that can't be built on is a profile setting to fix, and
+        // the messages below talk about cloning without saying which one.
+        const template = body.sourceId === ctx.profile.newChampionshipTemplate
+        const named = (why: string): string =>
+          template
+            ? `The league's template, \`newChampionshipTemplate\` in the profile, can't be built on. ${why}`
+            : why
+
+        let source: Championship
+        try {
+          source = await ctx.reader.exportChampionship(body.sourceId)
+        } catch (e) {
+          if (!template) throw e
+          throw new ApiError(422, "emit", named(e instanceof Error ? e.message : String(e)))
+        }
 
         // One instant for the emit and the check both. Two calls to `now()`
         // can land either side of midnight or a DST change, and then the
@@ -855,7 +871,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           // request rather than about champctl — an empty car list, a
           // championship with no name to inherit. 422 for the same reason a gridmom block
           // is: understood, and declined.
-          if (e instanceof EmitError) throw new ApiError(422, "emit", e.message)
+          if (e instanceof EmitError) throw new ApiError(422, "emit", named(e.message))
           throw e
         }
 

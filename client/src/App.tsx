@@ -100,6 +100,7 @@ export function App(): React.JSX.Element {
         )}
         {route.name === "new-championship" && (
           <NewChampionship
+            template={config.newChampionshipTemplate}
             onCreated={(id) => navigate({ name: "championship", id })}
             onAuthLost={onAuthLost}
           />

@@ -35,6 +35,8 @@ export type { Change, CheckReport, FormatPreset, FormFieldChange, InstalledItem,
 /** `GET /api/config`. Public — a login screen has to render before there is one. */
 export interface ConfigResponse {
   league: { id: string; name: string }
+  /** The championship a blank new one is built on, or null when there is none to offer. */
+  newChampionshipTemplate: string | null
   /** The league's colors over the defaults, keyed as the profile's `theme` is. */
   theme: Record<string, string>
   /** The ACSM these credentials will be forwarded to. Shown on the login form. */
@@ -325,7 +327,10 @@ export interface ReorderResponse {
 
 /** What the browser asks for when cloning a past championship into a new one. */
 export interface NewChampionshipRequest {
-  /** The championship to clone. Both the template and the source of the spec. */
+  /**
+   * The championship to clone, or the league's template for a blank start.
+   * Both the template and the source of the spec.
+   */
   sourceId: string
   /** The new championship's name. Without one, the source's name is reused. */
   name?: string

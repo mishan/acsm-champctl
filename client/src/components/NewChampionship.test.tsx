@@ -112,8 +112,8 @@ function planView(over: Partial<NewChampionshipPlan> = {}): NewChampionshipPlan 
   }
 }
 
-function renderScreen() {
-  return render(<NewChampionship onCreated={() => {}} onAuthLost={() => {}} />)
+function renderScreen(template: string | null = null) {
+  return render(<NewChampionship template={template} onCreated={() => {}} onAuthLost={() => {}} />)
 }
 
 async function settle() {
@@ -144,8 +144,8 @@ async function pick(label: RegExp, query: string): Promise<void> {
 /** Pick a source, name it and add one track — the smallest previewable championship. */
 async function filled(track = "Spa") {
   const r = renderScreen()
-  await screen.findByLabelText(/Clone from/)
-  fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+  await screen.findByLabelText(/Start from/)
+  fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: SOURCE } })
   // The source's cars arrive on their own; wait for them, since a draft with
   // no cars is not previewable.
   await screen.findByText("RSS Formula Hybrid 2021")
@@ -204,8 +204,8 @@ describe("choosing what to clone", () => {
 
   it("previews nothing until there is a name and a track", async () => {
     renderScreen()
-    await screen.findByLabelText(/Clone from/)
-    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+    await screen.findByLabelText(/Start from/)
+    fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: SOURCE } })
     await settle()
     // Not because the server would refuse: `cloneChampionship` inherits the
     // source's name when none is given, so a blank name would quietly create a
@@ -225,7 +225,7 @@ describe("choosing what to clone", () => {
     await filled()
     expect(screen.queryByLabelText(/^Name$/)).toBeTruthy()
 
-    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: "" } })
+    fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: "" } })
     expect(screen.queryByLabelText(/^Name$/)).toBeNull()
     expect(screen.queryByRole("button", { name: /Add a round/ })).toBeNull()
     expect(screen.getByText(/Pick a championship to clone/)).toBeTruthy()
@@ -262,8 +262,8 @@ describe("choosing what to clone", () => {
 describe("the car list", () => {
   it("shows the cars the source runs, without being asked", async () => {
     renderScreen()
-    await screen.findByLabelText(/Clone from/)
-    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+    await screen.findByLabelText(/Start from/)
+    fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: SOURCE } })
     // By the name the manager gives it, with the folder name beside it.
     expect(await screen.findByText("RSS Formula Hybrid 2021")).toBeTruthy()
     expect(screen.getByText("rss_formula_hybrid_2021")).toBeTruthy()
@@ -318,7 +318,7 @@ describe("the car list", () => {
     await settle()
     fireEvent.click(screen.getByRole("button", { name: "Remove all 2 cars" }))
     championshipMock.mockRejectedValue(new ApiFailure(502, "acsm", "Server Manager answered 503."))
-    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: "champ-july" } })
+    fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: "champ-july" } })
     await settle()
     expect(screen.queryByRole("button", { name: /Put the 2 cars back/ })).toBeNull()
   })
@@ -347,8 +347,8 @@ describe("the car list", () => {
     )
 
     renderScreen()
-    await screen.findByLabelText(/Clone from/)
-    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+    await screen.findByLabelText(/Start from/)
+    fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: SOURCE } })
 
     expect(await screen.findByText(/Reading the cars from the championship above/)).toBeTruthy()
     expect(screen.queryByText(/nothing to drive/)).toBeNull()
@@ -393,8 +393,8 @@ describe("the car list", () => {
 describe("the description", () => {
   it("shows what the source has, without being asked", async () => {
     renderScreen()
-    await screen.findByLabelText(/Clone from/)
-    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+    await screen.findByLabelText(/Start from/)
+    fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: SOURCE } })
     const box = (await screen.findByLabelText(/Description/)) as HTMLTextAreaElement
     await waitFor(() => expect(box.value).toBe("August was a good month."))
   })
@@ -434,8 +434,8 @@ describe("when champctl cannot read what is installed", () => {
   it("says so in the field rather than failing the screen", async () => {
     contentMock.mockRejectedValue(new Error("manager is down"))
     renderScreen()
-    await screen.findByLabelText(/Clone from/)
-    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+    await screen.findByLabelText(/Start from/)
+    fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: SOURCE } })
 
     expect(await screen.findByText(/couldn't read the cars installed/i)).toBeTruthy()
     // And the rest of the screen is still usable.
@@ -859,9 +859,11 @@ describe("when the server refuses", () => {
     // draft unchanged. Leaving `lastSent` set after a failure makes that look
     // like a duplicate and the screen stays on the error.
     planMock.mockRejectedValueOnce(new ApiFailure(502, "acsm", "Server Manager answered 503."))
-    const { rerender } = render(<NewChampionship onCreated={() => {}} onAuthLost={() => {}} />)
-    await screen.findByLabelText(/Clone from/)
-    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+    const { rerender } = render(
+      <NewChampionship template={null} onCreated={() => {}} onAuthLost={() => {}} />,
+    )
+    await screen.findByLabelText(/Start from/)
+    fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: SOURCE } })
     fireEvent.change(screen.getByLabelText(/^Name$/), { target: { value: "September 2026" } })
     fireEvent.click(screen.getByRole("button", { name: /Add a round/ }))
     await pick(/Round 1 track/, "spa")
@@ -870,7 +872,7 @@ describe("when the server refuses", () => {
     expect(await screen.findByText(/Server Manager answered 503/)).toBeTruthy()
     expect(planMock).toHaveBeenCalledTimes(1)
 
-    rerender(<NewChampionship onCreated={() => {}} onAuthLost={() => {}} />)
+    rerender(<NewChampionship template={null} onCreated={() => {}} onAuthLost={() => {}} />)
     await settle()
 
     expect(planMock).toHaveBeenCalledTimes(2)
@@ -910,9 +912,71 @@ describe("leaving before it is created", () => {
 
   it("asks once a source is picked, since its cars and description are edits too", async () => {
     renderScreen()
-    await screen.findByLabelText(/Clone from/)
+    await screen.findByLabelText(/Start from/)
     expect(wouldAskToLeave()).toBe(false)
-    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+    fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: SOURCE } })
     expect(wouldAskToLeave()).toBe(true)
+  })
+})
+
+describe("starting blank", () => {
+  const TEMPLATE = "champ-template"
+
+  it("isn't offered without a template in the profile", async () => {
+    renderScreen()
+    await screen.findByLabelText(/Start from/)
+    expect(screen.queryByRole("option", { name: /Blank/ })).toBeNull()
+  })
+
+  it("doesn't take the template's cars from a clone of it still loading", async () => {
+    championshipsMock.mockResolvedValue({
+      championships: [{ id: TEMPLATE, name: "League template" }],
+    })
+    let release: ((r: ChampionshipResponse) => void) | undefined
+    championshipMock.mockReturnValue(
+      new Promise<ChampionshipResponse>((r) => {
+        release = r
+      }),
+    )
+    renderScreen(TEMPLATE)
+    await screen.findByLabelText(/Start from/)
+    fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: TEMPLATE } })
+    fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: "blank" } })
+    expect(screen.queryByText(/Reading the cars/)).toBeNull()
+    await act(async () => {
+      release?.({
+        championship: {
+          id: TEMPLATE,
+          name: "League template",
+          timezone: "America/Los_Angeles",
+          cars: ["rss_formula_hybrid_2021"],
+          description: "The template's own words.",
+          rounds: [],
+        },
+        gridmom: report(),
+      })
+    })
+    expect(screen.queryByText("RSS Formula Hybrid 2021")).toBeNull()
+    expect((screen.getByLabelText("Description") as HTMLTextAreaElement).value).toBe("")
+  })
+
+  it("builds on the template with none of its cars or description", async () => {
+    renderScreen(TEMPLATE)
+    await screen.findByLabelText(/Start from/)
+    fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: "blank" } })
+    expect(championshipMock).not.toHaveBeenCalled()
+    expect((screen.getByLabelText("Description") as HTMLTextAreaElement).value).toBe("")
+    expect(screen.getByText(/nothing to drive/)).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText(/^Name$/), { target: { value: "December 2026" } })
+    await pick(/Add a car/, "Porsche")
+    fireEvent.click(screen.getByRole("button", { name: /Add a round/ }))
+    await pick(/Round 1 track/, "spa")
+    await settle()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({
+      sourceId: TEMPLATE,
+      cars: ["ks_porsche_911_gt3_r_2016"],
+      description: "",
+    })
   })
 })
