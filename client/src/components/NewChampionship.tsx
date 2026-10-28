@@ -757,7 +757,7 @@ function TrackList({
               type="text"
               aria-label={`Round ${i + 1} name`}
               value={row.name}
-              placeholder="Round name (optional — blank shows the track)"
+              placeholder="Round name, if any"
               onChange={(e) => update(i, { name: e.target.value })}
             />
           </li>
