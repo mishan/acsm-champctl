@@ -16,6 +16,7 @@ import {
 import { describeFormat, describeLength } from "../format"
 import { Picker } from "./Picker"
 import { Findings } from "./Findings"
+import { useLeaveGuard } from "../route"
 import { Message } from "./Message"
 import { Venue } from "./Venue"
 
@@ -132,6 +133,8 @@ export function EventEditor({
 
   /** What was last asked for, so seeding the form doesn't ask for it again. */
   const lastSent = useRef<string | null>(null)
+  /** The request the round as loaded makes, to tell an edited form from an untouched one. */
+  const loaded = useRef<string | null>(null)
 
   /**
    * Which load is current.
@@ -162,6 +165,7 @@ export function EventEditor({
         if (mine !== generation.current) return
         const seeded = draftFrom(res.round)
         lastSent.current = JSON.stringify(requestFrom(seeded))
+        loaded.current = lastSent.current
         setCurrent(res.round)
         setDraft(seeded)
         setPlan(res.plan)
@@ -266,6 +270,11 @@ export function EventEditor({
       setPushing(false)
     }
   }
+
+  useLeaveGuard(
+    draft !== null && done === null && JSON.stringify(requestFrom(draft)) !== loaded.current,
+    "Leave without pushing? Your changes to this round aren't in ACSM.",
+  )
 
   if (error && !draft) {
     return (

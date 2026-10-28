@@ -388,6 +388,22 @@ describe("the presets", () => {
   })
 })
 
+/** Whether closing or reloading the tab would be stopped to ask first. */
+function wouldAskToLeave(): boolean {
+  const e = new Event("beforeunload", { cancelable: true })
+  window.dispatchEvent(e)
+  return e.defaultPrevented
+}
+
+describe("leaving with changes not pushed", () => {
+  it("asks once the form differs from the round, and not before", async () => {
+    await opened()
+    expect(wouldAskToLeave()).toBe(false)
+    fireEvent.change(lengthField(), { target: { value: "22" } })
+    expect(wouldAskToLeave()).toBe(true)
+  })
+})
+
 describe("the push button", () => {
   it("pushes the plan id it was shown, and nothing else", async () => {
     await opened()

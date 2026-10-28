@@ -883,3 +883,20 @@ describe("the name it suggests", () => {
     expect(nextMonth(now)).toBe(name)
   })
 })
+
+describe("leaving before it is created", () => {
+  const wouldAskToLeave = (): boolean => {
+    const e = new Event("beforeunload", { cancelable: true })
+    window.dispatchEvent(e)
+    return e.defaultPrevented
+  }
+
+  it("asks once there is a name, not for a source alone", async () => {
+    renderScreen()
+    await screen.findByLabelText(/Clone from/)
+    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
+    expect(wouldAskToLeave()).toBe(false)
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "December 2026" } })
+    expect(wouldAskToLeave()).toBe(true)
+  })
+})
