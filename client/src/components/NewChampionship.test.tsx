@@ -306,6 +306,23 @@ describe("the car list", () => {
     })
   })
 
+  it("doesn't offer to put back another championship's cars", async () => {
+    championshipsMock.mockResolvedValue({
+      championships: [
+        { id: SOURCE, name: "August 2026" },
+        { id: "champ-july", name: "July 2026" },
+      ],
+    })
+    await filled()
+    await pick(/Add a car/, "Porsche")
+    await settle()
+    fireEvent.click(screen.getByRole("button", { name: "Remove all 2 cars" }))
+    championshipMock.mockRejectedValue(new ApiFailure(502, "acsm", "Server Manager answered 503."))
+    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: "champ-july" } })
+    await settle()
+    expect(screen.queryByRole("button", { name: /Put the 2 cars back/ })).toBeNull()
+  })
+
   it("does not offer a car that is already chosen", async () => {
     await filled()
     fireEvent.focus(screen.getByLabelText(/Add a car/))
@@ -891,12 +908,11 @@ describe("leaving before it is created", () => {
     return e.defaultPrevented
   }
 
-  it("asks once there is a name, not for a source alone", async () => {
+  it("asks once a source is picked, since its cars and description are edits too", async () => {
     renderScreen()
     await screen.findByLabelText(/Clone from/)
-    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
     expect(wouldAskToLeave()).toBe(false)
-    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "December 2026" } })
+    fireEvent.change(screen.getByLabelText(/Clone from/), { target: { value: SOURCE } })
     expect(wouldAskToLeave()).toBe(true)
   })
 })
