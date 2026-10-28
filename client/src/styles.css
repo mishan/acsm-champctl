@@ -908,7 +908,33 @@ button.link:hover {
  * they wonder why they cannot move something.
  */
 .tracks.reorder li {
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  /* The night under the track rather than beside it: side by side, a long
+     track name ran under the date on a phone. */
+  grid-template-areas:
+    "num title up down tag"
+    "num sub up down tag";
+}
+
+.tracks.reorder li > :nth-child(1) {
+  grid-area: num;
+}
+.tracks.reorder li > :nth-child(2) {
+  grid-area: title;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+.tracks.reorder li > :nth-child(3) {
+  grid-area: sub;
+}
+.tracks.reorder li > :nth-child(4) {
+  grid-area: up;
+}
+.tracks.reorder li > :nth-child(5) {
+  grid-area: down;
+}
+.tracks.reorder li > :nth-child(6) {
+  grid-area: tag;
 }
 
 .tracks.reorder .row-sub {
@@ -934,4 +960,45 @@ button.link:hover {
  */
 .tracks .round-name {
   grid-column: 1 / -1;
+}
+
+/*
+ * On a phone the layout gets a line of its own. Beside the track, with three
+ * buttons, each field was left a few characters wide.
+ */
+@media (max-width: 36rem) {
+  .tracks:not(.reorder) li {
+    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+    grid-template-areas:
+      "num track up down remove"
+      ". layout layout layout layout"
+      "name name name name name";
+  }
+  .tracks:not(.reorder) li > :nth-child(1) {
+    grid-area: num;
+  }
+  .tracks:not(.reorder) li > :nth-child(2) {
+    grid-area: track;
+  }
+  .tracks:not(.reorder) li > :nth-child(3) {
+    grid-area: layout;
+  }
+  .tracks:not(.reorder) li > :nth-child(4) {
+    grid-area: up;
+  }
+  .tracks:not(.reorder) li > :nth-child(5) {
+    grid-area: down;
+  }
+  .tracks:not(.reorder) li > :nth-child(6) {
+    grid-area: remove;
+  }
+  .tracks:not(.reorder) .round-name {
+    grid-area: name;
+  }
+  /* Level with the track's input rather than its label. */
+  .tracks:not(.reorder) li > .icon,
+  .tracks:not(.reorder) li > .round-number {
+    align-self: end;
+    margin-bottom: 0.4rem;
+  }
 }
