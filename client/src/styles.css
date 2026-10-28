@@ -187,6 +187,15 @@ h2 {
   background: var(--surface-2);
 }
 
+/* A row that only shows something: a preview, not a destination. */
+.row-static {
+  cursor: default;
+}
+
+.row-static:active {
+  background: var(--surface);
+}
+
 .row-main {
   flex: 1;
   min-width: 0;
@@ -245,7 +254,9 @@ input[type="text"],
 input[type="password"],
 input[type="number"],
 input[type="date"],
-input[type="time"] {
+input[type="time"],
+select,
+textarea {
   width: 100%;
   padding: 0.7rem 0.8rem;
   background: var(--surface);
@@ -255,7 +266,13 @@ input[type="time"] {
   font: inherit;
 }
 
+textarea {
+  resize: vertical;
+}
+
 input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
 button:focus-visible,
 summary:focus-visible {
   outline: 2px solid var(--accent);
@@ -902,6 +919,22 @@ button.link:hover {
 
 .chips .picker-id {
   font-size: 0.75rem;
+}
+
+/* The folder name under the car's on a phone, so the name isn't wrapped to a word a line. */
+@media (max-width: 36rem) {
+  .chips li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .chips li > .icon {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+  .chips .picker-id {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 
 /*
