@@ -11,6 +11,7 @@ import {
 } from "../api"
 import { moveItem, useReorder } from "../reorder"
 import { Findings } from "./Findings"
+import { useLeaveGuard } from "../route"
 import { Message } from "./Message"
 import { Picker } from "./Picker"
 import { Venue } from "./Venue"
@@ -304,6 +305,14 @@ export function NewChampionship({
       setCreating(false)
     }
   }
+
+  // Picking a source alone isn't work to lose; a name or a track is.
+  useLeaveGuard(
+    draft !== null &&
+      done === null &&
+      (draft.name.trim() !== "" || draft.tracks.some((t) => t.track !== "")),
+    "Leave without creating it? What you've filled in here will be lost.",
+  )
 
   if (error && !sources) {
     return <Message kind="error" title="Couldn't list championships" body={error} />

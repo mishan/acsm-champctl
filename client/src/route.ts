@@ -12,7 +12,7 @@
  * anything that isn't an API path.
  */
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 export type Route =
   | { name: "home" }
@@ -58,16 +58,48 @@ export function routePath(route: Route): string {
   }
 }
 
+/** Asks whether to leave a screen holding work that leaving would lose. */
+let mayLeave: (() => boolean) | undefined
+
+/**
+ * While `unsaved`, every way off the screen asks first: a link, the title, the
+ * back gesture, and closing or reloading the tab. Typed changes to a round
+ * went nowhere on a stray tap of "‹ Rounds", with nothing said.
+ */
+export function useLeaveGuard(unsaved: boolean, question: string): void {
+  useEffect(() => {
+    if (!unsaved) return
+    const ask = (): boolean => window.confirm(question)
+    mayLeave = ask
+    const onUnload = (e: BeforeUnloadEvent): void => e.preventDefault()
+    window.addEventListener("beforeunload", onUnload)
+    return () => {
+      if (mayLeave === ask) mayLeave = undefined
+      window.removeEventListener("beforeunload", onUnload)
+    }
+  }, [unsaved, question])
+}
+
 export function useRoute(): [Route, (next: Route) => void] {
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname))
+  const shown = useRef(route)
+  shown.current = route
 
   useEffect(() => {
-    const onPop = (): void => setRoute(parseRoute(window.location.pathname))
+    const onPop = (): void => {
+      // The address has already changed by now, so staying means putting it back.
+      if (mayLeave && !mayLeave()) {
+        window.history.pushState(null, "", routePath(shown.current))
+        return
+      }
+      setRoute(parseRoute(window.location.pathname))
+    }
     window.addEventListener("popstate", onPop)
     return () => window.removeEventListener("popstate", onPop)
   }, [])
 
   const navigate = (next: Route): void => {
+    if (mayLeave && !mayLeave()) return
     const path = routePath(next)
     // Guard the push rather than the state update: re-navigating to where you
     // already are would otherwise stack history entries that all look the same,
