@@ -159,6 +159,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const json = (body: unknown): RequestInit => ({ method: "POST", body: JSON.stringify(body) })
 
+let installed: Promise<ContentResponse> | undefined
+
 export const api = {
   config: (): Promise<ConfigResponse> => request<ConfigResponse>("/config"),
 
@@ -174,10 +176,16 @@ export const api = {
   /**
    * Cars and tracks installed on the manager, for the fields that ask for one.
    *
-   * Held server-side for an hour, so calling this whenever a screen opens is
-   * one cheap request rather than a walk of `/cars`.
+   * Held server-side for an hour, and here for the page's life: it is every
+   * car on the manager, and three screens want it, so moving between a
+   * championship and its rounds downloaded it again on every step. A failed
+   * read isn't kept, so the next screen tries again.
    */
-  content: (): Promise<ContentResponse> => request("/content"),
+  content: (): Promise<ContentResponse> =>
+    (installed ??= request<ContentResponse>("/content").catch((e: unknown) => {
+      installed = undefined
+      throw e
+    })),
 
   championship: (id: string): Promise<ChampionshipResponse> =>
     request(`/championships/${encodeURIComponent(id)}`),

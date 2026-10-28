@@ -3,10 +3,10 @@
  * keeps both the screen and the address.
  */
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { useLeaveGuard, useRoute } from "./route"
+import { confirmLeave, useLeaveGuard, useRoute } from "./route"
 
 function Screen({ unsaved }: { unsaved: boolean }): React.JSX.Element {
   const [route, navigate] = useRoute()
@@ -16,6 +16,9 @@ function Screen({ unsaved }: { unsaved: boolean }): React.JSX.Element {
       <p>on {route.name}</p>
       <button type="button" onClick={() => navigate({ name: "new-championship" })}>
         go
+      </button>
+      <button type="button" onClick={() => navigate({ name: "championship", id: "one" })}>
+        open one
       </button>
     </>
   )
@@ -47,13 +50,25 @@ describe("leaving with unsaved work", () => {
     expect(window.location.pathname).toBe(path)
   })
 
-  it("puts the address back when the back gesture is refused", () => {
-    confirm.mockReturnValue(false)
+  it("goes back to where it was when a jump through history is refused, keeping the rest", async () => {
+    confirm.mockReturnValueOnce(true).mockReturnValueOnce(true).mockReturnValue(false)
     render(<Screen unsaved />)
-    window.history.pushState(null, "", "/new-championship")
-    fireEvent(window, new PopStateEvent("popstate"))
-    expect(screen.getByText("on home")).toBeTruthy()
-    expect(window.location.pathname).toBe("/")
+    fireEvent.click(screen.getByText("go"))
+    fireEvent.click(screen.getByText("open one"))
+    const entries = window.history.length
+    window.history.go(-2)
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(window.location.pathname).toBe("/c/one"))
+    expect(screen.getByText("on championship")).toBeTruthy()
+    expect(window.history.length).toBe(entries)
+  })
+
+  it("asks before something else takes the screen away, and only once", () => {
+    confirm.mockReturnValue(true)
+    render(<Screen unsaved />)
+    expect(confirmLeave()).toBe(true)
+    fireEvent.click(screen.getByText("go"))
+    expect(confirm).toHaveBeenCalledTimes(1)
   })
 
   it("doesn't ask when there is nothing to lose", () => {

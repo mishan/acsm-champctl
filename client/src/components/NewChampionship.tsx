@@ -306,11 +306,10 @@ export function NewChampionship({
     }
   }
 
-  // Picking a source alone isn't work to lose; a name or a track is.
+  // From the moment there is a source: the cars, the description and the date
+  // are all edits worth asking about, not only a name or a track.
   useLeaveGuard(
-    draft !== null &&
-      done === null &&
-      (draft.name.trim() !== "" || draft.tracks.some((t) => t.track !== "")),
+    draft !== null && done === null,
     "Leave without creating it? What you've filled in here will be lost.",
   )
 
@@ -412,6 +411,8 @@ export function NewChampionship({
           </section>
 
           <CarList
+            // A fresh list per source, so "Put the cars back" can't restore another championship's.
+            key={draft.sourceId}
             chosen={draft.cars}
             installed={installed?.cars ?? []}
             loading={installed === null}
