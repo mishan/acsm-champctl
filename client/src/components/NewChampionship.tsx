@@ -406,7 +406,8 @@ export function NewChampionship({
               onChange={(e) => set({ description: e.target.value })}
             />
             <p className="fineprint">
-              Cloned from the championship above. Clear it for no description at all.
+              Cloned from the championship above. Clear it for no description at all. Change it and
+              its formatting and pictures go, leaving plain paragraphs.
             </p>
           </section>
 

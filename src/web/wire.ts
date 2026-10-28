@@ -124,10 +124,8 @@ export interface ChampionshipView {
    */
   cars: string[]
   /**
-   * The blurb ACSM shows on the championship page. Here for the same reason.
-   *
-   * Verbatim, whitespace and all: a clone starts from this, so normalising it
-   * here would edit somebody's prose on the way past.
+   * The blurb ACSM shows on the championship page, as plain text. Here for
+   * the same reason. See `info/description.ts` for where it is read from.
    */
   description: string
   rounds: RoundView[]

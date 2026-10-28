@@ -44,6 +44,7 @@ import type { LeagueProfile } from "../profile/types.js"
 import { deepMerge, mergeAll } from "./merge.js"
 import { gridCap, type GridCap } from "./grid.js"
 import { monthSchedule, type RoundSchedule } from "./schedule.js"
+import { descriptionFields } from "../info/description.js"
 
 /**
  * The sentinel that makes multi-model championships work (plan §4.4).
@@ -353,7 +354,7 @@ export function emitChampionship(options: EmitOptions): EmitResult {
     Classes: [championshipClass],
     Events: eventList,
     SignUpForm: signUpForm(base.SignUpForm, signUpsEnabled),
-    ...(spec.description === undefined ? {} : { Description: spec.description }),
+    ...(spec.description === undefined ? {} : descriptionFields(base, spec.description)),
   }
 
   // A template carries the date it was made. Stamping is the fix; see §5.5.
