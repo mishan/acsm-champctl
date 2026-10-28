@@ -292,6 +292,20 @@ describe("the car list", () => {
     expect(planMock.mock.lastCall?.[0]).toMatchObject({ cars: ["ks_porsche_911_gt3_r_2016"] })
   })
 
+  it("removes every car at once, and puts them back", async () => {
+    await filled()
+    await pick(/Add a car/, "Porsche")
+    await settle()
+    fireEvent.click(screen.getByRole("button", { name: "Remove all 2 cars" }))
+    await settle()
+    expect(screen.getByText(/nothing to drive/i)).toBeTruthy()
+    fireEvent.click(screen.getByRole("button", { name: "Put the 2 cars back" }))
+    await settle()
+    expect(planMock.mock.lastCall?.[0]).toMatchObject({
+      cars: ["rss_formula_hybrid_2021", "ks_porsche_911_gt3_r_2016"],
+    })
+  })
+
   it("does not offer a car that is already chosen", async () => {
     await filled()
     fireEvent.focus(screen.getByLabelText(/Add a car/))

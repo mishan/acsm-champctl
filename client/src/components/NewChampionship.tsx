@@ -502,6 +502,8 @@ function CarList({
   onChange: (cars: string[]) => void
 }): React.JSX.Element {
   const nameOf = (id: string): string => installed.find((c) => c.id === id)?.name ?? id
+  // What "Remove all" took, so a stray tap doesn't cost a clone's whole list.
+  const [cleared, setCleared] = useState<readonly string[]>([])
 
   return (
     <section>
@@ -527,6 +529,23 @@ function CarList({
             </li>
           ))}
         </ul>
+      )}
+      {chosen.length > 1 && (
+        <button
+          type="button"
+          className="link"
+          onClick={() => {
+            setCleared(chosen)
+            onChange([])
+          }}
+        >
+          Remove all {chosen.length} cars
+        </button>
+      )}
+      {chosen.length === 0 && cleared.length > 0 && (
+        <button type="button" className="link" onClick={() => onChange([...cleared])}>
+          Put the {cleared.length} cars back
+        </button>
       )}
 
       <Picker
