@@ -374,7 +374,7 @@ export function NewChampionship({
               id="name"
               type="text"
               value={draft.name}
-              placeholder="September 2026"
+              placeholder={nextMonth(new Date())}
               onChange={(e) => set({ name: e.target.value })}
             />
 
@@ -475,6 +475,14 @@ export function NewChampionship({
       </div>
     </>
   )
+}
+
+/** What a championship made now is usually called: next month, "November 2026". */
+export function nextMonth(now: Date): string {
+  return new Date(now.getFullYear(), now.getMonth() + 1, 1).toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  })
 }
 
 /**

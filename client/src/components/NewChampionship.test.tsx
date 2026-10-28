@@ -52,7 +52,7 @@ vi.mock("../api", async (importOriginal) => {
   }
 })
 
-const { NewChampionship } = await import("./NewChampionship")
+const { NewChampionship, nextMonth } = await import("./NewChampionship")
 
 const SOURCE = "champ-august"
 /** What the manager has installed, which is all either picker will offer. */
@@ -872,5 +872,14 @@ describe("when the server refuses", () => {
     fireEvent.click(createButton())
     expect(await screen.findByText(/gridmom has warnings/)).toBeTruthy()
     expect(screen.queryByText(/Championship created/)).toBeNull()
+  })
+})
+
+describe("the name it suggests", () => {
+  it.each([
+    [new Date(2026, 9, 28), "November 2026"],
+    [new Date(2026, 11, 31), "January 2027"],
+  ])("on %s suggests %s", (now, name) => {
+    expect(nextMonth(now)).toBe(name)
   })
 })
