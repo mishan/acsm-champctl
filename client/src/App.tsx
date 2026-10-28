@@ -7,7 +7,7 @@ import { Login } from "./components/Login"
 import { NewChampionship } from "./components/NewChampionship"
 import { Message } from "./components/Message"
 import { RoundList } from "./components/RoundList"
-import { useRoute } from "./route"
+import { confirmLeave, useRoute } from "./route"
 
 /**
  * Everything above the three screens: who is logged in, which league this is,
@@ -44,6 +44,7 @@ export function App(): React.JSX.Element {
     // The local state changes whatever the request does. A logout that failed
     // on the network must not leave someone looking at a screen that says they
     // are still signed in.
+    if (!confirmLeave()) return
     try {
       await api.logout()
     } finally {

@@ -62,6 +62,20 @@ export function routePath(route: Route): string {
 let mayLeave: (() => boolean) | undefined
 
 /**
+ * Whether to go ahead with leaving the screen: asks when it holds unsaved
+ * work. For anything that takes the screen away other than `navigate`, which
+ * asks already — signing out, say, which drops the screen with the session.
+ * A yes stands until the screen goes, so the navigation that follows doesn't
+ * ask again.
+ */
+export function confirmLeave(): boolean {
+  if (!mayLeave) return true
+  if (!mayLeave()) return false
+  mayLeave = undefined
+  return true
+}
+
+/**
  * While `unsaved`, every way off the screen asks first: a link, the title, the
  * back gesture, and closing or reloading the tab. Typed changes to a round
  * went nowhere on a stray tap of "‹ Rounds", with nothing said.
@@ -71,7 +85,11 @@ export function useLeaveGuard(unsaved: boolean, question: string): void {
     if (!unsaved) return
     const ask = (): boolean => window.confirm(question)
     mayLeave = ask
-    const onUnload = (e: BeforeUnloadEvent): void => e.preventDefault()
+    const onUnload = (e: BeforeUnloadEvent): void => {
+      e.preventDefault()
+      // Older Safari and WebViews prompt only when this is set.
+      e.returnValue = ""
+    }
     window.addEventListener("beforeunload", onUnload)
     return () => {
       if (mayLeave === ask) mayLeave = undefined
@@ -82,16 +100,26 @@ export function useLeaveGuard(unsaved: boolean, question: string): void {
 
 export function useRoute(): [Route, (next: Route) => void] {
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname))
-  const shown = useRef(route)
-  shown.current = route
+  // Where in the history the screen on show is. Each entry carries its index,
+  // so refusing a back or forward jump of any size can go back to it exactly,
+  // rather than pushing a copy that would throw away the forward entries.
+  const shownAt = useRef(0)
 
   useEffect(() => {
-    const onPop = (): void => {
-      // The address has already changed by now, so staying means putting it back.
+    const at = (window.history.state as { index?: number } | null)?.index
+    if (typeof at === "number") shownAt.current = at
+    else window.history.replaceState({ index: 0 }, "")
+
+    const onPop = (e: PopStateEvent): void => {
+      const to = (e.state as { index?: number } | null)?.index ?? 0
+      // The return trip from a refused jump, landing where it started.
+      if (to === shownAt.current) return
+      // The address has already changed by now, so staying means going back to it.
       if (mayLeave && !mayLeave()) {
-        window.history.pushState(null, "", routePath(shown.current))
+        window.history.go(shownAt.current - to)
         return
       }
+      shownAt.current = to
       setRoute(parseRoute(window.location.pathname))
     }
     window.addEventListener("popstate", onPop)
@@ -104,7 +132,10 @@ export function useRoute(): [Route, (next: Route) => void] {
     // Guard the push rather than the state update: re-navigating to where you
     // already are would otherwise stack history entries that all look the same,
     // and back would appear to do nothing several times running.
-    if (path !== window.location.pathname) window.history.pushState(null, "", path)
+    if (path !== window.location.pathname) {
+      shownAt.current += 1
+      window.history.pushState({ index: shownAt.current }, "", path)
+    }
     setRoute(next)
   }
 
