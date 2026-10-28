@@ -462,29 +462,6 @@ describe("emitting a championship", () => {
     }
   })
 
-  /**
-   * The stream car parks after the last entry slot, never inside one.
-   *
-   * `CAR_n` is pit box n, so a spectator car below the slot count shares a box
-   * with an entrant and `AddInPitBox` overwrites on collision. A clone
-   * inherits the template's box, and the championship this rule comes from
-   * inherited box 0 from one where the van sat at 29.
-   */
-  it("parks the spectator car past the last entry slot", () => {
-    const { championship: c, derived } = emit({
-      template: template({
-        SpectatorCarEnabled: true,
-        SpectatorCars: [{ Model: "ford_transit", Name: "BATL TV", PitBox: 0 }],
-      }),
-      spec: spec({ entryListSlots: 12 }),
-    })
-    expect(c.SpectatorCars?.[0]?.PitBox).toBe(12)
-    // Everything else about the car survives; only the box is decided here.
-    expect(c.SpectatorCars?.[0]?.Model).toBe("ford_transit")
-    expect(c.SpectatorCars?.[0]?.Name).toBe("BATL TV")
-    expect(derived.join(" ")).toContain("pit box 12")
-  })
-
   it("derives Cars from the spectator car ACSM actually populates", () => {
     // 2.4.x keeps it in `SpectatorCars[0]` and leaves the singular field
     // blank, so reading the singular one left the van out of the car list.
@@ -501,21 +478,7 @@ describe("emitting a championship", () => {
     }
   })
 
-  it("writes the box back to the field it read the car from", () => {
-    // A build that keeps the car in the singular field has no `SpectatorCars`
-    // array. Inventing one would leave the box unchanged where ACSM reads it
-    // and add a key it does not.
-    const t = template({
-      SpectatorCarEnabled: true,
-      SpectatorCar: { Model: "ford_transit", PitBox: 0 },
-    })
-    delete t.SpectatorCars
-    const { championship: c } = emit({ template: t, spec: spec({ entryListSlots: 12 }) })
-    expect(c.SpectatorCar?.PitBox).toBe(12)
-    expect(c.SpectatorCars).toBeUndefined()
-  })
-
-  it("parks every spectator car past the entry slots, in order, and lists every model", () => {
+  it("keeps every spectator car's box, and lists every model", () => {
     const { championship: c } = emit({
       template: template({
         SpectatorCarEnabled: true,
@@ -527,8 +490,8 @@ describe("emitting a championship", () => {
       spec: spec({ entryListSlots: 12 }),
     })
     expect(c.SpectatorCars).toEqual([
-      expect.objectContaining({ Model: "ford_transit", PitBox: 12 }),
-      expect.objectContaining({ Model: "ks_mazda_mx5_nd", Name: "Race Recorder", PitBox: 13 }),
+      expect.objectContaining({ Model: "ford_transit", PitBox: 0 }),
+      expect.objectContaining({ Model: "ks_mazda_mx5_nd", Name: "Race Recorder", PitBox: 7 }),
     ])
     for (const ev of events(c)) {
       expect(ev.RaceSetup?.Cars?.split(";")).toEqual(

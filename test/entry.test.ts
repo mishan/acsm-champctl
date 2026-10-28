@@ -182,7 +182,7 @@ describe("spectator car", () => {
         }),
       ],
     })
-    expect(codes(c)).not.toContain("entry.spectator-pit-box")
+    expect(codes(c).filter((code) => code.startsWith("entry.spectator-pit-box"))).toEqual([])
     // And nothing else took up the complaint: sharing a box is simply fine.
     expect(run(c).findings.filter((f) => f.severity === "ERROR")).toEqual([])
   })
@@ -373,114 +373,6 @@ describe("the spectator car's model", () => {
       SpectatorCar: { Model: "ford_transit" },
     })
     expect(codes(c)).not.toContain("entry.spectator-no-model")
-  })
-})
-
-/**
- * Where the stream car parks.
- *
- * `CAR_n` is pit box n, so a spectator car below the list's length is sharing
- * a box with a slot, and `AddInPitBox` overwrites on collision. Found on a
- * live championship at box 0, cloned from one where it sat at 29.
- */
-describe("the spectator car's pit box", () => {
-  const withBox = (box: number, slotCount = 4) =>
-    championship({
-      SpectatorCarEnabled: true,
-      SpectatorCars: [{ Model: "ford_transit", Name: "BATL TV", PitBox: box }],
-      Classes: [championshipClass({ Entrants: entryList(emptySlots(slotCount)) })],
-      Events: [raceEvent({ EntryList: entryList(emptySlots(slotCount)) })],
-    })
-
-  it("warns when it sits in a slot an entrant can hold", () => {
-    const f = run(withBox(0)).findings.find((x) => x.code === "entry.spectator-pit-box-taken")
-    expect(f?.severity).toBe("WARN")
-    expect(f?.message).toContain("pit box 0")
-    // The fix, named: past the end of the list.
-    expect(f?.message).toContain("park it at 4")
-    expect(f?.data).toMatchObject({ pitBox: 0, slots: 4, suggested: 4 })
-  })
-
-  it("is quiet when it is parked past the last slot", () => {
-    expect(codes(withBox(4))).not.toContain("entry.spectator-pit-box-taken")
-    expect(codes(withBox(9))).not.toContain("entry.spectator-pit-box-taken")
-  })
-
-  it("catches the last slot itself, which is a real box", () => {
-    // Off-by-one guard: 4 slots are boxes 0..3, so box 3 is taken and 4 is free.
-    expect(codes(withBox(3))).toContain("entry.spectator-pit-box-taken")
-  })
-
-  it("says nothing when the spectator car is off", () => {
-    const c = withBox(0)
-    c.SpectatorCarEnabled = false
-    expect(codes(c)).not.toContain("entry.spectator-pit-box-taken")
-  })
-
-  it("points at the field the box was read from", () => {
-    expect(
-      run(withBox(0)).findings.find((x) => x.code === "entry.spectator-pit-box-taken")?.location
-        ?.path,
-    ).toBe("SpectatorCars[0].PitBox")
-
-    const older = championship({
-      SpectatorCarEnabled: true,
-      SpectatorCar: { Model: "ford_transit", PitBox: 0 },
-      Classes: [championshipClass({ Entrants: entryList(emptySlots(4)) })],
-      Events: [raceEvent({ EntryList: entryList(emptySlots(4)) })],
-    })
-    delete older.SpectatorCars
-    expect(
-      run(older).findings.find((x) => x.code === "entry.spectator-pit-box-taken")?.location?.path,
-    ).toBe("SpectatorCar.PitBox")
-  })
-
-  it("warns when two spectator cars share a box past the entry slots", () => {
-    const c = championship({
-      SpectatorCarEnabled: true,
-      SpectatorCars: [
-        { Model: "ford_transit", PitBox: 30 },
-        { Model: "ks_mazda_mx5_nd", Name: "Race Recorder", PitBox: 30 },
-      ],
-      Classes: [championshipClass({ Entrants: entryList(emptySlots(4)) })],
-      Events: [raceEvent({ EntryList: entryList(emptySlots(4)) })],
-    })
-    const found = run(c).findings.filter((f) => f.code === "entry.spectator-pit-box-taken")
-    expect(found.map((f) => f.location?.path)).toEqual(["SpectatorCars[1].PitBox"])
-    expect(found[0]?.message).toMatch(
-      /Spectator car 2 \(Race Recorder\) shares pit box 30 with spectator car 1/,
-    )
-  })
-
-  it("checks every spectator car's box, not only the stream car's", () => {
-    // A second spectator car, such as a race recorder, in an entrant's box is
-    // the same collision as the stream car in one.
-    const c = championship({
-      SpectatorCarEnabled: true,
-      SpectatorCars: [
-        { Model: "ford_transit", PitBox: 30 },
-        { Model: "ks_mazda_mx5_nd", Name: "Race Recorder", PitBox: 0 },
-      ],
-      Classes: [championshipClass({ Entrants: entryList(emptySlots(4)) })],
-      Events: [raceEvent({ EntryList: entryList(emptySlots(4)) })],
-    })
-    const found = run(c).findings.filter((f) => f.code === "entry.spectator-pit-box-taken")
-    expect(found.map((f) => f.location?.path)).toEqual(["SpectatorCars[1].PitBox"])
-    expect(found[0]?.message).toMatch(/Spectator car 2 \(Race Recorder\) is in pit box 0/)
-  })
-
-  it("suggests a box no other spectator car is in", () => {
-    const c = championship({
-      SpectatorCarEnabled: true,
-      SpectatorCars: [
-        { Model: "ford_transit", PitBox: 5 },
-        { Model: "ks_mazda_mx5_nd", Name: "Race Recorder", PitBox: 0 },
-      ],
-      Classes: [championshipClass({ Entrants: entryList(emptySlots(4)) })],
-      Events: [raceEvent({ EntryList: entryList(emptySlots(4)) })],
-    })
-    const found = run(c).findings.find((f) => f.code === "entry.spectator-pit-box-taken")
-    expect(found?.data).toMatchObject({ pitBox: 0, suggested: 4 })
   })
 })
 

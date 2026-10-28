@@ -255,45 +255,13 @@ export function emitChampionship(options: EmitOptions): EmitResult {
 
   // Through `spectatorCarRefs`, not off `base.SpectatorCar`: 2.4.x keeps the
   // real cars in `SpectatorCars` and leaves the singular field blank, so
-  // reading it directly derived the car list without the van in it. The
-  // `field` matters as well as the car, because each box below is written back
-  // to whichever field it came from.
+  // reading it directly derived the car list without the van in it.
   const spectatorRefs = spectatorCarRefs(base)
   const spectatorEnabled = spectatorRefs.length > 0
   const carList = derivedCars(cars, [...spectatorModels(base)])
   derived.push(
     `RaceSetup.Cars from the class car list${spectatorEnabled ? ` plus the spectator car${spectatorRefs.length > 1 ? "s" : ""}` : ""}`,
   )
-
-  /**
-   * The spectator cars go after every entry slot, never inside one, in order.
-   *
-   * `unclaimedEntryList` numbers slots 0..slots-1 and `CAR_n` *is* pit box n,
-   * so `slots` is the first box no entrant can hold. A clone inherits whatever
-   * box the template's spectator car had, and the championship this rule comes
-   * from inherited box 0 — the same box as `CAR_0`, where `AddInPitBox`
-   * overwrites on collision and the next form save drops one of the two. The
-   * league's own working championship parks it past the end; this makes that
-   * automatic rather than remembered. A second spectator car, such as a race
-   * recorder, takes the box after that.
-   *
-   * Written back to the field each car was read from. A build that keeps the
-   * car in the singular `SpectatorCar` has no `SpectatorCars` array; inventing
-   * one would leave the box unchanged in the field ACSM actually reads and add
-   * a key it doesn't.
-   */
-  const spectatorOverlay: Partial<Championship> = !spectatorEnabled
-    ? {}
-    : spectatorRefs[0]?.field === "SpectatorCar"
-      ? { SpectatorCar: { ...spectatorRefs[0].entrant, PitBox: slots } }
-      : { SpectatorCars: spectatorRefs.map((r, i) => ({ ...r.entrant, PitBox: slots + i })) }
-  if (spectatorEnabled) {
-    derived.push(
-      spectatorRefs.length === 1
-        ? `spectator car at pit box ${slots}, after the last entry slot`
-        : `spectator cars at pit boxes ${slots}–${slots + spectatorRefs.length - 1}, after the last entry slot`,
-    )
-  }
 
   const championshipClass: ChampionshipClass = {
     ...(templateClass ?? {}),
@@ -385,7 +353,6 @@ export function emitChampionship(options: EmitOptions): EmitResult {
     Classes: [championshipClass],
     Events: eventList,
     SignUpForm: signUpForm(base.SignUpForm, signUpsEnabled),
-    ...spectatorOverlay,
     ...(spec.description === undefined ? {} : { Description: spec.description }),
   }
 
