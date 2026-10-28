@@ -376,6 +376,18 @@ describe("editing the form", () => {
   })
 })
 
+describe("the presets", () => {
+  it("marks the one the race already is, until the race stops matching it", async () => {
+    await opened()
+    const preset = () => screen.getByRole("button", { name: /1x40/ })
+    expect(preset().getAttribute("aria-pressed")).toBe("true")
+    fireEvent.change(lengthField(), { target: { value: "22" } })
+    expect(preset().getAttribute("aria-pressed")).toBe("false")
+    fireEvent.click(preset())
+    expect(preset().getAttribute("aria-pressed")).toBe("true")
+  })
+})
+
 describe("the push button", () => {
   it("pushes the plan id it was shown, and nothing else", async () => {
     await opened()

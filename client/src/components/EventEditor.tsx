@@ -386,17 +386,22 @@ export function EventEditor({
         <section>
           <h2>Preset</h2>
           <div className="presets">
-            {config.formats.map((p) => (
-              <button
-                key={p.name}
-                type="button"
-                className="preset"
-                onClick={() => set(applyPreset(draft, p))}
-              >
-                <strong>{p.name}</strong>
-                <span>{describeFormat(p)}</span>
-              </button>
-            ))}
+            {config.formats.map((p) => {
+              // The race is already this preset when choosing it would change nothing.
+              const on = JSON.stringify(applyPreset(draft, p)) === JSON.stringify(draft)
+              return (
+                <button
+                  key={p.name}
+                  type="button"
+                  className={on ? "preset on" : "preset"}
+                  aria-pressed={on}
+                  onClick={() => set(applyPreset(draft, p))}
+                >
+                  <strong>{p.name}</strong>
+                  <span>{describeFormat(p)}</span>
+                </button>
+              )
+            })}
           </div>
           <p className="fineprint">
             Starting points, from {config.league.name}'s profile. Everything stays editable.
