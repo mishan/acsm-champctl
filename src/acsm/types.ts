@@ -262,7 +262,10 @@ export interface SignUpForm extends Unknowns {
 export interface Championship extends Unknowns {
   ID?: string
   Name?: string
+  /** The championship page's description on builds without `Info`. */
   Description?: string
+  /** The championship page's description as HTML, on 2.4.x, which has no `Description`. */
+  Info?: string
   Created?: string
   Updated?: string
   Version?: number

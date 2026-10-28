@@ -27,6 +27,7 @@ import type { FormFieldChange } from "../finalize/format.js"
 import { readFormat } from "../finalize/format.js"
 import type { CheckReport } from "../gridmom/finding.js"
 import type { EmitResult } from "../emit/championship.js"
+import { descriptionText } from "../info/description.js"
 import type { FinalizePlan } from "../finalize/plan.js"
 import { currentQualiStart, practiceMinutesFor } from "../finalize/schedule.js"
 import type { ReorderPlan } from "../reorder/plan.js"
@@ -78,7 +79,7 @@ export function championshipView(c: Championship, profile: LeagueProfile): Champ
     // starts from what is shown here. Trimming would quietly drop a leading
     // blank line or trailing newline the author put there — a change to their
     // text that nobody asked for and nobody would see happen.
-    description: c.Description ?? "",
+    description: descriptionText(c),
     rounds: events(c).map((ev, i) => roundView(ev, i + 1, profile)),
   }
 }

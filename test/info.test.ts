@@ -249,7 +249,7 @@ describe("ChampionshipInfo", () => {
     const first = pictured("one")
     const h = harness([first])
     await h.info.refresh()
-    first.Info = pictured("two").Info
+    first.Info = pictured("two").Info ?? ""
     await h.info.refresh()
     expect(h.edited.map((e) => Buffer.from(e.embed.file?.data ?? []).toString())).toEqual(["two"])
   })

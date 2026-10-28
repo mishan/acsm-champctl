@@ -1596,6 +1596,47 @@ describe("previewing a new championship", () => {
     expect(importedChampionship(h).Description).toBe("August was a good month.")
   })
 
+  /**
+   * 2.4.x keeps the page's description as HTML in `Info` and has no
+   * `Description`, so the box showed BATL's clones nothing and writing it left
+   * the source's real description in place.
+   */
+  describe("on a manager that keeps the description in Info", () => {
+    const INFO = '<h1>August</h1><p>A good month.</p><img src="https://example.test/a.png">'
+
+    it("shows it as text", async () => {
+      const h = harness({ championship: champ({ Info: INFO }) })
+      await h.login()
+      const res = await h.app.inject({
+        method: "GET",
+        url: `/api/championships/${CHAMP_ID}`,
+        headers: { cookie: h.cookie() },
+      })
+      expect(res.json().championship.description).toBe("August\n\nA good month.")
+    })
+
+    it.each([
+      ["keeps it as it was, pictures and all, when left alone", "August\n\nA good month.", INFO],
+      [
+        "writes changed text as paragraphs",
+        "September <3\n\nFive new tracks.",
+        "<p>September &lt;3</p><p>Five new tracks.</p>",
+      ],
+      ["clears it", "", ""],
+    ])("%s", async (_, description, info) => {
+      const h = harness({ championship: champ({ Info: INFO }) })
+      await h.login()
+      const planId = await previewedWith(h, { description })
+      await h.app.inject({
+        method: "POST",
+        url: `/api/championships/${planId}/create`,
+        headers: { cookie: h.cookie() },
+        payload: { acknowledgeWarnings: true },
+      })
+      expect(importedChampionship(h).Info).toBe(info)
+    })
+  })
+
   it("refuses an empty car list rather than reading it as 'inherit'", async () => {
     // `[]` is a class with no cars, not "leave it alone". The emitter refuses
     // it, and refusing at the schema says so about the request instead of
