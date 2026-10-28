@@ -436,7 +436,8 @@ button.secondary {
   color: var(--text);
 }
 
-button.link {
+button.link,
+a.link {
   background: none;
   border: 0;
   color: var(--muted);
@@ -444,9 +445,11 @@ button.link {
   font-size: 0.85rem;
   padding: 0.25rem 0;
   cursor: pointer;
+  text-decoration: none;
 }
 
-button.link:hover {
+button.link:hover,
+a.link:hover {
   color: var(--text);
 }
 

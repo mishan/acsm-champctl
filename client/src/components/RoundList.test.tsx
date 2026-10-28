@@ -72,7 +72,12 @@ function response(name: string, rounds: RoundView[] = [round()]): ChampionshipRe
 
 function renderList(championshipId: string) {
   return render(
-    <RoundList championshipId={championshipId} onOpenRound={() => {}} onAuthLost={() => {}} />,
+    <RoundList
+      championshipId={championshipId}
+      baseUrl="https://acsm.example"
+      onOpenRound={() => {}}
+      onAuthLost={() => {}}
+    />,
   )
 }
 
@@ -106,6 +111,13 @@ describe("opening a championship", () => {
     expect(screen.getByText("suzuka")).toBeTruthy()
   })
 
+  it("links to the championship in Server Manager", async () => {
+    championshipMock.mockResolvedValue(response("Summer Series"))
+    renderList("champ-1")
+    const link = await screen.findByRole("link", { name: /Open in Server Manager/ })
+    expect(link.getAttribute("href")).toBe("https://acsm.example/championship/champ-1")
+  })
+
   it("says so when it could not be loaded", async () => {
     championshipMock.mockRejectedValue(new ApiFailure(502, "acsm", "Server Manager answered 503."))
     renderList("champ-1")
@@ -127,7 +139,14 @@ describe("moving to another championship", () => {
     expect(await screen.findByText(/Server Manager answered 503/)).toBeTruthy()
 
     championshipMock.mockResolvedValueOnce(response("Winter Series"))
-    rerender(<RoundList championshipId="champ-2" onOpenRound={() => {}} onAuthLost={() => {}} />)
+    rerender(
+      <RoundList
+        championshipId="champ-2"
+        baseUrl="https://acsm.example"
+        onOpenRound={() => {}}
+        onAuthLost={() => {}}
+      />,
+    )
 
     expect(await screen.findByText("Winter Series")).toBeTruthy()
     expect(screen.queryByText(/Server Manager answered 503/)).toBeNull()
@@ -148,7 +167,14 @@ describe("moving to another championship", () => {
     const { rerender } = renderList("champ-1")
 
     championshipMock.mockResolvedValueOnce(response("Winter Series"))
-    rerender(<RoundList championshipId="champ-2" onOpenRound={() => {}} onAuthLost={() => {}} />)
+    rerender(
+      <RoundList
+        championshipId="champ-2"
+        baseUrl="https://acsm.example"
+        onOpenRound={() => {}}
+        onAuthLost={() => {}}
+      />,
+    )
     expect(await screen.findByText("Winter Series")).toBeTruthy()
 
     settleFirst?.(response("Summer Series"))

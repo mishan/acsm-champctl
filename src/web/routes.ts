@@ -160,7 +160,9 @@ export function apiContext(options: ApiContextOptions): ApiContext {
   const sessionTtlMs = options.sessionTtlMs ?? DEFAULT_TTL_MS
   return {
     profile: options.profile,
-    baseUrl: options.baseUrl,
+    // Without a trailing slash, since the client builds links to the manager's
+    // pages onto it and the session and reader already strip one.
+    baseUrl: options.baseUrl.replace(/\/+$/, ""),
     reader: options.reader,
     pits: options.pits ?? EMPTY_PIT_TABLE,
     sessions: options.sessions ?? new SessionStore({ ttlMs: sessionTtlMs }),
