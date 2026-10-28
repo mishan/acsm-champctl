@@ -408,6 +408,11 @@ describe("authentication", () => {
     expect(res.json().theme).toEqual({})
   })
 
+  it("offers no blank template unless the profile names one", async () => {
+    const res = await harness().app.inject({ method: "GET", url: "/api/config" })
+    expect(res.json().newChampionshipTemplate).toBeNull()
+  })
+
   it("keeps health probes out of the request log", async () => {
     // A container health check hits this every thirty seconds, which is
     // thousands of lines a day burying the requests anyone reads the log for.

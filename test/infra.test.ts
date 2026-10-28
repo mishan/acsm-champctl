@@ -444,6 +444,29 @@ describe("profile validation", () => {
     else expect(load).not.toThrow()
   })
 
+  it.each([
+    ["be7446cd-b2c0-4157-8094-4d16add5be9d", null],
+    ["  ", /must be a championship id/],
+    [42, /must be a championship id/],
+  ])("checks the new-championship template %j", (template, problem) => {
+    const load = () =>
+      validateProfile({
+        id: "x",
+        name: "X",
+        schedule: {
+          weekday: 3,
+          qualiStart: "20:00",
+          timezone: "UTC",
+          practiceMinutes: 60,
+          qualiMinutes: 20,
+        },
+        entryList: { targetSlots: 10 },
+        newChampionshipTemplate: template,
+      })
+    if (problem) expect(load).toThrow(problem)
+    else expect(load).not.toThrow()
+  })
+
   it("rejects a timezone this system doesn't know", () => {
     // Luxon doesn't throw on an unknown zone — setZone returns an invalid
     // DateTime and every method on it answers politely, so a transposed letter

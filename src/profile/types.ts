@@ -316,6 +316,12 @@ export interface LeagueProfile {
   baseline: Baseline
   /** Named format shorthands, offered as one-tap starting points in the UI. */
   formats?: FormatPreset[]
+  /**
+   * The championship a blank new one takes its shape from: server settings,
+   * sessions, entry list. Its cars, rounds and description don't come with it.
+   * Absent means new championships can only be cloned from a past one.
+   */
+  newChampionshipTemplate?: string
   /** Where `champctl-bot` posts. Absent means the league has no bot. */
   discord?: DiscordSettings
   /** The web UI's colors, as `#rgb` or `#rrggbb`. Unset ones keep the defaults. */

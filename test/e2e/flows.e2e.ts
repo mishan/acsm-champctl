@@ -154,7 +154,7 @@ test("creates a championship and finalizes a round of it", async ({ page }) => {
   const sourceName = process.env[SOURCE_NAME_VAR]
   expect(sourceName, "global setup did not seed a championship to clone").toBeTruthy()
 
-  const sources = page.getByLabel(/Clone from/)
+  const sources = page.getByLabel(/Start from/)
   await expect(sources).toBeVisible()
   // By label. Position would be whatever the manager's ordering happens to be.
   await sources.selectOption({ label: sourceName as string })

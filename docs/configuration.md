@@ -48,6 +48,16 @@ defaults.
 "theme": { "accent": "#f7a8c8", "onAccent": "#2a0614" }
 ```
 
+`newChampionshipTemplate` is the id of a championship the web UI can build a
+blank new one on. The new championship takes its server settings, sessions and
+entry list shape, and none of its cars, rounds or description. Without it, a
+new championship can only be cloned from a past one. The class name still
+comes from the template, so name its class for the league rather than a car.
+
+```json
+"newChampionshipTemplate": "be7446cd-b2c0-4157-8094-4d16add5be9d"
+```
+
 **Track pit counts.** `data/track-pits.json`, an array of records — see
 [`data/track-pits.example.json`](../data/track-pits.example.json). Three sources,
 with `manual` always winning, because mod tracks routinely lie in their ui file.

@@ -40,6 +40,8 @@ import { Venue } from "./Venue"
  */
 
 interface NewChampionshipProps {
+  /** The league's template, when it has one, for a championship started blank. */
+  template: string | null
   onCreated: (championshipId: string) => void
   onAuthLost: () => void
 }
@@ -47,6 +49,8 @@ interface NewChampionshipProps {
 /** The form's own state. Tracks are held as text so a half-typed row is legal. */
 interface Draft {
   sourceId: string
+  /** Built on the league's template with none of its cars or description, not cloned. */
+  blank: boolean
   name: string
   startDate: string
   /**
@@ -87,7 +91,11 @@ interface TrackRow {
 /** Long enough to finish typing a track name, short enough to feel live. */
 const PREVIEW_DEBOUNCE_MS = 350
 
+/** The source picker's value for a blank championship; never a championship id. */
+const BLANK = "blank"
+
 export function NewChampionship({
+  template,
   onCreated,
   onAuthLost,
 }: NewChampionshipProps): React.JSX.Element {
@@ -256,8 +264,22 @@ export function NewChampionship({
       return
     }
 
+    if (id === BLANK && template) {
+      setDraft({
+        sourceId: template,
+        blank: true,
+        name: "",
+        startDate: "",
+        cars: [],
+        description: "",
+        tracks: [],
+      })
+      return
+    }
+
     setDraft({
       sourceId: id,
+      blank: false,
       // Blank rather than the source's name. "August 2026" sitting in a
       // September field is the kind of default that gets pushed.
       name: "",
@@ -344,27 +366,33 @@ export function NewChampionship({
     <>
       <h1>New championship</h1>
       <p className="muted">
-        Built from a past championship: same cars, same class, same format. Name it, say when it
-        starts, and list the tracks.
+        {template ? "Start blank, or build" : "Built"} from a past championship: same cars, same
+        class, same format. Name it, say when it starts, and list the tracks.
       </p>
 
       <section>
-        <h2>Clone from</h2>
+        <h2>Start from</h2>
         <label htmlFor="source" className="visually-hidden">
-          Clone from
+          Start from
         </label>
         <select
           id="source"
-          value={draft?.sourceId ?? ""}
+          value={draft?.blank ? BLANK : (draft?.sourceId ?? "")}
           onChange={(e) => chooseSource(e.target.value)}
         >
           <option value="">Pick a championship…</option>
+          {template && <option value={BLANK}>Blank</option>}
           {sources.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
             </option>
           ))}
         </select>
+        {draft?.blank && (
+          <p className="fineprint">
+            The league's template's settings and sessions, and nothing of what it raced.
+          </p>
+        )}
         {sources.length === 0 && (
           <p className="fineprint">
             This manager has no championships yet, so there is nothing to clone. Build the first one
@@ -405,15 +433,18 @@ export function NewChampionship({
               placeholder="Shown on the championship page in Server Manager."
               onChange={(e) => set({ description: e.target.value })}
             />
-            <p className="fineprint">
-              Cloned from the championship above. Clear it for no description at all. Change it and
-              its formatting and pictures go, leaving plain paragraphs.
-            </p>
+            {!draft.blank && (
+              <p className="fineprint">
+                Cloned from the championship above. Clear it for no description at all. Change it
+                and its formatting and pictures go, leaving plain paragraphs.
+              </p>
+            )}
           </section>
 
           <CarList
             // A fresh list per source, so "Put the cars back" can't restore another championship's.
-            key={draft.sourceId}
+            key={draft.blank ? BLANK : draft.sourceId}
+            cloned={!draft.blank}
             chosen={draft.cars}
             installed={installed?.cars ?? []}
             loading={installed === null}
@@ -443,7 +474,9 @@ export function NewChampionship({
           <p className="muted">
             {draft?.sourceId
               ? "Name it and add at least one track."
-              : "Pick a championship to clone."}
+              : template
+                ? "Start blank, or pick a championship to clone."
+                : "Pick a championship to clone."}
           </p>
         )}
       </section>
@@ -514,6 +547,7 @@ function CarList({
   installed,
   loading,
   pending,
+  cloned,
   onChange,
 }: {
   chosen: readonly string[]
@@ -521,6 +555,8 @@ function CarList({
   loading: boolean
   /** The source's cars have not arrived yet, which is not the same as none. */
   pending: boolean
+  /** The list came from a championship, rather than starting empty. */
+  cloned: boolean
   onChange: (cars: string[]) => void
 }): React.JSX.Element {
   const nameOf = (id: string): string => installed.find((c) => c.id === id)?.name ?? id
@@ -531,7 +567,8 @@ function CarList({
     <section>
       <h2>Cars</h2>
       <p className="fineprint">
-        Everything the class can drive. Cloned from the championship above; change it here.
+        Everything the class can drive.
+        {cloned && " Cloned from the championship above; change it here."}
       </p>
 
       {chosen.length > 0 && (
