@@ -13,10 +13,11 @@ import {
   type PlanView,
   type RoundView,
 } from "../api"
-import { describeFormat, describeLength, venueLabel } from "../format"
+import { describeFormat, describeLength } from "../format"
 import { Picker } from "./Picker"
 import { Findings } from "./Findings"
 import { Message } from "./Message"
+import { Venue } from "./Venue"
 
 /**
  * One event of a championship — ACSM's word for a race night, and the object
@@ -358,7 +359,7 @@ export function EventEditor({
 
       <h1>
         <span className="round-number">{round}</span>
-        {venueLabel(current.venue) || "no track set"}
+        <Venue venue={current.venue} tracks={installed?.tracks ?? []} />
       </h1>
       <p className="muted">
         {/*

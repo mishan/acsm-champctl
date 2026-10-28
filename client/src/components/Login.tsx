@@ -53,6 +53,7 @@ export function Login({ config, onLoggedIn }: LoginProps): React.JSX.Element {
         <input
           id="username"
           name="username"
+          type="text"
           autoComplete="username"
           autoCapitalize="none"
           autoCorrect="off"
