@@ -928,6 +928,38 @@ describe("starting blank", () => {
     expect(screen.queryByRole("option", { name: /Blank/ })).toBeNull()
   })
 
+  it("doesn't take the template's cars from a clone of it still loading", async () => {
+    championshipsMock.mockResolvedValue({
+      championships: [{ id: TEMPLATE, name: "League template" }],
+    })
+    let release: ((r: ChampionshipResponse) => void) | undefined
+    championshipMock.mockReturnValue(
+      new Promise<ChampionshipResponse>((r) => {
+        release = r
+      }),
+    )
+    renderScreen(TEMPLATE)
+    await screen.findByLabelText(/Start from/)
+    fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: TEMPLATE } })
+    fireEvent.change(screen.getByLabelText(/Start from/), { target: { value: "blank" } })
+    expect(screen.queryByText(/Reading the cars/)).toBeNull()
+    await act(async () => {
+      release?.({
+        championship: {
+          id: TEMPLATE,
+          name: "League template",
+          timezone: "America/Los_Angeles",
+          cars: ["rss_formula_hybrid_2021"],
+          description: "The template's own words.",
+          rounds: [],
+        },
+        gridmom: report(),
+      })
+    })
+    expect(screen.queryByText("RSS Formula Hybrid 2021")).toBeNull()
+    expect((screen.getByLabelText("Description") as HTMLTextAreaElement).value).toBe("")
+  })
+
   it("builds on the template with none of its cars or description", async () => {
     renderScreen(TEMPLATE)
     await screen.findByLabelText(/Start from/)

@@ -56,11 +56,10 @@ interface Draft {
   /**
    * The class car list, as folder names.
    *
-   * Empty means "whatever the source ran", which is what cloning always did.
-   * The screen fills this in from the source instead of leaving it empty, so
-   * the cars are on screen rather than inherited silently — that invisibility
-   * is why the form could ask which tracks a season runs at and never mention
-   * what anyone would be driving.
+   * A clone starts with the source's, so the cars are on screen rather than
+   * inherited silently — that invisibility is why the form could ask which
+   * tracks a season runs at and never mention what anyone would be driving. A
+   * blank start has none until some are added, and empty previews nothing.
    */
   cars: string[]
   /**
@@ -135,6 +134,8 @@ export function NewChampionship({
 
   /** What was last asked for, so seeding the form doesn't ask for it again. */
   const lastSent = useRef<string | null>(null)
+  /** Which pick of the source is current, so an earlier pick's read lands nowhere. */
+  const sourcePick = useRef(0)
   const generation = useRef(0)
 
   useEffect(() => {
@@ -253,6 +254,8 @@ export function NewChampionship({
     setDone(null)
     setError(null)
     lastSent.current = null
+    const pick = ++sourcePick.current
+    setSourceCarsPending(false)
 
     // Back to "Pick a championship…". Without clearing the draft the rest of
     // the form stayed on screen with nothing selected, which reads as though a
@@ -264,22 +267,10 @@ export function NewChampionship({
       return
     }
 
-    if (id === BLANK && template) {
-      setDraft({
-        sourceId: template,
-        blank: true,
-        name: "",
-        startDate: "",
-        cars: [],
-        description: "",
-        tracks: [],
-      })
-      return
-    }
-
+    const blank = id === BLANK && template !== null
     setDraft({
-      sourceId: id,
-      blank: false,
+      sourceId: blank ? template : id,
+      blank,
       // Blank rather than the source's name. "August 2026" sitting in a
       // September field is the kind of default that gets pushed.
       name: "",
@@ -288,6 +279,7 @@ export function NewChampionship({
       description: "",
       tracks: [],
     })
+    if (blank) return
 
     // The source's cars, so the field shows what would be inherited rather
     // than leaving it to be discovered after the championship exists. Unlike
@@ -297,18 +289,18 @@ export function NewChampionship({
     void (async () => {
       try {
         const { championship } = await api.championship(id)
-        // Only if they are still on the same source. Picking one, changing
-        // your mind, and having the first one's cars land a moment later is
-        // the exact shape of bug the preview effect's `generation` exists for.
+        // Only if this is still the current pick. Picking one, changing your
+        // mind, and having the first one's cars land a moment later is the
+        // exact shape of bug the preview effect's `generation` exists for —
+        // and comparing ids isn't enough, since Blank uses the template's.
+        if (pick !== sourcePick.current) return
         setDraft((d) =>
-          d && d.sourceId === id
-            ? { ...d, cars: championship.cars, description: championship.description }
-            : d,
+          d ? { ...d, cars: championship.cars, description: championship.description } : d,
         )
       } catch (e) {
-        setError(describe(e))
+        if (pick === sourcePick.current) setError(describe(e))
       } finally {
-        setSourceCarsPending(false)
+        if (pick === sourcePick.current) setSourceCarsPending(false)
       }
     })()
   }
@@ -366,8 +358,10 @@ export function NewChampionship({
     <>
       <h1>New championship</h1>
       <p className="muted">
-        {template ? "Start blank, or build" : "Built"} from a past championship: same cars, same
-        class, same format. Name it, say when it starts, and list the tracks.
+        {template
+          ? "Start blank, or from a past championship with its cars, class and format."
+          : "Built from a past championship: same cars, same class, same format."}{" "}
+        Name it, say when it starts, and list the tracks.
       </p>
 
       <section>
@@ -393,7 +387,7 @@ export function NewChampionship({
             The league's template's settings and sessions, and nothing of what it raced.
           </p>
         )}
-        {sources.length === 0 && (
+        {sources.length === 0 && !template && (
           <p className="fineprint">
             This manager has no championships yet, so there is nothing to clone. Build the first one
             with `champctl-championship build`.
