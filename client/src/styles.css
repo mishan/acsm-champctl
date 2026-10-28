@@ -212,9 +212,11 @@ h2 {
 }
 
 /* A round that has run stays visible and stops looking like a destination.
-   Hiding it would be worse: the list would silently renumber. */
+   Hiding it would be worse: the list would silently renumber. Muted text
+   rather than a faded row, which took its text to under 3:1 against the row. */
 .row-done {
-  opacity: 0.6;
+  color: var(--muted);
+  background: var(--bg);
 }
 
 .tag {
