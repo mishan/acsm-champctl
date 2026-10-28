@@ -17,12 +17,15 @@ import { Venue } from "./Venue"
 
 interface RoundListProps {
   championshipId: string
+  /** The manager's address, for the link to this championship there. */
+  baseUrl: string
   onOpenRound: (round: number) => void
   onAuthLost: () => void
 }
 
 export function RoundList({
   championshipId,
+  baseUrl,
   onOpenRound,
   onAuthLost,
 }: RoundListProps): React.JSX.Element {
@@ -116,6 +119,14 @@ export function RoundList({
   return (
     <>
       <h1>{championship.name}</h1>
+      <a
+        className="link"
+        href={`${baseUrl}/championship/${encodeURIComponent(championshipId)}`}
+        target="_blank"
+        rel="noreferrer"
+      >
+        Open in Server Manager ↗
+      </a>
 
       {/*
         The health of the championship as it stands, before anyone edits

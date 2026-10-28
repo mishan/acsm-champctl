@@ -370,6 +370,14 @@ export function EventEditor({
         <span className="round-number">{round}</span>
         <Venue venue={current.venue} tracks={installed?.tracks ?? []} />
       </h1>
+      <a
+        className="link"
+        href={`${config.baseUrl}/championship/${encodeURIComponent(championshipId)}/event/${encodeURIComponent(current.eventId)}/edit?server=0`}
+        target="_blank"
+        rel="noreferrer"
+      >
+        Open in Server Manager ↗
+      </a>
       <p className="muted">
         {/*
           "Event" because that is what ACSM calls this object, and someone

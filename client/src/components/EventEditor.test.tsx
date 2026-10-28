@@ -301,6 +301,15 @@ describe("opening a round", () => {
   })
 })
 
+describe("the link to Server Manager", () => {
+  it("opens this round's event there", async () => {
+    await opened()
+    expect(
+      screen.getByRole("link", { name: /Open in Server Manager/ }).getAttribute("href"),
+    ).toMatch(/\/championship\/[^/]+\/event\/event-1\/edit\?server=0$/)
+  })
+})
+
 describe("editing the form", () => {
   it("re-previews once the typing stops", async () => {
     await opened()

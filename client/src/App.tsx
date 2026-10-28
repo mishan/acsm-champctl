@@ -103,6 +103,7 @@ export function App(): React.JSX.Element {
         {route.name === "championship" && (
           <RoundList
             championshipId={route.id}
+            baseUrl={config.baseUrl}
             onOpenRound={(round) => navigate({ name: "round", id: route.id, round })}
             onAuthLost={onAuthLost}
           />
