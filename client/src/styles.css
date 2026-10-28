@@ -882,6 +882,21 @@ button.link:hover {
   white-space: nowrap;
 }
 
+/* A track's name with its folder name, which drops under it when they don't fit. */
+.venue {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.5rem;
+  min-width: 0;
+}
+
+.venue .picker-id {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-weight: normal;
+}
+
 .picker-list [role="option"].active .picker-id {
   color: rgb(255 255 255 / 80%);
 }

@@ -13,6 +13,7 @@ import { moveItem, useReorder } from "../reorder"
 import { Findings } from "./Findings"
 import { Message } from "./Message"
 import { Picker } from "./Picker"
+import { Venue } from "./Venue"
 
 /**
  * Create a championship (plan §5.1), by cloning a past one.
@@ -426,7 +427,7 @@ export function NewChampionship({
         </h2>
 
         {error && <Message kind="error" title="champctl refused this" body={error} />}
-        {plan && <Review plan={plan} />}
+        {plan && <Review plan={plan} tracks={installed?.tracks ?? []} />}
         {!plan && !error && !previewing && (
           <p className="muted">
             {draft?.sourceId
@@ -789,7 +790,13 @@ function TrackList({
  * derived list is here because "what did it decide for me?" is the question a
  * review screen exists to answer, and every entry in it was a real bug once.
  */
-function Review({ plan }: { plan: NewChampionshipPlan }): React.JSX.Element {
+function Review({
+  plan,
+  tracks,
+}: {
+  plan: NewChampionshipPlan
+  tracks: readonly InstalledItem[]
+}): React.JSX.Element {
   return (
     <>
       <ol className="list">
@@ -798,7 +805,7 @@ function Review({ plan }: { plan: NewChampionshipPlan }): React.JSX.Element {
             <span className="row-main">
               <span className="row-title">
                 <span className="round-number">{r.round}</span>
-                {r.label}
+                <Venue venue={{ track: r.track, layout: r.layout ?? "" }} tracks={tracks} />
               </span>
               <span className="row-sub">
                 {r.quali.display}

@@ -5,6 +5,7 @@ import {
   api,
   type CheckReport,
   type ChampionshipView,
+  type InstalledItem,
   type ReorderPlanView,
   type RoundView,
 } from "../api"
@@ -12,6 +13,7 @@ import { describeFormat, venueLabel } from "../format"
 import { moveItem, movedPositions, useReorder } from "../reorder"
 import { Findings, findingSummary } from "./Findings"
 import { Message } from "./Message"
+import { Venue } from "./Venue"
 
 interface RoundListProps {
   championshipId: string
@@ -32,6 +34,20 @@ export function RoundList({
   /** The running order being tried, as 1-based source rounds. Null when not reordering. */
   const [order, setOrder] = useState<number[] | null>(null)
   const describe = useAuthAware(onAuthLost)
+  // For the tracks' names. Without them the rows show folder names, which is
+  // all a failed read costs, so it fails quietly.
+  const [tracks, setTracks] = useState<readonly InstalledItem[]>([])
+
+  useEffect(() => {
+    let live = true
+    api.content().then(
+      (c) => live && setTracks(c.tracks),
+      () => {},
+    )
+    return () => {
+      live = false
+    }
+  }, [])
 
   useEffect(() => {
     // Cleared on the way in, not only on the way out. `error` short-circuits
@@ -92,6 +108,7 @@ export function RoundList({
         }}
         onCancel={() => setOrder(null)}
         onAuthLost={onAuthLost}
+        tracks={tracks}
       />
     )
   }
@@ -120,7 +137,7 @@ export function RoundList({
       <ul className="list">
         {championship.rounds.map((r) => (
           <li key={r.eventId || r.round}>
-            <Round round={r} onOpen={() => onOpenRound(r.round)} />
+            <Round round={r} tracks={tracks} onOpen={() => onOpenRound(r.round)} />
           </li>
         ))}
       </ul>
@@ -140,13 +157,21 @@ export function RoundList({
   )
 }
 
-function Round({ round, onOpen }: { round: RoundView; onOpen: () => void }): React.JSX.Element {
+function Round({
+  round,
+  tracks,
+  onOpen,
+}: {
+  round: RoundView
+  tracks: readonly InstalledItem[]
+  onOpen: () => void
+}): React.JSX.Element {
   return (
     <button type="button" className={`row ${round.started ? "row-done" : ""}`} onClick={onOpen}>
       <span className="row-main">
         <span className="row-title">
           <span className="round-number">{round.round}</span>
-          {venueLabel(round.venue) || "no track set"}
+          <Venue venue={round.venue} tracks={tracks} />
         </span>
         <span className="row-sub">
           {describeFormat(round.format)}
@@ -201,6 +226,7 @@ function Reorder({
   onDone,
   onCancel,
   onAuthLost,
+  tracks,
 }: {
   championshipId: string
   rounds: RoundView[]
@@ -209,6 +235,7 @@ function Reorder({
   onDone: () => void
   onCancel: () => void
   onAuthLost: () => void
+  tracks: readonly InstalledItem[]
 }): React.JSX.Element {
   const [plan, setPlan] = useState<ReorderPlanView | null>(null)
   /**
@@ -394,7 +421,7 @@ function Reorder({
                 {i + 1}
               </span>
               <span className="row-title">
-                {round ? venueLabel(round.venue) || "no track set" : ""}
+                {round && <Venue venue={round.venue} tracks={tracks} />}
                 {source !== i + 1 && <span className="tag tag-quiet">was {source}</span>}
               </span>
               {/* The night this slot keeps, whatever ends up racing on it. */}

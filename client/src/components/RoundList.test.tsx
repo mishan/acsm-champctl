@@ -11,9 +11,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ApiFailure } from "../api"
-import type { ChampionshipResponse, ReorderPlanView, RoundView } from "../api"
+import type { ChampionshipResponse, ContentResponse, ReorderPlanView, RoundView } from "../api"
 
-const { championshipMock, planReorderMock, applyReorderMock } = vi.hoisted(() => ({
+const { championshipMock, planReorderMock, applyReorderMock, contentMock } = vi.hoisted(() => ({
+  contentMock: vi.fn<() => Promise<ContentResponse>>(),
   championshipMock: vi.fn<(...args: unknown[]) => Promise<ChampionshipResponse>>(),
   planReorderMock: vi.fn<(...args: unknown[]) => Promise<{ plan: ReorderPlanView }>>(),
   applyReorderMock: vi.fn<(...args: unknown[]) => Promise<{ rounds: number[] }>>(),
@@ -28,6 +29,7 @@ vi.mock("../api", async (importOriginal) => {
       championship: championshipMock,
       planReorder: planReorderMock,
       applyReorder: applyReorderMock,
+      content: contentMock,
     },
   }
 })
@@ -78,6 +80,8 @@ beforeEach(() => {
   championshipMock.mockReset()
   planReorderMock.mockReset()
   applyReorderMock.mockReset()
+  contentMock.mockReset()
+  contentMock.mockRejectedValue(new ApiFailure(502, "acsm", "Server Manager answered 503."))
 })
 
 afterEach(cleanup)
@@ -88,6 +92,18 @@ describe("opening a championship", () => {
     renderList("champ-1")
     expect(await screen.findByText("Summer Series")).toBeTruthy()
     expect(screen.getByText(/suzuka/)).toBeTruthy()
+  })
+
+  it("names each track, with its folder name beside it", async () => {
+    contentMock.mockResolvedValue({
+      cars: [],
+      tracks: [{ id: "suzuka", name: "Suzuka Circuit" }],
+      layouts: null,
+    })
+    championshipMock.mockResolvedValue(response("Summer Series"))
+    renderList("champ-1")
+    expect(await screen.findByText(/Suzuka Circuit/)).toBeTruthy()
+    expect(screen.getByText("suzuka")).toBeTruthy()
   })
 
   it("says so when it could not be loaded", async () => {
