@@ -82,6 +82,7 @@ const champ = (over: Partial<Championship> = {}): Championship =>
   })
 
 interface HarnessOptions {
+  baseUrl?: string
   championship?: Championship
   /** Event HTML per GET, in order; the last is reused. */
   eventPages?: string[]
@@ -219,7 +220,7 @@ function harness(options: HarnessOptions = {}): Harness {
 
   const app = buildServer({
     profile: testProfile(),
-    baseUrl: BASE_URL,
+    baseUrl: options.baseUrl ?? BASE_URL,
     reader: options.reader ?? new StaticAcsmReader([options.championship ?? champ()]),
     pits: pitTable([suzukaPits]),
     // A real session over a scripted socket: the cookie jar, the redirect
@@ -391,6 +392,15 @@ describe("authentication", () => {
     expect(res.statusCode).toBe(502)
     expect(res.body).not.toContain("ECONNREFUSED")
     expect(log.join("")).toContain("ECONNREFUSED 10.0.0.5:8772")
+  })
+
+  it("gives the client the manager's address without a trailing slash", async () => {
+    // The client appends `/championship/…` for its links to the manager.
+    const res = await harness({ baseUrl: `${BASE_URL}/` }).app.inject({
+      method: "GET",
+      url: "/api/config",
+    })
+    expect(res.json().baseUrl).toBe(BASE_URL)
   })
 
   it("keeps health probes out of the request log", async () => {
