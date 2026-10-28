@@ -297,10 +297,9 @@ ACSM source rather than guessed. The load-bearing parts:
   Reading the singular field is why the emitter left the van out of
   `RaceSetup.Cars`, and why a "spectator car has no model" check fired on a
   championship whose spectator car was configured perfectly.
-- **The spectator car parks after the last entry slot.** `CAR_n` is pit box n,
-  so any box below the slot count belongs to an entrant and `AddInPitBox`
-  overwrites on collision. The emitter sets it; `entry.spectator-pit-box-taken`
-  catches a championship champctl didn't build.
+- **Spectator cars take no pit box.** They're configured apart from the entry
+  list, so a spectator car's `PitBox` matching an entrant's is fine. gridmom
+  has twice warned otherwise; don't bring it back.
 - **Types are deliberately loose.** ACSM's championship schema is a large
   undocumented Go struct that drifts across versions, so we model only what we
   read and let everything else flow through. Don't tighten them.

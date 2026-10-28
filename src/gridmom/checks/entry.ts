@@ -148,6 +148,11 @@ function freeBoxes(used: Set<number>, size: number): number[] {
  * one describes a policy a league might genuinely hold; this one described a
  * collision that does not happen, and an option to be told about it anyway is
  * an option nobody should take.
+ *
+ * It came back once, as `entry.spectator-pit-box-taken`, a WARN that a save
+ * would drop one of the two. It doesn't: spectator cars are configured apart
+ * from the entry list, and October 2026 kept both drivers in boxes 21 and 22
+ * through saves with its spectator cars in the same boxes.
  */
 
 export const maxClientsExceedsPits: Check = {
@@ -730,76 +735,6 @@ export const spectatorCarWithoutModel: Check = {
   },
 }
 
-/**
- * The stream car is parked in a box an entrant can hold.
- *
- * `CAR_n` *is* pit box n, so any box below the entry list's length belongs to
- * a slot. `AddInPitBox` overwrites on collision (docs §3), so the next form
- * save drops one of the two — and which one is not something anybody chose.
- *
- * Found on a live championship whose spectator car sat at box 0, cloned from a
- * template where it sat at 29. It had not bitten yet only because no entrant
- * had reached box 0; the league's working championship parks the van past the
- * end of the list, which is the convention this states.
- *
- * The box is compared against the *longest* list in the championship, since the
- * class list and each event's are meant to be the same length and a save
- * propagates between them.
- */
-export const spectatorCarInAnEntrantsBox: Check = {
-  id: "entry.spectator-pit-box-taken",
-  section: "6.1",
-  run(ctx, emit) {
-    const refs = spectatorCarRefs(ctx.championship)
-    const longest = Math.max(0, ...[...allLists(ctx)].map(({ list }) => slots(list).length))
-    const name = (i: number): string =>
-      refs.length > 1
-        ? `spectator car ${i + 1}${refs[i]?.entrant.Name ? ` (${refs[i]?.entrant.Name})` : ""}`
-        : "the spectator car"
-    const holder = new Map<number, number>()
-    // Suggestions past the list that no spectator car holds or has been offered.
-    const taken = new Set(refs.map((r) => r.entrant.PitBox))
-    const nextFree = (): number => {
-      let box = longest
-      while (taken.has(box)) box++
-      taken.add(box)
-      return box
-    }
-    refs.forEach((ref, i) => {
-      const box = ref.entrant.PitBox
-      if (typeof box !== "number" || !Number.isFinite(box)) return
-      // A recorder set up by copying the stream car keeps the stream car's
-      // box, past the entry slots where the check below can't see it.
-      const first = holder.get(box)
-      if (first !== undefined) {
-        emit(
-          "WARN",
-          "entry.spectator-pit-box-taken",
-          `${cap(name(i))} shares pit box ${box} with ${name(first)}, so the next save drops one of them. ` +
-            `Give each spectator car a box of its own past the entry list.`,
-          { path: `${ref.field}.PitBox` },
-          { pitBox: box, sharedWith: refs[first]!.field, field: ref.field },
-        )
-        return
-      }
-      holder.set(box, i)
-      if (longest === 0 || box >= longest) return
-      const which = cap(name(i))
-      const suggested = nextFree()
-      emit(
-        "WARN",
-        "entry.spectator-pit-box-taken",
-        `${which} is in pit box ${box}, which is one of the ${longest} entry list slots. ` +
-          `Two cars in one box means the next save drops one of them — park it at ${suggested}, ` +
-          `past the end of the list.`,
-        // Where the box was read from, so the path is somewhere to go and look.
-        { path: `${ref.field}.PitBox` },
-        { pitBox: box, slots: longest, suggested, field: ref.field },
-      )
-    })
-  },
-}
-
 export const entryChecks: readonly Check[] = [
   duplicatePitBox,
   maxClientsExceedsPits,
@@ -814,7 +749,6 @@ export const entryChecks: readonly Check[] = [
   acceptedSignUpWithoutSlot,
   unclaimedSlotNotSentinel,
   spectatorCarWithoutModel,
-  spectatorCarInAnEntrantsBox,
 ]
 
 // Re-exported for the emit signature's benefit; keeps imports honest.
