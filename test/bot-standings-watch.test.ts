@@ -72,6 +72,16 @@ describe("StandingsWatch", () => {
     expect(posts).toEqual(["October"])
   })
 
+  it("posts the last round of a championship, when the round before was a week ago", async () => {
+    const { watch, evs, posts } = harness([{ completed: at(-7 * 24 * 60).toISOString() }, {}])
+    await watch.tick(at(0))
+    evs[1]!.Sessions = { RACE: { CompletedTime: at(5).toISOString(), Results: {} } } as never
+    await watch.tick(at(16))
+    evs[1]!.CompletedTime = at(30).toISOString()
+    await watch.tick(at(31))
+    expect(posts).toEqual(["October"])
+  })
+
   it("doesn't post a round that was raced before it started watching", async () => {
     const { watch, posts } = harness([{ completed: at(-60).toISOString() }, {}])
     await watch.tick(at(0))
