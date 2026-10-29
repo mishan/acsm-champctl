@@ -7,11 +7,9 @@
  * second race finished, and not before. A session's results appear as each
  * one ends, so they would post the standings after the first race.
  *
- * Only completions it sees happen are posted. A championship's first good
- * read takes every round already raced as posted, so a restart doesn't repeat
- * last week's, even when that read only succeeds on a later tick; and a stamp
- * older than RECENT is never posted. A round that finished while the bot was
- * down goes unposted, which `champctl-bot standings` covers.
+ * A round raced in the last RECENT and not in `posted` is posted, so one that
+ * finished while the bot was down or restarting goes out when it's back. An
+ * older stamp never is: that is `champctl-bot standings`' job.
  */
 
 import type { AcsmReader } from "../acsm/client.js"
@@ -23,7 +21,7 @@ import { finishedAt } from "./trophies.js"
 const MINUTE = 60_000
 /** How often the championship list is re-read, for one created mid-season. */
 const REFRESH = 15 * MINUTE
-/** A stamp older than this is a round raced before the bot was watching. */
+/** A stamp older than this is left to `champctl-bot standings`. */
 const RECENT = 3 * 60 * MINUTE
 
 export interface StandingsWatchOptions {
@@ -39,6 +37,8 @@ export interface StandingsWatchOptions {
   notify: (content: string) => Promise<void>
   log: (line: string) => void
   finished?: FinishedChampionships
+  /** Rounds whose standings went out, by completion key, kept across restarts. */
+  posted?: { has(key: string): boolean; add(key: string): void }
 }
 
 export class StandingsWatch {
@@ -47,8 +47,6 @@ export class StandingsWatch {
   readonly #seen = new Set<string>()
   /** Completions the admins were told failed to post, so a retry doesn't tell them again. */
   readonly #failed = new Set<string>()
-  /** Championships read at least once, whose old completions are in `#seen`. */
-  readonly #primed = new Set<string>()
   /** Championships with every round raced, and long enough ago. */
   readonly #finished = new Set<string>()
   #active: string[] = []
@@ -111,14 +109,11 @@ export class StandingsWatch {
           ]
         : [],
     )
-    if (!this.#primed.has(id)) {
-      for (const r of raced) this.#seen.add(r.key)
-      this.#primed.add(id)
-      return
-    }
     // One post covers every round newly raced: a night run as two events, or
     // a stretch of failed reads, still posts the standings once.
-    const fresh = raced.filter((r) => !this.#seen.has(r.key) && t - r.at <= RECENT)
+    const fresh = raced.filter(
+      (r) => !this.#seen.has(r.key) && !this.#o.posted?.has(r.key) && t - r.at <= RECENT,
+    )
     const r = fresh.at(-1)
     if (!r || this.#stopped) return
     for (const f of fresh) this.#seen.add(f.key)
@@ -129,6 +124,7 @@ export class StandingsWatch {
       const warned = await this.#o.post(id, name, () => {
         sent = true
       })
+      for (const f of fresh) this.#o.posted?.add(f.key)
       if (warned) {
         await this.#tell(
           `${name}'s standings are posted, but ACSM's and champctl's own disagreed, or ACSM's ` +
@@ -138,7 +134,8 @@ export class StandingsWatch {
     } catch (e) {
       // Tried again next tick, for as long as the round is RECENT, unless part
       // of it went out already.
-      if (!sent) for (const f of fresh) this.#seen.delete(f.key)
+      if (sent) for (const f of fresh) this.#o.posted?.add(f.key)
+      else for (const f of fresh) this.#seen.delete(f.key)
       if (this.#failed.has(r.key)) return
       this.#failed.add(r.key)
       await this.#tell(
@@ -182,7 +179,7 @@ export class StandingsWatch {
       if (all.length > 0 && all.every((ev) => eventHasResults(ev)) && !(t - last <= RECENT)) {
         this.#finished.add(id)
         this.#o.finished?.add(id)
-        if (!this.#primed.has(id)) continue
+        continue
       } else active.push(id)
       await this.#check(id, c, t)
     }

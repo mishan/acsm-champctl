@@ -1257,6 +1257,7 @@ async function serve(args: Args): Promise<number> {
       stopStandings = new StandingsWatch({
         reader,
         finished: finished.for("standings"),
+        posted: posted(finished.for("standings-posted")),
         log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
         post: async (id, name, sent) => {
           const championship = await reader.exportChampionship(id)
@@ -1314,6 +1315,14 @@ async function serve(args: Args): Promise<number> {
     queue.close()
     claims.close()
   }
+}
+
+/** Posted rounds, kept in the finished table under a watcher name of their own. */
+function posted(store: FinishedChampionships): {
+  has(key: string): boolean
+  add(key: string): void
+} {
+  return { has: (key) => store.all().has(key), add: (key) => store.add(key) }
 }
 
 async function connect(options: { voice?: boolean } = {}): Promise<DiscordTransport> {
