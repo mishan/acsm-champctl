@@ -76,6 +76,7 @@ function renderList(championshipId: string) {
       championshipId={championshipId}
       baseUrl="https://acsm.example"
       onOpenRound={() => {}}
+      onOpenSignUps={() => {}}
       onAuthLost={() => {}}
     />,
   )
@@ -144,6 +145,7 @@ describe("moving to another championship", () => {
         championshipId="champ-2"
         baseUrl="https://acsm.example"
         onOpenRound={() => {}}
+        onOpenSignUps={() => {}}
         onAuthLost={() => {}}
       />,
     )
@@ -172,6 +174,7 @@ describe("moving to another championship", () => {
         championshipId="champ-2"
         baseUrl="https://acsm.example"
         onOpenRound={() => {}}
+        onOpenSignUps={() => {}}
         onAuthLost={() => {}}
       />,
     )

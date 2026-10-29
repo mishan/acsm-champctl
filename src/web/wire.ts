@@ -460,6 +460,39 @@ export interface NewChampionshipResponse {
 }
 
 /** The body of every non-2xx response. */
+/** One sign-up, as the queue shows it. */
+export interface SignUpView {
+  /** Steam ID, which is how ACSM finds the sign-up. */
+  guid: string
+  name: string
+  team: string
+  car: string
+  skin: string
+  /** ISO time it was sent. */
+  created: string
+  /** As ACSM stores it: "Pending Approval", "Accepted" or "Rejected". */
+  status: string
+  questions: { question: string; answer: string }[]
+  /** Holds a seat in the class entry list. */
+  seated: boolean
+  /** Why accepting would be refused, when it would be. */
+  cantAccept?: string
+}
+
+export interface SignUpsResponse {
+  championship: { id: string; name: string }
+  /** Sign-ups are switched on for the championship. */
+  open: boolean
+  /** Pending first, newest first within each status. */
+  signUps: SignUpView[]
+}
+
+export interface SignUpActionRequest {
+  action: "accept" | "reject"
+  /** Rejecting a seated driver takes their seat; this says that was meant. */
+  confirm?: boolean
+}
+
 export interface ErrorResponse {
   error: {
     /** Stable machine code, so the UI branches without matching on prose. */

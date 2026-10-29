@@ -20,6 +20,7 @@ interface RoundListProps {
   /** The manager's address, for the link to this championship there. */
   baseUrl: string
   onOpenRound: (round: number) => void
+  onOpenSignUps: () => void
   onAuthLost: () => void
 }
 
@@ -27,6 +28,7 @@ export function RoundList({
   championshipId,
   baseUrl,
   onOpenRound,
+  onOpenSignUps,
   onAuthLost,
 }: RoundListProps): React.JSX.Element {
   const [data, setData] = useState<{ championship: ChampionshipView; gridmom: CheckReport } | null>(
@@ -153,8 +155,11 @@ export function RoundList({
         ))}
       </ul>
 
-      {championship.rounds.length > 1 && (
-        <div className="actions">
+      <div className="actions">
+        <button type="button" className="secondary" onClick={onOpenSignUps}>
+          Sign-ups
+        </button>
+        {championship.rounds.length > 1 && (
           <button
             type="button"
             className="secondary"
@@ -162,8 +167,8 @@ export function RoundList({
           >
             Reorder rounds
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </>
   )
 }

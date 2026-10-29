@@ -43,6 +43,9 @@ import type {
   ReorderResponse,
   RoundView,
   SessionResponse,
+  SignUpActionRequest,
+  SignUpsResponse,
+  SignUpView,
   TrackRequest,
 } from "../../src/web/wire.js"
 
@@ -77,6 +80,8 @@ export type {
   ReorderResponse,
   RoundView,
   Severity,
+  SignUpsResponse,
+  SignUpView,
   TrackRequest,
 }
 
@@ -253,4 +258,15 @@ export const api = {
    */
   applyReorder: (planId: string, acknowledgeWarnings: boolean): Promise<ReorderResponse> =>
     request(`/reorders/${encodeURIComponent(planId)}/apply`, json({ acknowledgeWarnings })),
+
+  /** A championship's sign-ups, read logged in: the public export leaves them out. */
+  signUps: (id: string): Promise<SignUpsResponse> =>
+    request(`/championships/${encodeURIComponent(id)}/signups`),
+
+  /** Accept or reject one. Answers with the sign-ups as they are afterwards. */
+  signUpAction: (id: string, guid: string, body: SignUpActionRequest): Promise<SignUpsResponse> =>
+    request(
+      `/championships/${encodeURIComponent(id)}/signups/${encodeURIComponent(guid)}`,
+      json(body),
+    ),
 }

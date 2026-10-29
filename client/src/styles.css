@@ -452,6 +452,11 @@ button.secondary {
   color: var(--text);
 }
 
+button.secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 button.link,
 a.link {
   background: none;
@@ -727,7 +732,36 @@ a.link:hover {
 .actions {
   display: flex;
   justify-content: flex-end;
+  gap: 0.5rem;
   margin-bottom: 0.75rem;
+}
+
+/* --- sign-ups ----------------------------------------------------------- */
+
+.signup-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.signup-answers {
+  margin: 0.4rem 0 0;
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+}
+
+.signup-answers div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.5rem;
+}
+
+.signup-answers dt {
+  color: var(--muted);
+}
+
+.signup-answers dd {
+  margin: 0;
 }
 
 /*

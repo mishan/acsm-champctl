@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 
 import { api, isAuthFailure, type Config, type SessionState } from "./api"
 import { ChampionshipList } from "./components/ChampionshipList"
+import { SignUps } from "./components/SignUps"
 import { applyTheme, rememberTheme } from "./theme"
 import { EventEditor } from "./components/EventEditor"
 import { Login } from "./components/Login"
@@ -110,6 +111,14 @@ export function App(): React.JSX.Element {
             championshipId={route.id}
             baseUrl={config.baseUrl}
             onOpenRound={(round) => navigate({ name: "round", id: route.id, round })}
+            onOpenSignUps={() => navigate({ name: "signups", id: route.id })}
+            onAuthLost={onAuthLost}
+          />
+        )}
+        {route.name === "signups" && (
+          <SignUps
+            championshipId={route.id}
+            onBack={() => navigate({ name: "championship", id: route.id })}
             onAuthLost={onAuthLost}
           />
         )}
