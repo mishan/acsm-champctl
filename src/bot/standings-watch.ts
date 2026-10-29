@@ -13,7 +13,7 @@
  */
 
 import type { AcsmReader } from "../acsm/client.js"
-import type { Championship } from "../acsm/types.js"
+import type { Championship, ChampionshipEvent } from "../acsm/types.js"
 import { eventHasResults, events, isZeroTime } from "../acsm/view.js"
 import type { FinishedChampionships } from "./finished.js"
 import { finishedAt } from "./trophies.js"
@@ -23,6 +23,11 @@ const MINUTE = 60_000
 const REFRESH = 15 * MINUTE
 /** A stamp older than this is left to `champctl-bot standings`. */
 const RECENT = 3 * 60 * MINUTE
+
+export interface PostedRounds {
+  has(key: string): boolean
+  add(key: string): void
+}
 
 export interface StandingsWatchOptions {
   reader: AcsmReader
@@ -37,8 +42,8 @@ export interface StandingsWatchOptions {
   notify: (content: string) => Promise<void>
   log: (line: string) => void
   finished?: FinishedChampionships
-  /** Rounds whose standings went out, by completion key, kept across restarts. */
-  posted?: { has(key: string): boolean; add(key: string): void }
+  /** Rounds whose standings went out, by `roundKey`, kept across restarts. */
+  posted?: PostedRounds
 }
 
 export class StandingsWatch {
@@ -102,7 +107,7 @@ export class StandingsWatch {
       ev.CompletedTime && !isZeroTime(ev.CompletedTime)
         ? [
             {
-              key: `${ev.ID ?? index}#${ev.CompletedTime}`,
+              key: roundKey(ev, index),
               at: Date.parse(ev.CompletedTime),
               index,
             },
@@ -186,6 +191,11 @@ export class StandingsWatch {
     this.#active = active
     this.#refreshedAt = t
   }
+}
+
+/** A round's completion, as `posted` records it. */
+export function roundKey(ev: ChampionshipEvent, index: number): string {
+  return `${ev.ID ?? index}#${ev.CompletedTime}`
 }
 
 function message(e: unknown): string {
