@@ -18,6 +18,12 @@ x-champctl: &champctl
   build:
     context: ..
   init: true
+  # The host's journal outlives the container, which a deploy recreates and
+  # json-file's logs go with.
+  logging:
+    driver: journald
+    options:
+      tag: "{{.Name}}"
   environment:
     CHAMPCTL_PROFILE: /etc/champctl/profile.json
     CHAMPCTL_PITS: /etc/champctl/track-pits.json
