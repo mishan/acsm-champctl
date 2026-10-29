@@ -94,8 +94,12 @@ import type {
   ReorderRequest,
   ReorderResponse,
   SessionResponse,
+  SignUpActionRequest,
+  SignUpsResponse,
   TrackRequest,
 } from "./wire.js"
+import { entrantStatusPath, exportPath } from "../acsm/paths.js"
+import { PENDING, signUps } from "../signups/queue.js"
 
 declare module "fastify" {
   interface FastifyContextConfig {
@@ -605,6 +609,105 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
       const [content, layouts] = await Promise.all([ctx.content.get(), layoutsFor(s, req)])
       return { ...content, layouts }
     })
+
+    /**
+     * A championship's sign-ups. Read logged in: ACSM leaves them out of the
+     * public export, and the queue needs them as they are now, not as cached.
+     */
+    const readSignUps = async (s: StoredSession, id: string): Promise<SignUpsResponse> => {
+      const c = await s.acsm.getJson<Championship>(exportPath(id))
+      return {
+        championship: { id, name: c.Name ?? id },
+        open: c.SignUpForm?.Enabled === true,
+        signUps: signUps(c),
+      }
+    }
+
+    app.get<{ Params: { id: string } }>(
+      "/championships/:id/signups",
+      {
+        schema: {
+          params: {
+            type: "object",
+            required: ["id"],
+            properties: { id: { type: "string", minLength: 1, maxLength: 200 } },
+          },
+        },
+      },
+      async (req): Promise<SignUpsResponse> => readSignUps(requireSession(ctx, req), req.params.id),
+    )
+
+    /**
+     * Accepts or rejects one sign-up through ACSM's own links, then reads the
+     * championship again to say what happened: ACSM answers success and
+     * failure alike with a redirect (docs/acsm-signups.md).
+     */
+    app.post<{ Params: { id: string; guid: string }; Body: SignUpActionRequest }>(
+      "/championships/:id/signups/:guid",
+      {
+        schema: {
+          params: {
+            type: "object",
+            required: ["id", "guid"],
+            properties: {
+              id: { type: "string", minLength: 1, maxLength: 200 },
+              guid: { type: "string", minLength: 1, maxLength: 64 },
+            },
+          },
+          body: {
+            type: "object",
+            required: ["action"],
+            additionalProperties: false,
+            properties: {
+              action: { type: "string", enum: ["accept", "reject"] },
+              confirm: { type: "boolean" },
+            },
+          },
+        },
+      },
+      async (req): Promise<SignUpsResponse> => {
+        const s = requireSession(ctx, req)
+        const { id, guid } = req.params
+        const { action, confirm } = req.body
+
+        const before = (await readSignUps(s, id)).signUps.find((u) => u.guid === guid)
+        if (!before) {
+          throw new ApiError(
+            404,
+            "no-signup",
+            `There's no sign-up from ${guid} on this championship.`,
+          )
+        }
+        const who = before.name || guid
+        if (action === "accept" && before.cantAccept) {
+          throw new ApiError(422, "no-seat", `Can't accept ${who}. ${before.cantAccept}`)
+        }
+        if (action === "reject" && before.seated && !confirm) {
+          throw new ApiError(
+            409,
+            "would-unseat",
+            `${who} has a seat on the grid, and rejecting takes it away.`,
+          )
+        }
+
+        await s.acsm.getAction(
+          `${entrantStatusPath(id, guid)}?action=${action}`,
+          `${ctx.baseUrl}/championship/${encodeURIComponent(id)}/entrants`,
+        )
+
+        const after = await readSignUps(s, id)
+        const now = after.signUps.find((u) => u.guid === guid)
+        const wanted = action === "accept" ? "Accepted" : "Rejected"
+        if (now?.status !== wanted) {
+          throw new ApiError(
+            502,
+            "signup-unchanged",
+            `Server Manager answered, but ${who}'s sign-up is still ${(now?.status ?? PENDING).toLowerCase()}.`,
+          )
+        }
+        return after
+      },
+    )
 
     app.get<{ Params: { id: string } }>(
       "/championships/:id",

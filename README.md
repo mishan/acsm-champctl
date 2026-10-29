@@ -49,12 +49,10 @@ and `--base-url`; `--help` on any of them is authoritative.
 ## Status
 
 gridmom, the archive, and the finalize and championship engines are done and
-driven by their CLIs. Finalizing, creating a championship and reordering its
-rounds all have a web UI. GridMom runs BATL's Discord, and the recorder has
+driven by their CLIs. Finalizing, creating a championship, reordering its
+rounds and accepting its sign-ups all have a web UI. GridMom runs BATL's Discord, and the recorder has
 recorded its races since October 2026. What's left:
 
-- **No sign-up approval queue.** It needs the approve/reject POST captured
-  first, which is the last unread request in §3.4.
 - **Reordering is web-only.** The engine is in `src/reorder/`, and nothing on
   the command line reaches it — unlike every other engine here, which has a CLI
   as its first front end.

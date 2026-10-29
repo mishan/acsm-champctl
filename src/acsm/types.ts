@@ -238,7 +238,7 @@ export interface SignUpResponse extends Unknowns {
   Email?: string
   Car?: string
   Skin?: string
-  Status?: "Accepted" | "Rejected" | string
+  Status?: "Pending Approval" | "Accepted" | "Rejected" | string
   Questions?: Record<string, string>
 }
 

@@ -18,6 +18,7 @@ export type Route =
   | { name: "home" }
   | { name: "new-championship" }
   | { name: "championship"; id: string }
+  | { name: "signups"; id: string }
   | { name: "round"; id: string; round: number }
 
 export function parseRoute(pathname: string): Route {
@@ -35,6 +36,7 @@ export function parseRoute(pathname: string): Route {
   } catch {
     return { name: "home" }
   }
+  if (parts[2] === "signups") return { name: "signups", id }
   if (parts[2] === "round" && parts[3]) {
     const round = Number(parts[3])
     // A path with a nonsense round number is a mistyped link, and the
@@ -53,6 +55,8 @@ export function routePath(route: Route): string {
       return "/new-championship"
     case "championship":
       return `/c/${encodeURIComponent(route.id)}`
+    case "signups":
+      return `/c/${encodeURIComponent(route.id)}/signups`
     case "round":
       return `/c/${encodeURIComponent(route.id)}/round/${route.round}`
   }

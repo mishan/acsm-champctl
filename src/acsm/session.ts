@@ -529,6 +529,29 @@ export class AcsmSession {
     }
   }
 
+  /**
+   * A GET that changes something, as ACSM's sign-up accept and reject links
+   * do. The redirect isn't followed: it is the whole answer, and one to "/"
+   * means the session lapsed and nothing happened. `referer` is where ACSM
+   * sends it, so the redirect at least points somewhere real.
+   */
+  async getAction(path: string, referer: string): Promise<void> {
+    const res = await this.#request(path, {
+      method: "GET",
+      redirect: "manual",
+      headers: { Referer: referer },
+    })
+    if (res.status >= 400) {
+      throw new AcsmWriteError(`${res.status} ${res.statusText} from ${path}`, res.status, path)
+    }
+    if (isRedirect(res) && this.#redirectsToRoot(res.headers.get("location") ?? "")) {
+      throw new AcsmSessionLapsedError(
+        `ACSM sent ${path} back to its front page, so the session has lapsed and nothing changed.`,
+        res.status,
+      )
+    }
+  }
+
   /** Fetches a page and parses one of its forms. */
   async getForm(path: string, options: ParseFormOptions = {}): Promise<ParsedForm> {
     const html = await this.getText(path)
