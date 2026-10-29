@@ -249,7 +249,7 @@ export interface SignUpForm extends Unknowns {
   HideCarChoice?: boolean
   RequiresApproval?: boolean
   RegistrationOpen?: boolean
-  RegistrationClosesAt?: string
+  RegistrationDeadline?: string
   ExtraFields?: unknown[]
   /**
    * Admins only: ACSM leaves this out of an export read logged out (measured on

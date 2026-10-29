@@ -193,7 +193,7 @@ export const signUpDeadlinePassed: Check = {
   run(ctx, emit) {
     const form = ctx.championship.SignUpForm
     if (!form?.Enabled) return
-    const closes = form.RegistrationClosesAt
+    const closes = form.RegistrationDeadline
     if (isZeroTime(closes)) return
 
     const zone = ctx.profile.schedule.timezone
@@ -206,7 +206,7 @@ export const signUpDeadlinePassed: Check = {
       "INFO",
       "champ.signup-deadline",
       `Sign-ups are still switched on, but registration closed ${deadline.setZone(zone).toRelative({ base: now })}.`,
-      { path: "SignUpForm.RegistrationClosesAt" },
+      { path: "SignUpForm.RegistrationDeadline" },
       { closesAt: deadline.toISO() },
     )
   },

@@ -274,7 +274,7 @@ export class RacersWatch {
         ),
       )
       const form = c.SignUpForm
-      const closes = form?.RegistrationClosesAt
+      const closes = form?.RegistrationDeadline
       const link = signUpLink(c, this.#o.baseUrl)
       const s: Season = {
         id,

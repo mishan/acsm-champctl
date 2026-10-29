@@ -118,6 +118,9 @@ function harness(
     open: () => {
       october.SignUpForm = { Enabled: true }
     },
+    closeSignUps: (at: string) => {
+      october.SignUpForm = { ...october.SignUpForm, RegistrationDeadline: at }
+    },
     signUp: (guid: string) => {
       october.Classes = roster([...(o.october ?? []), guid])
     },
@@ -195,6 +198,14 @@ describe("RacersWatch", () => {
     h.start()
     await h.watch.tick(at(5))
     expect(h.posts).toHaveLength(2)
+  })
+
+  it("doesn't call sign-ups open once their deadline has passed", async () => {
+    const h = harness({ october: ["a"] })
+    h.open()
+    h.closeSignUps(new Date(at(-5)).toISOString())
+    await h.watch.tick(at(-4))
+    expect(h.posts).toEqual([])
   })
 
   it("warns the admins a day ahead, then takes the role from who didn't sign up", async () => {
