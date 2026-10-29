@@ -316,7 +316,9 @@ championship once, the night after its last round, and remembers that it has
 in the database `--store` names. Only championships that finished in the past
 week count (`--days` changes that), so the first night doesn't post every
 season the league has run. `champctl-bot trophy <championship-id>` posts one
-on demand, whether or not it has been posted before.
+on demand, whether or not it has been posted before. With `postStandingsWhenRaced`, `serve`
+posts the podium itself straight after the last round's standings, and the
+nightly run is only a backstop.
 
 ```sh
 champctl-bot trophy <championship-id> --dry-run --out podiums/

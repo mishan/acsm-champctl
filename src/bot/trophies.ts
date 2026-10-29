@@ -111,6 +111,23 @@ export async function postPodium(
 }
 
 /**
+ * The podium, once every round is stamped raced; undefined before.
+ *
+ * Stamped, not merely with results: those arrive after race 1 of the last
+ * round, and the podium would go out with race 2 still running.
+ */
+export async function postPodiumIfRaced(
+  deps: TrophyDeps,
+  c: Championship,
+  championshipId: string,
+  name: string,
+): Promise<TrophyOutcome | undefined> {
+  const at = finishedAt(c)
+  if (!at || !events(c).every((ev) => !isZeroTime(ev.CompletedTime))) return undefined
+  return postPodium(deps, championshipId, name, false, at)
+}
+
+/**
  * The month a championship ran, as the league names it: "September 2026".
  *
  * Taken from when the last round finished, in the league's timezone — BATL's

@@ -45,8 +45,10 @@ import { BotError, RecordingTransport, type DiscordTransport } from "../bot/tran
 import {
   finishedAt,
   postPodium,
+  postPodiumIfRaced,
   postRecentPodiums,
   type TrophyDeps,
+  type TrophyOutcome,
   type TrophyPost,
 } from "../bot/trophies.js"
 import { SqliteTrophyStore } from "../bot/trophy-store.js"
@@ -134,7 +136,7 @@ export from shortly before quali and, once ACSM says qualifying has started,
 moves everyone in fromChannelId to toChannelId. The bot needs Move Members.
 With discord.postStandingsWhenRaced, serve posts a championship's standings to
 discord.announceChannelId once a round's event has finished, every session of
-it.
+it, and after the last round the podium to discord.trophyChannelId.
 
 The bot token comes from CHAMPCTL_DISCORD_TOKEN and is never a flag — a flag
 lands in shell history and in every ps listing on the box. There is deliberately
@@ -981,6 +983,7 @@ async function serve(args: Args): Promise<number> {
   const racers = profile.discord.racers
   const racersStore = racers ? await SqliteRacersStore.open(storePath) : undefined
   const finished = await SqliteFinishedStore.open(storePath)
+  const trophies = await SqliteTrophyStore.open(storePath)
   const infoSettings = profile.discord.info
   const infoStore = infoSettings ? await SqliteInfoStore.open(storePath) : undefined
   const restarts = await SqliteRestartStore.open(storePath)
@@ -1289,6 +1292,32 @@ async function serve(args: Args): Promise<number> {
 
     const announceChannelId = profile.discord.announceChannelId
     if (profile.discord.postStandingsWhenRaced && announceChannelId) {
+      const tellAdmins = async (content: string) => {
+        const adminChannelId = profile.discord?.adminChannelId
+        if (adminChannelId) {
+          await transport.post({
+            channelId: adminChannelId,
+            content,
+            source: "discord.adminChannelId in the profile",
+          })
+        }
+      }
+      const trophyChannelId = profile.discord.trophyChannelId
+      const podiums: TrophyDeps | undefined = trophyChannelId
+        ? {
+            reader,
+            timezone: profile.schedule.timezone,
+            fetchAsset: (path) => fetchAsset(baseUrl, path),
+            post: (message) =>
+              transport.post({
+                channelId: trophyChannelId,
+                source: "discord.trophyChannelId in the profile",
+                ...message,
+              }),
+            posted: (id) => trophies.posted(id),
+            record: (id, cls) => trophies.record(id, cls, new Date()),
+          }
+        : undefined
       stopStandings = new StandingsWatch({
         reader,
         finished: finished.for("standings"),
@@ -1306,18 +1335,26 @@ async function serve(args: Args): Promise<number> {
             })
             sent()
           }
+          // The standings are out; a podium that fails is for the admins, not a retry.
+          const outcome = podiums
+            ? await postPodiumIfRaced(podiums, championship, id, name).catch(
+                (e: unknown): TrophyOutcome => ({
+                  kind: "failed",
+                  championshipId: id,
+                  name,
+                  error: asMessage(e),
+                }),
+              )
+            : undefined
+          if (outcome?.kind === "failed") {
+            await tellAdmins(
+              `${name} is over, but I couldn't post its podium: ${outcome.error}. ` +
+                `\`champctl-bot trophy ${id}\` posts it.`,
+            )
+          }
           return resolved.warned
         },
-        notify: async (content) => {
-          const adminChannelId = profile.discord?.adminChannelId
-          if (adminChannelId) {
-            await transport.post({
-              channelId: adminChannelId,
-              content,
-              source: "discord.adminChannelId in the profile",
-            })
-          }
-        },
+        notify: tellAdmins,
       }).start(2 * 60_000, watchdog.watch("The standings watch", 2 * 60_000))
       process.stderr.write(
         `Posting the standings when each round has been raced. ${skipping(finished.for("standings"))}\n`,
@@ -1359,6 +1396,7 @@ async function serve(args: Args): Promise<number> {
     racersStore?.close()
     infoStore?.close()
     restarts.close()
+    trophies.close()
     finished.close()
     tokens.close()
     queue.close()
