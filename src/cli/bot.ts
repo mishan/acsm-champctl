@@ -29,6 +29,7 @@ import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
 import { carsetUrl } from "../bot/livery.js"
 import { nightlyMessages, standingsMessage } from "../bot/message.js"
 import { QualiCall } from "../bot/quali-call.js"
+import { SqliteRestartStore, Watchdog } from "../bot/health.js"
 import { type PostedRounds, StandingsWatch } from "../bot/standings-watch.js"
 import { findingsAtOrAbove, nightly, type NightlyEntry } from "../bot/nightly.js"
 import {
@@ -981,6 +982,14 @@ async function serve(args: Args): Promise<number> {
   const finished = await SqliteFinishedStore.open(storePath)
   const infoSettings = profile.discord.info
   const infoStore = infoSettings ? await SqliteInfoStore.open(storePath) : undefined
+  const restarts = await SqliteRestartStore.open(storePath)
+  const wait = restarts.waitMs()
+  if (wait > 0) {
+    process.stderr.write(`Gave up last time; waiting ${wait / 60_000} min before starting.\n`)
+    await new Promise((r) => setTimeout(r, wait))
+  }
+  const startedAt = Date.now()
+  const watchdog = new Watchdog()
   const voice = profile.discord.qualiVoiceMove
   const transport = await connect({ voice: voice !== undefined })
   let stopQualiCall = async () => {}
@@ -1156,7 +1165,10 @@ async function serve(args: Args): Promise<number> {
         },
         log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
       })
-      stopInfo = championshipInfo.start()
+      stopInfo = championshipInfo.start(
+        15 * 60_000,
+        watchdog.watch("The info message", 15 * 60_000),
+      )
       info = new InfoRouter({
         info: championshipInfo,
         adminRoleId: infoSettings.adminRoleId,
@@ -1212,7 +1224,7 @@ async function serve(args: Args): Promise<number> {
             })
           }
         },
-      }).start()
+      }).start(60_000, watchdog.watch("The quali call", 60_000))
       process.stderr.write(
         `Moving Pit Lane to Race Control when qualifying starts. ${skipping(finished.for("quali-call"))}\n`,
       )
@@ -1253,7 +1265,7 @@ async function serve(args: Args): Promise<number> {
           }
         },
         log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
-      }).start()
+      }).start(15 * 60_000, watchdog.watch("The Racers watch", 15 * 60_000))
       process.stderr.write(`Looking after the Racers role. ${skipping(finished.for("racers"))}\n`)
     }
 
@@ -1288,18 +1300,31 @@ async function serve(args: Args): Promise<number> {
             })
           }
         },
-      }).start()
+      }).start(2 * 60_000, watchdog.watch("The standings watch", 2 * 60_000))
       process.stderr.write(
         `Posting the standings when each round has been raced. ${skipping(finished.for("standings"))}\n`,
       )
     }
 
-    await new Promise<void>((done) => {
-      const stop = () => done()
+    const why = await new Promise<string | undefined>((done) => {
+      const stop = () => done(undefined)
       process.once("SIGINT", stop)
       process.once("SIGTERM", stop)
+      setInterval(() => {
+        const stale = watchdog.stale()
+        if (stale) done(stale)
+        else restarts.working(startedAt)
+      }, 60_000).unref()
     })
-    return 0
+    if (!why) return 0
+    process.stderr.write(
+      `${new Date().toISOString()} Giving up: ${why}. Exiting to be restarted.\n`,
+    )
+    restarts.gaveUp()
+    process.exitCode = 1
+    // A hung loop never lets the shutdown below finish.
+    setTimeout(() => process.exit(1), 30_000).unref()
+    return 1
   } finally {
     // Closed in reverse, and the databases last: SQLite leaves a -wal beside
     // the file, and a queue whose log was never checkpointed is one the drain
@@ -1315,6 +1340,7 @@ async function serve(args: Args): Promise<number> {
     seasonStore?.close()
     racersStore?.close()
     infoStore?.close()
+    restarts.close()
     finished.close()
     tokens.close()
     queue.close()

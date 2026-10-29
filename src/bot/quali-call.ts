@@ -101,12 +101,18 @@ export class QualiCall {
    * Stopping waits for a tick in flight, which then moves and says nothing:
    * the caller closes the Discord client next.
    */
-  start(everyMs = MINUTE): () => Promise<void> {
+  start(everyMs = MINUTE, report?: (ok: boolean) => void): () => Promise<void> {
     let timer: NodeJS.Timeout | undefined
     let ticking = Promise.resolve()
     const loop = () => {
       ticking = this.tick(new Date())
-        .catch((e: unknown) => this.#o.log(`quali call: ${message(e)}`))
+        .then(
+          () => report?.(true),
+          (e: unknown) => {
+            this.#o.log(`quali call: ${message(e)}`)
+            report?.(false)
+          },
+        )
         .then(() => {
           if (!this.#stopped) timer = setTimeout(loop, everyMs)
         })

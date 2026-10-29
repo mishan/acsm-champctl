@@ -99,15 +99,17 @@ export class RacersWatch {
   }
 
   /** Ticks until the returned function is called; never two at once. */
-  start(everyMs = 15 * MINUTE): () => Promise<void> {
+  start(everyMs = 15 * MINUTE, report?: (ok: boolean) => void): () => Promise<void> {
     let timer: NodeJS.Timeout | undefined
     let ticking = Promise.resolve()
     const loop = () => {
       ticking = this.tick(new Date())
         .then(() => {
           this.#told = ""
+          report?.(true)
         })
         .catch(async (e: unknown) => {
+          report?.(false)
           const why = asMessage(e)
           this.#o.log(`racers: ${why}`)
           if (why === this.#told) return
