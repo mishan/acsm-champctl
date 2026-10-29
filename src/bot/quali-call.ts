@@ -13,9 +13,13 @@
  * moving members is a Discord permission rather than an ACSM one.
  */
 
+import { DateTime } from "luxon"
+
 import type { AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { eventHasResults, eventSession, events, isZeroTime } from "../acsm/view.js"
+import { nextWeekday } from "../emit/schedule.js"
+import { qualiStartFrom } from "../finalize/schedule.js"
 import type { LeagueProfile, QualiVoiceMove } from "../profile/types.js"
 import { qualiStart } from "./announce.js"
 import type { FinishedChampionships } from "./finished.js"
@@ -166,8 +170,12 @@ export class QualiCall {
           this.#finished.add(id)
           this.#o.finished?.add(id)
         }
+        const next = all.findIndex((ev) => !eventHasResults(ev))
         all.forEach((ev, index) => {
-          const quali = qualiStart(ev, this.#o.profile)
+          // A round started by hand often has no date on it.
+          const quali =
+            qualiStart(ev, this.#o.profile) ??
+            (index === next ? leagueNight(this.#o.profile, t) : undefined)
           if (!quali?.isValid || eventHasResults(ev) || quali.toMillis() + GRACE < t) return
           rounds.push({
             championshipId: id,
@@ -185,6 +193,14 @@ export class QualiCall {
     this.#rounds = rounds
     this.#refreshedAt = t
   }
+}
+
+/** The league's weekly quali whose watch window is open or still to come. */
+function leagueNight(profile: LeagueProfile, t: number): DateTime {
+  const { weekday, qualiStart, timezone } = profile.schedule
+  const from = DateTime.fromMillis(t - GRACE, { zone: timezone })
+  const quali = qualiStartFrom(nextWeekday(from, weekday).toISODate() ?? "", qualiStart, timezone)
+  return quali < from ? quali.plus({ weeks: 1 }) : quali
 }
 
 function message(e: unknown): string {
