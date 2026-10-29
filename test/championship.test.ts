@@ -277,7 +277,7 @@ describe("sign-up deadline", () => {
     const c = championship({
       SignUpForm: {
         Enabled: true,
-        RegistrationClosesAt: "2026-08-21T12:00:00-07:00",
+        RegistrationDeadline: "2026-08-21T12:00:00-07:00",
         Responses: [],
         ExtraFields: [],
       },
@@ -292,7 +292,7 @@ describe("sign-up deadline", () => {
     const c = championship({
       SignUpForm: {
         Enabled: true,
-        RegistrationClosesAt: "2026-08-30T12:00:00-07:00",
+        RegistrationDeadline: "2026-08-30T12:00:00-07:00",
         Responses: [],
         ExtraFields: [],
       },
@@ -304,7 +304,7 @@ describe("sign-up deadline", () => {
     const c = championship({
       SignUpForm: {
         Enabled: true,
-        RegistrationClosesAt: "0001-01-01T00:00:00Z",
+        RegistrationDeadline: "0001-01-01T00:00:00Z",
         Responses: [],
         ExtraFields: [],
       },

@@ -525,8 +525,7 @@ function checkDescription(before: Championship, form: ChampionshipForm): void {
 function registrationDeadline(
   before: Championship,
 ): { date: string; time: string; timezone: string } | undefined {
-  const raw = (before.SignUpForm as { RegistrationDeadline?: unknown } | undefined)
-    ?.RegistrationDeadline
+  const raw: unknown = before.SignUpForm?.RegistrationDeadline
   if (typeof raw !== "string" || raw.startsWith("0001-01-01")) return undefined
   const m =
     /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?(Z|([+-])(\d{2}):(\d{2}))$/.exec(raw)
