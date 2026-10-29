@@ -12,13 +12,16 @@ const at = (minutes: number) => new Date(NIGHT + minutes * 60_000)
 
 /** Two rounds; whatever is set on them is what the next export carries. */
 function harness(
-  rounds: { completed?: string }[] = [{}, {}],
+  rounds: { completed?: string; id?: string }[] = [{}, {}],
   fail: { reads?: number; posts?: number; partly?: boolean } = {},
   finished?: FinishedChampionships,
+  posted: Set<string> = new Set(),
 ) {
-  const evs: ChampionshipEvent[] = rounds.map((r) =>
-    r.completed ? { ...raceEvent(), CompletedTime: r.completed } : raceEvent(),
-  )
+  const evs: ChampionshipEvent[] = rounds.map((r) => ({
+    ...raceEvent(),
+    ...(r.completed ? { CompletedTime: r.completed } : {}),
+    ...(r.id ? { ID: r.id } : {}),
+  }))
   const c: Championship = championship({ Name: "October", Events: evs })
   const inner = new StaticAcsmReader([c])
   let failReads = fail.reads ?? 0
@@ -37,6 +40,7 @@ function harness(
   const watch = new StandingsWatch({
     reader,
     ...(finished ? { finished } : {}),
+    posted,
     log: () => {},
     post: async (_id, name, sent) => {
       if (failPosts-- > 0) {
@@ -72,11 +76,20 @@ describe("StandingsWatch", () => {
     expect(posts).toEqual(["October"])
   })
 
-  it("doesn't post a round that was raced before it started watching", async () => {
+  it("posts a round raced while it was down, once", async () => {
     const { watch, posts } = harness([{ completed: at(-60).toISOString() }, {}])
     await watch.tick(at(0))
     await watch.tick(at(2))
-    expect(posts).toEqual([])
+    expect(posts).toEqual(["October"])
+  })
+
+  it("doesn't post a round again after a restart", async () => {
+    const posted = new Set<string>()
+    const raced = [{ completed: at(-60).toISOString(), id: "round-1" }, {}]
+    await harness(raced, {}, undefined, posted).watch.tick(at(0))
+    const restarted = harness(raced, {}, undefined, posted)
+    await restarted.watch.tick(at(2))
+    expect(restarted.posts).toEqual([])
   })
 
   it("doesn't post an old round it only now managed to read", async () => {
@@ -85,15 +98,6 @@ describe("StandingsWatch", () => {
     await watch.tick(at(0))
     evs[1]!.CompletedTime = at(-3 * 24 * 60).toISOString()
     await watch.tick(at(2))
-    expect(posts).toEqual([])
-  })
-
-  it("doesn't post a round raced before it could first read the championship", async () => {
-    // A restart just after race night, with ACSM too slow to answer at first.
-    const { watch, posts } = harness([{ completed: at(-60).toISOString() }, {}], { reads: 1 })
-    await watch.tick(at(0))
-    await watch.tick(at(16))
-    await watch.tick(at(18))
     expect(posts).toEqual([])
   })
 
