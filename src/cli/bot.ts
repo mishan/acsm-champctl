@@ -26,6 +26,7 @@ import { INCIDENT_COMMAND, INFO_COMMAND, LIVERY_COMMANDS, SEASON_COMMAND } from 
 import { GatewayTransport } from "../bot/discord.js"
 import { type FinishedChampionships, SqliteFinishedStore } from "../bot/finished.js"
 import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
+import { AcsmAccessAlarm } from "../bot/acsm-access.js"
 import { carsetUrl } from "../bot/livery.js"
 import { nightlyMessages, standingsMessage } from "../bot/message.js"
 import { QualiCall } from "../bot/quali-call.js"
@@ -1016,7 +1017,24 @@ async function serve(args: Args): Promise<number> {
       : undefined
 
     // One reader, so the livery path and the quali watch share a rate limit.
-    const reader = new HttpAcsmReader({ baseUrl, userAgent: BOT_USER_AGENT })
+    const access = new AcsmAccessAlarm({
+      log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
+      notify: async (content) => {
+        const channelId = profile.discord?.adminChannelId
+        if (channelId) {
+          await transport.post({
+            channelId,
+            content,
+            source: "discord.adminChannelId in the profile",
+          })
+        }
+      },
+    })
+    const reader = new HttpAcsmReader({
+      baseUrl,
+      userAgent: BOT_USER_AGENT,
+      fetch: access.fetch(globalThis.fetch.bind(globalThis)),
+    })
     const livery = profile.discord.livery
     const router = new LiveryRouter({
       reader,
