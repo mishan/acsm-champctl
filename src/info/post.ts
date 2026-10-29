@@ -53,14 +53,19 @@ export class ChampionshipInfo {
   }
 
   /** Ticks until the returned function is called; never two at once. */
-  start(everyMs = 15 * MINUTE): () => Promise<void> {
+  start(everyMs = 15 * MINUTE, report?: (ok: boolean) => void): () => Promise<void> {
     let stopped = false
     let timer: NodeJS.Timeout | undefined
     let ticking = Promise.resolve()
     const loop = () => {
       ticking = this.refresh()
-        .then(() => {})
-        .catch((e: unknown) => this.#o.log(`info: ${asMessage(e)}`))
+        .then(
+          () => report?.(true),
+          (e: unknown) => {
+            this.#o.log(`info: ${asMessage(e)}`)
+            report?.(false)
+          },
+        )
         .then(() => {
           if (!stopped) timer = setTimeout(loop, everyMs)
         })

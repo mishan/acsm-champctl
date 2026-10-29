@@ -39,7 +39,10 @@ function harness(
     n: 0,
   }
   const reader = {
-    listChampionships: () => inner.listChampionships(),
+    listChampionships: async () => {
+      if (reads.failing.has("list")) throw new Error("403 Forbidden")
+      return inner.listChampionships()
+    },
     exportChampionship: async (id: string) => {
       reads.n++
       await reads.gate
@@ -210,6 +213,17 @@ describe("QualiCall", () => {
     release()
     await stopping
     expect(moves).toEqual([])
+  })
+
+  it.each([
+    ["working", true, false],
+    ["not working", false, true],
+  ])("reports a tick as %s to the watchdog", async (_, ok, broken) => {
+    const { call, reads } = harness()
+    if (broken) reads.failing.add("list")
+    const reports: boolean[] = []
+    await call.start(60_000, (r) => reports.push(r))()
+    expect(reports).toEqual([ok])
   })
 
   it("doesn't read a finished championship again after a restart", async () => {
