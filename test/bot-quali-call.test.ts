@@ -124,6 +124,15 @@ describe("QualiCall", () => {
     expect(moves).toHaveLength(1)
   })
 
+  it("watches the next round on league night when it has no date", async () => {
+    const { call, event, moves, setSession } = harness()
+    event.Scheduled = "0001-01-01T00:00:00Z"
+    await call.tick(at(-5))
+    setSession("QUALIFY", stamp(3))
+    await call.tick(at(4))
+    expect(moves).toHaveLength(1)
+  })
+
   it("sees a round brought forward before its new quali", async () => {
     const { call, event, moves, setSession } = harness()
     const scheduled = event.Scheduled as string
