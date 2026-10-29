@@ -6,6 +6,7 @@ import { DateTime } from "luxon"
 
 import { classes, events, isZeroTime, slots, trackLabel } from "../../acsm/view.js"
 import type { Check } from "../context.js"
+import { venueName } from "../context.js"
 import { MESSAGE_LOCALE, humanList, pluralize } from "../finding.js"
 
 export const dropScoresExceedRounds: Check = {
@@ -59,21 +60,21 @@ export const repeatedTrack: Check = {
   id: "champ.repeated-track",
   section: "6.5",
   run(ctx, emit) {
-    const byTrack = new Map<string, string[]>()
+    const byTrack = new Map<string, { name: string; rounds: string[] }>()
     events(ctx.championship).forEach((ev, i) => {
       const track = trackLabel(ev.RaceSetup)
       if (!track) return
       const bucket = byTrack.get(track)
-      if (bucket) bucket.push(`round ${i + 1}`)
-      else byTrack.set(track, [`round ${i + 1}`])
+      if (bucket) bucket.rounds.push(`round ${i + 1}`)
+      else byTrack.set(track, { name: venueName(ctx, ev.RaceSetup), rounds: [`round ${i + 1}`] })
     })
 
-    for (const [track, rounds] of byTrack) {
+    for (const [track, { name, rounds }] of byTrack) {
       if (rounds.length < 2) continue
       emit(
         "WARN",
         "champ.repeated-track",
-        `${track} shows up ${rounds.length} times in this championship, at ${humanList(rounds)}.`,
+        `${name} shows up ${rounds.length} times in this championship, at ${humanList(rounds)}.`,
         { path: "Events[].RaceSetup.Track" },
         { track, rounds },
       )

@@ -8,8 +8,9 @@
  */
 
 import { SESSION_KEY_ALIASES, type ChampionshipEvent } from "../../acsm/types.js"
-import { classes, eventHasStarted, eventLabel, events, session } from "../../acsm/view.js"
+import { classes, eventHasStarted, events, session } from "../../acsm/view.js"
 import type { Check } from "../context.js"
+import { roundName } from "../context.js"
 import { cap, pluralize } from "../finding.js"
 
 /**
@@ -40,7 +41,7 @@ export const raceLengthAmbiguous: Check = {
       if (!race) return
       const laps = race.Laps ?? 0
       const minutes = race.Time ?? 0
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       const loc = { round: i + 1, event: label, path: `Events[${i}].RaceSetup.Sessions.Race` }
 
       if (laps > 0 && minutes > 0) {
@@ -76,7 +77,7 @@ export const pitWindowDisagreesWithFormat: Check = {
       if (intent === undefined) return
 
       const windowStart = ev.RaceSetup?.RacePitWindowStart ?? 0
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       const loc = { round: i + 1, event: label, path: `Events[${i}].RaceSetup.RacePitWindowStart` }
       const race = session(ev, "Race")
       const lengthText = lengthAdjective(race?.Laps ?? 0, race?.Time ?? 0)
@@ -141,7 +142,7 @@ export const reversedGridWithoutMultiplier: Check = {
         eventMultiplier ?? (classMultipliers.length > 0 ? Math.max(...classMultipliers) : 0)
       if (multiplier !== 0) return
 
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       // Say which classes when there is more than one, since "the second race
       // is worth no points" is otherwise ambiguous about who it applies to.
       const scope =
@@ -175,7 +176,7 @@ export const differsFromBaseline: Check = {
     events(ctx.championship).forEach((ev, i) => {
       const rs = ev.RaceSetup
       if (!rs) return
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
 
       for (const [key, expected] of Object.entries(baseline)) {
         const actual = (rs as Record<string, unknown>)[key]
@@ -238,7 +239,7 @@ export const nonCanonicalSessionKeys: Check = {
     events(ctx.championship).forEach((ev, i) => {
       const sessions = ev.RaceSetup?.Sessions
       if (!sessions) return
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
 
       const wrong = Object.keys(sessions).filter((k) => !CANONICAL_SESSION_KEYS.has(k))
       if (wrong.length === 0) return

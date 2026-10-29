@@ -583,6 +583,13 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           return null
         })
 
+    /** The manager's track names for gridmom's messages; folder names do without them. */
+    const trackNamesFor = async (): Promise<ReadonlyMap<string, string> | undefined> =>
+      ctx.content.get().then(
+        (c) => new Map(c.tracks.map((t) => [t.id, t.name])),
+        () => undefined,
+      )
+
     /** The installed-content index for gridmom, never fatal for the same reasons. */
     const contentFor = async (req: FastifyRequest): Promise<ContentIndex | undefined> =>
       ctx.content
@@ -631,6 +638,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
             now: ctx.now(),
             layouts,
             content,
+            trackNames: await trackNamesFor(),
           }),
         }
       },
@@ -880,6 +888,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           now,
           layouts: await layoutsFor(s, req),
           content: await contentFor(req),
+          trackNames: await trackNamesFor(),
         })
 
         return {

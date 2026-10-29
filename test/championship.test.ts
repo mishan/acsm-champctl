@@ -131,6 +131,21 @@ describe("repeated tracks", () => {
     expect(f?.message).toContain("round 1 and round 3")
     expect(f?.data).toMatchObject({ track: "suzuka", rounds: ["round 1", "round 3"] })
   })
+  it.each([
+    ["", "Suzuka Circuit shows up"],
+    ["east", "Suzuka Circuit, east shows up"],
+  ])("names the track the way the manager does (layout %j)", (layout, said) => {
+    const at = { RaceSetup: { Track: "suzuka", TrackLayout: layout } }
+    const c = championship({ Events: [raceEvent(at), raceEvent(at)] })
+    const f = check(c, testProfile(), {
+      now: NOW,
+      checks: championshipChecks,
+      trackNames: new Map([["suzuka", "Suzuka Circuit"]]),
+    }).findings.find((x) => x.code === "champ.repeated-track")
+    expect(f?.message).toContain(said)
+    // The data stays in folder names, for anything that matches on it.
+    expect(f?.data).toMatchObject({ track: layout ? `suzuka/${layout}` : "suzuka" })
+  })
 })
 
 describe("ACSR", () => {

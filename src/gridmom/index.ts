@@ -41,6 +41,8 @@ export interface CheckOptions {
   content?: ContentIndex | undefined
   /** Track layouts, when a caller has been able to read them. See CheckContext. */
   layouts?: TrackLayouts | null
+  /** The manager's track names, by folder name. See CheckContext. */
+  trackNames?: ReadonlyMap<string, string> | undefined
   /** Injected so time-dependent checks are deterministic under test. */
   now?: Date
   /** Finding codes to drop, e.g. a league that genuinely runs a track twice. */
@@ -61,6 +63,7 @@ export function check(
     now: options.now ?? new Date(),
     content: options.content,
     layouts: options.layouts,
+    trackNames: options.trackNames,
   }
 
   const suppressed = new Set(options.suppress ?? [])
