@@ -292,7 +292,9 @@ as the server.
 
 - **Logs:** `docker compose logs -f serve`, and the same for `bot`, `drain`,
   `upload`. A failed request to Server Manager is logged with the reason,
-  which the browser deliberately isn't told.
+  which the browser deliberately isn't told. A container's logs go when a deploy
+  recreates it; the journal keeps them: `journalctl -t champctl-bot-1 --since
+  "2 hours ago"`, which needs the `systemd-journal` group.
 - **The drain keeps restarting:** it exits when ACSM turns its account down,
   and when `CHAMPCTL_LIVERY_CHAMPIONSHIP` isn't set in `.env` ("Needs a
   championship id"). `docker compose logs drain` says which. Check `acsm.env`
