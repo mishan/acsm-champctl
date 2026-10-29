@@ -11,6 +11,7 @@ import { parsePodium } from "../src/bot/podium.js"
 import {
   finishedAt,
   postPodium,
+  postPodiumIfRaced,
   postRecentPodiums,
   seasonMonth,
   type TrophyDeps,
@@ -262,6 +263,24 @@ describe("posting podiums", () => {
     const { deps, posts } = await setup([running], { r: single })
     await postRecentPodiums(deps, NOW)
     expect(posts).toEqual([])
+  })
+
+  it("posts the podium when the last round is stamped raced, not when race 1 is in", async () => {
+    const last = raceEvent({
+      Sessions: { RACE: { CompletedTime: "2026-10-29T03:50:00Z", Results: {} } },
+    } as never)
+    const c = championship({
+      ID: "o",
+      Name: "October",
+      Events: [raced("2026-10-22T04:00:00Z"), last],
+    })
+    const { deps, posts } = await setup([c], { o: single })
+    expect(await postPodiumIfRaced(deps, c, "o", "October")).toBeUndefined()
+
+    last.CompletedTime = "2026-10-29T04:17:00Z"
+    await postPodiumIfRaced(deps, c, "o", "October")
+    await postPodiumIfRaced(deps, c, "o", "October")
+    expect(posts).toHaveLength(1)
   })
 
   it("posts one image per class, titled with it", async () => {
