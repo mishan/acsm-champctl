@@ -4,6 +4,7 @@ import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { Championship, ChampionshipEvent } from "../src/acsm/types.js"
 import { type FinishedChampionships, SqliteFinishedStore } from "../src/bot/finished.js"
 import { QualiCall } from "../src/bot/quali-call.js"
+import { roundKey } from "../src/bot/standings-watch.js"
 import type { VoiceMover } from "../src/bot/transport.js"
 import { championship, raceEvent, testProfile } from "./support/build.js"
 
@@ -18,7 +19,12 @@ const stamp = (minutesFromQuali: number) => at(minutesFromQuali).toISOString()
 const BROKEN = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 
 function harness(
-  options: { mover?: VoiceMover; broken?: boolean; finished?: FinishedChampionships } = {},
+  options: {
+    mover?: VoiceMover
+    broken?: boolean
+    finished?: FinishedChampionships
+    posted?: Set<string>
+  } = {},
 ) {
   const event: ChampionshipEvent = raceEvent()
   const c: Championship = championship({ Events: [event] })
@@ -46,6 +52,7 @@ function harness(
   const call = new QualiCall({
     reader,
     ...(options.finished ? { finished: options.finished } : {}),
+    ...(options.posted ? { posted: options.posted } : {}),
     mover: options.mover ?? {
       move: async (from, to) => {
         moves.push([from, to])
@@ -131,6 +138,40 @@ describe("QualiCall", () => {
     setSession("QUALIFY", stamp(3))
     await call.tick(at(4))
     expect(moves).toHaveLength(1)
+  })
+
+  it.each([
+    ["once, for a round with a date", "2026-09-02T19:00:00-07:00", 1],
+    ["nothing, for a round without one", "0001-01-01T00:00:00Z", 0],
+  ])("tells the admins %s when quali never starts", async (_, scheduled, n) => {
+    const { call, event, notices } = harness()
+    event.Scheduled = scheduled
+    await call.tick(at(-5))
+    await call.tick(at(121))
+    await call.tick(at(122))
+    expect(notices).toHaveLength(n)
+    if (n)
+      expect(notices[0]).toContain("Qualifying for Test Championship round 1 was due at 8:00 PM")
+  })
+
+  it.each([
+    ["tells the admins", false, 1],
+    ["says nothing", true, 0],
+  ])("%s when a round's standings aren't out 15 minutes after it ends", async (_, out, n) => {
+    const posted = new Set<string>()
+    const { call, event, notices, setSession } = harness({ posted })
+    await call.tick(at(-5))
+    setSession("QUALIFY", stamp(0))
+    await call.tick(at(1))
+    event.Sessions = { ...event.Sessions, RACE: { CompletedTime: stamp(45), Results: {} } } as never
+    event.CompletedTime = stamp(75)
+    if (out) posted.add(roundKey(event, 0))
+    await call.tick(at(80))
+    expect(notices).toEqual([])
+    await call.tick(at(91))
+    await call.tick(at(92))
+    expect(notices).toHaveLength(n)
+    if (n) expect(notices[0]).toContain("round 1 finished at 9:15 PM")
   })
 
   it("sees a round brought forward before its new quali", async () => {

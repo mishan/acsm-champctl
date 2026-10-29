@@ -29,7 +29,7 @@ import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
 import { carsetUrl } from "../bot/livery.js"
 import { nightlyMessages, standingsMessage } from "../bot/message.js"
 import { QualiCall } from "../bot/quali-call.js"
-import { StandingsWatch } from "../bot/standings-watch.js"
+import { type PostedRounds, StandingsWatch } from "../bot/standings-watch.js"
 import { findingsAtOrAbove, nightly, type NightlyEntry } from "../bot/nightly.js"
 import {
   compareStandings,
@@ -1002,6 +1002,10 @@ async function serve(args: Args): Promise<number> {
     process.stderr.write(`Registered /livery in ${guildId}.\n`)
     if (args.registerOnly) return 0
 
+    const postedRounds = profile.discord.postStandingsWhenRaced
+      ? posted(finished.for("standings-posted"))
+      : undefined
+
     // One reader, so the livery path and the quali watch share a rate limit.
     const reader = new HttpAcsmReader({ baseUrl, userAgent: BOT_USER_AGENT })
     const livery = profile.discord.livery
@@ -1194,6 +1198,7 @@ async function serve(args: Args): Promise<number> {
       stopQualiCall = new QualiCall({
         reader,
         finished: finished.for("quali-call"),
+        ...(postedRounds ? { posted: postedRounds } : {}),
         profile,
         channels: voice,
         mover: { move: (from, to) => transport.moveVoiceMembers(guildId, from, to) },
@@ -1257,7 +1262,7 @@ async function serve(args: Args): Promise<number> {
       stopStandings = new StandingsWatch({
         reader,
         finished: finished.for("standings"),
-        posted: posted(finished.for("standings-posted")),
+        ...(postedRounds ? { posted: postedRounds } : {}),
         log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
         post: async (id, name, sent) => {
           const championship = await reader.exportChampionship(id)
@@ -1318,10 +1323,7 @@ async function serve(args: Args): Promise<number> {
 }
 
 /** Posted rounds, kept in the finished table under a watcher name of their own. */
-function posted(store: FinishedChampionships): {
-  has(key: string): boolean
-  add(key: string): void
-} {
+function posted(store: FinishedChampionships): PostedRounds {
   return { has: (key) => store.all().has(key), add: (key) => store.add(key) }
 }
 

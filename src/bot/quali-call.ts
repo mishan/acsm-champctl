@@ -9,6 +9,10 @@
  * further. So the schedule only says when to start looking: from shortly
  * before quali, the round's export is read once a tick until the stamp appears.
  *
+ * It is also what notices a race night going wrong, being the one reader that
+ * follows the round as it runs: the admins hear about a dated round whose quali
+ * never started, and a round whose standings weren't out soon after it ended.
+ *
  * Read-only, like the rest of the bot. Public Access serves the export, and
  * moving members is a Discord permission rather than an ACSM one.
  */
@@ -16,13 +20,14 @@
 import { DateTime } from "luxon"
 
 import type { AcsmReader } from "../acsm/client.js"
-import type { Championship } from "../acsm/types.js"
+import type { Championship, ChampionshipEvent } from "../acsm/types.js"
 import { eventHasResults, eventSession, events, isZeroTime } from "../acsm/view.js"
 import { nextWeekday } from "../emit/schedule.js"
 import { qualiStartFrom } from "../finalize/schedule.js"
 import type { LeagueProfile, QualiVoiceMove } from "../profile/types.js"
 import { qualiStart } from "./announce.js"
 import type { FinishedChampionships } from "./finished.js"
+import { type PostedRounds, roundKey } from "./standings-watch.js"
 import type { VoiceMover } from "./transport.js"
 
 const MINUTE = 60_000
@@ -42,6 +47,10 @@ const FRESH = 10 * MINUTE
  * a round brought forward is seen before its new quali, not after.
  */
 const REFRESH = 15 * MINUTE
+/** How long after a round is stamped raced its standings should be out. */
+const POSTED_BY = 15 * MINUTE
+/** And how long after quali to stop waiting for the stamp. */
+const RACED_BY = 6 * 60 * MINUTE
 
 interface Round {
   championshipId: string
@@ -49,6 +58,8 @@ interface Round {
   /** 0-based index into the events, which is the running order. */
   index: number
   quali: number
+  /** No date on the round: `quali` is the league's weekly slot, which a bye week skips. */
+  guessed: boolean
 }
 
 export interface QualiCallOptions {
@@ -60,6 +71,8 @@ export interface QualiCallOptions {
   /** Tells the admins. A failed move on race night is otherwise a log line nobody reads. */
   notify: (content: string) => Promise<void>
   finished?: FinishedChampionships
+  /** With this, a round is followed to its end, and the admins told if its standings never go out. */
+  posted?: PostedRounds
 }
 
 export class QualiCall {
@@ -68,7 +81,12 @@ export class QualiCall {
   #refreshedAt = Number.NEGATIVE_INFINITY
   /** Championships with every round raced: re-reading them would buy nothing. */
   readonly #finished = new Set<string>()
+  /** Rounds nothing more is done about. */
   readonly #done = new Set<string>()
+  /** Rounds whose quali stamp was seen, moved or not. */
+  readonly #seen = new Set<string>()
+  /** Rounds moved, and followed until their standings should be out. */
+  readonly #moved = new Set<string>()
   #stopped = false
 
   constructor(options: QualiCallOptions) {
@@ -107,7 +125,19 @@ export class QualiCall {
 
     for (const round of this.#rounds) {
       const key = `${round.championshipId}#${round.index}`
-      if (this.#done.has(key) || t < round.quali - LEAD || t > round.quali + GRACE) continue
+      const what = `${round.name} round ${round.index + 1}`
+      const moved = this.#moved.has(key)
+      if (this.#done.has(key) || t < round.quali - LEAD) continue
+      if (t > round.quali + (moved ? RACED_BY : GRACE)) {
+        this.#done.add(key)
+        if (!moved && !this.#seen.has(key) && !round.guessed) {
+          await this.#tell(
+            `Qualifying for ${what} was due at ${this.#clock(round.quali)}, and I never saw it ` +
+              `start, so nobody was moved to <#${this.#o.channels.toChannelId}>.`,
+          )
+        }
+        continue
+      }
 
       let c: Championship
       try {
@@ -118,14 +148,42 @@ export class QualiCall {
       }
       if (this.#stopped) return
       const ev = events(c)[round.index]
+      if (moved) {
+        await this.#checkPosted(key, round, ev, t)
+        continue
+      }
       const started = ev ? eventSession(ev, "Qualifying")?.StartedTime : undefined
       if (!started || isZeroTime(started)) continue
+      this.#seen.add(key)
       const at = Date.parse(started)
       if (!(t - at <= FRESH)) continue
 
-      this.#done.add(key)
-      await this.#move(`${round.name} round ${round.index + 1}`)
+      if (this.#o.posted) this.#moved.add(key)
+      else this.#done.add(key)
+      await this.#move(what)
     }
+  }
+
+  /** Tells the admins about a round raced POSTED_BY ago whose standings never went out. */
+  async #checkPosted(
+    key: string,
+    round: Round,
+    ev: ChampionshipEvent | undefined,
+    t: number,
+  ): Promise<void> {
+    const completed = ev?.CompletedTime
+    if (!ev || !completed || isZeroTime(completed) || t - Date.parse(completed) < POSTED_BY) return
+    this.#done.add(key)
+    if (this.#o.posted?.has(roundKey(ev, round.index))) return
+    await this.#tell(
+      `${round.name} round ${round.index + 1} finished at ${this.#clock(Date.parse(completed))}, ` +
+        `and its standings haven't been posted. \`champctl-bot standings ${round.championshipId}\` ` +
+        `posts them.`,
+    )
+  }
+
+  #clock(ms: number): string {
+    return DateTime.fromMillis(ms, { zone: this.#o.profile.schedule.timezone }).toFormat("h:mm a")
   }
 
   async #move(what: string): Promise<void> {
@@ -173,15 +231,18 @@ export class QualiCall {
         const next = all.findIndex((ev) => !eventHasResults(ev))
         all.forEach((ev, index) => {
           // A round started by hand often has no date on it.
-          const quali =
-            qualiStart(ev, this.#o.profile) ??
-            (index === next ? leagueNight(this.#o.profile, t) : undefined)
-          if (!quali?.isValid || eventHasResults(ev) || quali.toMillis() + GRACE < t) return
+          const dated = qualiStart(ev, this.#o.profile)
+          const quali = dated ?? (index === next ? leagueNight(this.#o.profile, t) : undefined)
+          // Kept a refresh past GRACE, so a tick sees it overdue before it goes.
+          if (!quali?.isValid || eventHasResults(ev) || quali.toMillis() + GRACE + REFRESH < t) {
+            return
+          }
           rounds.push({
             championshipId: id,
             name: c.Name?.trim() || id,
             index,
             quali: quali.toMillis(),
+            guessed: dated === undefined,
           })
         })
       } catch (e) {
@@ -189,6 +250,12 @@ export class QualiCall {
         rounds.push(...this.#rounds.filter((r) => r.championshipId === id))
         this.#o.log(`quali call: couldn't read championship ${id}: ${message(e)}`)
       }
+    }
+    // A moved round has results once race 1 is in, and may have finished its
+    // championship, but is followed until its standings should be out.
+    for (const r of this.#rounds) {
+      const key = `${r.championshipId}#${r.index}`
+      if (this.#moved.has(key) && !this.#done.has(key) && !rounds.includes(r)) rounds.push(r)
     }
     this.#rounds = rounds
     this.#refreshedAt = t
