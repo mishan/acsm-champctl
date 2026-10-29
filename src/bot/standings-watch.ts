@@ -18,6 +18,7 @@ import type { AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { eventHasResults, events, isZeroTime } from "../acsm/view.js"
 import type { FinishedChampionships } from "./finished.js"
+import { finishedAt } from "./trophies.js"
 
 const MINUTE = 60_000
 /** How often the championship list is re-read, for one created mid-season. */
@@ -174,10 +175,9 @@ export class StandingsWatch {
       // Done the way the quali watch decides it, so a round run without a stamp,
       // or one never run, doesn't keep a championship read every tick for good.
       const all = events(c)
-      const last = Math.max(
-        Number.NEGATIVE_INFINITY,
-        ...all.map((ev) => Date.parse(ev.CompletedTime ?? "")).filter((v) => !Number.isNaN(v)),
-      )
+      // Sessions count too: between the races, the last round has results but
+      // no stamp, and the newest stamp is last week's.
+      const last = finishedAt(c)?.getTime() ?? Number.NEGATIVE_INFINITY
       // A championship with no rounds yet has them all still to come.
       if (all.length > 0 && all.every((ev) => eventHasResults(ev)) && !(t - last <= RECENT)) {
         this.#finished.add(id)
