@@ -250,12 +250,12 @@ commands that write. Both prompt before writing and take `--yes` in a script.
 ## Upgrading
 
 ```sh
-cd acsm-champctl
-git pull
-cd deploy
-docker compose build
-docker compose --profile discord up -d     # or without --profile, for the UI alone
+acsm-champctl/deploy/upgrade.sh
 ```
+
+It pulls, builds, and restarts whichever services are running, so one left
+off stays off. While the recorder is writing a qualifying or a race it
+refuses, since a restart ends that recording; `--during-session` overrides.
 
 Restarting `serve` signs everyone out, since sessions are held in memory. The
 drain finishes the pass it is on before stopping, which can take a few minutes
