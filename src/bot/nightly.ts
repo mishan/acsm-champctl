@@ -92,6 +92,11 @@ export function findingsAtOrAbove(
  */
 export async function nightly(reader: AcsmReader, options: NightlyOptions): Promise<NightlyReport> {
   const summaries = await reader.listChampionships()
+  // Only for naming tracks in the findings, so a failed read costs folder names.
+  const trackNames = await reader.listContent().then(
+    (c) => new Map(c.tracks.map((t) => [t.id, t.name])),
+    () => undefined,
+  )
   const entries: NightlyEntry[] = []
 
   const record = (entry: NightlyEntry): void => {
@@ -148,6 +153,7 @@ export async function nightly(reader: AcsmReader, options: NightlyOptions): Prom
         ...(options.pits ? { pits: options.pits } : {}),
         ...(options.suppress ? { suppress: options.suppress } : {}),
         ...(options.now ? { now: options.now } : {}),
+        trackNames,
       }),
     })
   }

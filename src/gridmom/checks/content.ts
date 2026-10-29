@@ -11,13 +11,13 @@ import { ANY_CAR_MODEL } from "../../acsm/types.js"
 import {
   availableCars,
   claimedSlots,
-  eventLabel,
   events,
   slots,
   spectatorModels,
   trackLabel,
 } from "../../acsm/view.js"
 import type { Check } from "../context.js"
+import { roundName, venueName } from "../context.js"
 import { humanList, pluralize } from "../finding.js"
 
 export const trackNotInstalled: Check = {
@@ -33,7 +33,7 @@ export const trackNotInstalled: Check = {
       const layout = (ev.RaceSetup?.TrackLayout ?? "").trim()
       if (content.hasTrack(track, layout)) return
 
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       const what = layout ? `the ${layout} layout of ${track}` : track
       emit(
         "ERROR",
@@ -78,7 +78,7 @@ export const skinMissing: Check = {
 
     const seen = new Set<string>()
     events(ctx.championship).forEach((ev, i) => {
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       for (const s of claimedSlots(ev.EntryList)) {
         const model = (s.entrant.Model ?? "").trim()
         const skin = (s.entrant.Skin ?? "").trim()
@@ -138,7 +138,7 @@ export const trackLayoutUnusable: Check = {
       if (!track) return
 
       const available = layouts[track] ?? []
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       const loc = { round: i + 1, event: label, path: `Events[${i}].RaceSetup.TrackLayout` }
       const layout = (ev.RaceSetup?.TrackLayout ?? "").trim()
 
@@ -199,7 +199,7 @@ export const unknownPitCount: Check = {
       if (!track || reported.has(track)) return
 
       const record = ctx.pits.get(rs?.Track ?? "", rs?.TrackLayout)
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       const loc = { round: i + 1, event: label, path: `Events[${i}].RaceSetup.Track` }
 
       if (!record) {
@@ -213,7 +213,7 @@ export const unknownPitCount: Check = {
         emit(
           "WARN",
           "content.pit-count-unknown",
-          `I don't know how many pit boxes ${track} has, so I can't tell whether ${biggest} cars fit.`,
+          `I don't know how many pit boxes ${venueName(ctx, rs)} has, so I can't tell whether ${biggest} cars fit.`,
           loc,
           { track, needed: biggest },
         )

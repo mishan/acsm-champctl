@@ -6,7 +6,8 @@
  * the web UI before a push, on demand from the CLI, and nightly from the bot.
  */
 
-import type { Championship } from "../acsm/types.js"
+import type { Championship, ChampionshipEvent, RaceSetup } from "../acsm/types.js"
+import { trackLabel } from "../acsm/view.js"
 import type { TrackLayouts } from "../acsm/content.js"
 import type { ContentIndex } from "../content/index.js"
 import type { PitTable } from "../pits/table.js"
@@ -37,6 +38,32 @@ export interface CheckContext {
    * read was attempted and failed; here there is nothing to do about either.
    */
   layouts?: TrackLayouts | null | undefined
+  /**
+   * The manager's names for its tracks, by folder name, so findings say
+   * "Nürburgring" rather than `ks_nurburgring`. Apart from `content`, which
+   * also switches on the content checks, so a caller can have names without
+   * them.
+   */
+  trackNames?: ReadonlyMap<string, string> | undefined
+}
+
+/**
+ * A round's track as a person reads it: the manager's name, with the layout's
+ * folder name when there is one, or the folder name alone when the name isn't
+ * known. For messages only; keys and finding data keep the folder name.
+ */
+export function venueName(ctx: CheckContext, rs: RaceSetup | undefined): string {
+  const folder = trackLabel(rs)
+  const name = ctx.trackNames?.get((rs?.Track ?? "").trim())
+  if (!folder || !name) return folder
+  const layout = (rs?.TrackLayout ?? "").trim()
+  return layout ? `${name}, ${layout}` : name
+}
+
+/** `eventLabel`, naming the track the way `venueName` does. */
+export function roundName(ctx: CheckContext, ev: ChampionshipEvent, round: number): string {
+  const venue = venueName(ctx, ev.RaceSetup)
+  return venue ? `${venue} (round ${round})` : `round ${round}`
 }
 
 /** Convenience emitter handed to each check, so checks stay declarative. */

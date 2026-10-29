@@ -14,8 +14,9 @@
 import { DateTime } from "luxon"
 
 import type { ChampionshipEvent } from "../../acsm/types.js"
-import { eventHasStarted, eventLabel, events, isZeroTime, session } from "../../acsm/view.js"
+import { eventHasStarted, events, isZeroTime, session } from "../../acsm/view.js"
 import type { Check, CheckContext } from "../context.js"
+import { roundName } from "../context.js"
 import { cap, MESSAGE_LOCALE, humanList } from "../finding.js"
 
 /** Parses `Scheduled` into the league zone, preserving the instant. */
@@ -54,7 +55,7 @@ export const scheduledDisagreesWithQuali: Check = {
       const driftMinutes = Math.round(derivedQuali.diff(expectedQuali, "minutes").minutes)
       if (driftMinutes === 0) return
 
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       const expectedScheduled = expectedQuali.minus({ minutes: practice })
       emit(
         "WARN",
@@ -89,7 +90,7 @@ export const wrongWeekday: Check = {
       // A per-event override with a stated reason is legitimate (plan §4.3).
       if (hasOverrideNote(ev)) return
 
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       emit(
         "WARN",
         "schedule.weekday",
@@ -121,7 +122,7 @@ export const twoEventsSameNight: Check = {
       const scheduled = scheduledAt(ev, timezone)
       if (!scheduled) return
       const day = scheduled.toISODate()!
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       const bucket = byDay.get(day)
       if (bucket) bucket.push({ round: i + 1, label })
       else byDay.set(day, [{ round: i + 1, label }])
@@ -152,7 +153,7 @@ export const scheduledInThePast: Check = {
       const scheduled = scheduledAt(ev, timezone)
       if (!scheduled || scheduled >= now) return
 
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       emit(
         "WARN",
         "schedule.past",
@@ -178,7 +179,7 @@ export const missingScheduledServer: Check = {
       // Only meaningful for events that are actually scheduled.
       if (isZeroTime(ev.Scheduled)) return
 
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       emit(
         "WARN",
         "schedule.missing-server",
@@ -199,7 +200,7 @@ export const dstBoundaryCrossing: Check = {
     events(ctx.championship).forEach((ev, i) => {
       const scheduled = scheduledAt(ev, timezone)
       if (!scheduled) return
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       const bucket = offsets.get(scheduled.offset)
       if (bucket) bucket.push({ round: i + 1, label })
       else offsets.set(scheduled.offset, [{ round: i + 1, label }])

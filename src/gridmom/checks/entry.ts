@@ -10,7 +10,6 @@ import {
   acceptedSignUps,
   claimedSlots,
   classes,
-  eventLabel,
   events,
   isAnyCarModel,
   isMultiModel,
@@ -25,6 +24,7 @@ import {
   type Slot,
 } from "../../acsm/view.js"
 import type { Check, CheckContext, Emit } from "../context.js"
+import { roundName, venueName } from "../context.js"
 import { cap, humanList, pluralize } from "../finding.js"
 
 /** Groups slots by a key, returning only the keys with more than one slot. */
@@ -61,7 +61,7 @@ function allLists(ctx: CheckContext): NamedList[] {
   })
   events(ctx.championship).forEach((ev, i) => {
     const round = i + 1
-    const label = trackLabel(ev.RaceSetup) || eventLabel(ev, round)
+    const label = venueName(ctx, ev.RaceSetup) || roundName(ctx, ev, round)
     out.push({
       list: ev.EntryList,
       label: `${label}'s entry list`,
@@ -173,11 +173,11 @@ export const maxClientsExceedsPits: Check = {
       const maxClients = rs?.MaxClients ?? 0
       if (maxClients <= record.pitboxes) return
 
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       emit(
         "ERROR",
         "grid.max-clients",
-        `${cap(label)} lets ${maxClients} cars on track, but ${track} only has ${record.pitboxes} pit ${pluralize(record.pitboxes, "box", "boxes")}.`,
+        `${cap(label)} lets ${maxClients} cars on track, but ${venueName(ctx, rs)} only has ${record.pitboxes} pit ${pluralize(record.pitboxes, "box", "boxes")}.`,
         { round: i + 1, event: label, path: `Events[${i}].RaceSetup.MaxClients` },
         { maxClients, pitboxes: record.pitboxes, track },
       )
@@ -194,7 +194,7 @@ export const pitBoxBeyondTrackCapacity: Check = {
       const record = ctx.pits.get(rs?.Track ?? "", rs?.TrackLayout)
       if (!record) return
       const track = trackLabel(rs)
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
 
       const over = slots(ev.EntryList).filter((s) => (s.entrant.PitBox ?? 0) >= record.pitboxes)
       if (over.length === 0) return
@@ -219,7 +219,7 @@ export const pitBoxBeyondTrackCapacity: Check = {
       emit(
         started ? "ERROR" : "WARN",
         "entry.pit-box-out-of-range",
-        `${cap(label)} puts ${pluralize(over.length, "someone", "people")} in pit ${pluralize(boxes.length, "box", "boxes")} ${humanList(boxes)}, but ${track} stops at ${record.pitboxes - 1}.` +
+        `${cap(label)} puts ${pluralize(over.length, "someone", "people")} in pit ${pluralize(boxes.length, "box", "boxes")} ${humanList(boxes)}, but ${venueName(ctx, rs)} stops at ${record.pitboxes - 1}.` +
           (started
             ? ""
             : ` It hasn't run yet, and an entry list larger than the grid is normal — this only matters for whoever is still in those boxes on the night.`),
@@ -272,7 +272,7 @@ export const modelNotInClass: Check = {
     if (union.size === 0) return
 
     events(ctx.championship).forEach((ev, i) => {
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       for (const s of slots(ev.EntryList)) {
         const model = (s.entrant.Model ?? "").trim()
         if (!model || model === ANY_CAR_MODEL) continue
@@ -334,7 +334,7 @@ export const raceSetupCarsMismatch: Check = {
       const missing = [...expected].filter((m) => !actual.has(m))
       if (extra.length === 0 && missing.length === 0) return
 
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       const parts: string[] = []
       if (extra.length) parts.push(`still lists ${humanList(extra)}`)
       if (missing.length) parts.push(`is missing ${humanList(missing)}`)
@@ -385,7 +385,7 @@ export const eventListDiffersFromClass: Check = {
       const extra = [...eventGuids].filter((g) => !classGuids.has(g))
       if (missing.length === 0 && extra.length === 0) return
 
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       const nameOf = (guid: string) => guidName(ctx, guid) ?? guid
 
       // Nobody at all, while the championship has people. Worth its own
@@ -574,7 +574,7 @@ export const entryListLengthVaries: Check = {
     if (evs.length < 2) return
     const sizes = evs.map((ev, i) => ({
       round: i + 1,
-      label: eventLabel(ev, i + 1),
+      label: roundName(ctx, ev, i + 1),
       n: slots(ev.EntryList).length,
     }))
     const distinct = new Set(sizes.map((s) => s.n))
@@ -645,7 +645,7 @@ export const acceptedSignUpWithoutSlot: Check = {
       })
       if (stranded.length === 0) return
 
-      const label = eventLabel(ev, i + 1)
+      const label = roundName(ctx, ev, i + 1)
       const who = stranded.map((r) => r.Name || r.GUID || "someone")
       emit(
         "WARN",
