@@ -194,6 +194,27 @@ describe("renderIncidentSvg", () => {
     expect(turning(left, "#2e86ab")).toBeLessThan(0)
   })
 
+  // The staged incident is a straight into a corner, which draws tall and thin.
+  it.each([
+    ["the staged incident", (p: IncidentPacket) => p],
+    [
+      "a long driver name",
+      (p: IncidentPacket) => ({
+        ...p,
+        a: { ...p.a, driver: "Maximilian Alexander von Hohenberg-Wittelsbach III" },
+      }),
+    ],
+  ])("gives each header line its own row, inside the picture, for %s", (_, edit) => {
+    const svg = renderIncidentSvg(edit(packets.left.packet), packets.left.track)
+    const width = Number(/<svg [^>]*width="(\d+)"/.exec(svg)![1])
+    const header = [...svg.matchAll(/<text x="(\d+)" y="(\d+)"[^>]*>([^<]+)</g)]
+      .map(([, x, y, text]) => ({ x: Number(x), y: Number(y), text: text! }))
+      .filter((t) => t.y < 80)
+    expect(header).toHaveLength(3)
+    expect(new Set(header.map((t) => t.y)).size).toBe(3)
+    for (const t of header) expect(t.x + t.text.length * 7.2).toBeLessThan(width)
+  })
+
   it("rings the measured contact, not wherever the cars were when it was reported", () => {
     const { packet, track } = packets.right
     const ring = (svg: string) => /<circle cx="([^"]+)" cy="([^"]+)" r="14"/.exec(svg)?.slice(1)

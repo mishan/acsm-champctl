@@ -16,6 +16,12 @@ const COLORS = { a: "#d1495b", b: "#2e86ab" } as const
 const SHOWN = { before: 3, after: 1 }
 const PAD_M = 12
 const WIDTH = 720
+/**
+ * Room for the header's names and caption, which a braking-zone incident on a
+ * straight, drawn tall and thin, wouldn't leave.
+ */
+const MIN_WIDTH = 480
+const HEADER = 80
 
 export function renderIncidentSvg(p: IncidentPacket, track: Track): string {
   const rows = p.timeline.filter((r) => r.t >= -SHOWN.before && r.t <= SHOWN.after)
@@ -30,7 +36,7 @@ export function renderIncidentSvg(p: IncidentPacket, track: Track): string {
   const maxZ = Math.max(...zs) + PAD_M
   const scale = WIDTH / Math.max(maxX - minX, maxZ - minZ)
   const height = Math.round((maxZ - minZ) * scale)
-  const width = Math.round((maxX - minX) * scale)
+  const drawn = Math.round((maxX - minX) * scale)
   const at = (x: number, z: number): string =>
     `${((x - minX) * scale).toFixed(1)},${((z - minZ) * scale).toFixed(1)}`
 
@@ -81,9 +87,17 @@ export function renderIncidentSvg(p: IncidentPacket, track: Track): string {
     : ""
 
   const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`)
+  const names = [
+    `${p.a.driver || `car ${p.a.carId}`} (reported the contact)`,
+    p.b.driver || `car ${p.b.carId}`,
+  ]
+  const caption = `${p.collision.where}, ${Math.round(p.collision.impactSpeedKmh)} km/h impact`
+  // 0.6 em a character, which a 12 px sans-serif line stays inside.
+  const longest = Math.max(...[...names, caption].map((s) => s.length))
+  const width = Math.max(drawn, MIN_WIDTH, Math.ceil(42 + longest * 7.2))
   const legend = [
-    [COLORS.a, `${esc(p.a.driver || `car ${p.a.carId}`)} (reported the contact)`],
-    [COLORS.b, esc(p.b.driver || `car ${p.b.carId}`)],
+    [COLORS.a, esc(names[0]!)],
+    [COLORS.b, esc(names[1]!)],
   ]
     .map(
       ([color, name], i) =>
@@ -91,19 +105,21 @@ export function renderIncidentSvg(p: IncidentPacket, track: Track): string {
     )
     .join("")
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height + 60}" viewBox="0 0 ${width} ${height + 60}" font-family="sans-serif" font-size="12">
+  // Clipped, because the track edges run past the cars' bounds and up into the header.
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height + HEADER}" viewBox="0 0 ${width} ${height + HEADER}" font-family="sans-serif" font-size="12">
 <rect width="100%" height="100%" fill="#f7f7f2"/>
-<g transform="translate(0,60)">
+<clipPath id="drawing"><rect y="${HEADER}" width="${width}" height="${height}"/></clipPath>
+<g clip-path="url(#drawing)"><g transform="translate(${Math.round((width - drawn) / 2)},${HEADER})">
 <polyline points="${left.join(" ")}" fill="none" stroke="#555" stroke-width="2"/>
 <polyline points="${right.join(" ")}" fill="none" stroke="#555" stroke-width="2"/>
 <polyline points="${line.join(" ")}" fill="none" stroke="#aaa" stroke-width="1" stroke-dasharray="4 4"/>
 <polyline points="${path("a")}" fill="none" stroke="${COLORS.a}" stroke-width="2"/>
 <polyline points="${path("b")}" fill="none" stroke="${COLORS.b}" stroke-width="2"/>
 ${markers("a")}${markers("b")}${bang}
-</g>
+</g></g>
 <style>.t{font-size:10px;fill:#333}</style>
 ${legend}
-<text x="${width - 12}" y="24" text-anchor="end">${esc(p.collision.where)}, ${Math.round(p.collision.impactSpeedKmh)} km/h impact</text>
+<text x="12" y="64">${esc(caption)}</text>
 </svg>
 `
 }
