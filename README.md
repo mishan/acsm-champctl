@@ -20,6 +20,55 @@ The commands:
 | [`champctl-spectator`](docs/commands.md#champctl-spectator) | record every race, and find the incidents in it |
 | [`champctl-mcp`](docs/commands.md#champctl-mcp) | answer questions about the league for an MCP client, read-only |
 
+## What it looks like
+
+`champctl-serve` against a Server Manager holding a made-up season, with
+gridmom's findings opened above the rounds:
+
+<img src="docs/images/rounds.png" alt="A championship's rounds, with gridmom's warning that round 4 starts an hour late">
+
+| | |
+|---|---|
+| <img width="360" src="docs/images/phone-round.png" alt="Finalizing a round on a phone: what changes, and gridmom's warning"> | <img width="360" src="docs/images/incident.png" alt="An overhead drawing of two cars' paths into a left-hander, a marker each second, and the contact ringed"> |
+| Finalizing a round on a phone, since it gets opened from a Discord link | The drawing the stewards get with an incident report, beside the speeds, the gap, who moved and a suggested call |
+
+<details>
+<summary>More of the web UI</summary>
+
+Finalizing a round: pick a format, see exactly what changes.
+
+<img src="docs/images/finalize.png" alt="Finalizing round 4: the 1x40 preset picked, the two changes it makes, and gridmom's warning about the round's start time">
+
+Accepting sign-ups.
+
+<img src="docs/images/signups.png" alt="Three sign-ups waiting, each with Accept and Reject, and Accept all 3">
+
+Creating next season from this one.
+
+<img src="docs/images/new-championship.png" alt="A new championship's tracks, the rounds it will create with their dates, and the grid capped by the smallest pit lane">
+
+</details>
+
+gridmom on the command line, on a championship broken on purpose:
+
+```text
+$ gridmom check --file fixtures/synthetic/suzuka-duplicate-pitboxes.json
+gridmom — BATL August 2026 (synthetic)
+
+ERROR Suzuka's entry list has duplicate pit boxes at 3, 16 and 27. There are gaps at 10, 19 and 22 to move them into. Saving this event will drop 3 drivers from the list.
+      Events[0].EntryList  entry.duplicate-pit-box
+ERROR Nobody set the race length for suzuka (round 1).
+      Events[0].RaceSetup.Sessions.Race  format.race-length-missing
+…
+WARN  Suzuka (round 1) starts practice at 19:30, which puts quali at 20:30 rather than the usual 20:00; for a 60 minute practice it should be scheduled 19:00.
+      Events[0].Scheduled  schedule.derived-start
+WARN  Imola (round 2) is a 40-lap single race but the pit window never opens, so there's no mandatory stop.
+      Events[1].RaceSetup.RacePitWindowStart  format.pit-window-missing
+…
+
+6 errors, 6 warnings, 2 notes. Fix the errors before pushing.
+```
+
 ## Install
 
 Needs Node `>=22.13.0` — that floor is `node:sqlite`, which the archive and the
