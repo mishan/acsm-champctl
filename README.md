@@ -59,11 +59,14 @@ ERROR Suzuka's entry list has duplicate pit boxes at 3, 16 and 27. There are gap
       Events[0].EntryList  entry.duplicate-pit-box
 ERROR Nobody set the race length for suzuka (round 1).
       Events[0].RaceSetup.Sessions.Race  format.race-length-missing
+…
 WARN  Suzuka (round 1) starts practice at 19:30, which puts quali at 20:30 rather than the usual 20:00; for a 60 minute practice it should be scheduled 19:00.
       Events[0].Scheduled  schedule.derived-start
 WARN  Imola (round 2) is a 40-lap single race but the pit window never opens, so there's no mandatory stop.
       Events[1].RaceSetup.RacePitWindowStart  format.pit-window-missing
 …
+
+6 errors, 6 warnings, 2 notes. Fix the errors before pushing.
 ```
 
 ## Install
