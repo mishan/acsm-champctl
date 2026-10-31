@@ -37,7 +37,6 @@ export function renderIncidentSvg(p: IncidentPacket, track: Track): string {
   const scale = WIDTH / Math.max(maxX - minX, maxZ - minZ)
   const height = Math.round((maxZ - minZ) * scale)
   const drawn = Math.round((maxX - minX) * scale)
-  const width = Math.max(drawn, MIN_WIDTH)
   const at = (x: number, z: number): string =>
     `${((x - minX) * scale).toFixed(1)},${((z - minZ) * scale).toFixed(1)}`
 
@@ -88,9 +87,17 @@ export function renderIncidentSvg(p: IncidentPacket, track: Track): string {
     : ""
 
   const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`)
+  const names = [
+    `${p.a.driver || `car ${p.a.carId}`} (reported the contact)`,
+    p.b.driver || `car ${p.b.carId}`,
+  ]
+  const caption = `${p.collision.where}, ${Math.round(p.collision.impactSpeedKmh)} km/h impact`
+  // 0.6 em a character, which a 12 px sans-serif line stays inside.
+  const longest = Math.max(...[...names, caption].map((s) => s.length))
+  const width = Math.max(drawn, MIN_WIDTH, Math.ceil(42 + longest * 7.2))
   const legend = [
-    [COLORS.a, `${esc(p.a.driver || `car ${p.a.carId}`)} (reported the contact)`],
-    [COLORS.b, esc(p.b.driver || `car ${p.b.carId}`)],
+    [COLORS.a, esc(names[0]!)],
+    [COLORS.b, esc(names[1]!)],
   ]
     .map(
       ([color, name], i) =>
@@ -112,7 +119,7 @@ ${markers("a")}${markers("b")}${bang}
 </g></g>
 <style>.t{font-size:10px;fill:#333}</style>
 ${legend}
-<text x="12" y="64">${esc(p.collision.where)}, ${Math.round(p.collision.impactSpeedKmh)} km/h impact</text>
+<text x="12" y="64">${esc(caption)}</text>
 </svg>
 `
 }
