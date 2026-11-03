@@ -945,6 +945,19 @@ describe("emitting a championship", () => {
     }
   })
 
+  it("reports the class name an override leaves, not the one it replaced", () => {
+    const { championship: c, derived } = emitChampionship({
+      template: template(),
+      spec: spec({ className: "GT3" }),
+      profile: testProfile(),
+      pits,
+      now: NOW,
+      championshipOverrides: { Classes: [{ ...template().Classes![0]!, Name: "GT4" }] },
+    })
+    expect(c.Classes?.[0]?.Name).toBe("GT4")
+    expect(derived).toContain('class named "GT4"')
+  })
+
   it("applies the championship half of the baseline at championship level", () => {
     // The deliberate EntryListType/PracticeEntryListType pair (§4.4) lives
     // here, not on RaceSetup. It was in `baseline.raceSetup` until a real

@@ -1543,6 +1543,13 @@ describe("previewing a new championship", () => {
       "RSS Formula Hybrid",
     ],
     [
+      "other cars, once each when picked twice",
+      listing,
+      ["ks_porsche_911_gt3_r_2016", "ks_porsche_911_gt3_r_2016 "],
+      {},
+      "Porsche 911 GT3 R",
+    ],
+    [
       "the source's cars, read off its rounds",
       listing,
       ["rss_formula_hybrid_2021"],

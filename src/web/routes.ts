@@ -971,7 +971,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           : raceSetupCars(events(source)[0]?.RaceSetup)
         const newCars =
           body.cars?.length && carSet(body.cars) !== carSet(sourceCars)
-            ? body.cars.map((c) => c.trim())
+            ? [...new Set(body.cars.map((c) => c.trim()))]
             : undefined
         const listed = newCars && (await ctx.content.get().catch(() => undefined))
         const overrides: Partial<ChampionshipSpec> = {
