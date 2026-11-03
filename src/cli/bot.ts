@@ -1045,6 +1045,7 @@ async function serve(args: Args): Promise<number> {
       queue,
       tokens,
       store: liveries,
+      finished: finished.for("livery"),
       ...liveryRouterSettings(livery),
     })
 

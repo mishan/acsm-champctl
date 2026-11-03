@@ -7,6 +7,7 @@ import { LIVERY_COMMAND, LIVERY_COMMANDS, RACER_COMMAND } from "../src/bot/comma
 import { toSlashCommand } from "../src/bot/discord.js"
 import { LiveryRouter, liveryRouterSettings } from "../src/bot/livery-router.js"
 import type { SlashCommand } from "../src/bot/transport.js"
+import { SqliteFinishedStore } from "../src/bot/finished.js"
 import { SqliteClaimStore } from "../src/liveries/claims.js"
 import { DEFAULT_LIMITS } from "../src/liveries/pack.js"
 import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
@@ -380,6 +381,42 @@ describe("choosing the championship", () => {
       claims.close()
     },
   )
+
+  it("reads a championship it has found finished only once, across claims", async () => {
+    const claims = await SqliteClaimStore.open(":memory:")
+    const queue = await SqliteSubmissionQueue.open(":memory:")
+    const tokens = await SqliteTokenStore.open(":memory:")
+    const finished = await SqliteFinishedStore.open(":memory:")
+    const done = champ({
+      ID: OTHER,
+      Name: "August 2026",
+      Events: [raceEvent({ StartedTime: "2026-08-05T19:00:00-07:00" })],
+    })
+    const reader = new StaticAcsmReader([champ(), done])
+    const exported: string[] = []
+    const read = reader.exportChampionship.bind(reader)
+    reader.exportChampionship = async (id) => {
+      exported.push(id)
+      return read(id)
+    }
+    const r = new LiveryRouter({
+      reader,
+      claims,
+      queue,
+      tokens,
+      clamp: {},
+      finished: finished.for("livery"),
+      now: () => NOW,
+    })
+    const claim = command({ name: "racer", subcommand: "claim", options: { name: "Misha" } })
+    expect((await r.handle(claim)).content).toMatch(/claimed as "Misha"/)
+    expect((await r.handle(claim)).content).toMatch(/claimed as "Misha"/)
+    expect(exported.filter((id) => id === OTHER)).toHaveLength(1)
+    finished.close()
+    tokens.close()
+    queue.close()
+    claims.close()
+  })
 
   it("claims on every running championship with the name, whichever is pinned", async () => {
     const claims = await SqliteClaimStore.open(":memory:")

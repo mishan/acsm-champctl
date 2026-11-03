@@ -20,6 +20,7 @@ import type { SqliteTokenStore } from "../liveries/upload-token.js"
 import { maxSubmissionBytes } from "../liveries/pack.js"
 import type { SqliteLiveryStore } from "../liveries/store.js"
 import type { LiveryUploadSettings } from "../profile/types.js"
+import type { FinishedChampionships } from "./finished.js"
 import {
   DEFAULT_UPLOAD_LIMITS,
   handleCarsetLink,
@@ -48,6 +49,8 @@ export interface LiveryRouterOptions {
   championshipId?: string
   limits?: UploadLimits
   now?: () => Date
+  /** Championships already found finished, which a claim needn't read again. */
+  finished?: FinishedChampionships
 }
 
 /** Everything the router takes from the profile, and nothing it takes from the process. */
@@ -293,14 +296,16 @@ export class LiveryRouter implements CommandRouter {
     }
 
     const live: Live[] = []
+    const finished = this.#options.finished?.all()
     for (const summary of summaries) {
       const id = summary.ID
-      if (!id) continue
+      if (!id || finished?.has(id)) continue
       try {
         const championship = await this.#options.reader.exportChampionship(id)
         // A finished championship cannot be acted on — the same test the
         // nightly report uses to decide there is nothing left to say about one.
         if (!isFinished(championship)) live.push({ championship, championshipId: id })
+        else this.#options.finished?.add(id)
       } catch {
         // One unreadable championship should not stop an upload for a different
         // one. If it was the only one, the count below says so anyway.
