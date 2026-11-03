@@ -14,7 +14,7 @@
 import type { AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { autoApplyPromised } from "../liveries/accept.js"
-import type { SqliteClaimStore } from "../liveries/claims.js"
+import { claimAnnouncement, type DriverClaim, type SqliteClaimStore } from "../liveries/claims.js"
 import type { SqliteSubmissionQueue } from "../liveries/queue.js"
 import type { SqliteTokenStore } from "../liveries/upload-token.js"
 import { maxSubmissionBytes } from "../liveries/pack.js"
@@ -156,12 +156,18 @@ export class LiveryRouter implements CommandRouter {
           }
         }
 
+        const { claim, announcement } = await this.#claim(
+          championshipId,
+          championship,
+          command,
+          now,
+        )
         const result = await handleUpload({
           context,
           clamp: this.#options.clamp,
           championship,
           championshipId,
-          claim: await this.#options.claims.forDiscordUser(championshipId, command.userId),
+          claim,
           download: () => attachment.download(),
           queue: this.#options.queue,
           now,
@@ -172,7 +178,7 @@ export class LiveryRouter implements CommandRouter {
             now,
           ),
         })
-        return { content: result.reply }
+        return { content: result.reply, ...(announcement ? { announcement } : {}) }
       }
 
       case "carset": {
@@ -195,24 +201,54 @@ export class LiveryRouter implements CommandRouter {
       }
 
       case "upload-url": {
+        const { claim, announcement } = await this.#claim(
+          championshipId,
+          championship,
+          command,
+          now,
+        )
         const result = await handleUploadUrl(
           {
             context,
             clamp: this.#options.clamp,
             championship,
             championshipId,
-            claim: await this.#options.claims.forDiscordUser(championshipId, command.userId),
+            claim,
             ...(this.#options.uploadBaseUrl ? { uploadBaseUrl: this.#options.uploadBaseUrl } : {}),
           },
           this.#options.tokens,
           now,
         )
-        return { content: result.reply }
+        return { content: result.reply, ...(announcement ? { announcement } : {}) }
       }
 
       default:
         return { content: `I don't know \`/livery ${command.subcommand ?? ""}\`.` }
     }
+  }
+
+  /**
+   * This account's claim, carried forward from an earlier championship if it
+   * has none here. A claim made that way owes the admins the same announcement
+   * `/racer claim` sends, whether or not the upload then goes through.
+   */
+  async #claim(
+    championshipId: string,
+    championship: Championship,
+    command: SlashCommand,
+    now: Date,
+  ): Promise<{ claim?: DriverClaim; announcement?: string }> {
+    const claims = this.#options.claims
+    const had = await claims.forDiscordUser(championshipId, command.userId)
+    if (had) return { claim: had }
+    const claim = await claims.carriedForward(championshipId, championship, command.userId, {
+      discordHandle: command.username,
+      at: now,
+    })
+    if (!claim) return {}
+    // The claim is saved by now, so a failed hint mustn't cost its announcement.
+    const hint = await claims.handleHint(claim.entrantName).catch(() => undefined)
+    return { claim, announcement: claimAnnouncement(claim, hint ? { hint } : {}) }
   }
 
   /**

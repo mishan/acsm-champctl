@@ -176,6 +176,76 @@ describe("LiveryRouter", () => {
     r.close()
   })
 
+  const STEAM = "76561198000000001"
+  it.each([
+    [
+      "takes the upload of a racer who claimed their Steam id last season, and tells the admins",
+      [["Misha", STEAM]],
+      undefined,
+      /2 files for Misha/,
+      /claimed the entry list name \*\*Misha\*\*/,
+    ],
+    [
+      "still tells the admins when the sign-up's handle can't be read",
+      [["Misha", STEAM]],
+      "no hint",
+      /2 files for Misha/,
+      /claimed the entry list name \*\*Misha\*\*/,
+    ],
+    [
+      "still sends them to /racer claim when someone holds that name",
+      [["Misha", STEAM]],
+      "222222222222222222",
+      /\/racer claim/,
+      undefined,
+    ],
+    [
+      "sends them to /racer claim when two entrants carry their Steam id",
+      [
+        ["Misha", STEAM],
+        ["Misha 2", STEAM],
+      ],
+      undefined,
+      /\/racer claim/,
+      undefined,
+    ],
+    [
+      "sends them to /racer claim when another entrant has their name",
+      [
+        ["Misha", "76561198000000002"],
+        ["Misha", STEAM],
+      ],
+      undefined,
+      /\/racer claim/,
+      undefined,
+    ],
+  ])("%s", async (_, entrants, other, expected, announced) => {
+    const roster = (rows: string[][]) => [
+      championshipClass({
+        Entrants: entryList(rows.map(([Name = "", GUID = ""]) => person({ Name, GUID }))),
+      }),
+    ]
+    const r = await router({
+      reader: new StaticAcsmReader([champ({ Classes: roster(entrants) })]),
+    })
+    await r.claims.claim(
+      OTHER,
+      champ({ ID: OTHER, Classes: roster([["misha", STEAM]]) }),
+      "misha",
+      MISHA,
+    )
+    if (other === "no hint") r.claims.handleHint = async () => Promise.reject(new Error("locked"))
+    else if (other)
+      await r.claims.claim(CHAMP, champ({ Classes: roster(entrants) }), "Misha", other)
+    const reply = await r.router.handle(
+      command({ subcommand: "upload", attachment: attachment(skin()) }),
+    )
+    expect(reply.content).toMatch(expected)
+    if (announced) expect(reply.announcement).toMatch(announced)
+    else expect(reply.announcement).toBeUndefined()
+    r.close()
+  })
+
   /**
    * Checked against the size Discord reported, before fetching anything.
    * Downloading first and then refusing would spend the bandwidth to learn what
