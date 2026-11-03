@@ -46,6 +46,7 @@ import {
 } from "./support/acsm-html.js"
 import {
   championship,
+  championshipClass,
   driver,
   entryList,
   NOW,
@@ -1516,6 +1517,68 @@ describe("previewing a new championship", () => {
       payload: { acknowledgeWarnings: true },
     })
     expect(importedChampionship(h).Classes?.[0]?.AvailableCars).toEqual(["rss_formula_hybrid_2021"])
+  })
+
+  const listing = async () => [{ id: "ks_porsche_911_gt3_r_2016", name: "Porsche 911 GT3 R" }]
+  it.each([
+    [
+      "other cars, by the manager's name",
+      listing,
+      [" ks_porsche_911_gt3_r_2016 "],
+      {},
+      "Porsche 911 GT3 R",
+    ],
+    [
+      "other cars, by folder name with no car listing",
+      async () => Promise.reject(new Error("down")),
+      ["ks_porsche_911_gt3_r_2016"],
+      {},
+      "ks_porsche_911_gt3_r_2016",
+    ],
+    [
+      "the source's cars, untrimmed and twice",
+      listing,
+      [" rss_formula_hybrid_2021", "rss_formula_hybrid_2021"],
+      {},
+      "RSS Formula Hybrid",
+    ],
+    [
+      "other cars, once each when picked twice",
+      listing,
+      ["ks_porsche_911_gt3_r_2016", "ks_porsche_911_gt3_r_2016 "],
+      {},
+      "Porsche 911 GT3 R",
+    ],
+    [
+      "the source's cars, read off its rounds",
+      listing,
+      ["rss_formula_hybrid_2021"],
+      {
+        championship: championship({
+          ID: CHAMP_ID,
+          Classes: [championshipClass({ AvailableCars: [] })],
+        }),
+      },
+      "RSS Formula Hybrid",
+    ],
+  ])("names the class for %s", async (_, cars, picked, over, name) => {
+    const h = harness({
+      ...over,
+      content: new ContentCache({ load: async () => ({ cars: await cars(), tracks: [] }) }),
+    })
+    await h.login()
+    const planned = await planChampionship(h, { name: "September 2026", cars: picked })
+    expect(planned.statusCode, planned.body).toBe(200)
+    const { plan } = planned.json() as NewChampionshipPlanResponse
+    // Said in the preview only when it isn't the source's.
+    expect(plan.derived.includes(`class named "${name}"`)).toBe(name !== "RSS Formula Hybrid")
+    await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${plan.planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+    expect(importedChampionship(h).Classes?.[0]?.Name).toBe(name)
   })
 
   /**
