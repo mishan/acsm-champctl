@@ -176,6 +176,34 @@ describe("LiveryRouter", () => {
     r.close()
   })
 
+  it.each([
+    [
+      "takes the upload of a racer who claimed their Steam id last season",
+      undefined,
+      /2 files for Misha/,
+    ],
+    [
+      "still sends them to /racer claim when someone holds that name",
+      "222222222222222222",
+      /\/racer claim/,
+    ],
+  ])("%s", async (_, holder, expected) => {
+    const GUID = "76561198000000001"
+    const roster = (name: string) => [
+      championshipClass({ Entrants: entryList([person({ Name: name, GUID })]) }),
+    ]
+    const r = await router({
+      reader: new StaticAcsmReader([champ({ Classes: roster("Misha") })]),
+    })
+    await r.claims.claim(OTHER, champ({ ID: OTHER, Classes: roster("misha") }), "misha", MISHA)
+    if (holder) await r.claims.claim(CHAMP, champ({ Classes: roster("Misha") }), "Misha", holder)
+    const reply = await r.router.handle(
+      command({ subcommand: "upload", attachment: attachment(skin()) }),
+    )
+    expect(reply.content).toMatch(expected)
+    r.close()
+  })
+
   /**
    * Checked against the size Discord reported, before fetching anything.
    * Downloading first and then refusing would spend the bandwidth to learn what

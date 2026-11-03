@@ -384,6 +384,34 @@ export class SqliteClaimStore {
     return this.#claimOf(championshipId, discordUserId)
   }
 
+  /**
+   * `forDiscordUser`, or else a claim made now on the entrant carrying a Steam
+   * id this account has claimed before, so a returning racer doesn't claim
+   * again every season. `claim` still refuses a name someone else holds.
+   */
+  async carriedForward(
+    championshipId: string,
+    championship: Championship,
+    discordUserId: string,
+    options: { discordHandle?: string; at?: Date } = {},
+  ): Promise<DriverClaim | undefined> {
+    const existing = this.#claimOf(championshipId, discordUserId)
+    if (existing) return existing
+    const guids = (await this.guidsByUser()).get(discordUserId)
+    const entrant = rosterOf(championship).find((r) =>
+      splitGuids(r.entrant.GUID).some((g) => guids?.has(g)),
+    )
+    if (!entrant) return undefined
+    const outcome = await this.claim(
+      championshipId,
+      championship,
+      entrant.name,
+      discordUserId,
+      options,
+    )
+    return outcome.ok ? outcome.claim : undefined
+  }
+
   async forEntrant(championshipId: string, entrantName: string): Promise<DriverClaim | undefined> {
     return this.#holderOf(championshipId, entrantName)
   }
