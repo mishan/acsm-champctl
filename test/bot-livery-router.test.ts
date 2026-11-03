@@ -178,22 +178,33 @@ describe("LiveryRouter", () => {
 
   it.each([
     [
-      "takes the upload of a racer who claimed their Steam id last season",
+      "takes the upload of a racer who claimed their Steam id last season, and tells the admins",
+      ["Misha"],
       undefined,
       /2 files for Misha/,
+      /claimed the entry list name \*\*Misha\*\*/,
     ],
     [
       "still sends them to /racer claim when someone holds that name",
+      ["Misha"],
       "222222222222222222",
       /\/racer claim/,
+      undefined,
     ],
-  ])("%s", async (_, holder, expected) => {
+    [
+      "sends them to /racer claim when two entrants carry their Steam id",
+      ["Misha", "Misha 2"],
+      undefined,
+      /\/racer claim/,
+      undefined,
+    ],
+  ])("%s", async (_, names, holder, expected, announced) => {
     const GUID = "76561198000000001"
-    const roster = (name: string) => [
-      championshipClass({ Entrants: entryList([person({ Name: name, GUID })]) }),
+    const roster = (...names: string[]) => [
+      championshipClass({ Entrants: entryList(names.map((Name) => person({ Name, GUID }))) }),
     ]
     const r = await router({
-      reader: new StaticAcsmReader([champ({ Classes: roster("Misha") })]),
+      reader: new StaticAcsmReader([champ({ Classes: roster(...names) })]),
     })
     await r.claims.claim(OTHER, champ({ ID: OTHER, Classes: roster("misha") }), "misha", MISHA)
     if (holder) await r.claims.claim(CHAMP, champ({ Classes: roster("Misha") }), "Misha", holder)
@@ -201,6 +212,8 @@ describe("LiveryRouter", () => {
       command({ subcommand: "upload", attachment: attachment(skin()) }),
     )
     expect(reply.content).toMatch(expected)
+    if (announced) expect(reply.announcement).toMatch(announced)
+    else expect(reply.announcement).toBeUndefined()
     r.close()
   })
 

@@ -398,9 +398,11 @@ export class SqliteClaimStore {
     const existing = this.#claimOf(championshipId, discordUserId)
     if (existing) return existing
     const guids = (await this.guidsByUser()).get(discordUserId)
-    const entrant = rosterOf(championship).find((r) =>
+    const matches = rosterOf(championship).filter((r) =>
       splitGuids(r.entrant.GUID).some((g) => guids?.has(g)),
     )
+    // Two entrants with this racer's Steam ids is a choice for them to make.
+    const entrant = matches.length === 1 ? matches[0] : undefined
     if (!entrant) return undefined
     const outcome = await this.claim(
       championshipId,
