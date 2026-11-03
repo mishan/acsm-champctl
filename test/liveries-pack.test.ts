@@ -687,6 +687,25 @@ describe("readSingleLivery", () => {
     ).toEqual(["livery.dds", "ui_skin.json"])
   })
 
+  it.each([
+    ["the game's own path", `content/cars/${CAR}/skins/misha/`],
+    ["the path from the game folder down", `assettocorsa/content/cars/${CAR}/skins/misha/`],
+  ])("unwraps a skin zipped with %s", (_, folder) => {
+    const deep = zipSync({ [`${folder}livery.dds`]: dds(), [`${folder}ui_skin.json`]: bytes("{}") })
+    expect(
+      readSingleLivery(deep, identity)
+        .files.map((f) => f.name)
+        .sort(),
+    ).toEqual(["livery.dds", "ui_skin.json"])
+  })
+
+  it("refuses a skin whose path names another car, and names both", () => {
+    const other = zipSync({ "content/cars/jtc_honda_civic_eg_gra/skins/misha/livery.dds": dds() })
+    expect(() => readSingleLivery(other, identity)).toThrowError(
+      `this zip is a skin for jtc_honda_civic_eg_gra, but your car is ${CAR}`,
+    )
+  })
+
   it("refuses a path that climbs out with ..", () => {
     const evil = zipSync({ "livery.dds": bytes("d"), "../evil.dds": bytes("x") })
     expect(() => readSingleLivery(evil, identity)).toThrowError(/climbs out/)

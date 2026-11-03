@@ -797,6 +797,25 @@ function readOneLivery(
     .filter((e) => e.parts.length > 0)
     .sort((a, b) => a.path.localeCompare(b.path))
 
+  // Zipped from inside the game folder, the skin keeps its whole path:
+  // content/cars/<car>/skins/<skin>/. That names a car, so it is checked
+  // against the seat's rather than stripped blind.
+  const gamePath = (parts: string[]): string[] | undefined => {
+    const i = parts.findIndex((p, j) => p === "cars" && parts[j + 2] === "skins")
+    return i >= 0 && parts.length > i + 4 ? parts.slice(0, i + 4) : undefined
+  }
+  const prefix = entries[0] && gamePath(entries[0].parts)
+  if (prefix && entries.every((e) => gamePath(e.parts)?.join("/") === prefix.join("/"))) {
+    const zipCar = normalise(prefix[prefix.length - 3]!)
+    if (zipCar !== carModel) {
+      throw new LiveryPackError(
+        `Refusing ${carModel}/${driverName}: this zip is a skin for ${zipCar}, but your car is ` +
+          `${carModel}.`,
+      )
+    }
+    for (const e of entries) e.parts = e.parts.slice(prefix.length - 1)
+  }
+
   const roots = new Set(entries.filter((e) => e.parts.length > 1).map((e) => e.parts[0]!))
   const wrapped = entries.length > 0 && entries.every((e) => e.parts.length > 1) && roots.size === 1
 
