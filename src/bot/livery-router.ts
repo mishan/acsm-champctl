@@ -246,7 +246,8 @@ export class LiveryRouter implements CommandRouter {
       at: now,
     })
     if (!claim) return {}
-    const hint = await claims.handleHint(claim.entrantName)
+    // The claim is saved by now, so a failed hint mustn't cost its announcement.
+    const hint = await claims.handleHint(claim.entrantName).catch(() => undefined)
     return { claim, announcement: claimAnnouncement(claim, hint ? { hint } : {}) }
   }
 

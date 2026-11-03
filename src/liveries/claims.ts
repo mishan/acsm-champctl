@@ -401,9 +401,13 @@ export class SqliteClaimStore {
     const matches = rosterOf(championship).filter((r) =>
       splitGuids(r.entrant.GUID).some((g) => guids?.has(g)),
     )
-    // Two entrants with this racer's Steam ids is a choice for them to make.
+    // Two entrants with this racer's Steam ids is a choice for them to make,
+    // and `claim` goes by name, so a name two entrants share could store the
+    // other one's Steam id.
     const entrant = matches.length === 1 ? matches[0] : undefined
-    if (!entrant) return undefined
+    if (!entrant || rosterOf(championship).filter((r) => r.name === entrant.name).length > 1) {
+      return undefined
+    }
     const outcome = await this.claim(
       championshipId,
       championship,
