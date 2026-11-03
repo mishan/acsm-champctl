@@ -33,7 +33,7 @@ import type { Championship } from "../acsm/types.js"
 import { AcsmAuthError, AcsmSession } from "../acsm/session.js"
 import { ContentCache } from "./content-cache.js"
 import { readTrackLayouts, type TrackLayouts } from "./layouts.js"
-import { classes, events } from "../acsm/view.js"
+import { classes, events, raceSetupCars } from "../acsm/view.js"
 import { importChampionship } from "../acsm/write.js"
 import { cloneChampionship } from "../emit/clone.js"
 import {
@@ -962,9 +962,17 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
 
         // The source's class is named for the source's cars, so other cars get
         // a class named for them instead, as the manager names them.
-        const sourceCars = classes(source)[0]?.AvailableCars ?? []
+        // The same cars `specFromChampionship` reads, as a set of trimmed ids.
+        const carSet = (cars: string[]): string =>
+          [...new Set(cars.map((c) => c.trim()))].sort().join(";")
+        const sourceClass = classes(source)[0]?.AvailableCars
+        const sourceCars = sourceClass?.length
+          ? sourceClass
+          : raceSetupCars(events(source)[0]?.RaceSetup)
         const newCars =
-          body.cars?.length && body.cars.join(";") !== sourceCars.join(";") ? body.cars : undefined
+          body.cars?.length && carSet(body.cars) !== carSet(sourceCars)
+            ? body.cars.map((c) => c.trim())
+            : undefined
         const listed = newCars && (await ctx.content.get().catch(() => undefined))
         const overrides: Partial<ChampionshipSpec> = {
           ...(body.name ? { name: body.name } : {}),

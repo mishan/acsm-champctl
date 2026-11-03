@@ -418,6 +418,9 @@ export function emitChampionship(options: EmitOptions): EmitResult {
     }
   }
 
+  if (championshipClass.Name !== templateClass?.Name) {
+    derived.push(`class named ${JSON.stringify(championshipClass.Name)}`)
+  }
   derived.push("every UUID regenerated, so importing creates rather than overwrites")
 
   return { championship: out, grid, schedule, derived }
