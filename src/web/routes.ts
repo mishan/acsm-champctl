@@ -33,7 +33,7 @@ import type { Championship } from "../acsm/types.js"
 import { AcsmAuthError, AcsmSession } from "../acsm/session.js"
 import { ContentCache } from "./content-cache.js"
 import { readTrackLayouts, type TrackLayouts } from "./layouts.js"
-import { events } from "../acsm/view.js"
+import { classes, events } from "../acsm/view.js"
 import { importChampionship } from "../acsm/write.js"
 import { cloneChampionship } from "../emit/clone.js"
 import {
@@ -960,10 +960,23 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
         // generated — a disagreement that reproduces roughly never.
         const now = ctx.now()
 
+        // The source's class is named for the source's cars, so other cars get
+        // a class named for them instead, as the manager names them.
+        const sourceCars = classes(source)[0]?.AvailableCars ?? []
+        const newCars =
+          body.cars?.length && body.cars.join(";") !== sourceCars.join(";") ? body.cars : undefined
+        const listed = newCars && (await ctx.content.get().catch(() => undefined))
         const overrides: Partial<ChampionshipSpec> = {
           ...(body.name ? { name: body.name } : {}),
           ...(body.startDate ? { startDate: body.startDate } : {}),
           ...(body.cars?.length ? { cars: body.cars } : {}),
+          ...(newCars
+            ? {
+                className: newCars
+                  .map((id) => listed?.cars.find((c) => c.id === id)?.name || id)
+                  .join(" / "),
+              }
+            : {}),
           ...(body.description === undefined ? {} : { description: body.description }),
           ...(body.tracks ? { rounds: body.tracks.map(roundSpecFrom) } : {}),
         }

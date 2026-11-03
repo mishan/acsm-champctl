@@ -1518,6 +1518,32 @@ describe("previewing a new championship", () => {
     expect(importedChampionship(h).Classes?.[0]?.AvailableCars).toEqual(["rss_formula_hybrid_2021"])
   })
 
+  it.each([
+    [
+      "the manager's name for them",
+      async () => [{ id: "ks_porsche_911_gt3_r_2016", name: "Porsche 911 GT3 R" }],
+      "Porsche 911 GT3 R",
+    ],
+    [
+      "their folder name, with no car listing",
+      async () => Promise.reject(new Error("down")),
+      "ks_porsche_911_gt3_r_2016",
+    ],
+  ])("names the class for other cars by %s, not after the source's", async (_, cars, name) => {
+    const h = harness({
+      content: new ContentCache({ load: async () => ({ cars: await cars(), tracks: [] }) }),
+    })
+    await h.login()
+    const planId = await previewedWith(h, { cars: ["ks_porsche_911_gt3_r_2016"] })
+    await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${planId}/create`,
+      headers: { cookie: h.cookie() },
+      payload: { acknowledgeWarnings: true },
+    })
+    expect(importedChampionship(h).Classes?.[0]?.Name).toBe(name)
+  })
+
   /**
    * A name per round, which ACSM shows instead of the track.
    *
