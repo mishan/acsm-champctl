@@ -796,6 +796,26 @@ describe("emitting a championship", () => {
     expect(report.findings.map((f) => f.code)).not.toContain("schedule.derived-start")
   })
 
+  it("gives the league's length to every key a session goes by", () => {
+    // ACSM's exports have carried both spellings, and a reader looks for the
+    // exact key before the aliases. Updating only the first match left the
+    // other one saying 23 to whichever reader found it.
+    const t = template()
+    for (const ev of events(t)) {
+      ev.RaceSetup = {
+        ...ev.RaceSetup,
+        Sessions: {
+          PRACTICE: { Name: "Practice", Time: 23 },
+          Practice: { Name: "Practice", Time: 23 },
+          RACE: { Name: "Race", Time: 0, Laps: 13 },
+        },
+      }
+    }
+    const { championship: out } = emit({ template: t })
+    const sessions = events(out)[0]!.RaceSetup!.Sessions!
+    expect([sessions["PRACTICE"]?.Time, sessions["Practice"]?.Time]).toEqual([60, 60])
+  })
+
   it("writes MaxClients from the binding track, and says which", () => {
     const { championship: c, grid, derived } = emit()
     expect(grid.maxClients).toBe(24)

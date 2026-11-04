@@ -29,10 +29,10 @@ export function withSessionLengths(
     ["Qualifying", lengths.qualiMinutes],
   ]
   for (const [key, minutes] of wanted) {
-    const k = Object.keys(sessions).find((s) =>
+    const keys = Object.keys(sessions).filter((s) =>
       SESSION_KEY_ALIASES[key].includes(s.trim().toLowerCase()),
     )
-    if (k) sessions[k] = { ...sessions[k], Time: minutes }
+    for (const k of keys) sessions[k] = { ...sessions[k], Time: minutes }
   }
   return { ...ev, RaceSetup: { ...ev.RaceSetup, Sessions: sessions } }
 }
