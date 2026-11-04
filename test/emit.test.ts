@@ -740,30 +740,80 @@ describe("emitting a championship", () => {
     expect(report.findings.filter((f) => f.severity === "ERROR")).toEqual([])
   })
 
-  it("derives Scheduled from the event's practice length, not the profile's", () => {
-    // monthSchedule used profile.schedule.practiceMinutes for every round while
-    // the practice session came from the template, so a 30-minute practice
-    // against a 60-minute default put quali half an hour early — and gridmom's
-    // schedule.derived-start, which reads the length off the event, says so.
-    //
-    // The session is *replaced*, not added: the fixture already carries a
-    // "Practice" at 60, and adding a "PRACTICE" at 30 beside it just leaves
-    // lookupSession finding the first one. The initial version of this test did
-    // exactly that and measured nothing.
+  it.each([
+    {
+      template: "a hot-fixed 23 minute practice and a 15 minute quali",
+      sessions: {
+        PRACTICE: { Name: "Practice", Time: 23 },
+        QUALIFY: { Name: "Qualifying", Time: 15 },
+      },
+      practice: 60,
+      derived: "practice 23 → 60 minutes and quali 15 → 20 minutes, from the league defaults",
+    },
+    {
+      template: "the league's own lengths",
+      sessions: {
+        PRACTICE: { Name: "Practice", Time: 60 },
+        QUALIFY: { Name: "Qualifying", Time: 20 },
+      },
+      practice: 60,
+      derived: undefined,
+    },
+    {
+      template: "no practice session",
+      sessions: { QUALIFY: { Name: "Qualifying", Time: 15 } },
+      practice: undefined,
+      derived: "quali 15 → 20 minutes, from the league defaults",
+    },
+  ])("gives every round the league's session lengths, from $template", (c) => {
+    // A template is last month's championship, so whatever was done to one of
+    // its rounds on a race night — a practice cut short and restarted — comes
+    // with it. The league's lengths are what a new month starts from.
     const t = template()
     for (const ev of events(t)) {
       ev.RaceSetup = {
         ...ev.RaceSetup,
-        Sessions: { Practice: { Name: "Practice", Time: 30, Laps: 0, IsOpen: 1 } },
+        Sessions: { ...c.sessions, RACE: { Name: "Race", Time: 0, Laps: 13 } },
       }
     }
-    expect(session(events(t)[0]!, "Practice")?.Time).toBe(30)
 
-    const { championship: c } = emit({ template: t })
-    expect(session(events(c)[0]!, "Practice")?.Time).toBe(30)
-
-    const report = check(c, testProfile(), { pits, now: NOW })
+    const { championship: out, derived } = emit({ template: t })
+    for (const ev of events(out)) {
+      expect(session(ev, "Practice")?.Time).toBe(c.practice)
+      expect(session(ev, "Qualifying")?.Time).toBe(20)
+    }
+    if (c.practice) {
+      expect(
+        DateTime.fromISO(events(out)[0]!.Scheduled!)
+          .setZone("America/Los_Angeles")
+          .toFormat("HH:mm"),
+      ).toBe("19:00")
+    }
+    expect(derived.filter((d) => d.includes("league defaults"))).toEqual(
+      c.derived ? [c.derived] : [],
+    )
+    const report = check(out, testProfile(), { pits, now: NOW })
     expect(report.findings.map((f) => f.code)).not.toContain("schedule.derived-start")
+  })
+
+  it("gives the league's length to every key a session goes by", () => {
+    // ACSM's exports have carried both spellings, and a reader looks for the
+    // exact key before the aliases. Updating only the first match left the
+    // other one saying 23 to whichever reader found it.
+    const t = template()
+    for (const ev of events(t)) {
+      ev.RaceSetup = {
+        ...ev.RaceSetup,
+        Sessions: {
+          PRACTICE: { Name: "Practice", Time: 23 },
+          Practice: { Name: "Practice", Time: 23 },
+          RACE: { Name: "Race", Time: 0, Laps: 13 },
+        },
+      }
+    }
+    const { championship: out } = emit({ template: t })
+    const sessions = events(out)[0]!.RaceSetup!.Sessions!
+    expect([sessions["PRACTICE"]?.Time, sessions["Practice"]?.Time]).toEqual([60, 60])
   })
 
   it("writes MaxClients from the binding track, and says which", () => {
