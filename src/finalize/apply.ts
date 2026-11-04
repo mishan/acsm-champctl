@@ -74,11 +74,17 @@ export class PartialWriteError extends FinalizeError {
     override readonly cause: unknown,
   ) {
     const why = cause instanceof Error ? cause.message : String(cause)
+    const moved = plan.schedule?.ifEventOnly
     super(
-      `Half of this went through. The event was saved, so the format is applied, but the ` +
-        `schedule save failed and round ${plan.round} is still at its old time: ${why}. ` +
-        `Re-running would re-apply a format that is already applied — set the quali time in ` +
-        `ACSM, or re-run once you know why the schedule POST failed.`,
+      moved
+        ? `Half of this went through. The event was saved, so the new practice length is ` +
+            `applied, but the schedule save failed and practice still starts when it did — so ` +
+            `round ${plan.round}'s quali now starts at ${moved}: ${why}. Set the quali time ` +
+            `again in champctl once you know why the schedule POST failed.`
+        : `Half of this went through. The event was saved, so the format is applied, but the ` +
+            `schedule save failed and round ${plan.round} is still at its old time: ${why}. ` +
+            `Re-running would re-apply a format that is already applied — set the quali time in ` +
+            `ACSM, or re-run once you know why the schedule POST failed.`,
     )
     this.name = "PartialWriteError"
   }
@@ -205,6 +211,7 @@ export async function applyFinalize(
       entryListFingerprint: plan.entryListFingerprint,
       fields: {
         ...formFieldsFor(plan.desired),
+        ...plan.sessionFields,
         ...(plan.venue ? { Track: plan.venue.to.track, TrackLayout: plan.venue.to.layout } : {}),
       },
     })

@@ -819,6 +819,35 @@ function push(h: Harness, id: string, body: Record<string, unknown> = {}) {
   })
 }
 
+describe("previewing a session length", () => {
+  it.each([
+    { body: { practiceMinutes: 45 }, status: 200 },
+    { body: { qualiMinutes: 120 }, status: 200 },
+    { body: { practiceMinutes: 0 }, status: 400 },
+    { body: { qualiMinutes: 1.5 }, status: 400 },
+  ])("answers $status to $body", async ({ body, status }) => {
+    const h = harness({
+      championship: champ({
+        Events: [
+          raceEvent({
+            ID: EVENT_ID,
+            Scheduled: "2026-09-02T19:00:00-07:00",
+            EntryList: entryList([driver("Ada"), driver("Grace")]),
+          }),
+        ],
+      }),
+    })
+    await h.login()
+    const res = await preview(h, body)
+    expect(res.statusCode).toBe(status)
+    if (status === 200) {
+      expect(res.json().plan.changes.map((c: { label: string }) => c.label)).toContain(
+        "practiceMinutes" in body ? "Practice length" : "Quali length",
+      )
+    }
+  })
+})
+
 describe("pushing a change", () => {
   it("posts the event form with the new length", async () => {
     const h = harness()
@@ -1032,6 +1061,56 @@ describe("reading a championship", () => {
     expect(round.practiceStart.time).toBe("19:00")
     expect(round.started).toBe(false)
   })
+
+  it.each([
+    {
+      round: "a practice, a quali and a race",
+      sessions: {
+        PRACTICE: { Name: "Practice", Time: 60, Laps: 0, IsOpen: 1 },
+        QUALIFY: { Name: "Qualifying", Time: 15, Laps: 0, IsOpen: 1 },
+      },
+      lengths: { practice: 60, quali: 15 },
+      raceStart: "20:15",
+    },
+    {
+      round: "no practice",
+      sessions: { QUALIFY: { Name: "Qualifying", Time: 15, Laps: 0, IsOpen: 1 } },
+      lengths: { practice: null, quali: 15 },
+      raceStart: "20:15",
+    },
+    {
+      round: "no quali",
+      sessions: { PRACTICE: { Name: "Practice", Time: 60, Laps: 0, IsOpen: 1 } },
+      lengths: { practice: 60, quali: null },
+      raceStart: null,
+    },
+  ])(
+    "shows the session lengths of a round with $round",
+    async ({ sessions, lengths, raceStart }) => {
+      const h = harness({
+        championship: champ({
+          Events: [
+            raceEvent({
+              ID: EVENT_ID,
+              Scheduled: "2026-09-02T19:00:00-07:00",
+              RaceSetup: {
+                Sessions: { ...sessions, RACE: { Name: "Race", Time: 0, Laps: 20, IsOpen: 1 } },
+              },
+            }),
+          ],
+        }),
+      })
+      await h.login()
+      const res = await h.app.inject({
+        method: "GET",
+        url: `/api/championships/${CHAMP_ID}`,
+        headers: { cookie: h.cookie() },
+      })
+      const round = res.json().championship.rounds[0]
+      expect(round.lengths).toEqual(lengths)
+      expect(round.raceStart?.time ?? null).toBe(raceStart)
+    },
+  )
 
   it("shows an unscheduled round as unscheduled rather than as the year 1", async () => {
     // ACSM writes Go's zero time rather than omitting the field, and treating

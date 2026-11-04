@@ -109,6 +109,13 @@ export interface RoundView {
   quali: LocalTimeView | null
   /** `Scheduled` — practice start, before quali. Null if unscheduled. */
   practiceStart: LocalTimeView | null
+  /** The sessions' own lengths in minutes, null for a session the round doesn't run. */
+  lengths: { practice: number | null; quali: number | null }
+  /**
+   * Quali start plus quali length. Approximate: a quali running over, and the
+   * race's own wait, push the real start later. Null without both.
+   */
+  raceStart: LocalTimeView | null
 }
 
 export interface ChampionshipView {
@@ -187,6 +194,9 @@ export interface PlanRequest {
   extraLap?: boolean
   /** League-local wall clock. Omit to leave the schedule alone. */
   quali?: { date: string; time: string }
+  /** Omit to leave the length alone. A practice changing length keeps quali where it is. */
+  practiceMinutes?: number
+  qualiMinutes?: number
   /**
    * Move the round to another track, or set the layout it should have had.
    *

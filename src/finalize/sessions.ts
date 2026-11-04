@@ -21,10 +21,10 @@ export interface SessionLengths {
  */
 export function withSessionLengths(
   ev: ChampionshipEvent,
-  lengths: SessionLengths,
+  lengths: Partial<SessionLengths>,
 ): ChampionshipEvent {
   const sessions = { ...(ev.RaceSetup?.Sessions ?? {}) }
-  const wanted: [SessionKey, number][] = [
+  const wanted: [SessionKey, number | undefined][] = [
     ["Practice", lengths.practiceMinutes],
     ["Qualifying", lengths.qualiMinutes],
   ]
@@ -32,7 +32,7 @@ export function withSessionLengths(
     const keys = Object.keys(sessions).filter((s) =>
       SESSION_KEY_ALIASES[key].includes(s.trim().toLowerCase()),
     )
-    for (const k of keys) sessions[k] = { ...sessions[k], Time: minutes }
+    if (minutes !== undefined) for (const k of keys) sessions[k] = { ...sessions[k], Time: minutes }
   }
   return { ...ev, RaceSetup: { ...ev.RaceSetup, Sessions: sessions } }
 }

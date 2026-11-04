@@ -52,6 +52,8 @@ function round(over: Partial<RoundView> = {}): RoundView {
     practiceMinutes: 30,
     quali: null,
     practiceStart: null,
+    lengths: { practice: 60, quali: 15 },
+    raceStart: null,
     ...over,
   }
 }
