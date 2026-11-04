@@ -25,6 +25,7 @@ import type { Championship, ChampionshipEvent, ChampionshipSummary } from "../ac
 import { classes, eventHasStarted, eventLabel, events, trackLabel } from "../acsm/view.js"
 import type { FormFieldChange } from "../finalize/format.js"
 import { readFormat } from "../finalize/format.js"
+import { sessionLengthsOf } from "../finalize/sessions.js"
 import type { CheckReport } from "../gridmom/finding.js"
 import type { EmitResult } from "../emit/championship.js"
 import { descriptionText } from "../info/description.js"
@@ -88,6 +89,7 @@ export function roundView(ev: ChampionshipEvent, round: number, profile: LeagueP
   const zone = profile.schedule.timezone
   const practiceMinutes = practiceMinutesFor(ev, profile.schedule.practiceMinutes)
   const quali = currentQualiStart(ev, zone, practiceMinutes)
+  const lengths = sessionLengthsOf(ev, profile.schedule)
 
   return {
     round,
@@ -107,6 +109,9 @@ export function roundView(ev: ChampionshipEvent, round: number, profile: LeagueP
     // Reading the raw field would also mean rendering Go's zero time for an
     // unscheduled event as though it were a date in the year 1.
     practiceStart: quali ? localTime(quali.minus({ minutes: practiceMinutes })) : null,
+    lengths,
+    raceStart:
+      quali && lengths.quali !== null ? localTime(quali.plus({ minutes: lengths.quali })) : null,
   }
 }
 

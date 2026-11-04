@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest"
 import { AcsmSession, AcsmSessionLapsedError } from "../src/acsm/session.js"
 import type { ChampionshipEvent } from "../src/acsm/types.js"
 import { AcsmError } from "../src/acsm/client.js"
+import { events } from "../src/acsm/view.js"
 import {
   applyFinalize,
   EntryListChangedError,
@@ -24,6 +25,7 @@ import {
   entryListFingerprint,
   FinalizeError,
   planFinalize,
+  type PlanOptions,
 } from "../src/finalize/plan.js"
 import {
   currentQualiStart,
@@ -31,6 +33,7 @@ import {
   localTimeCandidates,
   qualiStartFrom,
   scheduledFromQuali,
+  SCHEDULE_FIELD,
   scheduleFormValues,
   ScheduleError,
 } from "../src/finalize/schedule.js"
@@ -845,6 +848,199 @@ describe("planning a finalize", () => {
     })
     expect(moved.schedule?.values["event-schedule-time"]).toBe("20:00") // practice start
     expect(moved.noop).toBe(false)
+  })
+})
+
+describe("practice and quali length", () => {
+  // Round 1 of November 2026 as it was cloned: a 23 minute practice from last
+  // month's hot fix, started at 7:37 so quali still opened at 8:00.
+  const hotFixed = () =>
+    champ({
+      Scheduled: "2026-09-02T19:37:00-07:00",
+      RaceSetup: {
+        Sessions: {
+          PRACTICE: { Name: "Practice", Time: 23, Laps: 0, IsOpen: 1 },
+          QUALIFY: { Name: "Qualifying", Time: 15, Laps: 0, IsOpen: 1 },
+          RACE: { Name: "Race", Time: 0, Laps: 13, IsOpen: 1 },
+        },
+      },
+    })
+  const hotFixedForm = eventFormHtml(TWO, {
+    "Practice.Time": "23",
+    "Qualifying.Time": "15",
+    "Race.Laps": "13",
+  })
+
+  const plan = async (
+    over: Partial<PlanOptions>,
+    championship = hotFixed(),
+    page = hotFixedForm,
+  ) => {
+    const { session } = await harness({ eventPages: [page] })
+    return planFinalize(session, {
+      championship,
+      championshipId: CHAMP_ID,
+      eventId: EVENT_ID,
+      format: readFormat(events(championship)[0]!),
+      profile: testProfile(),
+      pits: pitTable([suzukaPits]),
+      now: NOW,
+      ...over,
+    })
+  }
+
+  it.each([
+    {
+      asked: "a longer practice",
+      over: { sessionLengths: { practiceMinutes: 60 } },
+      fields: { "Practice.Time": "60" },
+      practiceStart: "19:00",
+    },
+    {
+      asked: "a longer practice and the quali time it already has",
+      over: {
+        sessionLengths: { practiceMinutes: 60 },
+        qualiStart: { date: "2026-09-02", time: "20:00" },
+      },
+      fields: { "Practice.Time": "60" },
+      practiceStart: "19:00",
+    },
+    {
+      asked: "a longer quali",
+      over: { sessionLengths: { qualiMinutes: 30 } },
+      fields: { "Qualifying.Time": "30" },
+      practiceStart: undefined,
+    },
+    {
+      asked: "both, a week later",
+      over: {
+        sessionLengths: { practiceMinutes: 60, qualiMinutes: 20 },
+        qualiStart: { date: "2026-09-09", time: "20:00" },
+      },
+      fields: { "Practice.Time": "60", "Qualifying.Time": "20" },
+      practiceStart: "19:00",
+    },
+  ])(
+    "keeps quali where it was asked to be, for $asked",
+    async ({ over, fields, practiceStart }) => {
+      const p = await plan(over)
+      expect(Object.fromEntries(p.formChanges.map((f) => [f.name, f.after]))).toEqual(fields)
+      expect(p.schedule?.values[SCHEDULE_FIELD.time]).toBe(practiceStart)
+      expect(p.noop).toBe(false)
+      // gridmom checks the round as it would be. Handed the old lengths, it
+      // would find quali somewhere other than where it is and want that
+      // acknowledged before the push that fixes it.
+      expect(p.gridmom.findings.map((f) => f.code)).not.toContain("schedule.derived-start")
+    },
+  )
+
+  it("says what changes in minutes", async () => {
+    const p = await plan({ sessionLengths: { practiceMinutes: 60, qualiMinutes: 20 } })
+    expect(p.changes).toEqual([
+      { label: "Practice length", before: "23 minutes", after: "60 minutes" },
+      { label: "Quali length", before: "15 minutes", after: "20 minutes" },
+      { label: "Practice start", before: "2026-09-02 19:37 PDT", after: "2026-09-02 19:00 PDT" },
+    ])
+  })
+
+  it("has nothing to do when the lengths are already right", async () => {
+    const p = await plan({ sessionLengths: { practiceMinutes: 23, qualiMinutes: 15 } })
+    expect(p.noop).toBe(true)
+  })
+
+  it("refuses a length for a session the round doesn't run", async () => {
+    // ACSM renders Practice.Time whether or not the round has a practice, so
+    // the form would take the value and the race night would ignore it.
+    await expect(plan({ sessionLengths: { practiceMinutes: 60 } }, champ())).rejects.toThrow(
+      /Round 1 has no practice/,
+    )
+  })
+
+  it("reads a stored practice of 0 as the league's, as the start time does", async () => {
+    // Every reader of the export takes 0 to mean the league's 60 minutes, and
+    // Scheduled was worked out that way. "0 → 60" would describe a change
+    // that moves nothing.
+    const zero = hotFixed()
+    events(zero)[0]!.Scheduled = "2026-09-02T19:00:00-07:00"
+    events(zero)[0]!.RaceSetup!.Sessions!["PRACTICE"]!.Time = 0
+    const p = await plan(
+      { sessionLengths: { practiceMinutes: 60 } },
+      zero,
+      eventFormHtml(TWO, { "Practice.Time": "60", "Qualifying.Time": "15", "Race.Laps": "13" }),
+    )
+    expect(p.changes).toEqual([])
+    expect(p.noop).toBe(true)
+  })
+
+  it("sends no schedule for a longer practice on an unscheduled round", async () => {
+    const unscheduled = hotFixed()
+    events(unscheduled)[0]!.Scheduled = "0001-01-01T00:00:00Z"
+    const p = await plan({ sessionLengths: { practiceMinutes: 60 } }, unscheduled)
+    expect(p.formChanges.map((f) => f.name)).toEqual(["Practice.Time"])
+    expect(p.schedule).toBeUndefined()
+  })
+
+  it("posts the new length with the event, then moves practice", async () => {
+    const { session, posts } = await harness({ eventPages: [hotFixedForm] })
+    const championship = hotFixed()
+    const p = await planFinalize(session, {
+      championship,
+      championshipId: CHAMP_ID,
+      eventId: EVENT_ID,
+      format: readFormat(events(championship)[0]!),
+      sessionLengths: { practiceMinutes: 60 },
+      profile: testProfile(),
+      pits: pitTable([suzukaPits]),
+      now: NOW,
+    })
+    await applyFinalize(session, p)
+    expect(posts.map((x) => new URL(x.url).pathname)).toEqual([
+      `/championship/${CHAMP_ID}/event/submit`,
+      `/championship/${CHAMP_ID}/event/${EVENT_ID}/schedule`,
+    ])
+    expect(posts[0]!.body.get("Practice.Time")).toBe("60")
+    expect(posts[1]!.body.get(SCHEDULE_FIELD.time)).toBe("19:00")
+  })
+
+  it("tells one story when the schedule page can't be read after the length saved", async () => {
+    const { session } = await harness({
+      eventPages: [hotFixedForm],
+      scheduleHtml: "<html><body>no form here</body></html>",
+    })
+    const championship = hotFixed()
+    const p = await planFinalize(session, {
+      championship,
+      championshipId: CHAMP_ID,
+      eventId: EVENT_ID,
+      format: readFormat(events(championship)[0]!),
+      sessionLengths: { practiceMinutes: 60 },
+      profile: testProfile(),
+      pits: pitTable([suzukaPits]),
+      now: NOW,
+    })
+    const failed = applyFinalize(session, p)
+    await expect(failed).rejects.toThrow(/quali now starts at 2026-09-02 20:37/)
+    await expect(failed).rejects.not.toThrow(/unchanged/)
+  })
+
+  it("names the quali time a round is left at when only the length saved", async () => {
+    // The practice is longer and still starts at 7:37, so quali has moved to
+    // 8:37 — "still at its old time" would be the wrong thing to tell someone.
+    const { session } = await harness({ eventPages: [hotFixedForm], failSchedulePost: true })
+    const championship = hotFixed()
+    const p = await planFinalize(session, {
+      championship,
+      championshipId: CHAMP_ID,
+      eventId: EVENT_ID,
+      format: readFormat(events(championship)[0]!),
+      sessionLengths: { practiceMinutes: 60 },
+      profile: testProfile(),
+      pits: pitTable([suzukaPits]),
+      now: NOW,
+    })
+    const failed = applyFinalize(session, p)
+    await expect(failed).rejects.toBeInstanceOf(PartialWriteError)
+    await expect(failed).rejects.toThrow(/quali now starts at 2026-09-02 20:37/)
   })
 })
 

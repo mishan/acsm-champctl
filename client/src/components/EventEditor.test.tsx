@@ -68,6 +68,8 @@ function round(over: Partial<RoundView> = {}): RoundView {
     practiceMinutes: 30,
     quali: { date: "2026-09-02", time: "19:00", display: "2026-09-02 19:00 PDT" },
     practiceStart: { date: "2026-09-02", time: "18:30", display: "2026-09-02 18:30 PDT" },
+    lengths: { practice: 30, quali: 15 },
+    raceStart: { date: "2026-09-02", time: "19:15", display: "2026-09-02 19:15 PDT" },
     ...over,
   }
 }

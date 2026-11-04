@@ -203,6 +203,11 @@ const planBodySchema = {
     reversedGridPositions: { type: "integer", minimum: 0, maximum: MAX_REVERSED },
     mandatoryPit: { type: "boolean" },
     extraLap: { type: "boolean" },
+    // At least a minute: every reader of the export takes 0 to mean "use the
+    // league default", so a 0 written here would disagree with the start time
+    // champctl worked out from it.
+    practiceMinutes: { type: "integer", minimum: 1, maximum: MAX_MINUTES },
+    qualiMinutes: { type: "integer", minimum: 1, maximum: MAX_MINUTES },
     quali: {
       type: "object",
       additionalProperties: false,
@@ -808,6 +813,12 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           format: withOverrides(readFormat(ev), body),
           ...(body.quali ? { qualiStart: body.quali } : {}),
           ...(body.venue ? { venue: body.venue } : {}),
+          sessionLengths: {
+            ...(body.practiceMinutes === undefined
+              ? {}
+              : { practiceMinutes: body.practiceMinutes }),
+            ...(body.qualiMinutes === undefined ? {} : { qualiMinutes: body.qualiMinutes }),
+          },
           profile: ctx.profile,
           pits: ctx.pits,
           now: ctx.now(),

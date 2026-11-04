@@ -281,6 +281,8 @@ export function eventFormHtml(
   const { TrackLayout: layout = "", ...rest } = over
   const base: Record<string, string> = {
     Track: "suzuka",
+    "Practice.Time": "60",
+    "Qualifying.Time": "20",
     "Race.Laps": "20",
     "Race.Time": "0",
     RacePitWindowStart: "0",

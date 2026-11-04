@@ -20,6 +20,8 @@
 
 import { createHash } from "node:crypto"
 
+import type { DateTime } from "luxon"
+
 import { layoutsFrom } from "../acsm/content.js"
 import { currentTrackLayout, offeredTracks, trackIsMissingFromServer } from "../acsm/event-form.js"
 import {
@@ -45,7 +47,9 @@ import type { PitTable } from "../pits/table.js"
 import {
   applyFormat,
   describeLength,
+  FIELD,
   formFieldsFor,
+  MAX_MINUTES,
   readFormat,
   sameFormat,
   type Change,
@@ -60,6 +64,7 @@ import {
   scheduleFormValues,
   type ScheduleFormValues,
 } from "./schedule.js"
+import { type SessionLengths, sessionLengthsOf, withSessionLengths } from "./sessions.js"
 
 export class FinalizeError extends Error {
   constructor(message: string) {
@@ -90,12 +95,20 @@ export interface FinalizePlan {
   desired: RaceFormat
   changes: Change[]
   formChanges: FormFieldChange[]
-  /** Present only when quali timing moves; it is a second request. */
+  /** Present only when `Scheduled` moves; it is a second request. */
   schedule?: {
     from: string | undefined
     to: string
     values: ScheduleFormValues
+    /**
+     * Where quali lands if the event saves and this doesn't: the new practice
+     * length from the old practice start. Present only when practice changes
+     * length, since otherwise quali hasn't moved at all.
+     */
+    ifEventOnly?: string
   }
+  /** `Practice.Time` and `Qualifying.Time`, for the ones being set. */
+  sessionFields: Record<string, string>
   gridmom: CheckReport
   /** Blocking, i.e. gridmom found an ERROR in the would-be championship. */
   blocked: boolean
@@ -135,6 +148,11 @@ export interface PlanOptions {
   venue?: Venue
   /** League-local quali start. Omit to leave the schedule alone. */
   qualiStart?: { date: string; time: string }
+  /**
+   * New practice or quali length. A longer practice on a scheduled round
+   * moves its start so that quali stays where it was.
+   */
+  sessionLengths?: Partial<SessionLengths>
   profile: LeagueProfile
   pits?: PitTable
   now?: Date
@@ -364,6 +382,9 @@ export async function planFinalize(
   const venue = planVenue(ev, html, options.venue)
   if (venue) changes.push(describeVenue(venue))
 
+  const lengths = options.sessionLengths ?? {}
+  const sessionFields = sessionLengthFields(ev, round, lengths, profile, changes)
+
   // What the form would actually send, compared against what it currently
   // holds. A field already at the target value is not a change.
   //
@@ -382,9 +403,14 @@ export async function planFinalize(
   for (const [name, after] of Object.entries(venueFields(venue))) {
     formChanges.push({ name, before: getOne(form.fields, name), after })
   }
+  for (const [name, after] of Object.entries(sessionFields)) {
+    const before = getOne(form.fields, name)
+    if (before !== after) formChanges.push({ name, before, after })
+  }
 
   const planned = planSchedule(ev, options)
   const schedule = planned?.schedule
+  if (planned?.practiceStart) changes.push(planned.practiceStart)
 
   // gridmom runs against the championship as it *would* be. Checking the
   // current one would report yesterday's problems and miss the ones this
@@ -396,7 +422,7 @@ export async function planFinalize(
   // schedule.weekday, moving one into the past raised no schedule.past — and
   // moving one *out* of a stale problem still reported it, so applyFinalize
   // demanded an acknowledgement for a warning the change was fixing.
-  const wouldBeEvent = applyFormat(ev, format)
+  const wouldBeEvent = withSessionLengths(applyFormat(ev, format), lengths)
   if (planned) wouldBeEvent.Scheduled = planned.scheduled
   // The move too, so every check that reads the track sees where the round is
   // going rather than where it has been: the pit count that caps the grid, the
@@ -432,6 +458,7 @@ export async function planFinalize(
     changes,
     formChanges,
     ...(schedule ? { schedule } : {}),
+    sessionFields,
     gridmom,
     blocked: gridmom.counts.ERROR > 0,
     noop: formChanges.length === 0 && !schedule,
@@ -450,34 +477,103 @@ export async function planFinalize(
 function planSchedule(
   ev: ChampionshipEvent,
   options: PlanOptions,
-): { schedule: NonNullable<FinalizePlan["schedule"]>; scheduled: string } | undefined {
-  if (!options.qualiStart) return undefined
-
+):
+  | {
+      schedule: NonNullable<FinalizePlan["schedule"]>
+      scheduled: string
+      practiceStart: Change | undefined
+    }
+  | undefined {
   const zone = options.profile.schedule.timezone
-  const practice = practiceMinutesFor(ev, options.profile.schedule.practiceMinutes)
+  const practiceNow = practiceMinutesFor(ev, options.profile.schedule.practiceMinutes)
+  const practice = options.sessionLengths?.practiceMinutes ?? practiceNow
+  const existing = currentQualiStart(ev, zone, practiceNow)
+
   // qualiStartFrom throws ScheduleError for a nonexistent or ambiguous local
   // time. Let it through rather than wrapping — the message is already
   // specific about which night the clocks move and what to do instead.
-  const wanted = qualiStartFrom(options.qualiStart.date, options.qualiStart.time, zone)
-  const existing = currentQualiStart(ev, zone, practice)
+  //
+  // A practice changing length with no quali time named keeps the quali time
+  // the round has: quali is what the league schedules around.
+  const wanted = options.qualiStart
+    ? qualiStartFrom(options.qualiStart.date, options.qualiStart.time, zone)
+    : practice !== practiceNow
+      ? existing
+      : undefined
+  if (!wanted) return undefined
 
-  // Same instant: nothing to send. Compared as instants rather than as
-  // strings, so an event stored with a different but equivalent offset
-  // doesn't read as a change.
-  if (existing && +existing === +wanted) return undefined
+  // Same instant and same practice: nothing to send. Compared as instants
+  // rather than as strings, so an event stored with a different but
+  // equivalent offset doesn't read as a change.
+  if (existing && +existing === +wanted && practice === practiceNow) return undefined
 
+  const at = (t: DateTime): string => t.toFormat("yyyy-MM-dd HH:mm ZZZZ")
   const scheduled = scheduledFromQuali(wanted, practice)
+  const scheduledNow = existing && scheduledFromQuali(existing, practiceNow)
   return {
     schedule: {
-      ...(existing ? { from: existing.toFormat("yyyy-MM-dd HH:mm ZZZZ") } : { from: undefined }),
-      to: wanted.toFormat("yyyy-MM-dd HH:mm ZZZZ"),
+      ...(existing ? { from: at(existing) } : { from: undefined }),
+      to: at(wanted),
       // Recurrence is filled in at apply time from the schedule form itself,
       // so an existing repeat isn't cancelled by echoing a blank.
       values: scheduleFormValues(scheduled, zone, ""),
+      ...(scheduledNow && practice !== practiceNow
+        ? { ifEventOnly: at(scheduledNow.plus({ minutes: practice })) }
+        : {}),
     },
     // What ACSM will hold afterwards, in the same shape an export uses.
     scheduled: scheduled.toISO() ?? "",
+    practiceStart:
+      scheduledNow && +scheduledNow !== +scheduled
+        ? { label: "Practice start", before: at(scheduledNow), after: at(scheduled) }
+        : undefined,
   }
+}
+
+/**
+ * The form fields for the session lengths asked for, adding a line to
+ * `changes` for each that differs from the export.
+ *
+ * Refuses a session the round doesn't have. ACSM renders `Practice.Time`
+ * whether or not the round runs a practice, so the save would take the value
+ * and the race night would ignore it.
+ */
+function sessionLengthFields(
+  ev: ChampionshipEvent,
+  round: number,
+  lengths: Partial<SessionLengths>,
+  profile: LeagueProfile,
+  changes: Change[],
+): Record<string, string> {
+  const fields: Record<string, string> = {}
+  const runs = sessionLengthsOf(ev, profile.schedule)
+  const asked = [
+    ["practice", FIELD.practiceTime, lengths.practiceMinutes, runs.practice],
+    ["quali", FIELD.qualifyingTime, lengths.qualiMinutes, runs.quali],
+  ] as const
+  for (const [name, field, minutes, was] of asked) {
+    if (minutes === undefined) continue
+    if (was === null) {
+      throw new FinalizeError(
+        `Round ${round} has no ${name} session, so there's no ${name} length to set. Add the ` +
+          `session in ACSM first if this round should have one.`,
+      )
+    }
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_MINUTES) {
+      throw new FinalizeError(
+        `A ${name} has to run between 1 and ${MAX_MINUTES} minutes, and ${minutes} isn't.`,
+      )
+    }
+    fields[field] = String(minutes)
+    if (was !== minutes) {
+      changes.push({
+        label: `${name === "practice" ? "Practice" : "Quali"} length`,
+        before: `${was} minutes`,
+        after: `${minutes} minutes`,
+      })
+    }
+  }
+  return fields
 }
 
 /** Replaces one event, returning a new championship. Never mutates. */
