@@ -176,17 +176,20 @@ describe("SqliteCache", () => {
     const before = await onDisk(join(root, "legacy.db"))
 
     const c = await SqliteCache.open({ path: join(root, "legacy.db") })
-    c.close()
     expect(await onDisk(join(root, "legacy.db"))).toBeLessThan(before / 10)
+    c.close()
   })
 
-  it("keeps giving back space as entries are cleared", async () => {
+  it("keeps giving back space while it stays open", async () => {
+    // champctl-serve never closes its handle, and SQLite only shrinks a WAL
+    // on close unless told to, so a long-running cache must shrink open.
     const c = await open()
-    for (let i = 0; i < 200; i++) await c.set(`https://acsm.example/${i}`, "x".repeat(10_000))
+    for (let i = 0; i < 2000; i++) await c.set(`https://acsm.example/${i}`, "x".repeat(10_000))
     const full = await onDisk(dbPath())
     await c.clear()
-    c.close()
+    await c.set("https://acsm.example/next", "x")
     expect(await onDisk(dbPath())).toBeLessThan(full / 10)
+    c.close()
   })
 
   it("leaves nothing open behind it when closed", async () => {

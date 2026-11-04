@@ -127,6 +127,9 @@ export class SqliteCache implements ResponseCache {
     // the last thing that should turn contention into an error.
     db.exec("PRAGMA journal_mode = WAL")
     db.exec("PRAGMA busy_timeout = 5000")
+    // A WAL keeps its largest size until the last connection closes, which for
+    // champctl-serve is never; this trims it on the next write instead.
+    db.exec("PRAGMA journal_size_limit = 1048576")
     // SQLite keeps a deleted page for reuse rather than giving it back, and a
     // cache deletes everything it writes: production's file reached 278 MB
     // holding 190 KB. Incremental mode lets `#reclaim` hand pages back as they
@@ -136,6 +139,8 @@ export class SqliteCache implements ResponseCache {
       try {
         db.exec("PRAGMA auto_vacuum = INCREMENTAL")
         db.exec("VACUUM")
+        // VACUUM rewrote the whole file through the WAL.
+        db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
       } catch {
         // Still a working cache, only a larger one.
       }
