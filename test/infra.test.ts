@@ -223,6 +223,9 @@ describe("HTTP reader", () => {
         async set(key, value) {
           stored.set(key, value)
         },
+        clear() {
+          stored.clear()
+        },
       },
     })
 
@@ -282,6 +285,23 @@ describe("HTTP reader", () => {
       await expect(r.healthcheck()).resolves.toEqual({ n: 2 })
     })
 
+    it("doesn't fail a write because the cache couldn't be emptied", async () => {
+      const r = new HttpAcsmReader({
+        baseUrl: "https://acsm.example",
+        rateLimit: false,
+        cache: {
+          async get() {
+            return undefined
+          },
+          async set() {},
+          async clear() {
+            throw new Error("disk full")
+          },
+        },
+      })
+      await expect(r.forget()).resolves.toBeUndefined()
+    })
+
     it("doesn't store a read that was in flight when it forgot", async () => {
       // The read began before a write and finishes after it, so what it holds
       // is the championship as it was. Storing it would undo the forget.
@@ -310,6 +330,9 @@ describe("HTTP reader", () => {
           return '{"ok":true}'
         },
         async set() {
+          /* no-op */
+        },
+        async clear() {
           /* no-op */
         },
       },

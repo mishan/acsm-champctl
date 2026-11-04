@@ -190,4 +190,7 @@ export const NO_CACHE: ResponseCache = {
   async set() {
     /* no-op */
   },
+  async clear() {
+    /* no-op */
+  },
 }

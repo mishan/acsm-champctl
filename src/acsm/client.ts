@@ -103,8 +103,11 @@ export interface ResponseCache {
    * opened it.
    */
   close?(): void | Promise<void>
-  /** Drops every response held, for after a write has made them stale. */
-  clear?(): void | Promise<void>
+  /**
+   * Drops every response held, for after a write has made them stale.
+   * Required: a cache nothing can empty would serve the page from before a push.
+   */
+  clear(): void | Promise<void>
 }
 
 export class HttpAcsmReader implements AcsmReader {
@@ -322,7 +325,12 @@ export class HttpAcsmReader implements AcsmReader {
   /** Drops everything cached, so the next read sees what a write just changed. */
   async forget(): Promise<void> {
     this.#generation++
-    await this.#cache?.clear?.()
+    try {
+      await this.#cache?.clear()
+    } catch {
+      // The write this follows has happened; failing to empty a cache must not
+      // report it as failed. Stale for one TTL is the worst left.
+    }
   }
 }
 
