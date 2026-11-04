@@ -12,8 +12,20 @@
 
 import { readInstalledContent, type InstalledContent } from "./content.js"
 import { walkChampionships } from "./listing.js"
-import { championshipPath, exportPath, standingsPath } from "./paths.js"
-import type { AcsmHealthcheck, Championship, ChampionshipSummary } from "./types.js"
+import {
+  championshipPath,
+  exportPath,
+  resultFilePath,
+  resultsListPath,
+  standingsPath,
+} from "./paths.js"
+import type {
+  AcsmHealthcheck,
+  Championship,
+  ChampionshipSummary,
+  ResultsPage,
+  SessionResults,
+} from "./types.js"
 import { RateLimiter, type RateLimiterOptions } from "./rate-limit.js"
 
 export interface AcsmReader {
@@ -247,6 +259,17 @@ export class HttpAcsmReader implements AcsmReader {
   /** A car's page, which lists every skin the server has for it. Not followed, like the championship page. */
   async carPage(car: string): Promise<string> {
     return (await this.#request(`/car/${encodeURIComponent(car)}`, "manual")).toString("utf8")
+  }
+
+  async resultsPage(page: number): Promise<ResultsPage> {
+    // Not cached: a new session shifts every row down a page, so a cached page
+    // beside a fresh one skips a file or reads one twice.
+    const path = resultsListPath(page)
+    return assertJson(await this.#request(path), path, `${this.#baseUrl}${path}`) as ResultsPage
+  }
+
+  async resultFile(sessionFile: string): Promise<SessionResults> {
+    return this.#getJson<SessionResults>(resultFilePath(sessionFile))
   }
 
   async healthcheck(): Promise<AcsmHealthcheck> {

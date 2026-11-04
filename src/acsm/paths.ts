@@ -27,6 +27,16 @@ export function exportPath(championshipId: string): string {
   return `/championship/${encodeURIComponent(championshipId)}/export`
 }
 
+/** Every session's results, newest first, a page at a time. Zero-based. */
+export function resultsListPath(page: number): string {
+  return `/api/results/list.json?page=${page}`
+}
+
+/** One session's results file, by its `SessionFile` name. */
+export function resultFilePath(sessionFile: string): string {
+  return `/results/download/${encodeURIComponent(sessionFile)}.json`
+}
+
 /** The championship overview page. Also where the schedule form is rendered. */
 export function championshipPath(championshipId: string): string {
   return `/championship/${encodeURIComponent(championshipId)}`
