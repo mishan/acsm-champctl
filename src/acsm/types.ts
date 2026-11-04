@@ -124,11 +124,30 @@ export interface RaceSetup extends Unknowns {
   MandatoryLongPitMinimumNumberOfLongPits?: number
 }
 
+/** One row of `/api/results/list.json`, as 2.4.15 spells it. */
+export interface ResultsListing extends Unknowns {
+  track?: string
+  /** Absent, not empty, for a track with no layout. */
+  track_layout?: string
+  session_type?: string
+  /** ISO 8601 in UTC, to the minute. */
+  date?: string
+  results_json_url?: string
+}
+
+export interface ResultsPage extends Unknowns {
+  num_pages?: number
+  results?: ResultsListing[]
+}
+
 export interface SessionResults extends Unknowns {
   Type?: string
   TrackName?: string
   TrackConfig?: string
   Date?: string
+  SessionFile?: string
+  /** On a standalone results file; the export nests results under their event instead. */
+  ChampionshipID?: string
   Cars?: ResultCar[]
   Result?: ResultEntry[]
   Laps?: ResultLap[]

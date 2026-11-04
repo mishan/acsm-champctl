@@ -1,0 +1,739 @@
+{
+  "Version": 7,
+  "Cars": [
+    {
+      "BallastKG": 0,
+      "CarId": 0,
+      "Driver": {
+        "Guid": "76561199000000001",
+        "GuidsList": [
+          "76561199000000001"
+        ],
+        "Name": "Driver 1",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_931",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 1,
+      "Driver": {
+        "Guid": "76561199000000002",
+        "GuidsList": [
+          "76561199000000002"
+        ],
+        "Name": "Driver 2",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_701",
+      "ClassID": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "MinPing": 184,
+      "MaxPing": 195
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 2,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_492",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 3,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_533",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 4,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_435",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 5,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_463",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 6,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_701",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 7,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_373",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 8,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_463",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 9,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_37",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 10,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_492",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 11,
+      "Driver": {
+        "Guid": "76561199000000003",
+        "GuidsList": [
+          "76561199000000003"
+        ],
+        "Name": "Driver 3",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_580",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 12,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_463",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 13,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_622",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 14,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_580",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 15,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_783",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 16,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_622",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 17,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_580",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 18,
+      "Driver": {
+        "Guid": "76561199000000004",
+        "GuidsList": [
+          "76561199000000004"
+        ],
+        "Name": "Driver 4",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_864",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 19,
+      "Driver": {
+        "Guid": "76561199000000005",
+        "GuidsList": [
+          "76561199000000005"
+        ],
+        "Name": "Driver 5",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_37",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 20,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_864",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 21,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_373",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 22,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_701",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 23,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_920",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 24,
+      "Driver": {
+        "Guid": "76561199000000006",
+        "GuidsList": [
+          "76561199000000006"
+        ],
+        "Name": "Driver 6",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_622",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 25,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_765",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 26,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_931",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 27,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_864",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 28,
+      "Driver": {
+        "Guid": "",
+        "GuidsList": [
+          ""
+        ],
+        "Name": "",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "jtc_honda_civic_eg_gra",
+      "Restrictor": 0,
+      "Skin": "skin_373",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 29,
+      "Driver": {
+        "Guid": "76561199000000007",
+        "GuidsList": [
+          "76561199000000007"
+        ],
+        "Name": "Driver 7",
+        "Nation": "",
+        "Team": "",
+        "ClassID": "00000000-0000-0000-0000-000000000000"
+      },
+      "Model": "ford_transit",
+      "Restrictor": 0,
+      "Skin": "skin_973",
+      "ClassID": "00000000-0000-0000-0000-000000000000",
+      "MinPing": 0,
+      "MaxPing": 0
+    }
+  ],
+  "Events": null,
+  "Laps": [
+    {
+      "BallastKG": 0,
+      "CarId": 1,
+      "CarModel": "jtc_honda_civic_eg_gra",
+      "Cuts": 1,
+      "DriverGuid": "76561199000000002",
+      "DriverName": "Driver 2",
+      "LapTime": 104297,
+      "Restrictor": 0,
+      "Sectors": [
+        69549,
+        22572,
+        12176
+      ],
+      "Timestamp": 1793274360,
+      "Tyre": "S",
+      "ClassID": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "ContributedToFastestLap": false,
+      "SpeedTrapHits": null,
+      "Conditions": {
+        "Ambient": 25,
+        "Road": 35,
+        "Grip": 0.99639064,
+        "WindSpeed": 5,
+        "WindDirection": 33,
+        "RainIntensity": 0,
+        "RainWetness": 0,
+        "RainWater": 0
+      }
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 1,
+      "CarModel": "jtc_honda_civic_eg_gra",
+      "Cuts": 0,
+      "DriverGuid": "76561199000000002",
+      "DriverName": "Driver 2",
+      "LapTime": 57625,
+      "Restrictor": 0,
+      "Sectors": [
+        25373,
+        20431,
+        11821
+      ],
+      "Timestamp": 1793274418,
+      "Tyre": "S",
+      "ClassID": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "ContributedToFastestLap": true,
+      "SpeedTrapHits": [],
+      "Conditions": {
+        "Ambient": 25,
+        "Road": 35,
+        "Grip": 0.99640495,
+        "WindSpeed": 5,
+        "WindDirection": 33,
+        "RainIntensity": 0,
+        "RainWetness": 0,
+        "RainWater": 0
+      }
+    },
+    {
+      "BallastKG": 0,
+      "CarId": 1,
+      "CarModel": "jtc_honda_civic_eg_gra",
+      "Cuts": 1,
+      "DriverGuid": "76561199000000002",
+      "DriverName": "Driver 2",
+      "LapTime": 160710,
+      "Restrictor": 0,
+      "Sectors": [
+        128832,
+        20276,
+        11602
+      ],
+      "Timestamp": 1793274579,
+      "Tyre": "S",
+      "ClassID": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "ContributedToFastestLap": false,
+      "SpeedTrapHits": [],
+      "Conditions": {
+        "Ambient": 25,
+        "Road": 35,
+        "Grip": 0.99641925,
+        "WindSpeed": 5,
+        "WindDirection": 33,
+        "RainIntensity": 0,
+        "RainWetness": 0,
+        "RainWater": 0
+      }
+    }
+  ],
+  "Result": [
+    {
+      "BallastKG": 0,
+      "BestLap": 57625,
+      "CarId": 1,
+      "CarModel": "jtc_honda_civic_eg_gra",
+      "DriverGuid": "76561199000000002",
+      "DriverName": "Driver 2",
+      "Restrictor": 0,
+      "TotalTime": 2355695,
+      "NumLaps": 3,
+      "HasPenalty": false,
+      "PenaltyTime": 0,
+      "LapPenalty": 0,
+      "Disqualified": false,
+      "ClassID": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "GridPosition": 7
+    }
+  ],
+  "Penalties": null,
+  "TrackConfig": "chicane",
+  "TrackName": "rt_lime_rock_park",
+  "Type": "PRACTICE",
+  "Date": "2026-10-29T13:10:00Z",
+  "SessionFile": "2026_10_29_13_10_PRACTICE",
+  "SessionConfig": {
+    "session_type": 1,
+    "name": "Practice",
+    "time": 120,
+    "laps": 0,
+    "is_open": 1,
+    "wait_time": 0,
+    "visibility_mode": 0,
+    "qualifying_type": 0,
+    "qualifying_number_of_laps_to_average": 0,
+    "count_out_lap": false,
+    "disable_push_to_pass": false
+  },
+  "ChampionshipID": "11111111-2222-3333-4444-555555555555",
+  "RaceWeekendID": "",
+  "EventName": "Lime Rock Park - South Chicane, USA - Looping Practice"
+}
