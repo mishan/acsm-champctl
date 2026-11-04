@@ -35,10 +35,10 @@ import {
   type SignUpForm,
 } from "../acsm/types.js"
 import { FORBIDDEN_KEYS, regenerateIds } from "../acsm/write.js"
-import { classes, events, spectatorCarRefs, spectatorModels } from "../acsm/view.js"
+import { classes, events, session, spectatorCarRefs, spectatorModels } from "../acsm/view.js"
 import type { RaceFormat } from "../finalize/format.js"
 import { applyFormat } from "../finalize/format.js"
-import { practiceMinutesFor } from "../finalize/schedule.js"
+import { type SessionLengths, withSessionLengths } from "../finalize/sessions.js"
 import type { PitTable } from "../pits/table.js"
 import type { LeagueProfile } from "../profile/types.js"
 import { deepMerge, mergeAll } from "./merge.js"
@@ -199,21 +199,11 @@ export function emitChampionship(options: EmitOptions): EmitResult {
   // other date in the same championship came from `now` — so a test could pin
   // Created and still get a schedule that moved, and a caller passing `now`
   // deliberately would get a championship half in one timeframe and half in another.
-  // The template event's practice length, not the league default: Scheduled is
-  // quali minus practice, and the two disagreeing puts every round off by the
-  // difference. templateEvent is resolved below, so this reads it from the
-  // same place buildEvent will.
-  const firstTemplateEvent = events(template)[0]
-  const practiceMinutes = firstTemplateEvent
-    ? practiceMinutesFor(firstTemplateEvent, profile.schedule.practiceMinutes)
-    : profile.schedule.practiceMinutes
-
   const schedule = monthSchedule(
     rounds,
     profile,
     spec.startDate,
     DateTime.fromJSDate(now).setZone(profile.schedule.timezone),
-    practiceMinutes,
   )
   // No box reserved for the spectator car. It used to take one, on the reading
   // that a car on the grid needs somewhere to sit — but the league that runs
@@ -234,6 +224,22 @@ export function emitChampionship(options: EmitOptions): EmitResult {
       "The template championship has no events to use as a shape for this championship's rounds. " +
         "A golden template must be a real exported championship (plan §4.1).",
     )
+  }
+
+  const sessionLengths: SessionLengths = {
+    practiceMinutes: profile.schedule.practiceMinutes,
+    qualiMinutes: profile.schedule.qualiMinutes,
+  }
+  const lengthChanges = (
+    [
+      ["practice", session(templateEvent, "Practice")?.Time, sessionLengths.practiceMinutes],
+      ["quali", session(templateEvent, "Qualifying")?.Time, sessionLengths.qualiMinutes],
+    ] as const
+  )
+    .filter(([, was, now]) => was !== undefined && was !== now)
+    .map(([name, was, now]) => `${name} ${was} → ${now} minutes`)
+  if (lengthChanges.length > 0) {
+    derived.push(`${lengthChanges.join(" and ")}, from the league defaults`)
   }
 
   // A ChampionshipSpec describes one class, and `Classes` is replaced wholesale below.
@@ -333,6 +339,7 @@ export function emitChampionship(options: EmitOptions): EmitResult {
       entryList: unclaimedEntryList(slots),
       baselineRaceSetup,
       format: round.format ?? spec.format,
+      sessionLengths,
     }),
   )
 
@@ -540,6 +547,7 @@ interface BuildEventOptions {
   entryList: EntryList
   baselineRaceSetup: Partial<RaceSetup>
   format?: RaceFormat | undefined
+  sessionLengths: SessionLengths
 }
 
 function buildEvent(o: BuildEventOptions): ChampionshipEvent {
@@ -591,5 +599,6 @@ function buildEvent(o: BuildEventOptions): ChampionshipEvent {
       ...(o.maxClients === undefined ? {} : { MaxClients: o.maxClients }),
     },
   }
-  return o.format ? applyFormat(ev, o.format) : ev
+  const timed = withSessionLengths(ev, o.sessionLengths)
+  return o.format ? applyFormat(timed, o.format) : timed
 }
