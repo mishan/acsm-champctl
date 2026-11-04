@@ -223,6 +223,9 @@ describe("HTTP reader", () => {
         async set(key, value) {
           stored.set(key, value)
         },
+        clear() {
+          stored.clear()
+        },
       },
     })
 
@@ -230,6 +233,87 @@ describe("HTTP reader", () => {
     expect(fetches).toBe(1)
     // ...and the good response replaced the corrupt entry.
     expect(stored.get("https://acsm.example/healthcheck.json")).toBe('{"ok":true}')
+  })
+
+  describe("forgetting", () => {
+    function counting() {
+      let fetches = 0
+      let gate: Promise<void> = Promise.resolve()
+      let onFetch = (): void => {}
+      const stored = new Map<string, string>()
+      const r = new HttpAcsmReader({
+        baseUrl: "https://acsm.example",
+        rateLimit: false,
+        fetch: async () => {
+          const n = ++fetches
+          onFetch()
+          await gate
+          return new Response(JSON.stringify({ n }))
+        },
+        cache: {
+          async get(key) {
+            return stored.get(key)
+          },
+          async set(key, value) {
+            stored.set(key, value)
+          },
+          clear() {
+            stored.clear()
+          },
+        },
+      })
+      return {
+        r,
+        /** Holds the next fetch open; `fetching` settles once it has reached the network. */
+        hold: () => {
+          let release = (): void => {}
+          gate = new Promise((resolve) => {
+            release = resolve
+          })
+          const fetching = new Promise<void>((resolve) => {
+            onFetch = resolve
+          })
+          return { release, fetching }
+        },
+      }
+    }
+
+    it("reads again after forgetting", async () => {
+      const { r } = counting()
+      await expect(r.healthcheck()).resolves.toEqual({ n: 1 })
+      await r.forget()
+      await expect(r.healthcheck()).resolves.toEqual({ n: 2 })
+    })
+
+    it("doesn't fail a write because the cache couldn't be emptied", async () => {
+      const r = new HttpAcsmReader({
+        baseUrl: "https://acsm.example",
+        rateLimit: false,
+        cache: {
+          async get() {
+            return undefined
+          },
+          async set() {},
+          async clear() {
+            throw new Error("disk full")
+          },
+        },
+      })
+      await expect(r.forget()).resolves.toBeUndefined()
+    })
+
+    it("doesn't store a read that was in flight when it forgot", async () => {
+      // The read began before a write and finishes after it, so what it holds
+      // is the championship as it was. Storing it would undo the forget.
+      const { r, hold } = counting()
+      const { release, fetching } = hold()
+      const inFlight = r.healthcheck()
+      await fetching
+      await r.forget()
+      release()
+      await expect(inFlight).resolves.toEqual({ n: 1 })
+      await expect(r.healthcheck()).resolves.toEqual({ n: 2 })
+    })
   })
 
   it("serves a valid cache entry without hitting the network", async () => {
@@ -246,6 +330,9 @@ describe("HTTP reader", () => {
           return '{"ok":true}'
         },
         async set() {
+          /* no-op */
+        },
+        async clear() {
           /* no-op */
         },
       },

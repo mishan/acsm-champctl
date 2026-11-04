@@ -146,6 +146,18 @@ describe("SqliteCache", () => {
     b.close()
   })
 
+  it("clears every response it holds, and nothing it keeps", async () => {
+    const c = await open()
+    await c.set("https://acsm.example/a", "one")
+    await c.set("https://acsm.example/b", "two")
+    await c.keep("content", "installed cars")
+    await c.clear()
+    expect(await c.get("https://acsm.example/a")).toBeUndefined()
+    expect(await c.get("https://acsm.example/b")).toBeUndefined()
+    expect((await c.kept("content"))?.body).toBe("installed cars")
+    c.close()
+  })
+
   it("leaves nothing open behind it when closed", async () => {
     // The connection owns a WAL and a shared-memory file. SQLite removes both
     // on a clean close and leaves them for the next process to recover on an

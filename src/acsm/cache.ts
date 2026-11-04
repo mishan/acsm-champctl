@@ -136,6 +136,14 @@ export class SqliteCache implements ResponseCache {
     }
   }
 
+  async clear(): Promise<void> {
+    try {
+      this.#db.exec("DELETE FROM response")
+    } catch {
+      // Same rule as `set`: the worst a failed clear leaves is one TTL of staleness.
+    }
+  }
+
   /**
    * Read something stored without a lifetime.
    *
@@ -180,6 +188,9 @@ export const NO_CACHE: ResponseCache = {
     return undefined
   },
   async set() {
+    /* no-op */
+  },
+  async clear() {
     /* no-op */
   },
 }

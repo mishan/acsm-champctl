@@ -110,6 +110,13 @@ declare module "fastify" {
      * route, where the person adding it is looking.
      */
     public?: boolean
+    /**
+     * A POST that only reads, like a preview. Every other signed-in POST
+     * empties the response cache on its way out (see the `onSend` hook), and a
+     * preview sent on every keystroke would otherwise re-read the export
+     * against ACSM's rate limit each time.
+     */
+    writesNothing?: boolean
   }
 }
 
@@ -371,9 +378,13 @@ type PlanBody = PlanRequest & FormatOverrides
 
 export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
   return async (app: FastifyInstance): Promise<void> => {
+    /** Requests that passed the session check, which only these hooks can see. */
+    const signedIn = new WeakSet<FastifyRequest>()
+
     app.addHook("onRequest", async (req) => {
       if (req.routeOptions.config?.public === true) return
       requireSession(ctx, req)
+      signedIn.add(req)
     })
 
     /**
@@ -412,9 +423,17 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
      * argument covers every route under it and picking them off one at a time
      * means the next route added is the one that isn't.
      */
-    app.addHook("onSend", async (_req, reply) => {
+    app.addHook("onSend", async (req, reply) => {
       reply.header("Cache-Control", "no-store")
       reply.header("Vary", "Cookie")
+      // Before the reply leaves, so the browser's next read can't beat it to a
+      // stale copy. Whatever the status: a refused reorder or a schedule that
+      // didn't save can follow a write that did. Signed-in requests only, so
+      // nobody can empty the cache from outside.
+      const safe = req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS"
+      if (!safe && signedIn.has(req) && req.routeOptions.config?.writesNothing !== true) {
+        await ctx.reader.forget?.()
+      }
     })
 
     // -----------------------------------------------------------------------
@@ -753,7 +772,10 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
 
     app.post<{ Params: { id: string; round: number }; Body: PlanBody }>(
       "/championships/:id/rounds/:round/plan",
-      { schema: { params: roundParamsSchema, body: planBodySchema } },
+      {
+        config: { writesNothing: true },
+        schema: { params: roundParamsSchema, body: planBodySchema },
+      },
       async (req): Promise<PlanResponse> => {
         const s = requireSession(ctx, req)
         const { id, round } = req.params
@@ -817,6 +839,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
     app.post<{ Params: { id: string }; Body: ReorderRequest }>(
       "/championships/:id/reorder/plan",
       {
+        config: { writesNothing: true },
         schema: {
           params: {
             type: "object",
@@ -933,7 +956,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
      */
     app.post<{ Body: NewChampionshipRequest }>(
       "/championships/plan",
-      { schema: { body: newChampionshipBodySchema } },
+      { config: { writesNothing: true }, schema: { body: newChampionshipBodySchema } },
       async (req): Promise<NewChampionshipPlanResponse> => {
         const s = requireSession(ctx, req)
         const body = req.body
