@@ -286,7 +286,7 @@ describe("opening a round", () => {
     expect(unitRadio("Minutes").checked).toBe(true)
     expect(field(/Reversed grid positions/).value).toBe("0")
     expect(field(/Date/).value).toBe("2026-09-02")
-    expect(field(/Start/).value).toBe("19:00")
+    expect(field(/Quali start/).value).toBe("19:00")
   })
 
   it("does not re-ask for the preview it was just given", async () => {
@@ -383,9 +383,63 @@ describe("editing the form", () => {
     // nobody means. The draft is incomplete rather than wrong, so the screen
     // waits rather than refusing.
     await opened()
-    fireEvent.change(field(/Start/), { target: { value: "" } })
+    fireEvent.change(field(/Quali start/), { target: { value: "" } })
     await settle()
     expect(planMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("practice and quali length", () => {
+  it("sends a practice length once it changes", async () => {
+    await opened()
+    fireEvent.change(field(/Practice minutes/), { target: { value: "60" } })
+    await settle()
+    expect(planMock.mock.lastCall?.[2]).toMatchObject({ practiceMinutes: 60 })
+  })
+
+  it("shows when the night's sessions start, as typed", async () => {
+    await opened()
+    expect(screen.getByText(/Practice 18:30 · Quali 19:00 · Race about 19:15/)).toBeTruthy()
+    fireEvent.change(field(/Practice minutes/), { target: { value: "60" } })
+    expect(screen.getByText(/Practice 18:00 · Quali 19:00 · Race about 19:15/)).toBeTruthy()
+  })
+
+  it("doesn't claim quali moves when only practice does", async () => {
+    const at = "2026-09-02 19:00 PDT"
+    planMock.mockResolvedValue({
+      plan: planView({
+        changes: [
+          { label: "Practice length", before: "30 minutes", after: "60 minutes" },
+          {
+            label: "Practice start",
+            before: "2026-09-02 18:30 PDT",
+            after: "2026-09-02 18:00 PDT",
+          },
+        ],
+        schedule: { from: at, to: at, fields: [] },
+      }),
+      round: round(),
+    })
+    await opened()
+    expect(screen.queryByText("Quali", { selector: ".change-label" })).toBeNull()
+    expect(screen.getByText("Practice start", { selector: ".change-label" })).toBeTruthy()
+  })
+
+  it("names a half-typed length rather than asking for a quali time it has", async () => {
+    await opened()
+    fireEvent.change(field(/Practice minutes/), { target: { value: "0" } })
+    expect(screen.getByText(/whole minutes, at least 1/)).toBeTruthy()
+  })
+
+  it("offers no practice length on a round without a practice", async () => {
+    planMock.mockResolvedValue({
+      plan: planView(),
+      round: round({ lengths: { practice: null, quali: 15 } }),
+    })
+    await opened()
+    expect(screen.queryByLabelText(/Practice minutes/)).toBeNull()
+    expect(field(/Quali minutes/).value).toBe("15")
+    expect(screen.queryByText(/moves practice, not quali/)).toBeNull()
   })
 })
 
