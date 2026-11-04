@@ -560,7 +560,7 @@ export function EventEditor({
             />
           </div>
           <div>
-            <label htmlFor="qualiTime">Start</label>
+            <label htmlFor="qualiTime">Quali start</label>
             <input
               id="qualiTime"
               type="time"
@@ -569,34 +569,36 @@ export function EventEditor({
             />
           </div>
         </div>
-        <div className="pair">
-          {current.lengths.practice !== null && (
-            <div>
-              <label htmlFor="practiceMinutes">Practice minutes</label>
-              <input
-                id="practiceMinutes"
-                type="number"
-                inputMode="numeric"
-                min={1}
-                value={draft.practiceMinutes}
-                onChange={(e) => set({ practiceMinutes: e.target.value })}
-              />
-            </div>
-          )}
-          {current.lengths.quali !== null && (
-            <div>
-              <label htmlFor="qualiMinutes">Quali minutes</label>
-              <input
-                id="qualiMinutes"
-                type="number"
-                inputMode="numeric"
-                min={1}
-                value={draft.qualiMinutes}
-                onChange={(e) => set({ qualiMinutes: e.target.value })}
-              />
-            </div>
-          )}
-        </div>
+        {(current.lengths.practice !== null || current.lengths.quali !== null) && (
+          <div className="pair">
+            {current.lengths.practice !== null && (
+              <div>
+                <label htmlFor="practiceMinutes">Practice minutes</label>
+                <input
+                  id="practiceMinutes"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  value={draft.practiceMinutes}
+                  onChange={(e) => set({ practiceMinutes: e.target.value })}
+                />
+              </div>
+            )}
+            {current.lengths.quali !== null && (
+              <div>
+                <label htmlFor="qualiMinutes">Quali minutes</label>
+                <input
+                  id="qualiMinutes"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  value={draft.qualiMinutes}
+                  onChange={(e) => set({ qualiMinutes: e.target.value })}
+                />
+              </div>
+            )}
+          </div>
+        )}
         <NightLine draft={draft} timezone={config.timezone} />
       </section>
 
@@ -770,8 +772,13 @@ export { describeLength }
  * the practice length moves practice, not quali.
  */
 function NightLine({ draft, timezone }: { draft: Draft; timezone: string }): React.JSX.Element {
+  if (!draft.qualiTime.trim()) {
+    return <p className="fineprint">Set a quali start to see when the night starts.</p>
+  }
   const night = nightFrom(draft)
-  if (!night) return <p className="fineprint">Set a quali time to see when the night starts.</p>
+  if (!night) {
+    return <p className="fineprint">Session lengths are whole minutes, at least 1.</p>
+  }
   const parts = [
     ...(night.practice ? [`Practice ${night.practice}`] : []),
     `Quali ${night.quali}`,
@@ -779,7 +786,8 @@ function NightLine({ draft, timezone }: { draft: Draft; timezone: string }): Rea
   ]
   return (
     <p className="fineprint">
-      {parts.join(" · ")}, in {timezone}. Changing the practice length moves practice, not quali.
+      {parts.join(" · ")}, in {timezone}.
+      {night.practice && " Changing the practice length moves practice, not quali."}
     </p>
   )
 }

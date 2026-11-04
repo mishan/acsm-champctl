@@ -286,7 +286,7 @@ describe("opening a round", () => {
     expect(unitRadio("Minutes").checked).toBe(true)
     expect(field(/Reversed grid positions/).value).toBe("0")
     expect(field(/Date/).value).toBe("2026-09-02")
-    expect(field(/Start/).value).toBe("19:00")
+    expect(field(/Quali start/).value).toBe("19:00")
   })
 
   it("does not re-ask for the preview it was just given", async () => {
@@ -383,7 +383,7 @@ describe("editing the form", () => {
     // nobody means. The draft is incomplete rather than wrong, so the screen
     // waits rather than refusing.
     await opened()
-    fireEvent.change(field(/Start/), { target: { value: "" } })
+    fireEvent.change(field(/Quali start/), { target: { value: "" } })
     await settle()
     expect(planMock).toHaveBeenCalledTimes(1)
   })
@@ -425,6 +425,12 @@ describe("practice and quali length", () => {
     expect(screen.getByText("Practice start", { selector: ".change-label" })).toBeTruthy()
   })
 
+  it("names a half-typed length rather than asking for a quali time it has", async () => {
+    await opened()
+    fireEvent.change(field(/Practice minutes/), { target: { value: "0" } })
+    expect(screen.getByText(/whole minutes, at least 1/)).toBeTruthy()
+  })
+
   it("offers no practice length on a round without a practice", async () => {
     planMock.mockResolvedValue({
       plan: planView(),
@@ -433,6 +439,7 @@ describe("practice and quali length", () => {
     await opened()
     expect(screen.queryByLabelText(/Practice minutes/)).toBeNull()
     expect(field(/Quali minutes/).value).toBe("15")
+    expect(screen.queryByText(/moves practice, not quali/)).toBeNull()
   })
 })
 
