@@ -39,7 +39,7 @@ import {
 import type { AcsmSession } from "../acsm/session.js"
 import type { Championship, ChampionshipEvent } from "../acsm/types.js"
 import { eventEditPath, eventSubmitPath } from "../acsm/write.js"
-import { events, session } from "../acsm/view.js"
+import { events } from "../acsm/view.js"
 import { humanList } from "../gridmom/finding.js"
 import { check, type CheckReport } from "../gridmom/index.js"
 import type { LeagueProfile } from "../profile/types.js"
@@ -64,7 +64,7 @@ import {
   scheduleFormValues,
   type ScheduleFormValues,
 } from "./schedule.js"
-import { type SessionLengths, withSessionLengths } from "./sessions.js"
+import { type SessionLengths, sessionLengthsOf, withSessionLengths } from "./sessions.js"
 
 export class FinalizeError extends Error {
   constructor(message: string) {
@@ -383,7 +383,7 @@ export async function planFinalize(
   if (venue) changes.push(describeVenue(venue))
 
   const lengths = options.sessionLengths ?? {}
-  const sessionFields = sessionLengthFields(ev, round, lengths, changes)
+  const sessionFields = sessionLengthFields(ev, round, lengths, profile, changes)
 
   // What the form would actually send, compared against what it currently
   // holds. A field already at the target value is not a change.
@@ -542,17 +542,18 @@ function sessionLengthFields(
   ev: ChampionshipEvent,
   round: number,
   lengths: Partial<SessionLengths>,
+  profile: LeagueProfile,
   changes: Change[],
 ): Record<string, string> {
   const fields: Record<string, string> = {}
+  const runs = sessionLengthsOf(ev, profile.schedule)
   const asked = [
-    ["Practice", "practice", FIELD.practiceTime, lengths.practiceMinutes],
-    ["Qualifying", "quali", FIELD.qualifyingTime, lengths.qualiMinutes],
+    ["practice", FIELD.practiceTime, lengths.practiceMinutes, runs.practice],
+    ["quali", FIELD.qualifyingTime, lengths.qualiMinutes, runs.quali],
   ] as const
-  for (const [key, name, field, minutes] of asked) {
+  for (const [name, field, minutes, was] of asked) {
     if (minutes === undefined) continue
-    const s = session(ev, key)
-    if (!s) {
+    if (was === null) {
       throw new FinalizeError(
         `Round ${round} has no ${name} session, so there's no ${name} length to set. Add the ` +
           `session in ACSM first if this round should have one.`,
@@ -564,7 +565,6 @@ function sessionLengthFields(
       )
     }
     fields[field] = String(minutes)
-    const was = s.Time ?? 0
     if (was !== minutes) {
       changes.push({
         label: `${name === "practice" ? "Practice" : "Quali"} length`,

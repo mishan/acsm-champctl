@@ -22,9 +22,10 @@
 import { DateTime } from "luxon"
 
 import type { Championship, ChampionshipEvent, ChampionshipSummary } from "../acsm/types.js"
-import { classes, eventHasStarted, eventLabel, events, session, trackLabel } from "../acsm/view.js"
+import { classes, eventHasStarted, eventLabel, events, trackLabel } from "../acsm/view.js"
 import type { FormFieldChange } from "../finalize/format.js"
 import { readFormat } from "../finalize/format.js"
+import { sessionLengthsOf } from "../finalize/sessions.js"
 import type { CheckReport } from "../gridmom/finding.js"
 import type { EmitResult } from "../emit/championship.js"
 import { descriptionText } from "../info/description.js"
@@ -88,10 +89,7 @@ export function roundView(ev: ChampionshipEvent, round: number, profile: LeagueP
   const zone = profile.schedule.timezone
   const practiceMinutes = practiceMinutesFor(ev, profile.schedule.practiceMinutes)
   const quali = currentQualiStart(ev, zone, practiceMinutes)
-  const lengths = {
-    practice: session(ev, "Practice")?.Time ?? null,
-    quali: session(ev, "Qualifying")?.Time ?? null,
-  }
+  const lengths = sessionLengthsOf(ev, profile.schedule)
 
   return {
     round,

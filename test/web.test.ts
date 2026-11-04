@@ -1079,6 +1079,15 @@ describe("reading a championship", () => {
       raceStart: "20:15",
     },
     {
+      round: "a practice stored as 0, which means the league's",
+      sessions: {
+        PRACTICE: { Name: "Practice", Time: 0, Laps: 0, IsOpen: 1 },
+        QUALIFY: { Name: "Qualifying", Time: 15, Laps: 0, IsOpen: 1 },
+      },
+      lengths: { practice: 60, quali: 15 },
+      raceStart: "20:15",
+    },
+    {
       round: "no quali",
       sessions: { PRACTICE: { Name: "Practice", Time: 60, Laps: 0, IsOpen: 1 } },
       lengths: { practice: 60, quali: null },

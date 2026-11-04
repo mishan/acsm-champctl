@@ -956,6 +956,30 @@ describe("practice and quali length", () => {
     )
   })
 
+  it("reads a stored practice of 0 as the league's, as the start time does", async () => {
+    // Every reader of the export takes 0 to mean the league's 60 minutes, and
+    // Scheduled was worked out that way. "0 → 60" would describe a change
+    // that moves nothing.
+    const zero = hotFixed()
+    events(zero)[0]!.Scheduled = "2026-09-02T19:00:00-07:00"
+    events(zero)[0]!.RaceSetup!.Sessions!["PRACTICE"]!.Time = 0
+    const p = await plan(
+      { sessionLengths: { practiceMinutes: 60 } },
+      zero,
+      eventFormHtml(TWO, { "Practice.Time": "60", "Qualifying.Time": "15", "Race.Laps": "13" }),
+    )
+    expect(p.changes).toEqual([])
+    expect(p.noop).toBe(true)
+  })
+
+  it("sends no schedule for a longer practice on an unscheduled round", async () => {
+    const unscheduled = hotFixed()
+    events(unscheduled)[0]!.Scheduled = "0001-01-01T00:00:00Z"
+    const p = await plan({ sessionLengths: { practiceMinutes: 60 } }, unscheduled)
+    expect(p.formChanges.map((f) => f.name)).toEqual(["Practice.Time"])
+    expect(p.schedule).toBeUndefined()
+  })
+
   it("posts the new length with the event, then moves practice", async () => {
     const { session, posts } = await harness({ eventPages: [hotFixedForm] })
     const championship = hotFixed()
@@ -976,6 +1000,27 @@ describe("practice and quali length", () => {
     ])
     expect(posts[0]!.body.get("Practice.Time")).toBe("60")
     expect(posts[1]!.body.get(SCHEDULE_FIELD.time)).toBe("19:00")
+  })
+
+  it("tells one story when the schedule page can't be read after the length saved", async () => {
+    const { session } = await harness({
+      eventPages: [hotFixedForm],
+      scheduleHtml: "<html><body>no form here</body></html>",
+    })
+    const championship = hotFixed()
+    const p = await planFinalize(session, {
+      championship,
+      championshipId: CHAMP_ID,
+      eventId: EVENT_ID,
+      format: readFormat(events(championship)[0]!),
+      sessionLengths: { practiceMinutes: 60 },
+      profile: testProfile(),
+      pits: pitTable([suzukaPits]),
+      now: NOW,
+    })
+    const failed = applyFinalize(session, p)
+    await expect(failed).rejects.toThrow(/quali now starts at 2026-09-02 20:37/)
+    await expect(failed).rejects.not.toThrow(/unchanged/)
   })
 
   it("names the quali time a round is left at when only the length saved", async () => {
