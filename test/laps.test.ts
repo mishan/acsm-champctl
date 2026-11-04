@@ -272,6 +272,15 @@ describe("practiceSessions", () => {
     expect(asked).toBe(3)
   })
 
+  it("refuses a list with a row it can't date", async () => {
+    const { reader } = readerOver([
+      [listing("2026-11-03T11:42:00Z"), listing("2026-11-03T09:42:00Z", { date: "yesterday" })],
+    ])
+    await expect(
+      practiceSessions(reader, { ...query, since: new Date("2026-11-01T00:00:00Z") }),
+    ).rejects.toThrow(/no readable date/)
+  })
+
   it("refuses a practice row whose file it can't name", async () => {
     const { reader } = readerOver([
       [listing("2026-11-03T11:42:00Z", { results_json_url: "https://elsewhere/x.json" })],

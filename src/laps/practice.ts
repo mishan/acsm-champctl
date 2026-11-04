@@ -48,7 +48,9 @@ export async function practiceSessions(
     const { num_pages, results = [] } = await reader.resultsPage(page)
     for (const row of results) {
       const at = Date.parse(row.date ?? "")
-      if (Number.isNaN(at) || at >= q.until.getTime()) continue
+      // Skipping it could skip the fastest lap, and paging stops by these dates.
+      if (Number.isNaN(at)) throw new Error(`A results row has no readable date: ${row.date}`)
+      if (at >= q.until.getTime()) continue
       if (q.since ? at < q.since.getTime() : row.session_type === "RACE") break pages
       if (
         row.session_type !== "PRACTICE" ||
