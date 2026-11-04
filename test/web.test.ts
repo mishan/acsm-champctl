@@ -21,7 +21,8 @@ import { join } from "node:path"
 import type { FastifyInstance } from "fastify"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { AcsmError, type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
+import { SqliteCache } from "../src/acsm/cache.js"
+import { AcsmError, type AcsmReader, HttpAcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import { IMPORT_PATH } from "../src/acsm/paths.js"
 import { AcsmSession } from "../src/acsm/session.js"
 import type { Championship, ChampionshipEvent } from "../src/acsm/types.js"
@@ -1010,6 +1011,52 @@ describe("pushing a change", () => {
 // ---------------------------------------------------------------------------
 
 describe("reading a championship", () => {
+  it.each([
+    {
+      request: "a push",
+      shows: "after",
+      send: async (h: Harness) => push(h, await planId(h)),
+    },
+    {
+      request: "a push by someone signed out",
+      shows: "before",
+      send: async (h: Harness) =>
+        h.app.inject({ method: "POST", url: `/api/plans/${await planId(h)}/apply`, payload: {} }),
+    },
+    { request: "a preview", shows: "before", send: (h: Harness) => preview(h) },
+    {
+      request: "an anonymous log-out",
+      shows: "before",
+      send: (h: Harness) => h.app.inject({ method: "POST", url: "/api/logout" }),
+    },
+  ])("after $request, shows the championship as it is $shows", async ({ send, shows }) => {
+    // The export is cached for five minutes, and a push is a write the cache
+    // can't see. Only a signed-in write may empty it: a preview writes
+    // nothing, and anyone at all can POST a log-out.
+    let current = champ({ Name: "before" })
+    const reader = new HttpAcsmReader({
+      baseUrl: BASE_URL,
+      rateLimit: false,
+      fetch: async () => new Response(JSON.stringify(current)),
+      cache: await SqliteCache.open({ path: ":memory:" }),
+    })
+    const h = harness({ reader })
+    await h.login()
+    const read = async () =>
+      (
+        await h.app.inject({
+          method: "GET",
+          url: `/api/championships/${CHAMP_ID}`,
+          headers: { cookie: h.cookie() },
+        })
+      ).json().championship.name
+
+    expect(await read()).toBe("before")
+    current = champ({ Name: "after" })
+    await send(h)
+    expect(await read()).toBe(shows)
+  })
+
   it("lists the rounds with their format and quali time", async () => {
     const h = harness()
     await h.login()

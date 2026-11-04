@@ -51,6 +51,8 @@ export interface AcsmReader {
    * by. Scraped, because there is no endpoint — see `content.ts`.
    */
   listContent(): Promise<InstalledContent>
+  /** Drops anything cached. Optional: a reader that caches nothing has nothing to drop. */
+  forget?(): Promise<void>
 }
 
 export class AcsmError extends Error {
@@ -101,6 +103,8 @@ export interface ResponseCache {
    * opened it.
    */
   close?(): void | Promise<void>
+  /** Drops every response held, for after a write has made them stale. */
+  clear?(): void | Promise<void>
 }
 
 export class HttpAcsmReader implements AcsmReader {
@@ -110,6 +114,8 @@ export class HttpAcsmReader implements AcsmReader {
   readonly #timeoutMs: number
   readonly #userAgent: string
   readonly #cache: ResponseCache | undefined
+  /** Bumped by `forget`, so a read that began before it doesn't store what it got. */
+  #generation = 0
 
   constructor(options: HttpReaderOptions) {
     this.#baseUrl = options.baseUrl.replace(/\/+$/, "")
@@ -304,12 +310,19 @@ export class HttpAcsmReader implements AcsmReader {
       }
     }
 
+    const generation = this.#generation
     const bytes = await this.#request(path)
     const text = decodeForParsing(bytes)
     const parsed = assertJson(bytes, path, url)
 
-    await this.#cache?.set(url, text)
+    if (generation === this.#generation) await this.#cache?.set(url, text)
     return { text, parsed }
+  }
+
+  /** Drops everything cached, so the next read sees what a write just changed. */
+  async forget(): Promise<void> {
+    this.#generation++
+    await this.#cache?.clear?.()
   }
 }
 
