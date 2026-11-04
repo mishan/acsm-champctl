@@ -28,7 +28,15 @@ import { readFormat, withOverrides } from "../finalize/format.js"
 import { FinalizeError, planFinalize, type FinalizePlan } from "../finalize/plan.js"
 import { ScheduleError } from "../finalize/schedule.js"
 import { loadProfile } from "../profile/load.js"
-import { confirm, defaultProfile, loadPits, reportUsageError, runCli, UsageError } from "./args.js"
+import {
+  confirm,
+  defaultProfile,
+  forgetSharedCache,
+  loadPits,
+  reportUsageError,
+  runCli,
+  UsageError,
+} from "./args.js"
 
 // Re-exported so callers and tests have one obvious place to import it from,
 // while there is still only one class.
@@ -365,7 +373,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     )
   }
 
-  const session = new AcsmSession({ baseUrl })
+  const session = new AcsmSession({ baseUrl, afterWrite: forgetSharedCache })
   await login(session, args)
 
   const plan = await planFinalize(session, {

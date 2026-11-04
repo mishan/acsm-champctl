@@ -293,6 +293,11 @@ export interface AcsmSessionOptions {
   userAgent?: string
   /** Server index for the `current-server` cookie. Defaults to 0. */
   serverIndex?: number
+  /**
+   * Called once a write has been sent, whatever ACSM answered — a refusal can
+   * follow a partial save. Not called when champctl refused to send at all.
+   */
+  afterWrite?: () => Promise<void>
 }
 
 export interface LoginCredentials {
@@ -337,6 +342,7 @@ export class AcsmSession {
   readonly #userAgent: string
   readonly #serverIndex: string
   readonly #limiter: RateLimiter | undefined
+  readonly #afterWrite: (() => Promise<void>) | undefined
   readonly jar = new CookieJar()
   #loggedInAs: string | undefined
 
@@ -348,7 +354,17 @@ export class AcsmSession {
     this.#serverIndex = String(options.serverIndex ?? 0)
     this.#limiter =
       options.rateLimit === false ? undefined : new RateLimiter(options.rateLimit ?? {})
+    this.#afterWrite = options.afterWrite
     this.jar.set("current-server", this.#serverIndex)
+  }
+
+  /** `#request` for a write, telling `afterWrite` once it has gone out. */
+  async #write(path: string, init: RequestInit, timeoutMs?: number): Promise<Response> {
+    try {
+      return await this.#request(path, init, timeoutMs)
+    } finally {
+      await this.#afterWrite?.()
+    }
   }
 
   get baseUrl(): string {
@@ -536,7 +552,7 @@ export class AcsmSession {
    * sends it, so the redirect at least points somewhere real.
    */
   async getAction(path: string, referer: string): Promise<void> {
-    const res = await this.#request(path, {
+    const res = await this.#write(path, {
       method: "GET",
       redirect: "manual",
       headers: { Referer: referer },
@@ -609,7 +625,7 @@ export class AcsmSession {
       )
     }
 
-    const res = await this.#request(path, {
+    const res = await this.#write(path, {
       method: "POST",
       body: toBody(sent),
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -672,7 +688,7 @@ export class AcsmSession {
       )
     }
 
-    const res = await this.#request(
+    const res = await this.#write(
       path,
       {
         method: "POST",

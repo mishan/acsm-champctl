@@ -149,8 +149,8 @@ service holding an admin password in its environment is one exposed endpoint
 away from being an admin password anyone can spend.
 
 **Cache.** Responses are cached in `.cache/acsm/cache.db` for five minutes, so
-re-running gridmom while fixing a pit box costs one request. A push from the
-web UI empties it; a push from the CLI or an edit made in ACSM itself shows up
-once the five minutes are up. It holds whole
+re-running gridmom while fixing a pit box costs one request. Any push from
+champctl, web or CLI, empties it; an edit made in ACSM itself shows up once the
+five minutes are up. Space freed by expired entries goes back to the disk. It holds whole
 response bodies — entry lists, so driver names and Steam GUIDs — and is created
 `0600` inside a `0700` directory. `--no-cache` bypasses it.

@@ -18,7 +18,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
-import { SqliteCache } from "../acsm/cache.js"
+import { CACHE_FILE, SqliteCache } from "../acsm/cache.js"
 import { AcsmNotJsonError, asMessage, HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { announce, NothingToAnnounce, RoundRefused, type Announcement } from "../bot/announce.js"
@@ -486,9 +486,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     {
       transport: async () => (args.dryRun ? new RecordingTransport() : connect()),
       cache: async () =>
-        args.cache
-          ? SqliteCache.open({ path: resolve(process.cwd(), ".cache/acsm/cache.db") })
-          : undefined,
+        args.cache ? SqliteCache.open({ path: resolve(process.cwd(), CACHE_FILE) }) : undefined,
     },
     async (transport, cache) => {
       const reader: AcsmReader = new HttpAcsmReader({

@@ -838,6 +838,65 @@ describe("postForm refuses to scramble an entry list", () => {
   })
 })
 
+describe("after a write", () => {
+  const writing = (status: number) => {
+    let wrote = 0
+    const { fn } = scriptedFetch((url) =>
+      url.endsWith("/login")
+        ? new Response("", { status: 302, headers: { "set-cookie": sessionCookie, location: "/" } })
+        : new Response("", { status, headers: { location: "/championship/abc" } }),
+    )
+    const s = new AcsmSession({
+      baseUrl: "https://acsm.example",
+      fetch: fn,
+      rateLimit: false,
+      afterWrite: async () => {
+        wrote++
+      },
+    })
+    return { s, wrote: () => wrote, ready: s.login({ username: "admin", password: "x" }) }
+  }
+  const form = () => parseForm(fakeEventForm({ entrants: [entrant("a"), entrant("b")] })).fields
+
+  it.each([
+    {
+      write: "a saved form",
+      status: 302,
+      send: (s: AcsmSession) => s.postForm("/championship/abc/event/submit", form()),
+    },
+    {
+      // A 500 can still have written something; ACSM gives no other answer.
+      write: "a form ACSM answered with a 500",
+      status: 500,
+      send: (s: AcsmSession) => s.postForm("/championship/abc/event/submit", form()),
+    },
+    {
+      write: "an upload",
+      status: 302,
+      send: (s: AcsmSession) =>
+        s.postFiles("/api/car/x/skin", [{ field: "f", fileName: "a.png", bytes: "x" }]),
+    },
+    {
+      write: "an accepted sign-up",
+      status: 302,
+      send: (s: AcsmSession) => s.getAction("/championship/abc/signup/1/accept", "/x"),
+    },
+  ])("says so after $write", async ({ status, send }) => {
+    const { s, wrote, ready } = writing(status)
+    await ready
+    await send(s).catch(() => {})
+    expect(wrote()).toBe(1)
+  })
+
+  it("says nothing when it refused to send", async () => {
+    const { s, wrote, ready } = writing(302)
+    await ready
+    const ragged = form().filter((f) => f.name !== "EntryList.GUID")
+    await expect(s.postForm("/championship/abc/event/submit", ragged)).rejects.toThrow()
+    expect(wrote()).toBe(0)
+  })
+})
+
 describe("import mechanism detection", () => {
   const on = (importHtml: string) => {
     const posts: { url: string; init: RequestInit }[] = []

@@ -23,6 +23,8 @@
 import { createInterface } from "node:readline/promises"
 import { resolve } from "node:path"
 
+import { CACHE_FILE, forgetCachedResponses } from "../acsm/cache.js"
+
 import { EMPTY_PIT_TABLE, loadPitTable, type PitTable } from "../pits/table.js"
 
 /**
@@ -135,4 +137,9 @@ export async function confirm(question: string): Promise<boolean> {
   } finally {
     rl.close()
   }
+}
+
+/** After a write, so serve's next page shows it rather than its cached copy. */
+export function forgetSharedCache(): Promise<void> {
+  return forgetCachedResponses(resolve(process.cwd(), CACHE_FILE))
 }

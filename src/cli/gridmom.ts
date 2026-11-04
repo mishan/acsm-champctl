@@ -11,7 +11,7 @@ import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
-import { SqliteCache } from "../acsm/cache.js"
+import { CACHE_FILE, SqliteCache } from "../acsm/cache.js"
 import { HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { loadProfile } from "../profile/load.js"
@@ -157,7 +157,7 @@ async function withReader<T>(
   use: (reader: AcsmReader) => Promise<T>,
 ): Promise<T> {
   const cache = args.cache
-    ? await SqliteCache.open({ path: resolve(process.cwd(), ".cache/acsm/cache.db") })
+    ? await SqliteCache.open({ path: resolve(process.cwd(), CACHE_FILE) })
     : undefined
   try {
     return await use(new HttpAcsmReader({ baseUrl, ...(cache ? { cache } : {}) }))
