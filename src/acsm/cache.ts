@@ -30,6 +30,7 @@
  * ever fetched sitting there, which is a different thing from a cache.
  */
 
+import { existsSync } from "node:fs"
 import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -65,6 +66,34 @@ CREATE TABLE IF NOT EXISTS kept (
 ) STRICT;
 `
 
+/**
+ * Where every champctl process keeps its response cache, relative to where it
+ * runs. One file, so serve, the bot and gridmom share their reads — and so a
+ * write from any of them can empty it for all of them.
+ */
+export const CACHE_FILE = ".cache/acsm/cache.db"
+
+/**
+ * Empties the shared cache after a write, so serve's next page shows it.
+ *
+ * Opens nothing that isn't there: a CLI run that writes has no business
+ * creating a cache nobody reads. Never throws, since the write it follows has
+ * already happened and a cache is not worth failing it over.
+ */
+export async function forgetCachedResponses(path: string): Promise<void> {
+  if (!existsSync(path)) return
+  try {
+    const cache = await SqliteCache.open({ path })
+    try {
+      await cache.clear()
+    } finally {
+      cache.close()
+    }
+  } catch {
+    // Five minutes of staleness at worst, which is where things stood before.
+  }
+}
+
 export interface SqliteCacheOptions {
   /** Database file. `:memory:` for a cache that lives as long as the process. */
   path: string
@@ -98,6 +127,19 @@ export class SqliteCache implements ResponseCache {
     // the last thing that should turn contention into an error.
     db.exec("PRAGMA journal_mode = WAL")
     db.exec("PRAGMA busy_timeout = 5000")
+    // SQLite keeps a deleted page for reuse rather than giving it back, and a
+    // cache deletes everything it writes: production's file reached 278 MB
+    // holding 190 KB. Incremental mode lets `#reclaim` hand pages back as they
+    // are freed, and switching a file into it takes one VACUUM. Best effort,
+    // since another process holding the file only postpones it to the next open.
+    if ((db.prepare("PRAGMA auto_vacuum").get() as { auto_vacuum: number }).auto_vacuum !== 2) {
+      try {
+        db.exec("PRAGMA auto_vacuum = INCREMENTAL")
+        db.exec("VACUUM")
+      } catch {
+        // Still a working cache, only a larger one.
+      }
+    }
     db.exec(SCHEMA)
 
     if (path !== ":memory:") await restrictToOwner(path)
@@ -131,14 +173,21 @@ export class SqliteCache implements ResponseCache {
       // class is reliably called. Cheap: the index makes it a range scan over
       // rows that are all about to be deleted anyway.
       this.#db.prepare("DELETE FROM response WHERE fetched_at <= ?").run(now - this.#ttlMs)
+      this.#reclaim()
     } catch {
       // Caching is an optimisation; failing to write must not fail the request.
     }
   }
 
+  /** Hands freed pages back to the filesystem; see `open`. */
+  #reclaim(): void {
+    this.#db.exec("PRAGMA incremental_vacuum")
+  }
+
   async clear(): Promise<void> {
     try {
       this.#db.exec("DELETE FROM response")
+      this.#reclaim()
     } catch {
       // Same rule as `set`: the worst a failed clear leaves is one TTL of staleness.
     }

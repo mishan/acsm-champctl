@@ -25,7 +25,7 @@ import { resolve, sep } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
 import { HttpAcsmReader } from "../acsm/client.js"
-import { SqliteCache } from "../acsm/cache.js"
+import { CACHE_FILE, SqliteCache } from "../acsm/cache.js"
 import { loadProfile } from "../profile/load.js"
 import { ContentCache } from "../web/content-cache.js"
 import { contentStore } from "../web/content-store.js"
@@ -274,7 +274,7 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   const cache = args.cache
-    ? await SqliteCache.open({ path: resolve(process.cwd(), ".cache/acsm/cache.db") })
+    ? await SqliteCache.open({ path: resolve(process.cwd(), CACHE_FILE) })
     : undefined
 
   /**

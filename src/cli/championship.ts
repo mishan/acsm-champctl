@@ -35,7 +35,15 @@ import {
 import { ScheduleError } from "../finalize/schedule.js"
 import { check } from "../gridmom/index.js"
 import { loadProfile } from "../profile/load.js"
-import { confirm, defaultProfile, loadPits, reportUsageError, runCli, UsageError } from "./args.js"
+import {
+  confirm,
+  defaultProfile,
+  forgetSharedCache,
+  loadPits,
+  reportUsageError,
+  runCli,
+  UsageError,
+} from "./args.js"
 
 // Re-exported so callers and tests have one obvious place to import it from,
 // while there is still only one class.
@@ -377,7 +385,7 @@ async function importIt(
     return
   }
 
-  const session = new AcsmSession({ baseUrl })
+  const session = new AcsmSession({ baseUrl, afterWrite: forgetSharedCache })
   await session.login({ username, password })
   // freshIds is the default; the emitter already regenerated them, and this
   // regenerates again, which is harmless and keeps the safety rail on.

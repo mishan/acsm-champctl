@@ -63,7 +63,14 @@ import {
   planLiveries,
   unreachableRounds,
 } from "../liveries/plan.js"
-import { confirm, defaultProfile, reportUsageError, runCli, UsageError } from "./args.js"
+import {
+  confirm,
+  defaultProfile,
+  forgetSharedCache,
+  reportUsageError,
+  runCli,
+  UsageError,
+} from "./args.js"
 
 export { UsageError }
 
@@ -558,7 +565,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     else process.stdout.write(line)
   }
 
-  const session = new AcsmSession({ baseUrl })
+  const session = new AcsmSession({ baseUrl, afterWrite: forgetSharedCache })
   await login(session)
 
   const halt = await haltFor(args, args.championshipId!)
@@ -836,7 +843,7 @@ async function drain(
       return 3
     }
 
-    const session = new AcsmSession({ baseUrl })
+    const session = new AcsmSession({ baseUrl, afterWrite: forgetSharedCache })
     await login(session)
 
     if (!args.yes && !(await confirm("\nApply these?"))) {

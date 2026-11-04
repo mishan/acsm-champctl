@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
-import { SqliteCache } from "../src/acsm/cache.js"
+import { forgetCachedResponses, SqliteCache } from "../src/acsm/cache.js"
 
 let root: string
 
@@ -19,6 +19,12 @@ afterEach(async () => {
 const dbPath = () => join(root, "acsm", "cache.db")
 const open = (o: { ttlMs?: number; now?: () => number } = {}) =>
   SqliteCache.open({ path: dbPath(), ...o })
+
+/** The database and its WAL, since what's written can sit in either. */
+async function onDisk(path: string): Promise<number> {
+  const size = async (p: string) => (await stat(p).catch(() => ({ size: 0 }))).size
+  return (await size(path)) + (await size(`${path}-wal`))
+}
 
 function countRows(): number {
   const db = new DatabaseSync(dbPath())
@@ -158,6 +164,31 @@ describe("SqliteCache", () => {
     c.close()
   })
 
+  it("gives back the space a cache built before incremental vacuuming had left", async () => {
+    // Production's file was 278 MB holding 190 KB: SQLite keeps deleted pages
+    // for reuse unless told otherwise, and every expired export was one.
+    const legacy = new DatabaseSync(join(root, "legacy.db"))
+    legacy.exec("CREATE TABLE response (key TEXT PRIMARY KEY, fetched_at INTEGER, body TEXT)")
+    const insert = legacy.prepare("INSERT INTO response VALUES (?, 0, ?)")
+    for (let i = 0; i < 200; i++) insert.run(`k${i}`, "x".repeat(10_000))
+    legacy.exec("DELETE FROM response")
+    legacy.close()
+    const before = await onDisk(join(root, "legacy.db"))
+
+    const c = await SqliteCache.open({ path: join(root, "legacy.db") })
+    c.close()
+    expect(await onDisk(join(root, "legacy.db"))).toBeLessThan(before / 10)
+  })
+
+  it("keeps giving back space as entries are cleared", async () => {
+    const c = await open()
+    for (let i = 0; i < 200; i++) await c.set(`https://acsm.example/${i}`, "x".repeat(10_000))
+    const full = await onDisk(dbPath())
+    await c.clear()
+    c.close()
+    expect(await onDisk(dbPath())).toBeLessThan(full / 10)
+  })
+
   it("leaves nothing open behind it when closed", async () => {
     // The connection owns a WAL and a shared-memory file. SQLite removes both
     // on a clean close and leaves them for the next process to recover on an
@@ -178,5 +209,20 @@ describe("SqliteCache", () => {
     const files = await readdir(join(root, "acsm"))
     expect(files.every((f) => f.startsWith("cache.db"))).toBe(true)
     c.close()
+  })
+})
+
+describe("forgetting the shared cache from another process", () => {
+  it("empties the file serve reads", async () => {
+    const serve = await open()
+    await serve.set("https://acsm.example/a", "before the push")
+    await forgetCachedResponses(dbPath())
+    expect(await serve.get("https://acsm.example/a")).toBeUndefined()
+    serve.close()
+  })
+
+  it("creates nothing where there was no cache", async () => {
+    await forgetCachedResponses(dbPath())
+    expect(await readdir(root)).toEqual([])
   })
 })
