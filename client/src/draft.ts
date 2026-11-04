@@ -31,6 +31,10 @@ export interface Draft {
   extraLap: boolean
   qualiDate: string
   qualiTime: string
+  practiceMinutes: string
+  qualiMinutes: string
+  /** The round's own lengths, null for a session it doesn't run. */
+  lengthsWas: { practice: number | null; quali: number | null }
 }
 
 /**
@@ -64,6 +68,9 @@ export function requestFrom(draft: Draft): PlanRequest | null {
   const track = draft.track.trim()
   if (!track) return null
 
+  const lengths = lengthsOf(draft)
+  if (!lengths) return null
+
   return {
     ...(draft.lengthKind === "laps" ? { laps: length } : { minutes: length }),
     reversedGridPositions: reversed,
@@ -71,7 +78,69 @@ export function requestFrom(draft: Draft): PlanRequest | null {
     extraLap: draft.extraLap,
     ...(qualiDate && qualiTime ? { quali: { date: qualiDate, time: qualiTime } } : {}),
     ...venueOf(draft),
+    ...lengths,
   }
+}
+
+/**
+ * The session lengths that changed, or null while one is half-typed.
+ *
+ * Only a session the round runs: one it doesn't has no field on screen, and
+ * the server refuses a length for it.
+ */
+function lengthsOf(draft: Draft): Pick<PlanRequest, "practiceMinutes" | "qualiMinutes"> | null {
+  const out: Pick<PlanRequest, "practiceMinutes" | "qualiMinutes"> = {}
+  const fields = [
+    ["practiceMinutes", draft.practiceMinutes, draft.lengthsWas.practice],
+    ["qualiMinutes", draft.qualiMinutes, draft.lengthsWas.quali],
+  ] as const
+  for (const [key, typed, was] of fields) {
+    if (was === null) continue
+    const minutes = minutesFrom(typed)
+    if (minutes === null) return null
+    if (minutes !== was) out[key] = minutes
+  }
+  return out
+}
+
+/** At least a minute: to everything that reads the export, 0 means "the league default". */
+function minutesFrom(typed: string): number | null {
+  const n = Number(typed.trim() || "x")
+  return Number.isInteger(n) && n >= 1 ? n : null
+}
+
+/** When each session starts, as `HH:mm`. */
+export interface Night {
+  practice: string | null
+  quali: string
+  /** Approximate: a quali running over, and the race's own wait, push it later. */
+  race: string | null
+}
+
+/**
+ * The race night the draft describes, for the screen to show before anything
+ * is previewed. Wall-clock arithmetic only: the server works out the real
+ * instants, in the league's zone, and that is what gets pushed.
+ */
+export function nightFrom(draft: Draft): Night | null {
+  const m = /^(\d{2}):(\d{2})$/.exec(draft.qualiTime.trim())
+  if (!m) return null
+  const quali = Number(m[1]) * 60 + Number(m[2])
+  const practice = draft.lengthsWas.practice === null ? null : minutesFrom(draft.practiceMinutes)
+  const qualiLength = draft.lengthsWas.quali === null ? null : minutesFrom(draft.qualiMinutes)
+  if (draft.lengthsWas.practice !== null && practice === null) return null
+  if (draft.lengthsWas.quali !== null && qualiLength === null) return null
+  return {
+    practice: practice === null ? null : clock(quali - practice),
+    quali: clock(quali),
+    race: qualiLength === null ? null : clock(quali + qualiLength),
+  }
+}
+
+function clock(minutes: number): string {
+  const day = 24 * 60
+  const m = ((minutes % day) + day) % day
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`
 }
 
 /**

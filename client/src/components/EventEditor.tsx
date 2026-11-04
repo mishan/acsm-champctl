@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import { type Draft, requestFrom } from "../draft.js"
+import { type Draft, nightFrom, requestFrom } from "../draft.js"
 
 import { useAuthAware } from "../App"
 import {
@@ -83,6 +83,9 @@ function draftFrom(round: RoundView): Draft {
     extraLap: f.extraLap,
     qualiDate: round.quali?.date ?? "",
     qualiTime: round.quali?.time ?? "",
+    practiceMinutes: String(round.lengths.practice ?? ""),
+    qualiMinutes: String(round.lengths.quali ?? ""),
+    lengthsWas: round.lengths,
   }
 }
 
@@ -545,7 +548,7 @@ export function EventEditor({
       </section>
 
       <section>
-        <h2>Quali</h2>
+        <h2>Schedule</h2>
         <div className="pair">
           <div>
             <label htmlFor="qualiDate">Date</label>
@@ -566,16 +569,35 @@ export function EventEditor({
             />
           </div>
         </div>
-        {/*
-          Said out loud because getting it wrong is an hour, every time. ACSM's
-          `Scheduled` is practice start, not quali start; champctl takes the
-          quali time and subtracts the practice length.
-        */}
-        <p className="fineprint">
-          {current.practiceMinutes} minutes of practice run before this, in {config.timezone}. What
-          ACSM stores is practice start, so champctl sets that to {current.practiceMinutes} minutes
-          before the time above.
-        </p>
+        <div className="pair">
+          {current.lengths.practice !== null && (
+            <div>
+              <label htmlFor="practiceMinutes">Practice minutes</label>
+              <input
+                id="practiceMinutes"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                value={draft.practiceMinutes}
+                onChange={(e) => set({ practiceMinutes: e.target.value })}
+              />
+            </div>
+          )}
+          {current.lengths.quali !== null && (
+            <div>
+              <label htmlFor="qualiMinutes">Quali minutes</label>
+              <input
+                id="qualiMinutes"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                value={draft.qualiMinutes}
+                onChange={(e) => set({ qualiMinutes: e.target.value })}
+              />
+            </div>
+          )}
+        </div>
+        <NightLine draft={draft} timezone={config.timezone} />
       </section>
 
       <section aria-live="polite">
@@ -669,7 +691,9 @@ function Preview({ plan }: { plan: PlanView }): React.JSX.Element {
             <span className="change-after">{c.after}</span>
           </li>
         ))}
-        {plan.schedule && (
+        {/* A practice changing length moves practice and keeps quali, so the
+            schedule can change while quali doesn't; "Practice start" says so. */}
+        {plan.schedule && plan.schedule.from !== plan.schedule.to && (
           <li>
             <span className="change-label">Quali</span>
             <span className="change-before">{plan.schedule.from ?? "unscheduled"}</span>
@@ -737,3 +761,25 @@ function BackLink({ onBack }: { onBack: () => void }): React.JSX.Element {
 
 /** Re-exported for the round list's row label. */
 export { describeLength }
+
+/**
+ * When each session starts, from the draft as typed.
+ *
+ * Said out loud because getting it wrong is an hour, every time: ACSM stores
+ * practice start, and quali is that plus however long practice runs. Changing
+ * the practice length moves practice, not quali.
+ */
+function NightLine({ draft, timezone }: { draft: Draft; timezone: string }): React.JSX.Element {
+  const night = nightFrom(draft)
+  if (!night) return <p className="fineprint">Set a quali time to see when the night starts.</p>
+  const parts = [
+    ...(night.practice ? [`Practice ${night.practice}`] : []),
+    `Quali ${night.quali}`,
+    ...(night.race ? [`Race about ${night.race}`] : []),
+  ]
+  return (
+    <p className="fineprint">
+      {parts.join(" · ")}, in {timezone}. Changing the practice length moves practice, not quali.
+    </p>
+  )
+}
