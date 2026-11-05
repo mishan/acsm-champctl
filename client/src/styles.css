@@ -96,6 +96,18 @@ main {
   margin-right: auto;
 }
 
+.version {
+  margin-top: 2rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.version a {
+  color: inherit;
+}
+
 /* --- type --------------------------------------------------------------- */
 
 h1 {
