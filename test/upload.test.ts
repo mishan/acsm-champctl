@@ -601,6 +601,7 @@ describe("downloading the carset", () => {
     store.close()
     tokens.close()
     queue.close()
+    await rm(cacheDir, { recursive: true, force: true })
   })
 
   it("hands back a zip laid out for Content Manager", async () => {

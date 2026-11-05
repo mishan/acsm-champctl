@@ -8,11 +8,11 @@
  * the version this replaces looked fine for as long as it did.
  */
 
-import { mkdtemp, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 
-import { beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import { paceLogin, paceStatePath } from "./live/login-pace.mjs"
 
@@ -21,6 +21,9 @@ describe("pacing logins against ACSM's limiter", () => {
 
   beforeEach(async () => {
     statePath = join(await mkdtemp(join(tmpdir(), "champctl-pace-")), "window.json")
+  })
+  afterEach(async () => {
+    await rm(dirname(statePath), { recursive: true, force: true })
   })
 
   /** A pacer on a clock that only moves when a sleep says it does. */

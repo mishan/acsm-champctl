@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { Writable } from "node:stream"
 
 import { unzipSync } from "fflate"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, onTestFinished } from "vitest"
 
 import {
   carsetDigest,
@@ -343,6 +343,7 @@ describe("the store and the carset together", () => {
     )
 
     const dir = await mkdtemp(join(tmpdir(), "champctl-carset-"))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
     const out = join(dir, "carset.zip")
     const plan = carsetPlan(CHAMP, await store.list(CHAMP), { championshipName: "March 2026" })
     expect(plan.skins).toHaveLength(1)
@@ -363,6 +364,5 @@ describe("the store and the carset together", () => {
     expect(text(entries["carset.txt"] ?? new Uint8Array())).toContain(plan.digest)
 
     store.close()
-    await rm(dir, { recursive: true, force: true })
   })
 })
