@@ -73,7 +73,8 @@ export interface NewProposal {
   championshipId: string
   eventId: string
   night: string
-  cutoff: string
+  /** Stored as UTC ISO text, the only form whose text order is time order. */
+  cutoff: Date
   minutes: number
   laps: number
   wasLaps: number
@@ -114,7 +115,7 @@ function fromRow(r: Row): LapProposal {
     championshipId: r.championship_id,
     eventId: r.event_id,
     night: r.night,
-    cutoff: r.cutoff,
+    cutoff: new Date(r.cutoff),
     minutes: r.minutes,
     laps: r.laps,
     wasLaps: r.was_laps,
@@ -167,7 +168,7 @@ export class SqliteLapProposals {
         p.championshipId,
         p.eventId,
         p.night,
-        p.cutoff,
+        p.cutoff.toISOString(),
         p.minutes,
         p.laps,
         p.wasLaps,

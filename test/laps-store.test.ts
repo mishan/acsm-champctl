@@ -17,7 +17,7 @@ const round: NewProposal = {
   championshipId: "c1",
   eventId: "e1",
   night: "2026-11-04",
-  cutoff: "2026-11-05T03:00:00.000Z",
+  cutoff: new Date("2026-11-05T03:00:00.000Z"),
   minutes: 20,
   laps: 22,
   wasLaps: 13,
@@ -53,7 +53,7 @@ describe("lap proposals", () => {
   it("stops taking approvals once practice has started, and says it expired", async () => {
     const s = await open()
     const { id } = s.create(round, NOW)
-    const started = new Date(round.cutoff)
+    const started = round.cutoff
     expect(s.approve(id, 22, "staff", started)).toBe(false)
     s.expire(new Date(started.getTime() - 1))
     expect(s.get(id)?.status).toBe("pending")
@@ -62,11 +62,20 @@ describe("lap proposals", () => {
     s.close()
   })
 
+  it("compares practice starts as instants, whatever offset they arrived with", async () => {
+    const s = await open()
+    // 03:00 at +02:00 is 01:00 UTC; as text it would sort after 02:00Z.
+    const { id } = s.create({ ...round, cutoff: new Date("2026-11-05T03:00:00+02:00") }, NOW)
+    s.approve(id, 22, "staff", NOW)
+    expect(s.claim(new Date("2026-11-05T02:00:00Z"))).toBeUndefined()
+    s.close()
+  })
+
   it("won't hand out an approval once practice has started", async () => {
     const s = await open()
     const { id } = s.create(round, NOW)
     s.approve(id, 22, "staff", NOW)
-    const started = new Date(round.cutoff)
+    const started = round.cutoff
     expect(s.claim(started)).toBeUndefined()
     s.expire(started)
     expect(s.get(id)?.status).toBe("expired")
