@@ -180,7 +180,25 @@ const MIGRATIONS: Migration[] = [
       `)
     },
   },
+  {
+    name: "queue: key halts and leases by the lowercase championship id",
+    up: (db) => {
+      // ACSM reads ids case-insensitively, and the CLI, the drain and champctl
+      // web get theirs from different places. Where both spellings exist, the
+      // lowercase row stays.
+      for (const table of ["drain_halt", "drain_lease"]) {
+        db.exec(`
+          DELETE FROM ${table} WHERE championship_id <> lower(championship_id)
+            AND lower(championship_id) IN (SELECT championship_id FROM ${table});
+          UPDATE ${table} SET championship_id = lower(championship_id);
+        `)
+      }
+    },
+  },
 ]
+
+/** A championship id as halts and leases are keyed: ACSM's ids are case-insensitive. */
+const key = (championshipId: string): string => championshipId.toLowerCase()
 
 export interface DrainHalt {
   reason: string
@@ -414,7 +432,7 @@ export class SqliteSubmissionQueue {
     try {
       const held = this.#db
         .prepare(`SELECT holder, expires_at FROM drain_lease WHERE championship_id = ?`)
-        .get(championshipId) as { holder: string; expires_at: string } | undefined
+        .get(key(championshipId)) as { holder: string; expires_at: string } | undefined
 
       // String comparison, and that is safe: both sides are `Date.toISOString`,
       // which is fixed-width UTC. Parsing them back would only add a way to be
@@ -433,7 +451,7 @@ export class SqliteSubmissionQueue {
              acquired_at = excluded.acquired_at,
              expires_at = excluded.expires_at`,
         )
-        .run(championshipId, holder, now, expires)
+        .run(key(championshipId), holder, now, expires)
       this.#db.exec("COMMIT")
     } catch (e) {
       this.#db.exec("ROLLBACK")
@@ -457,7 +475,7 @@ export class SqliteSubmissionQueue {
   ): Promise<boolean> {
     const changed = this.#db
       .prepare(`UPDATE drain_lease SET expires_at = ? WHERE championship_id = ? AND holder = ?`)
-      .run(new Date(at.getTime() + ttlMs).toISOString(), championshipId, holder).changes
+      .run(new Date(at.getTime() + ttlMs).toISOString(), key(championshipId), holder).changes
     return Number(changed) > 0
   }
 
@@ -465,7 +483,7 @@ export class SqliteSubmissionQueue {
   async releaseDrainLease(championshipId: string, holder: string): Promise<void> {
     this.#db
       .prepare(`DELETE FROM drain_lease WHERE championship_id = ? AND holder = ?`)
-      .run(championshipId, holder)
+      .run(key(championshipId), holder)
   }
 
   /**
@@ -532,13 +550,13 @@ export class SqliteSubmissionQueue {
         `INSERT INTO drain_halt (championship_id, reason, backup, halted_at) VALUES (?, ?, ?, ?)
          ON CONFLICT(championship_id) DO NOTHING`,
       )
-      .run(championshipId, reason, backup ?? null, at.toISOString())
+      .run(key(championshipId), reason, backup ?? null, at.toISOString())
   }
 
   async drainHalt(championshipId: string): Promise<DrainHalt | undefined> {
     const row = this.#db
       .prepare("SELECT reason, backup, halted_at FROM drain_halt WHERE championship_id = ?")
-      .get(championshipId) as unknown as
+      .get(key(championshipId)) as unknown as
       | { reason: string; backup: string | null; halted_at: string }
       | undefined
     if (!row) return undefined
@@ -553,7 +571,7 @@ export class SqliteSubmissionQueue {
   async clearDrainHalt(championshipId: string): Promise<boolean> {
     const r = this.#db
       .prepare("DELETE FROM drain_halt WHERE championship_id = ?")
-      .run(championshipId)
+      .run(key(championshipId))
     return Number(r.changes) > 0
   }
 

@@ -6,7 +6,10 @@
  * each had their own regex and each had the same two holes in it.
  */
 import { existsSync, readFileSync } from "node:fs"
-import { dirname, resolve } from "node:path"
+import { dirname, relative, resolve, sep } from "node:path"
+
+/** The source tree, which forbidden paths are named from. */
+const SRC = resolve(dirname(new URL(import.meta.url).pathname), "../../src")
 
 /**
  * Every module specifier a file pulls in.
@@ -60,9 +63,11 @@ export function reachesAny(entries: readonly string[], forbidden: readonly strin
     for (const specifier of importsOf(file)) {
       const next = resolveSpecifier(file, specifier)
       // The resolved path as well as the specifier: inside src/acsm/, the
-      // session is imported as "./session.js", which names no "acsm/".
-      const target = next?.replace(/\.ts$/, ".js") ?? ""
-      if (forbidden.some((f) => specifier.includes(f) || target.includes(`/${f}`))) {
+      // session is imported as "./session.js", which names no "acsm/". Taken
+      // relative to src/ with forward slashes, so neither Windows nor a
+      // checkout under a folder called "web" changes what matches.
+      const target = next ? relative(SRC, next).split(sep).join("/").replace(/\.ts$/, ".js") : ""
+      if (forbidden.some((f) => specifier.includes(f) || target.startsWith(f))) {
         offences.push([...here, specifier].join(" → "))
         continue
       }

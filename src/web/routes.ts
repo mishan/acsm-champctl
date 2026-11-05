@@ -201,13 +201,6 @@ interface SpectatorPlan {
 }
 
 /**
- * A championship id as the livery queue keys it. ACSM reads ids
- * case-insensitively and writes them lowercase, so a halt or lease recorded
- * under one spelling has to hold for every other.
- */
-const queueKey = (id: string): string => id.toLowerCase()
-
-/**
  * The league's spectator cars a championship doesn't have at all, by GUID. A
  * car that's there but switched off isn't one: adding it again would make two.
  */
@@ -689,7 +682,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
 
     const liveriesHalt = (championshipId: string): Promise<LiveriesHaltView | null> =>
       withQueue(async (q) => {
-        const halt = await q.drainHalt(queueKey(championshipId))
+        const halt = await q.drainHalt(championshipId)
         return halt
           ? {
               reason: halt.reason,
@@ -1099,13 +1092,12 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           )
         }
         const { championshipId: id, cars, effects } = taken.plan
-        const key = queueKey(id)
         // Single use whatever happens: a refusal below means the championship
         // has moved on, and a fresh preview is how to see it as it is.
         ctx.spectatorPlans.destroy(planId, s.id)
 
         return withQueue(async (queue) => {
-          const halt = await queue.drainHalt(key)
+          const halt = await queue.drainHalt(id)
           if (halt) {
             throw new ApiError(
               409,
@@ -1115,7 +1107,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
             )
           }
           const holder = `web:${s.username}:${planId}`
-          const lease = await queue.acquireDrainLease(key, holder, ctx.now(), SPECTATOR_LEASE_MS)
+          const lease = await queue.acquireDrainLease(id, holder, ctx.now(), SPECTATOR_LEASE_MS)
           if (!lease.ok) {
             throw new ApiError(
               409,
@@ -1127,7 +1119,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
             // Again under the lease: a drain whose save drifted halts and then
             // lets go of it, after the check above. No test reaches this; the
             // window is between two statements with nothing to hook in it.
-            if (await queue.drainHalt(key)) {
+            if (await queue.drainHalt(id)) {
               throw new ApiError(
                 409,
                 "liveries-halted",
@@ -1161,13 +1153,13 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
             )
             await checked.save().catch(async (e: unknown) => {
               if (e instanceof ChampionshipDriftError || e instanceof ChampionshipUnverifiedError) {
-                await queue.haltDrain(key, e.message, e.backup, ctx.now())
+                await queue.haltDrain(id, e.message, e.backup, ctx.now())
               }
               throw e
             })
             return { added: cars.map((c) => c.name) }
           } finally {
-            await queue.releaseDrainLease(key, holder)
+            await queue.releaseDrainLease(id, holder)
           }
         })
       },
@@ -1196,7 +1188,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
             "Server Manager won't let this account edit the championship, so it can't resume it either.",
           )
         }
-        return { cleared: await withQueue((q) => q.clearDrainHalt(queueKey(req.params.id))) }
+        return { cleared: await withQueue((q) => q.clearDrainHalt(req.params.id)) }
       },
     )
 

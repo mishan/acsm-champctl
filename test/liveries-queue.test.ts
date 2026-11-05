@@ -396,3 +396,44 @@ describe("the drain lease", () => {
     await close()
   })
 })
+
+describe("which championship a halt or lease is for", () => {
+  // ACSM reads ids case-insensitively, and the CLI, the drain and champctl web
+  // each get theirs from somewhere different.
+  const UPPER = CHAMP.toUpperCase()
+
+  it("holds a halt or lease against every spelling of the id", async () => {
+    const q = await open()
+    await q.haltDrain(UPPER, "x", undefined, MON)
+    expect(await q.drainHalt(CHAMP)).toBeDefined()
+    expect(await q.clearDrainHalt(CHAMP)).toBe(true)
+
+    expect((await q.acquireDrainLease(UPPER, "cli", MON, 60_000)).ok).toBe(true)
+    expect((await q.acquireDrainLease(CHAMP, "web", MON, 60_000)).ok).toBe(false)
+    await q.releaseDrainLease(CHAMP, "cli")
+    expect((await q.acquireDrainLease(CHAMP, "web", MON, 60_000)).ok).toBe(true)
+    q.close()
+  })
+
+  it("still finds a halt written under another spelling before this", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-queue-"))
+    const path = join(dir, "liveries.db")
+    try {
+      ;(await SqliteSubmissionQueue.open(path)).close()
+      const raw = new DatabaseSync(path)
+      raw
+        .prepare("INSERT INTO drain_halt (championship_id, reason, halted_at) VALUES (?, ?, ?)")
+        .run(UPPER, "old", MON.toISOString())
+      // As a database from before the ids were lowercased: one version back.
+      raw
+        .prepare("UPDATE champctl_schema SET version = version - 1 WHERE component = 'queue'")
+        .run()
+      raw.close()
+      const q = await SqliteSubmissionQueue.open(path)
+      expect((await q.drainHalt(CHAMP))?.reason).toBe("old")
+      q.close()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
