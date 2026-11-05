@@ -40,6 +40,9 @@ export function RoundList({
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showFindings, setShowFindings] = useState(false)
+  // Which championship is on screen now, for an answer that arrives later.
+  const onScreen = useRef(championshipId)
+  onScreen.current = championshipId
   /** The running order being tried, as 1-based source rounds. Null when not reordering. */
   const [order, setOrder] = useState<number[] | null>(null)
   const describe = useAuthAware(onAuthLost)
@@ -98,11 +101,13 @@ export function RoundList({
   // that knows what the championship now says, gridmom included. What's on
   // screen stays meanwhile, so a message below it stays up.
   const refresh = () => {
+    const id = championshipId
     void (async () => {
       try {
-        setData(await api.championship(championshipId))
+        const next = await api.championship(id)
+        if (onScreen.current === id) setData(next)
       } catch (e) {
-        setError(describe(e))
+        if (onScreen.current === id) setError(describe(e))
       }
     })()
   }

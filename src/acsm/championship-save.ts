@@ -54,6 +54,11 @@ export interface ChampionshipEdit {
   what: string
   /** Said after a refusal, about anything the caller did before the save. */
   leftBehind?: string
+  /**
+   * Refusals that need the championship as the save will hold itself to it:
+   * the export it backs up, which nothing may change before the POST.
+   */
+  checkChampionship?(before: Championship): void
   /** Refusals that need the form, made before anything is written and again at the save. */
   check?(form: ChampionshipForm): void
   /** Makes the change, in place, on a fresh read of the form. */
@@ -70,23 +75,6 @@ export interface AddedSpectator {
   GUID: string
   Model: string
   Skin: string
-}
-
-/**
- * What any save of the form does to the spectator cars, which ACSM numbers
- * from 0 and stores without a race number (measured on 2.4.15). For previews:
- * the drift check lets it through, so it's said rather than hidden.
- */
-export function spectatorSaveEffects(championship: Championship): string[] {
-  return (championship.SpectatorCars ?? []).flatMap((car, i) => {
-    const what = [
-      ...(car.RaceNumber ? [`its race number ${car.RaceNumber} will be cleared`] : []),
-      ...(car.PitBox !== i ? [`its pit box will become ${i}`] : []),
-    ]
-    return what.length === 0
-      ? []
-      : [`${car.Name}: ${what.join(" and ")}, as any save of the championship form does.`]
-  })
 }
 
 /** A save every check has passed, to be made once the caller is ready. */
@@ -120,6 +108,7 @@ export async function checkChampionshipSave(
   const beforeText = await session.getText(exportPath(championshipId))
   const before = JSON.parse(beforeText) as Championship
   const backup = backupDir ? await writeBackup(backupDir, championshipId, beforeText) : undefined
+  edit.checkChampionship?.(before)
 
   const form = await readForm(session, championshipId, edit)
   checkDescription(before, form)

@@ -58,11 +58,14 @@ export function reachesAny(entries: readonly string[], forbidden: readonly strin
     seen.add(file)
     const here = [...trail, file]
     for (const specifier of importsOf(file)) {
-      if (forbidden.some((f) => specifier.includes(f))) {
+      const next = resolveSpecifier(file, specifier)
+      // The resolved path as well as the specifier: inside src/acsm/, the
+      // session is imported as "./session.js", which names no "acsm/".
+      const target = next?.replace(/\.ts$/, ".js") ?? ""
+      if (forbidden.some((f) => specifier.includes(f) || target.includes(`/${f}`))) {
         offences.push([...here, specifier].join(" → "))
         continue
       }
-      const next = resolveSpecifier(file, specifier)
       if (next) walk(next, here)
     }
   }

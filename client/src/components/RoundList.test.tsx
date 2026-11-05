@@ -19,14 +19,21 @@ import type {
   SpectatorPlanResponse,
 } from "../api"
 
-const { championshipMock, planReorderMock, applyReorderMock, contentMock, planSpectatorsMock } =
-  vi.hoisted(() => ({
-    planSpectatorsMock: vi.fn<(...args: unknown[]) => Promise<SpectatorPlanResponse>>(),
-    contentMock: vi.fn<() => Promise<ContentResponse>>(),
-    championshipMock: vi.fn<(...args: unknown[]) => Promise<ChampionshipResponse>>(),
-    planReorderMock: vi.fn<(...args: unknown[]) => Promise<{ plan: ReorderPlanView }>>(),
-    applyReorderMock: vi.fn<(...args: unknown[]) => Promise<{ rounds: number[] }>>(),
-  }))
+const {
+  championshipMock,
+  planReorderMock,
+  applyReorderMock,
+  contentMock,
+  planSpectatorsMock,
+  addSpectatorsMock,
+} = vi.hoisted(() => ({
+  planSpectatorsMock: vi.fn<(...args: unknown[]) => Promise<SpectatorPlanResponse>>(),
+  addSpectatorsMock: vi.fn<(...args: unknown[]) => Promise<{ added: string[] }>>(),
+  contentMock: vi.fn<() => Promise<ContentResponse>>(),
+  championshipMock: vi.fn<(...args: unknown[]) => Promise<ChampionshipResponse>>(),
+  planReorderMock: vi.fn<(...args: unknown[]) => Promise<{ plan: ReorderPlanView }>>(),
+  applyReorderMock: vi.fn<(...args: unknown[]) => Promise<{ rounds: number[] }>>(),
+}))
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>()
@@ -39,6 +46,7 @@ vi.mock("../api", async (importOriginal) => {
       applyReorder: applyReorderMock,
       content: contentMock,
       planSpectators: planSpectatorsMock,
+      addSpectators: addSpectatorsMock,
     },
   }
 })
@@ -531,5 +539,42 @@ describe("the league's spectator cars", () => {
     )
     expect(await screen.findByText("champ-2")).toBeTruthy()
     expect(screen.queryByText(/Recorder, in ford_transit/)).toBeNull()
+  })
+
+  it("doesn't let an add that finishes late repaint the next championship", async () => {
+    const missing = (name: string): ChampionshipResponse => ({
+      ...response(name),
+      gridmom: {
+        findings: [{ severity: "WARN", code: "entry.spectator-missing", message: "missing" }],
+        counts: { ERROR: 0, WARN: 1, INFO: 0 },
+        ok: true,
+      } as ChampionshipResponse["gridmom"],
+    })
+    championshipMock.mockImplementation(async (id) => missing(`Championship ${String(id)}`))
+    planSpectatorsMock.mockResolvedValue({
+      planId: "p1",
+      cars: [{ name: "Recorder", model: "ford_transit", guid: "90000000000000002" }],
+      effects: [],
+    })
+    let finish: (v: { added: string[] }) => void = () => {}
+    addSpectatorsMock.mockImplementation(() => new Promise((r) => (finish = r)))
+
+    const view = renderList("champ-1")
+    fireEvent.click(await screen.findByText("Add the missing spectator cars"))
+    fireEvent.click(await screen.findByText("Add"))
+    view.rerender(
+      <RoundList
+        championshipId="champ-2"
+        baseUrl="https://acsm.example"
+        onOpenRound={() => {}}
+        onOpenSignUps={() => {}}
+        onAuthLost={() => {}}
+      />,
+    )
+    expect(await screen.findByText("Championship champ-2")).toBeTruthy()
+    await act(async () => finish({ added: ["Recorder"] }))
+    await act(async () => {})
+    expect(screen.getByText("Championship champ-2")).toBeTruthy()
+    expect(screen.queryByText("Championship champ-1")).toBeNull()
   })
 })

@@ -2214,7 +2214,8 @@ describe("adding the league's spectator cars", () => {
       addedInAcsm?: boolean
       dropsNewRows?: boolean
       editedDuringSave?: boolean
-      raceNumberAfterPreview?: boolean
+      /** Which export read gives the stream car a race number. */
+      raceNumberAt?: number
     } = {},
   ) {
     const car = (c: typeof STREAM, i: number) => ({
@@ -2249,12 +2250,12 @@ describe("adding the league's spectator cars", () => {
     const answer = (url: string, init: RequestInit): Response | undefined => {
       if (url.endsWith(`/championship/${CHAMP_ID}/export`)) {
         // Someone adds the recorder in ACSM after the preview was read.
-        // Reads: the preview, the confirm's, the save's checks, then its last look.
+        // Reads: the preview, the save's checks, its last look before the
+        // POST, then its read-back.
         exports++
         if (options.addedInAcsm && exports === 2) state.SpectatorCars.push(car(RECORDER, 1))
-        if (options.editedDuringSave && exports === 4) state.Name = "Renamed by an admin"
-        if (options.raceNumberAfterPreview && exports === 2)
-          state.SpectatorCars[0]!.RaceNumber = 420
+        if (options.editedDuringSave && exports === 3) state.Name = "Renamed by an admin"
+        if (exports === options.raceNumberAt) state.SpectatorCars[0]!.RaceNumber = 420
         return new Response(JSON.stringify(state), { status: 200 })
       }
       if (url.endsWith(`/championship/${CHAMP_ID}/edit`)) {
@@ -2353,17 +2354,25 @@ describe("adding the league's spectator cars", () => {
     expect(m.posts).toEqual([])
   })
 
-  it("refuses, writing nothing, when what the save does changed since the preview", async () => {
-    // Someone gave the stream car a race number, which the save would clear
-    // without the preview having said so.
-    const m = manager({ raceNumberAfterPreview: true })
-    const h = harness({ profile, acsm: m.answer })
-    await h.login()
-    const res = await apply(h, (await plan(h)).json().planId)
-    expect(res.statusCode).toBe(409)
-    expect(res.json().error.code).toBe("spectators-changed")
-    expect(m.posts).toEqual([])
-  })
+  it.each([2, 3])(
+    "refuses, writing nothing, when what the save does changed by read %i",
+    async (at) => {
+      // Someone gave the stream car a race number, which the save would clear
+      // without the preview having said so, at any read after the preview's.
+      const m = manager({ raceNumberAt: at })
+      const h = harness({ profile, acsm: m.answer })
+      await h.login()
+      const res = await apply(h, (await plan(h)).json().planId)
+      expect(res.statusCode).toBe(409)
+      expect(m.posts).toEqual([])
+    },
+  )
+
+  /** An account that may edit championships: ACSM serves it the edit form. */
+  const editor = (url: string): Response | undefined =>
+    url.endsWith("/edit")
+      ? new Response('<form action="/championships/new/submit" method="post"></form>')
+      : undefined
 
   it("keys a halt by the championship however its id is capitalized", async () => {
     // ACSM reads ids case-insensitively, so the halt has to as well.
@@ -2371,7 +2380,7 @@ describe("adding the league's spectator cars", () => {
     const q = await SqliteSubmissionQueue.open(liveriesStore)
     await q.haltDrain("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "x", undefined, NOW)
     q.close()
-    const h = harness({ liveriesStore })
+    const h = harness({ liveriesStore, acsm: editor })
     await h.login()
     const res = await h.app.inject({
       method: "POST",
@@ -2460,7 +2469,7 @@ describe("adding the league's spectator cars", () => {
     const q = await SqliteSubmissionQueue.open(liveriesStore)
     await q.haltDrain(CHAMP_ID, "A save moved a driver.", "/backups/x.json", NOW)
     q.close()
-    const h = harness({ liveriesStore })
+    const h = harness({ liveriesStore, acsm: editor })
     await h.login()
     const read = () =>
       h.app.inject({
@@ -2480,5 +2489,27 @@ describe("adding the league's spectator cars", () => {
     })
     expect(cleared.json()).toEqual({ cleared: true })
     expect((await read()).json().liveriesHalt).toBeNull()
+  })
+
+  it("won't let an account that can't edit championships lift a halt", async () => {
+    // The halt stops the drain, which writes with the league's own account.
+    const liveriesStore = await store()
+    const q = await SqliteSubmissionQueue.open(liveriesStore)
+    await q.haltDrain(CHAMP_ID, "A save moved a driver.", undefined, NOW)
+    q.close()
+    const h = harness({
+      liveriesStore,
+      acsm: (url) => (url.endsWith("/edit") ? new Response("<p>Not allowed.</p>") : undefined),
+    })
+    await h.login()
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${CHAMP_ID}/liveries-halt/clear`,
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.statusCode).toBe(403)
+    const after = await SqliteSubmissionQueue.open(liveriesStore)
+    expect(await after.drainHalt(CHAMP_ID)).toBeDefined()
+    after.close()
   })
 })

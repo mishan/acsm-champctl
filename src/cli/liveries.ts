@@ -577,6 +577,25 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     return 0
   }
 
+  // The drain's lease, so a pack pushed by hand and a drain pass can't both
+  // replace the whole championship at once.
+  const queue = await SqliteSubmissionQueue.open(storePath(args))
+  const holder = `${hostname()}:${process.pid}`
+  const lease = await queue.acquireDrainLease(
+    args.championshipId!,
+    holder,
+    new Date(),
+    DRAIN_LEASE_MS,
+  )
+  if (!lease.ok) {
+    queue.close()
+    say(
+      `Another drain is running (${lease.heldBy}, until ${lease.until}). ` +
+        `Applying two at once loses one of them, so this one is not starting.\n`,
+    )
+    return 3
+  }
+
   const store = args.noStore ? undefined : await SqliteLiveryStore.open(storePath(args))
   try {
     const result = await applyLiveries(session, plan, {
@@ -597,6 +616,8 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     }
   } finally {
     store?.close()
+    await queue.releaseDrainLease(args.championshipId!, holder)
+    queue.close()
   }
   return 0
 }

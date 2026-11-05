@@ -10,7 +10,7 @@
  * branches that settle rows without writing to ACSM all run before
  * `login()`, which is what makes them testable and is also worth knowing.
  */
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -60,6 +60,7 @@ let open: { dir: string; stub?: AcsmStub }[] = []
 
 afterEach(async () => {
   vi.unstubAllEnvs()
+  vi.restoreAllMocks()
   for (const o of open) {
     await o.stub?.close()
     await rm(o.dir, { recursive: true, force: true })
@@ -366,5 +367,43 @@ describe("champctl-liveries --drain", () => {
     const lease = await after.acquireDrainLease(CHAMP, "next-run:1", new Date(), 60_000)
     after.close()
     expect(lease).toMatchObject({ ok: true })
+  })
+
+  it("doesn't push a pack while the drain holds the championship", async () => {
+    // Two whole-championship saves at once lose one of them, whichever path
+    // each came in by.
+    const { db, dir } = await seeded([], oneClass(["Ann"]))
+    const stub = await acsmStub(CHAMP, oneClass(["Ann"]), {
+      handle: ({ path }) =>
+        path === "/login"
+          ? { status: 302, headers: { location: "/", "set-cookie": "_acsm_data=x; Path=/" } }
+          : undefined,
+    })
+    open.push({ dir, stub })
+    const q = await SqliteSubmissionQueue.open(db)
+    await q.acquireDrainLease(CHAMP, "drain", new Date(), 60_000)
+    q.close()
+    const pack = join(dir, "pack.zip")
+    await writeFile(pack, zipSync({ [`${CAR}/Ann.zip`]: skinZip() }))
+
+    vi.stubEnv("CHAMPCTL_USERNAME", "operator")
+    vi.stubEnv("CHAMPCTL_PASSWORD", "secret")
+    const said: string[] = []
+    vi.spyOn(process.stdout, "write").mockImplementation((s) => (said.push(String(s)), true))
+    vi.spyOn(process.stderr, "write").mockImplementation((s) => (said.push(String(s)), true))
+    const code = await main([
+      CHAMP,
+      "--zip",
+      pack,
+      "--push",
+      "--yes",
+      "--base-url",
+      stub.baseUrl,
+      "--store",
+      db,
+    ])
+    expect(code).toBe(3)
+    expect(said.join("")).toMatch(/Another drain is running \(drain/)
+    expect(stub.requests.filter((r) => r.includes("/skin") || r.includes("/submit"))).toEqual([])
   })
 })

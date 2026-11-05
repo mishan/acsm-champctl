@@ -31,9 +31,8 @@
  * happened in the database.
  */
 
-import { spectatorSaveEffects } from "../acsm/championship-save.js"
 import type { Championship, Entrant } from "../acsm/types.js"
-import { classes, events, eventHasResults, slots } from "../acsm/view.js"
+import { classes, events, eventHasResults, slots, spectatorSaveEffects } from "../acsm/view.js"
 import type { Livery, LiveryPack } from "./pack.js"
 
 /**

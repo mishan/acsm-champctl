@@ -101,16 +101,21 @@ import type {
   SignUpsResponse,
   TrackRequest,
 } from "./wire.js"
-import { entrantStatusPath, exportPath } from "../acsm/paths.js"
+import {
+  CHAMPIONSHIP_SUBMIT_PATH,
+  championshipEditPath,
+  entrantStatusPath,
+  exportPath,
+} from "../acsm/paths.js"
+import { findFormByAction } from "../acsm/form.js"
 import { PENDING, signUps } from "../signups/queue.js"
 import { addSpectatorCars } from "../acsm/add-spectators.js"
 import {
   ChampionshipDriftError,
   ChampionshipUnverifiedError,
   checkChampionshipSave,
-  spectatorSaveEffects,
 } from "../acsm/championship-save.js"
-import { normGuid } from "../acsm/view.js"
+import { normGuid, spectatorSaveEffects } from "../acsm/view.js"
 import { SqliteSubmissionQueue } from "../liveries/queue.js"
 import type { LeagueSpectatorCar } from "../profile/types.js"
 import { defaultStorePath } from "../sqlite.js"
@@ -1129,25 +1134,29 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
                 "champctl has just stopped writing this championship after a save went wrong. Nothing was written.",
               )
             }
-            // Read again: someone may have added a car in ACSM since the
-            // preview, or changed what the save would do to the ones there.
-            const fresh = await s.acsm.getJson<Championship>(exportPath(id))
-            const now = missingSpectatorCars(fresh, ctx.profile)
-            if (
-              now.map((c) => c.guid).join() !== cars.map((c) => c.guid).join() ||
-              spectatorSaveEffects(fresh).join("\n") !== effects.join("\n")
-            ) {
-              throw new ApiError(
-                409,
-                "spectators-changed",
-                "The championship's spectator cars changed since the preview. Nothing was written; " +
-                  "open it again to see what's missing now.",
-              )
-            }
             const checked = await checkChampionshipSave(
               s.acsm,
               id,
-              addSpectatorCars(cars),
+              {
+                ...addSpectatorCars(cars),
+                // On the export the save backs up and holds itself to: someone
+                // may have added a car in ACSM since the preview, or changed
+                // what the save would do to the ones there.
+                checkChampionship: (before) => {
+                  const now = missingSpectatorCars(before, ctx.profile)
+                  if (
+                    now.map((c) => c.guid).join() !== cars.map((c) => c.guid).join() ||
+                    spectatorSaveEffects(before).join("\n") !== effects.join("\n")
+                  ) {
+                    throw new ApiError(
+                      409,
+                      "spectators-changed",
+                      "The championship's spectator cars changed since the preview. Nothing was " +
+                        "written; open it again to see what's missing now.",
+                    )
+                  }
+                },
+              },
               join(dirname(ctx.liveriesStore), "backups"),
             )
             await checked.save().catch(async (e: unknown) => {
@@ -1172,7 +1181,21 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
       "/championships/:id/liveries-halt/clear",
       { schema: { params: idParamsSchema } },
       async (req): Promise<{ cleared: boolean }> => {
-        requireSession(ctx, req)
+        const s = requireSession(ctx, req)
+        // Only someone ACSM would let edit this championship: the halt is what
+        // stops the drain writing it with the league's own account.
+        const path = championshipEditPath(req.params.id)
+        if (
+          !findFormByAction(await s.acsm.getText(path), CHAMPIONSHIP_SUBMIT_PATH, {
+            pageUrl: s.acsm.url(path),
+          })
+        ) {
+          throw new ApiError(
+            403,
+            "not-allowed",
+            "Server Manager won't let this account edit the championship, so it can't resume it either.",
+          )
+        }
         return { cleared: await withQueue((q) => q.clearDrainHalt(queueKey(req.params.id))) }
       },
     )
