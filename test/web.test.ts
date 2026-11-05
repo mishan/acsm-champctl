@@ -2210,7 +2210,12 @@ describe("adding the league's spectator cars", () => {
    * 2.4.15 does: one spectator car per EntryList.Spectator.
    */
   function manager(
-    options: { addedInAcsm?: boolean; dropsNewRows?: boolean; editedDuringSave?: boolean } = {},
+    options: {
+      addedInAcsm?: boolean
+      dropsNewRows?: boolean
+      editedDuringSave?: boolean
+      raceNumberAfterPreview?: boolean
+    } = {},
   ) {
     const car = (c: typeof STREAM, i: number) => ({
       Name: c.name,
@@ -2248,6 +2253,8 @@ describe("adding the league's spectator cars", () => {
         exports++
         if (options.addedInAcsm && exports === 2) state.SpectatorCars.push(car(RECORDER, 1))
         if (options.editedDuringSave && exports === 4) state.Name = "Renamed by an admin"
+        if (options.raceNumberAfterPreview && exports === 2)
+          state.SpectatorCars[0]!.RaceNumber = 420
         return new Response(JSON.stringify(state), { status: 200 })
       }
       if (url.endsWith(`/championship/${CHAMP_ID}/edit`)) {
@@ -2271,6 +2278,11 @@ describe("adding the league's spectator cars", () => {
         state.SpectatorCars = markers.map((_, i) => ({
           ...(state.SpectatorCars.find((c) => c.GUID === guids[i]) ?? {
             InternalUUID: "6c1b1a52-1111-4111-8111-111111111111",
+            Team: "",
+            Ballast: 0,
+            Restrictor: 0,
+            FixedSetup: "",
+            ConnectAsSpectator: true,
           }),
           Name: names[i]!,
           GUID: guids[i]!,
@@ -2339,6 +2351,34 @@ describe("adding the league's spectator cars", () => {
     expect(res.statusCode).toBe(409)
     expect(res.json().error.code).toBe("spectators-changed")
     expect(m.posts).toEqual([])
+  })
+
+  it("refuses, writing nothing, when what the save does changed since the preview", async () => {
+    // Someone gave the stream car a race number, which the save would clear
+    // without the preview having said so.
+    const m = manager({ raceNumberAfterPreview: true })
+    const h = harness({ profile, acsm: m.answer })
+    await h.login()
+    const res = await apply(h, (await plan(h)).json().planId)
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error.code).toBe("spectators-changed")
+    expect(m.posts).toEqual([])
+  })
+
+  it("keys a halt by the championship however its id is capitalized", async () => {
+    // ACSM reads ids case-insensitively, so the halt has to as well.
+    const liveriesStore = await store()
+    const q = await SqliteSubmissionQueue.open(liveriesStore)
+    await q.haltDrain("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "x", undefined, NOW)
+    q.close()
+    const h = harness({ liveriesStore })
+    await h.login()
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/api/championships/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/liveries-halt/clear",
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.json()).toEqual({ cleared: true })
   })
 
   it("refuses, writing nothing, while liveries are halted for the championship", async () => {

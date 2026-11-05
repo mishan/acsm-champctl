@@ -567,6 +567,7 @@ function asSaved(before: unknown, added: readonly AddedSpectator[]): unknown {
       ...(c.SpectatorCars ?? []),
       ...added.map((car, i) => ({
         ...car,
+        ...ADDED_ROW,
         PitBox: own + i,
         RaceNumber: 0,
         InternalUUID: ASSIGNED,
@@ -619,12 +620,28 @@ function inOrderOf(before: unknown, after: unknown, added: readonly AddedSpectat
           GUID: car.GUID,
           Model: car.Model,
           Skin: car.Skin,
+          ...Object.fromEntries(
+            Object.keys(ADDED_ROW).map((k) => [k, (car as Record<string, unknown>)[k]]),
+          ),
           PitBox: car.PitBox,
           RaceNumber: car.RaceNumber,
           InternalUUID: uuid && uuid !== NIL_UUID ? ASSIGNED : uuid,
         }
       }),
   }
+}
+
+/**
+ * What an added car comes back with for the rest of what `addSpectatorCars`
+ * posts, and the spectator flag (measured on 2.4.15). ACSM's own defaults for
+ * what nobody posts, such as CSPCarFlags, aren't held to anything.
+ */
+const ADDED_ROW = {
+  Team: "",
+  Ballast: 0,
+  Restrictor: 0,
+  FixedSetup: "",
+  ConnectAsSpectator: true,
 }
 
 /** Stands for whatever InternalUUID ACSM gave a car it was sent without one. */

@@ -95,9 +95,9 @@ export function RoundList({
   const blocking = gridmom.counts.ERROR > 0
 
   // Re-read rather than patch what is on screen: the export is the only thing
-  // that knows what the championship now says, gridmom included.
-  const reload = () => {
-    setData(null)
+  // that knows what the championship now says, gridmom included. What's on
+  // screen stays meanwhile, so a message below it stays up.
+  const refresh = () => {
     void (async () => {
       try {
         setData(await api.championship(championshipId))
@@ -115,8 +115,9 @@ export function RoundList({
         order={order}
         onOrder={setOrder}
         onDone={() => {
+          setData(null)
           setOrder(null)
-          reload()
+          refresh()
         }}
         onCancel={() => setOrder(null)}
         onAuthLost={onAuthLost}
@@ -154,10 +155,12 @@ export function RoundList({
       </button>
       {showFindings && <Findings report={gridmom} />}
       <SpectatorCars
+        // A preview belongs to its championship; keyed, it can't be spent on another.
+        key={championshipId}
         championshipId={championshipId}
         halt={liveriesHalt}
         missing={gridmom.findings.some((f) => f.code === "entry.spectator-missing")}
-        onChanged={reload}
+        onChanged={refresh}
         describe={describe}
       />
 

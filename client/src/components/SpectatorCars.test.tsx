@@ -77,6 +77,23 @@ describe("the league's spectator cars", () => {
     expect(addMock).toHaveBeenCalledWith("p1")
   })
 
+  it("drops a spent preview after a refusal, keeps the reason, and reads the championship again", async () => {
+    // The server uses a preview once, whatever happens; a refusal may also
+    // have halted the championship, which only a fresh read shows.
+    planMock.mockResolvedValue({
+      planId: "p1",
+      cars: [{ name: "Recorder", model: "ford_transit", guid: "90000000000000002" }],
+      effects: [],
+    })
+    addMock.mockRejectedValue(new Error("The save came back wrong."))
+    const { onChanged } = show({ missing: true })
+    fireEvent.click(screen.getByText("Add the missing spectator cars"))
+    fireEvent.click(await screen.findByText("Add"))
+    expect(await screen.findByText(/The save came back wrong/)).toBeTruthy()
+    expect(screen.queryByText(/Recorder, in ford_transit/)).toBeNull()
+    expect(onChanged).toHaveBeenCalled()
+  })
+
   it("offers nothing when every car is there", () => {
     const { view } = show()
     expect(view.container.innerHTML).toBe("")

@@ -191,7 +191,16 @@ export interface ApiContext {
 interface SpectatorPlan {
   championshipId: string
   cars: LeagueSpectatorCar[]
+  /** What the preview said the save would do to the cars already there. */
+  effects: string[]
 }
+
+/**
+ * A championship id as the livery queue keys it. ACSM reads ids
+ * case-insensitively and writes them lowercase, so a halt or lease recorded
+ * under one spelling has to hold for every other.
+ */
+const queueKey = (id: string): string => id.toLowerCase()
 
 /**
  * The league's spectator cars a championship doesn't have at all, by GUID. A
@@ -675,7 +684,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
 
     const liveriesHalt = (championshipId: string): Promise<LiveriesHaltView | null> =>
       withQueue(async (q) => {
-        const halt = await q.drainHalt(championshipId)
+        const halt = await q.drainHalt(queueKey(championshipId))
         return halt
           ? {
               reason: halt.reason,
@@ -1047,6 +1056,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
         const { id } = req.params
         const c = await s.acsm.getJson<Championship>(exportPath(id))
         const cars = missingSpectatorCars(c, ctx.profile)
+        const effects = spectatorSaveEffects(c)
         if (cars.length === 0) {
           throw new ApiError(
             422,
@@ -1055,9 +1065,9 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           )
         }
         return {
-          planId: ctx.spectatorPlans.create(s.id, { championshipId: id, cars }),
+          planId: ctx.spectatorPlans.create(s.id, { championshipId: id, cars, effects }),
           cars: cars.map(({ name, model, guid }) => ({ name, model, guid })),
-          effects: spectatorSaveEffects(c),
+          effects,
         }
       },
     )
@@ -1083,13 +1093,14 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
               : "These cars are already being added. Nothing extra was written.",
           )
         }
-        const { championshipId: id, cars } = taken.plan
+        const { championshipId: id, cars, effects } = taken.plan
+        const key = queueKey(id)
         // Single use whatever happens: a refusal below means the championship
         // has moved on, and a fresh preview is how to see it as it is.
         ctx.spectatorPlans.destroy(planId, s.id)
 
         return withQueue(async (queue) => {
-          const halt = await queue.drainHalt(id)
+          const halt = await queue.drainHalt(key)
           if (halt) {
             throw new ApiError(
               409,
@@ -1099,7 +1110,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
             )
           }
           const holder = `web:${s.username}:${planId}`
-          const lease = await queue.acquireDrainLease(id, holder, ctx.now(), SPECTATOR_LEASE_MS)
+          const lease = await queue.acquireDrainLease(key, holder, ctx.now(), SPECTATOR_LEASE_MS)
           if (!lease.ok) {
             throw new ApiError(
               409,
@@ -1111,19 +1122,21 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
             // Again under the lease: a drain whose save drifted halts and then
             // lets go of it, after the check above. No test reaches this; the
             // window is between two statements with nothing to hook in it.
-            if (await queue.drainHalt(id)) {
+            if (await queue.drainHalt(key)) {
               throw new ApiError(
                 409,
                 "liveries-halted",
                 "champctl has just stopped writing this championship after a save went wrong. Nothing was written.",
               )
             }
-            // Read again: someone may have added a car in ACSM since the preview.
-            const now = missingSpectatorCars(
-              await s.acsm.getJson<Championship>(exportPath(id)),
-              ctx.profile,
-            )
-            if (now.map((c) => c.guid).join() !== cars.map((c) => c.guid).join()) {
+            // Read again: someone may have added a car in ACSM since the
+            // preview, or changed what the save would do to the ones there.
+            const fresh = await s.acsm.getJson<Championship>(exportPath(id))
+            const now = missingSpectatorCars(fresh, ctx.profile)
+            if (
+              now.map((c) => c.guid).join() !== cars.map((c) => c.guid).join() ||
+              spectatorSaveEffects(fresh).join("\n") !== effects.join("\n")
+            ) {
               throw new ApiError(
                 409,
                 "spectators-changed",
@@ -1139,13 +1152,13 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
             )
             await checked.save().catch(async (e: unknown) => {
               if (e instanceof ChampionshipDriftError || e instanceof ChampionshipUnverifiedError) {
-                await queue.haltDrain(id, e.message, e.backup, ctx.now())
+                await queue.haltDrain(key, e.message, e.backup, ctx.now())
               }
               throw e
             })
             return { added: cars.map((c) => c.name) }
           } finally {
-            await queue.releaseDrainLease(id, holder)
+            await queue.releaseDrainLease(key, holder)
           }
         })
       },
@@ -1160,7 +1173,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
       { schema: { params: idParamsSchema } },
       async (req): Promise<{ cleared: boolean }> => {
         requireSession(ctx, req)
-        return { cleared: await withQueue((q) => q.clearDrainHalt(req.params.id)) }
+        return { cleared: await withQueue((q) => q.clearDrainHalt(queueKey(req.params.id))) }
       },
     )
 

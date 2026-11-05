@@ -102,8 +102,9 @@ export function SpectatorCars({
             type="button"
             disabled={busy}
             onClick={() =>
-              void run(async () => {
-                await api.addSpectators(preview.planId)
+              // Spent either way: the server uses a preview once. And a refusal
+              // may have halted the championship, which only a fresh read shows.
+              void run(() => api.addSpectators(preview.planId)).finally(() => {
                 setPreview(null)
                 onChanged()
               })

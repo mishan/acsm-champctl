@@ -11,14 +11,22 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ApiFailure } from "../api"
-import type { ChampionshipResponse, ContentResponse, ReorderPlanView, RoundView } from "../api"
+import type {
+  ChampionshipResponse,
+  ContentResponse,
+  ReorderPlanView,
+  RoundView,
+  SpectatorPlanResponse,
+} from "../api"
 
-const { championshipMock, planReorderMock, applyReorderMock, contentMock } = vi.hoisted(() => ({
-  contentMock: vi.fn<() => Promise<ContentResponse>>(),
-  championshipMock: vi.fn<(...args: unknown[]) => Promise<ChampionshipResponse>>(),
-  planReorderMock: vi.fn<(...args: unknown[]) => Promise<{ plan: ReorderPlanView }>>(),
-  applyReorderMock: vi.fn<(...args: unknown[]) => Promise<{ rounds: number[] }>>(),
-}))
+const { championshipMock, planReorderMock, applyReorderMock, contentMock, planSpectatorsMock } =
+  vi.hoisted(() => ({
+    planSpectatorsMock: vi.fn<(...args: unknown[]) => Promise<SpectatorPlanResponse>>(),
+    contentMock: vi.fn<() => Promise<ContentResponse>>(),
+    championshipMock: vi.fn<(...args: unknown[]) => Promise<ChampionshipResponse>>(),
+    planReorderMock: vi.fn<(...args: unknown[]) => Promise<{ plan: ReorderPlanView }>>(),
+    applyReorderMock: vi.fn<(...args: unknown[]) => Promise<{ rounds: number[] }>>(),
+  }))
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>()
@@ -30,6 +38,7 @@ vi.mock("../api", async (importOriginal) => {
       planReorder: planReorderMock,
       applyReorder: applyReorderMock,
       content: contentMock,
+      planSpectators: planSpectatorsMock,
     },
   }
 })
@@ -481,5 +490,46 @@ describe("reordering the rounds", () => {
 
     expect(await screen.findByText("Summer Series")).toBeTruthy()
     expect(applyReorderMock).not.toHaveBeenCalled()
+  })
+})
+
+describe("the league's spectator cars", () => {
+  it("doesn't carry one championship's preview to the next", async () => {
+    // Pressing Add on the second would otherwise spend the first one's plan.
+    const missing = (name: string): ChampionshipResponse => ({
+      ...response(name),
+      gridmom: {
+        findings: [
+          {
+            severity: "WARN",
+            code: "entry.spectator-missing",
+            message: "The league's spectator car Recorder isn't in this championship.",
+          },
+        ],
+        counts: { ERROR: 0, WARN: 1, INFO: 0 },
+        ok: true,
+      } as ChampionshipResponse["gridmom"],
+    })
+    championshipMock.mockImplementation(async (id) => missing(String(id)))
+    planSpectatorsMock.mockResolvedValue({
+      planId: "p1",
+      cars: [{ name: "Recorder", model: "ford_transit", guid: "90000000000000002" }],
+      effects: [],
+    })
+    const view = renderList("champ-1")
+    fireEvent.click(await screen.findByText("Add the missing spectator cars"))
+    expect(await screen.findByText(/Recorder, in ford_transit/)).toBeTruthy()
+
+    view.rerender(
+      <RoundList
+        championshipId="champ-2"
+        baseUrl="https://acsm.example"
+        onOpenRound={() => {}}
+        onOpenSignUps={() => {}}
+        onAuthLost={() => {}}
+      />,
+    )
+    expect(await screen.findByText("champ-2")).toBeTruthy()
+    expect(screen.queryByText(/Recorder, in ford_transit/)).toBeNull()
   })
 })

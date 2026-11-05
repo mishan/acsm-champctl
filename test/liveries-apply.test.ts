@@ -283,6 +283,10 @@ async function fakeSession(
     state["SpectatorCars"] = rowNames.slice(0, spectators).map((Name, i) => ({
       ...(previousSpectators.find((c) => (c.GUID ?? "") === guids[i]) ?? {
         InternalUUID: randomUUID(),
+        Team: "",
+        Ballast: 0,
+        Restrictor: 0,
+        FixedSetup: "",
         ConnectAsSpectator: true,
       }),
       Name,
@@ -911,8 +915,22 @@ describe("championshipDrift", () => {
   it("allows the spectator cars an edit added, at the end, as asked", () => {
     const tv = { Name: "TV", GUID: "1", Model: "van", Skin: "s", PitBox: 0, RaceNumber: 0 }
     const rec = { Name: "Rec", GUID: "2", Model: "van", Skin: "r" }
+    // As 2.4.15 stores a car added through the form, with its own defaults
+    // for what nobody posted (measured).
     const added = [
-      { ...rec, PitBox: 1, RaceNumber: 0, InternalUUID: "6c1b1a52-1111-4111-8111-111111111111" },
+      {
+        ...rec,
+        PitBox: 1,
+        RaceNumber: 0,
+        InternalUUID: "6c1b1a52-1111-4111-8111-111111111111",
+        Team: "",
+        Ballast: 0,
+        Restrictor: 0,
+        FixedSetup: "",
+        ConnectAsSpectator: true,
+        VIP: false,
+        CSPCarFlags: { allow_teleporting: false },
+      },
     ]
     const before = of({}, { SpectatorCars: [tv] })
     const asked = [rec]
@@ -937,6 +955,17 @@ describe("championshipDrift", () => {
     ).toEqual([".SpectatorCars.1.InternalUUID changed"])
     expect(championshipDrift(before, of({}, { SpectatorCars: [tv] }), new Map(), asked)).toEqual([
       ".SpectatorCars.1 removed",
+    ])
+    const wrong = (over: Record<string, unknown>) =>
+      championshipDrift(
+        before,
+        of({}, { SpectatorCars: [tv, { ...added[0], ...over }] }),
+        new Map(),
+        asked,
+      )
+    expect(wrong({ Ballast: 5 })).toEqual([".SpectatorCars.1.Ballast changed"])
+    expect(wrong({ ConnectAsSpectator: false })).toEqual([
+      ".SpectatorCars.1.ConnectAsSpectator changed",
     ])
   })
 
