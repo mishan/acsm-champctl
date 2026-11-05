@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
-import { describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import type { Entrant } from "../src/acsm/types.js"
 import {
@@ -383,6 +383,15 @@ describe("claims are per championship", () => {
 })
 
 describe("migrating a database written before claims were per championship", () => {
+  let dir = ""
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
+  })
+  afterEach(async () => {
+    if (dir) await rm(dir, { recursive: true, force: true })
+    dir = ""
+  })
+
   const openGlobal = async (dir: string) => {
     const db = new DatabaseSync(join(dir, "liveries.db"))
     db.exec(`
@@ -406,7 +415,6 @@ describe("migrating a database written before claims were per championship", () 
   it("keeps the claim, rather than making everyone re-claim", async () => {
     // The only databases this can meet are ones champctl itself wrote, and a
     // migration that dropped their rows would silently un-claim a whole grid.
-    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
     await openGlobal(dir)
 
     const store = await SqliteClaimStore.open(join(dir, "liveries.db"))
@@ -416,25 +424,21 @@ describe("migrating a database written before claims were per championship", () 
       entrantName: "Misha",
     })
     store.close()
-    await rm(dir, { recursive: true, force: true })
   })
 
   it("lets a real claim take over from the carried-forward one", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
     await openGlobal(dir)
 
     const store = await SqliteClaimStore.open(join(dir, "liveries.db"))
     expect(await store.claim(CHAMP, champ(), "Misha", MISHA)).toMatchObject({ ok: true })
     expect(await store.forDiscordUser(CHAMP, MISHA)).toMatchObject({ championshipId: CHAMP })
     store.close()
-    await rm(dir, { recursive: true, force: true })
   })
 
   it("refuses a second account the name the carried-forward claim already holds", async () => {
     // claim() matched championship_id exactly, so the legacy row was invisible
     // to the holder check while forEntrant still resolved it — both accounts
     // then answered to "Misha" and could upload onto the same car.
-    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
     await openGlobal(dir)
 
     const store = await SqliteClaimStore.open(join(dir, "liveries.db"))
@@ -444,11 +448,9 @@ describe("migrating a database written before claims were per championship", () 
     })
     expect(await store.forEntrant(CHAMP, "Misha")).toMatchObject({ discordUserId: MISHA })
     store.close()
-    await rm(dir, { recursive: true, force: true })
   })
 
   it("holds the carried-forward claimant to the name they already have", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
     await openGlobal(dir)
 
     const store = await SqliteClaimStore.open(join(dir, "liveries.db"))
@@ -457,11 +459,9 @@ describe("migrating a database written before claims were per championship", () 
       reason: expect.stringContaining("already claimed"),
     })
     store.close()
-    await rm(dir, { recursive: true, force: true })
   })
 
   it("fills in a carried-forward claim's Steam id from any championship with the name", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
     await openGlobal(dir)
 
     const store = await SqliteClaimStore.open(join(dir, "liveries.db"))
@@ -475,14 +475,12 @@ describe("migrating a database written before claims were per championship", () 
     )
     expect(await store.guidsByUser()).toEqual(new Map([[MISHA, new Set(["7656111"])]]))
     store.close()
-    await rm(dir, { recursive: true, force: true })
   })
 
   it("lists a driver who re-claimed once, not once per row", async () => {
     // The carried-forward row survives a re-claim on purpose — it still answers
     // for other championships — so this championship had both. The operator's
     // listing showed the driver twice and said "2 claimed" for a grid of one.
-    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
     await openGlobal(dir)
 
     const store = await SqliteClaimStore.open(join(dir, "liveries.db"))
@@ -493,13 +491,11 @@ describe("migrating a database written before claims were per championship", () 
     // The real one, not the carried-forward one it took over from.
     expect(listed[0]).toMatchObject({ championshipId: CHAMP, entrantName: "Misha" })
     store.close()
-    await rm(dir, { recursive: true, force: true })
   })
 
   it("still lists a carried-forward claim nobody has re-made", async () => {
     // The other half of the rule: dedupe must not hide a legacy row that is the
     // only claim this championship has, or a whole migrated grid vanishes.
-    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
     await openGlobal(dir)
 
     const store = await SqliteClaimStore.open(join(dir, "liveries.db"))
@@ -507,22 +503,18 @@ describe("migrating a database written before claims were per championship", () 
     expect(listed).toHaveLength(1)
     expect(listed[0]).toMatchObject({ championshipId: LEGACY_CLAIM, entrantName: "Misha" })
     store.close()
-    await rm(dir, { recursive: true, force: true })
   })
 
   it("runs once, not on every open", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
     await openGlobal(dir)
     for (let i = 0; i < 3; i += 1) {
       const store = await SqliteClaimStore.open(join(dir, "liveries.db"))
       expect(await store.list(CHAMP)).toHaveLength(1)
       store.close()
     }
-    await rm(dir, { recursive: true, force: true })
   })
 
   it("refuses a database from a newer champctl rather than writing to it", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
     const path = join(dir, "liveries.db")
     const db = new DatabaseSync(path)
     db.exec(`
@@ -532,6 +524,5 @@ describe("migrating a database written before claims were per championship", () 
     db.close()
 
     await expect(SqliteClaimStore.open(path)).rejects.toThrow(/newer version/)
-    await rm(dir, { recursive: true, force: true })
   })
 })

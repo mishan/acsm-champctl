@@ -1,5 +1,5 @@
 import { zipSync } from "fflate"
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it, onTestFinished, vi } from "vitest"
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -276,6 +276,7 @@ describe("champctl-liveries --carset", () => {
 
   const scratch = async () => {
     const dir = await mkdtemp(join(tmpdir(), "champctl-carset-"))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
     return { dir, db: join(dir, "liveries.db"), out: join(dir, "carset.zip") }
   }
 
@@ -402,6 +403,7 @@ describe("champctl-liveries --import", () => {
 
   it("adds collected skins to the carset of every championship racing the car, only with --push", async () => {
     const dir = await mkdtemp(join(tmpdir(), "champctl-import-"))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
     const db = join(dir, "liveries.db")
     const zip = join(dir, "skins.zip")
     const out = join(dir, "carset.zip")
@@ -446,7 +448,6 @@ describe("champctl-liveries --import", () => {
     const after = Object.keys(unzipSync(new Uint8Array(await readFile(out))))
     expect(after).toContain(`content/cars/${CAR}/skins/Collected/livery.dds`)
     expect(after).toContain(`content/cars/${CAR}/skins/Misha/livery.dds`)
-    await rm(dir, { recursive: true, force: true })
   })
 
   it("takes no championship id, since every championship shares the library", async () => {
@@ -464,6 +465,7 @@ describe("champctl-liveries --claims", () => {
 
   const scratch = async () => {
     const dir = await mkdtemp(join(tmpdir(), "champctl-claims-"))
+    onTestFinished(() => rm(dir, { recursive: true, force: true }))
     return { db: join(dir, "liveries.db") }
   }
 

@@ -8,19 +8,27 @@
  * the version this replaces looked fine for as long as it did.
  */
 
-import { mkdtemp, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import { paceLogin, paceStatePath } from "./live/login-pace.mjs"
 
 describe("pacing logins against ACSM's limiter", () => {
+  let dir = ""
   let statePath = ""
 
   beforeEach(async () => {
-    statePath = join(await mkdtemp(join(tmpdir(), "champctl-pace-")), "window.json")
+    dir = await mkdtemp(join(tmpdir(), "champctl-pace-"))
+    statePath = join(dir, "window.json")
+  })
+  afterEach(async () => {
+    // Guarded: after a failed mkdtemp there is no directory, and an empty path
+    // must not reach a recursive rm.
+    if (dir) await rm(dir, { recursive: true, force: true })
+    dir = ""
   })
 
   /** A pacer on a clock that only moves when a sleep says it does. */
