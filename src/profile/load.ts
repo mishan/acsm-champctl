@@ -71,17 +71,11 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
   if (typeof weekday !== "number" || weekday < 1 || weekday > 7) {
     bad("`schedule.weekday` must be 1..7 (Monday..Sunday)")
   }
-  // The shape *and* the range. `^\d{2}:\d{2}$` accepts "99:99", which then
-  // reaches `scheduled.set({ hour: 99 })` in the schedule checks and yields an
-  // invalid DateTime rather than an error anyone can act on.
   const qualiStart = sched["qualiStart"]
   if (typeof qualiStart !== "string" || !/^\d{2}:\d{2}$/.test(qualiStart)) {
     bad("`schedule.qualiStart` must be `HH:mm`")
-  } else {
-    const [h, m] = qualiStart.split(":").map(Number) as [number, number]
-    if (h > 23 || m > 59) {
-      bad(`\`schedule.qualiStart\` must be a real time; ${JSON.stringify(qualiStart)} is not`)
-    }
+  } else if (!isClock(qualiStart)) {
+    bad(`\`schedule.qualiStart\` must be a real time; ${JSON.stringify(qualiStart)} is not`)
   }
 
   // Checked against tzdata, not merely for being a non-empty string.
@@ -152,6 +146,34 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
       const problem = presetProblem(f, `\`formats[${i}]\``)
       if (problem) bad(problem)
     })
+  }
+
+  const lapCount = p["lapCount"]
+  if (lapCount !== undefined) {
+    if (typeof lapCount !== "object" || lapCount === null || Array.isArray(lapCount)) {
+      bad("`lapCount` must be an object")
+    }
+    const lc = lapCount as Record<string, unknown>
+    for (const key of Object.keys(lc)) {
+      if (!["raceMinutes", "proposeAt", "approverRoleId"].includes(key)) {
+        bad(`\`lapCount.${key}\` isn't a setting champctl knows`)
+      }
+    }
+    const minutes = lc["raceMinutes"]
+    if (
+      typeof minutes !== "number" ||
+      !Number.isInteger(minutes) ||
+      minutes < 1 ||
+      minutes > MAX_MINUTES
+    ) {
+      bad(`\`lapCount.raceMinutes\` must be a whole number between 1 and ${MAX_MINUTES}`)
+    }
+    const at = lc["proposeAt"]
+    if (at !== undefined && !isClock(at)) bad("`lapCount.proposeAt` must be a time, as `HH:mm`")
+    const role = lc["approverRoleId"]
+    if (role !== undefined && (typeof role !== "string" || !/^\d{17,20}$/.test(role))) {
+      bad("`lapCount.approverRoleId` must be a Discord role id, 17 to 20 digits")
+    }
   }
 
   // Hex only, so a typo is refused at startup: in the browser, a color CSS
@@ -390,6 +412,17 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
   profile.schedule.weekday = profile.schedule.weekday as Weekday
   profile.baseline ??= {}
   return profile
+}
+
+/**
+ * `HH:mm` that is a time of day. The shape alone accepts "99:99", which then
+ * reaches Luxon's `set({ hour: 99 })` and yields an invalid DateTime rather
+ * than an error anyone can act on.
+ */
+function isClock(v: unknown): boolean {
+  if (typeof v !== "string" || !/^\d{2}:\d{2}$/.test(v)) return false
+  const [h, m] = v.split(":").map(Number) as [number, number]
+  return h <= 23 && m <= 59
 }
 
 /**
