@@ -20,6 +20,17 @@ check used to read ACSM's `AllowDuplicateSkinChoices` instead. That field is
 than a rule, so a normal entry list produced a screenful of errors that blocked
 every push and buried the findings that mattered.
 
+`entryList.spectatorCars` lists the spectator cars every championship should
+have, such as a stream car and a race recorder. gridmom warns about one that's
+missing or in a different car. Each is matched by its Steam id, since that is
+what its ACSM slot is locked to; the name only appears in messages.
+
+```json
+"spectatorCars": [
+  { "name": "Stream", "model": "ford_transit", "guid": "90000000000000001" }
+]
+```
+
 `excludedCarModels` is league furniture: cars that are always in the list and
 never worth a finding. BATL's `ford_transit` runs in every race for the stream,
 so naming it here stops both the car-list checks reporting it — whatever the

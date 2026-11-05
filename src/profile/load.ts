@@ -106,6 +106,29 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
   if (typeof entry["targetSlots"] !== "number" || entry["targetSlots"] < 0) {
     bad("`entryList.targetSlots` must be >= 0")
   }
+  const spectators = entry["spectatorCars"]
+  if (spectators !== undefined) {
+    if (!Array.isArray(spectators)) bad("`entryList.spectatorCars` must be a list")
+    const seen = new Set<unknown>()
+    ;(spectators as unknown[]).forEach((car, i) => {
+      const at = `\`entryList.spectatorCars[${i}]`
+      if (typeof car !== "object" || car === null) bad(`${at}\` must be an object`)
+      const c = car as Record<string, unknown>
+      for (const key of Object.keys(c)) {
+        if (!["name", "model", "guid", "skin"].includes(key))
+          bad(`${at}.${key}\` isn't a setting champctl knows`)
+      }
+      for (const key of ["name", "model"] as const) {
+        if (typeof c[key] !== "string" || !c[key].trim()) bad(`${at}.${key}\` must be set`)
+      }
+      if (c["skin"] !== undefined && typeof c["skin"] !== "string") bad(`${at}.skin\` must be text`)
+      if (typeof c["guid"] !== "string" || !/^\d{17}$/.test(c["guid"])) {
+        bad(`${at}.guid\` must be a Steam id, 17 digits`)
+      }
+      if (seen.has(c["guid"])) bad(`${at}.guid\` is already another spectator car's`)
+      seen.add(c["guid"])
+    })
+  }
 
   if (
     p["baseline"] !== undefined &&
