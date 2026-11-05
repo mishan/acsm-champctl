@@ -597,11 +597,16 @@ describe("downloading the carset", () => {
   })
 
   afterAll(async () => {
-    await new Promise<void>((done) => server.close(() => done()))
-    store.close()
-    tokens.close()
-    queue.close()
-    await rm(cacheDir, { recursive: true, force: true })
+    // A setup that failed partway leaves some of these unset; the directory
+    // still has to go.
+    try {
+      await new Promise<void>((done) => server.close(() => done()))
+      store.close()
+      tokens.close()
+      queue.close()
+    } finally {
+      if (cacheDir) await rm(cacheDir, { recursive: true, force: true })
+    }
   })
 
   it("hands back a zip laid out for Content Manager", async () => {
@@ -829,11 +834,14 @@ describe("the carset cache under load", () => {
   })
 
   afterAll(async () => {
-    await new Promise<void>((done) => server.close(() => done()))
-    store.close()
-    tokens.close()
-    queue.close()
-    await rm(cacheDir, { recursive: true, force: true })
+    try {
+      await new Promise<void>((done) => server.close(() => done()))
+      store.close()
+      tokens.close()
+      queue.close()
+    } finally {
+      if (cacheDir) await rm(cacheDir, { recursive: true, force: true })
+    }
   })
 
   it("serves every one of eight cold requests that arrive together", async () => {
