@@ -20,6 +20,7 @@ import { cloneChampionship, specFromChampionship } from "../src/emit/clone.js"
 import type { PitTable } from "../src/pits/table.js"
 import { monthSchedule, nextWeekday } from "../src/emit/schedule.js"
 import { ScheduleError } from "../src/finalize/schedule.js"
+import type { LeagueProfile } from "../src/profile/types.js"
 import { check } from "../src/gridmom/index.js"
 import {
   championship,
@@ -391,12 +392,17 @@ describe("emitting a championship", () => {
   ])
 
   const emit = (
-    o: { template?: Championship; spec?: ChampionshipSpec; pits?: PitTable | undefined } = {},
+    o: {
+      template?: Championship
+      spec?: ChampionshipSpec
+      pits?: PitTable | undefined
+      profile?: LeagueProfile
+    } = {},
   ) =>
     emitChampionship({
       template: o.template ?? template(),
       spec: o.spec ?? spec(),
-      profile: testProfile(),
+      profile: o.profile ?? testProfile(),
       // Passing `pits: undefined` explicitly means "no pit table" — the case
       // one of these tests is about — and omitting the key entirely means "use
       // the shared one". Both end up *absent* on EmitOptions rather than set to
@@ -510,6 +516,65 @@ describe("emitting a championship", () => {
     })
     expect(c.SpectatorCars?.[0]?.PitBox).toBe(3)
     for (const ev of events(c)) expect(ev.RaceSetup?.Cars).not.toContain("ford_transit")
+  })
+
+  describe("the league's spectator cars", () => {
+    const league = testProfile({
+      entryList: {
+        targetSlots: 30,
+        spectatorCars: [
+          { name: "Stream", model: "ford_transit", guid: "90000000000000001", skin: "tv" },
+          { name: "Recorder", model: "ford_transit", guid: "90000000000000002" },
+        ],
+      },
+    })
+
+    it("adds the ones the template lacks, after its own, with their model in Cars", () => {
+      // November was cloned from a championship without the recorder, and
+      // nothing recorded its races.
+      const { championship: c, derived } = emit({
+        profile: league,
+        template: template({
+          SpectatorCarEnabled: true,
+          SpectatorCars: [
+            {
+              Name: "Old stream name",
+              GUID: "90000000000000001",
+              Model: "ford_transit",
+              PitBox: 0,
+            },
+          ],
+        }),
+      })
+      expect(c.SpectatorCars?.map((x) => [x.Name, x.GUID, x.Model, x.Skin, x.PitBox])).toEqual([
+        ["Old stream name", "90000000000000001", "ford_transit", undefined, 0],
+        ["Recorder", "90000000000000002", "ford_transit", "", 1],
+      ])
+      expect(c.SpectatorCars?.[1]).toMatchObject({ ConnectAsSpectator: true, RaceNumber: 0 })
+      expect(c.SpectatorCars?.[1]?.InternalUUID).toMatch(/^[0-9a-f-]{36}$/)
+      expect(derived).toContain("the league's spectator car Recorder added")
+      for (const ev of events(c)) expect(ev.RaceSetup?.Cars).toContain("ford_transit")
+    })
+
+    it("switches spectator cars on when the template had them off", () => {
+      const { championship: c } = emit({
+        profile: league,
+        template: template({ SpectatorCarEnabled: false }),
+      })
+      expect(c.SpectatorCarEnabled).toBe(true)
+      expect(c.SpectatorCars?.map((x) => [x.Name, x.Skin])).toEqual([
+        ["Stream", "tv"],
+        ["Recorder", ""],
+      ])
+      for (const ev of events(c)) expect(ev.RaceSetup?.Cars).toContain("ford_transit")
+    })
+
+    it("produces a championship gridmom doesn't warn about", () => {
+      const { championship: c } = emit({ profile: league, template: template() })
+      expect(check(c, league, { pits, now: NOW }).findings.map((f) => f.code)).not.toContain(
+        "entry.spectator-missing",
+      )
+    })
   })
 
   it("turns off ExportSecondRaceToACSR when ACSR is off", () => {

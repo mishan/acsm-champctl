@@ -513,6 +513,36 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       expect(new Set(models)).toEqual(new Set(["any_car_model"]))
     }, 60_000)
 
+    it("adds the league's spectator cars, and ACSM keeps them", async () => {
+      const league = testProfile({
+        entryList: {
+          targetSlots: 6,
+          spectatorCars: [
+            { name: "Stream", model: "abarth500", guid: "90000000000000001" },
+            { name: "Recorder", model: "abarth500", guid: "90000000000000002" },
+          ],
+        },
+      })
+      const { championship: emitted } = emitChampionship({
+        template: await loadFixture(SEED),
+        profile: league,
+        spec: {
+          name: `champctl live spectators ${Date.now()}`,
+          cars: ["rss_formula_hybrid_2021"],
+          rounds: [{ track: "spa" }],
+          startDate: "2027-03-03",
+          entryListSlots: 2,
+        },
+      })
+
+      const { export: exported } = await importFixture(emitted)
+      expect(exported.SpectatorCarEnabled).toBe(true)
+      expect(exported.SpectatorCars?.map((c) => [c.Name, c.GUID, c.Model])).toEqual([
+        ["Stream", "90000000000000001", "abarth500"],
+        ["Recorder", "90000000000000002", "abarth500"],
+      ])
+    }, 60_000)
+
     it("emits a championship with no results, so the import safety rails stay quiet", async () => {
       const template = await loadFixture(SEED)
       const { championship: emitted } = emitChampionship({

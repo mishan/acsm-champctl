@@ -35,7 +35,14 @@ import {
   type SignUpForm,
 } from "../acsm/types.js"
 import { FORBIDDEN_KEYS, regenerateIds } from "../acsm/write.js"
-import { classes, events, session, spectatorCarRefs, spectatorModels } from "../acsm/view.js"
+import {
+  classes,
+  events,
+  normGuid,
+  session,
+  spectatorCarRefs,
+  spectatorModels,
+} from "../acsm/view.js"
 import type { RaceFormat } from "../finalize/format.js"
 import { applyFormat } from "../finalize/format.js"
 import { type SessionLengths, withSessionLengths } from "../finalize/sessions.js"
@@ -214,7 +221,11 @@ export function emitChampionship(options: EmitOptions): EmitResult {
 
   // Start from the template, then the league baseline. Both are whole-object
   // overlays, so anything neither mentions survives from the template.
-  const base = mergeAll<Championship>(template, profile.baseline.championship ?? {})
+  const base = withLeagueSpectatorCars(
+    mergeAll<Championship>(template, profile.baseline.championship ?? {}),
+    profile,
+    derived,
+  )
 
   const templateClasses = classes(template)
   const templateClass = templateClasses[0]
@@ -430,6 +441,53 @@ export function emitChampionship(options: EmitOptions): EmitResult {
   derived.push("every UUID regenerated, so importing creates rather than overwrites")
 
   return { championship: out, grid, schedule, derived }
+}
+
+/**
+ * The championship with the league's spectator cars it lacks added after its
+ * own, and spectator cars switched on if the league has any.
+ *
+ * Matched by GUID, which is what an ACSM slot is locked to. A car already
+ * there is left as it is, whatever it's called. November was cloned from a
+ * championship without the race recorder's car, and nothing recorded it.
+ */
+function withLeagueSpectatorCars(
+  c: Championship,
+  profile: LeagueProfile,
+  derived: string[],
+): Championship {
+  const league = profile.entryList.spectatorCars ?? []
+  if (league.length === 0) return c
+  const existing = c.SpectatorCars ?? []
+  const missing = league.filter(
+    (car) => !existing.some((e) => normGuid(e.GUID) === normGuid(car.guid)),
+  )
+  if (missing.length === 0 && c.SpectatorCarEnabled) return c
+  if (!c.SpectatorCarEnabled) derived.push("spectator cars switched on, for the league's")
+  for (const car of missing) derived.push(`the league's spectator car ${car.name} added`)
+  return {
+    ...c,
+    SpectatorCarEnabled: true,
+    SpectatorCars: [
+      ...existing,
+      ...missing.map(
+        (car, i): Entrant => ({
+          Name: car.name,
+          Team: "",
+          GUID: car.guid,
+          Model: car.model,
+          Skin: car.skin ?? "",
+          InternalUUID: randomUUID(),
+          // Numbered after the others, as a save in ACSM would number them.
+          PitBox: existing.length + i,
+          RaceNumber: 0,
+          Ballast: 0,
+          Restrictor: 0,
+          ConnectAsSpectator: true,
+        }),
+      ),
+    ],
+  }
 }
 
 /**
