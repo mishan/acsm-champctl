@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 
+import { setOne } from "../src/acsm/form.js"
 import { CHAMPIONSHIP_SUBMIT_PATH } from "../src/acsm/paths.js"
 import { AcsmSession } from "../src/acsm/session.js"
 import type { Entrant } from "../src/acsm/types.js"
@@ -8,16 +9,19 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import {
-  ChampionshipDriftError,
-  ChampionshipUnverifiedError,
   LiveryRecordError,
   MultiClassError,
   RosterChangedError,
   applyLiveries,
-  championshipDrift,
   uploadTimeoutMs,
-  writeBackup,
 } from "../src/liveries/apply.js"
+import {
+  checkChampionshipSave,
+  ChampionshipDriftError,
+  ChampionshipUnverifiedError,
+  championshipDrift,
+  writeBackup,
+} from "../src/acsm/championship-save.js"
 import { AcsmWriteError } from "../src/acsm/session.js"
 import type { Livery, LiveryPack } from "../src/liveries/pack.js"
 import { planLiveries } from "../src/liveries/plan.js"
@@ -818,6 +822,41 @@ describe("what a championship save leaves behind", () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe("the shared championship save", () => {
+  it("refuses, before posting, an edit that changes how ACSM would read the rows", async () => {
+    // Dropping a spectator marker is the 2026-10-06 shape: ACSM would take the
+    // spectator car as the first driver.
+    const { session, requests } = await fakeSession()
+    const checked = await checkChampionshipSave(session, CHAMP_ID, {
+      what: "a marker",
+      apply: (fields) => {
+        fields.splice(
+          fields.findIndex((f) => f.name === "EntryList.Spectator"),
+          1,
+        )
+      },
+    })
+    await expect(checked.save()).rejects.toThrow(/doesn't add up/)
+    expect(requests.filter((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))).toEqual([])
+  })
+
+  it("refuses, before posting, an edit that adds a row it didn't declare", async () => {
+    const { session, requests } = await fakeSession()
+    const checked = await checkChampionshipSave(session, CHAMP_ID, {
+      what: "a row",
+      apply: (fields, form) => {
+        const row = fields
+          .filter((f) => f.name.startsWith("EntryList.") && f.name !== "EntryList.NumEntrants")
+          .slice(0, 9)
+        fields.push(...row.map((f) => ({ ...f })))
+        setOne(fields, "EntryList.NumEntrants", String(form.rows))
+      },
+    })
+    await expect(checked.save()).rejects.toThrow(/changed its rows/)
+    expect(requests.filter((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))).toEqual([])
   })
 })
 

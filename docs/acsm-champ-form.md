@@ -5,7 +5,7 @@ form champctl writes, and the one a livery change belongs on, because it is the
 only write that reaches every round.
 
 `champctl-liveries` drives it. `src/acsm/championship-form.ts` is the parser and
-`src/liveries/apply.ts` the writer; this document is why they do what they do.
+`src/acsm/championship-save.ts` the writer; this document is why they do what they do.
 
 Everything below marked **source** is read off `JustaPenguin/assetto-server-manager`
 at `master` and needs confirming against the build BATL runs. Everything marked
@@ -365,7 +365,7 @@ this. BATL runs one class plus the spectator van.
 
 **champctl does.** `planLiveries` refuses on the class count from the export, so
 the preview says no before anything is uploaded and without needing a password;
-`saveChampionshipSkins` refuses again on the count the *form* renders, which is
+the shared save (`src/acsm/championship-save.ts`) refuses again on the count the *form* renders, which is
 the payload actually being posted and the only description of it worth trusting.
 Lifting the refusal means measuring the pit-box behaviour on a manager nobody is
 racing on that week, not deleting the check.

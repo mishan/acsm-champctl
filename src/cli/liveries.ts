@@ -31,14 +31,13 @@ import { AcsmError, HttpAcsmReader } from "../acsm/client.js"
 import { AcsmAuthError, AcsmSession, PasswordChangeRequiredError } from "../acsm/session.js"
 import { events } from "../acsm/view.js"
 import {
-  ChampionshipDriftError,
-  ChampionshipUnverifiedError,
   LiveryApplyError,
   MultiClassError,
   PracticeRestartError,
   RosterChangedError,
   applyLiveries,
 } from "../liveries/apply.js"
+import { ChampionshipDriftError, ChampionshipUnverifiedError } from "../acsm/championship-save.js"
 import { carsetFilename, carsetPlan, writeCarset } from "../liveries/carset.js"
 import { SqliteClaimStore } from "../liveries/claims.js"
 import { carCoverage, parseCarSkins, racedCars, renderCoverage } from "../liveries/coverage.js"

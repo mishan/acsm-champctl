@@ -18,34 +18,22 @@
  * matters, and `unreachableRounds` for how a plan says so when it isn't.
  */
 
-import * as cheerio from "cheerio"
-
 import {
-  CHAMPIONSHIP_REQUIRED_ENTRY_LIST_FIELDS,
   type ChampionshipForm,
   currentNames,
-  findChampionshipForm,
   findEntrantRow,
-  SPECTATOR_MARKER,
   setEntrantSkin,
 } from "../acsm/championship-form.js"
-import { getAll, setOne } from "../acsm/form.js"
 import {
-  CHAMPIONSHIP_SUBMIT_PATH,
-  carSkinUploadPath,
-  championshipEditPath,
-  championshipPath,
-  eventPracticePath,
-  exportPath,
-} from "../acsm/paths.js"
+  ChampionshipChangedError,
+  type ChampionshipEdit,
+  checkChampionshipSave,
+} from "../acsm/championship-save.js"
+import { getAll } from "../acsm/form.js"
+import { carSkinUploadPath, championshipPath, eventPracticePath } from "../acsm/paths.js"
 import { AcsmWriteError, isRedirectStatus, type AcsmSession } from "../acsm/session.js"
-import { championshipIdFromRedirect } from "../acsm/write.js"
-import { randomBytes } from "node:crypto"
-import { mkdir, readdir, rm, writeFile } from "node:fs/promises"
-import { join } from "node:path"
 
 import { ACSM_SKIN_FILES, MAX_UPLOAD_REQUEST_BYTES, type Livery } from "./pack.js"
-import type { Championship } from "../acsm/types.js"
 import type { LiveryPlan } from "./plan.js"
 import type { LiverySource, RecordResult, LiveryRecorder } from "./store.js"
 
@@ -219,7 +207,9 @@ export async function applyLiveries(
   // a refusal left the skins on the server behind it.
   const checked =
     plan.skinChanges.length > 0
-      ? await preflightChampionshipSave(session, plan, options.backupDir)
+      ? await liveryChanged(() =>
+          checkChampionshipSave(session, plan.championshipId, skinEdit(plan), options.backupDir),
+        )
       : undefined
 
   for (const assignment of plan.assignments) {
@@ -242,7 +232,7 @@ export async function applyLiveries(
   // are already assigned needs no write — and this write is a
   // whole-championship replace, which is not a thing to do for nothing.
   if (plan.skinChanges.length > 0) {
-    await saveChampionshipSkins(session, plan, checked!)
+    await liveryChanged(() => checked!.save())
     result.championshipSaved = true
   }
 
@@ -375,18 +365,47 @@ async function uploadSkinFiles(
 }
 
 /**
- * Two championship ids, compared the way ACSM's router compares them.
+ * The plan's skins as an edit of the championship form.
  *
- * Case-insensitively, because the two sides come from different places: one is
- * whatever the operator typed on the command line, the other is whatever Go's
- * `uuid.String()` wrote into `Location`, which is always lowercase. ACSM parses
- * the id case-insensitively, so a championship pasted as `1E9F4A2B-...` reads
- * and saves perfectly — and a `!==` here would then call that successful save a
- * duplicate-creating failure, which is a worse answer than the one this check
- * was added to replace.
+ * Each driver's row is found by name on every read of the form, and a driver
+ * the form no longer has is refused: a sign-up approved while the preview was
+ * open would otherwise be the one that gets moved.
  */
-function sameChampionshipId(a: string | undefined, b: string): boolean {
-  return a !== undefined && a.toLowerCase() === b.toLowerCase()
+function skinEdit(plan: LiveryPlan): ChampionshipEdit {
+  const rows = (form: ChampionshipForm) => {
+    if (form.entrantsPerClass.length > 1) throw new MultiClassError(form.entrantsPerClass.length)
+    return plan.assignments.map((a) => {
+      const row = findEntrantRow(form, a.driverName)
+      if (row === undefined) {
+        throw new RosterChangedError(
+          `champctl matched ${a.driverName} against the championship export, and the ` +
+            `entry list on the form does not have them.`,
+        )
+      }
+      return { row, skin: a.skinFolder }
+    })
+  }
+  return {
+    what: "the liveries",
+    leftBehind: "The skins are uploaded either way, and are harmless on their own.",
+    check: rows,
+    apply: (fields, form) => {
+      for (const { row, skin } of rows(form)) setEntrantSkin(fields, row, skin)
+    },
+    skins: new Map(
+      plan.assignments.map((a) => [a.driverName.normalize("NFC").trim(), a.skinFolder]),
+    ),
+  }
+}
+
+/** The shared save's "changed since the checks", as the liveries have always said it. */
+async function liveryChanged<T>(f: () => Promise<T>): Promise<T> {
+  try {
+    return await f()
+  } catch (e) {
+    if (e instanceof ChampionshipChangedError) throw new RosterChangedError(e.detail)
+    throw e
+  }
 }
 
 /**
@@ -414,508 +433,6 @@ export function uploadTimeoutMs(bytes: number): number {
 
 function mb(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-/**
- * The championship form, checked, and the row each driver is on.
- *
- * The form is fetched rather than reused from the plan, and the entrant names
- * are compared against what the plan matched. ACSM's championship save is a
- * whole-championship replace: a sign-up approved while the preview was open
- * would be silently dropped by posting a form read before it landed. That is
- * the same hazard `saveEventForm` guards, one form up.
- */
-async function readChampionshipForm(
-  session: AcsmSession,
-  plan: LiveryPlan,
-): Promise<{ form: ChampionshipForm; rows: Map<string, number> }> {
-  const path = championshipEditPath(plan.championshipId)
-  const form = findChampionshipForm(await session.getText(path), session.url(path))
-
-  if (form.entrantsPerClass.length > 1) throw new MultiClassError(form.entrantsPerClass.length)
-
-  const rows = new Map<string, number>()
-  for (const assignment of plan.assignments) {
-    const row = findEntrantRow(form, assignment.driverName)
-    if (row === undefined) {
-      throw new RosterChangedError(
-        `champctl matched ${assignment.driverName} against the championship export, and the ` +
-          `entry list on the form does not have them.`,
-      )
-    }
-    rows.set(assignment.driverName, row)
-  }
-  return { form, rows }
-}
-
-/** What the checks before any write established, for the save to hold itself to. */
-interface Preflight {
-  /** The logged-in export, as text, exactly as read. */
-  beforeText: string
-  before: Championship
-  /** Where that export was kept, when there was somewhere to keep it. */
-  backup: string | undefined
-}
-
-/**
- * Every refusal a championship save can make, made before anything is written.
- *
- * The logged-in export is read and backed up here, and the form checked against
- * it, so that a save champctl won't make — or can't keep a backup for — leaves
- * no skin uploaded behind it either.
- */
-async function preflightChampionshipSave(
-  session: AcsmSession,
-  plan: LiveryPlan,
-  backupDir: string | undefined,
-): Promise<Preflight> {
-  // Logged in: the public export leaves out the sign-up responses and the
-  // server password, and this is what a restore would be made from.
-  const beforeText = await session.getText(exportPath(plan.championshipId))
-  const before = JSON.parse(beforeText) as Championship
-  const backup = backupDir
-    ? await writeBackup(backupDir, plan.championshipId, beforeText)
-    : undefined
-
-  const { form } = await readChampionshipForm(session, plan)
-  checkDescription(before, form)
-  checkSpectatorRows(before, form)
-  checkPitBoxes(before)
-  checkClassRows(before, form)
-  registrationDeadline(before)
-  return { beforeText, before, backup }
-}
-
-/**
- * The form's leading rows have to be the championship's spectator cars, in
- * order. ACSM reads them as such by count alone, so this is the check that
- * they are what the count says.
- */
-function checkSpectatorRows(before: Championship, form: ChampionshipForm): void {
-  const stored = (before.SpectatorCars ?? []).map((c) => c.GUID ?? "")
-  const onForm = getAll(form.fields, "EntryList.GUID").slice(0, form.spectatorRows)
-  if (stored.length !== onForm.length || stored.some((g, i) => g !== onForm[i])) {
-    throw new AcsmWriteError(
-      `The edit page's ${form.spectatorRows} spectator-car rows don't match the ` +
-        `championship's ${stored.length} spectator cars, by GUID and in order, so champctl ` +
-        `can't tell which rows ACSM would read as drivers. Nothing was written.`,
-      undefined,
-      CHAMPIONSHIP_SUBMIT_PATH,
-    )
-  }
-}
-
-/**
- * Every class's pit boxes have to be 0 to n-1 already. The form has no
- * EntrantID, so a save numbers each class's entrants by position (§4.4): any
- * other numbering would move somebody, and the drift check matches entrants by
- * pit box on that understanding.
- */
-function checkPitBoxes(before: Championship): void {
-  for (const [i, cls] of (before.Classes ?? []).entries()) {
-    const boxes = Object.values(cls.Entrants ?? {})
-      .map((e) => e.PitBox)
-      .sort((a, b) => (a ?? -1) - (b ?? -1))
-    if (boxes.some((b, n) => b !== n)) {
-      throw new AcsmWriteError(
-        `Class ${i + 1}'s pit boxes are ${boxes.join(", ")}, and saving the championship form ` +
-          `renumbers them 0 to ${boxes.length - 1} by position, which would move somebody. ` +
-          `Nothing was written. Saving the championship once in ACSM renumbers them.`,
-        undefined,
-        CHAMPIONSHIP_SUBMIT_PATH,
-      )
-    }
-  }
-}
-
-/**
- * The form's class rows have to be the export's entrants in pit-box order,
- * which is how 2.4.15 renders them and what a save numbers them by. Any other
- * order would move drivers, and the drift check would only see it afterwards.
- * Single class only, as `readChampionshipForm` refuses more.
- */
-function checkClassRows(before: Championship, form: ChampionshipForm): void {
-  const byBox = Object.values(before.Classes?.[0]?.Entrants ?? {}).sort(
-    (a, b) => (a.PitBox ?? 0) - (b.PitBox ?? 0),
-  )
-  const names = currentNames(form).slice(form.spectatorRows)
-  const guids = getAll(form.fields, "EntryList.GUID").slice(form.spectatorRows)
-  const out = byBox.findIndex((e, i) => (e.Name ?? "") !== names[i] || (e.GUID ?? "") !== guids[i])
-  if (out >= 0 || names.length !== byBox.length) {
-    throw new AcsmWriteError(
-      `The edit page doesn't list the drivers in pit-box order (first difference at pit box ` +
-        `${out >= 0 ? out : byBox.length}), and saving it would number them by that order, ` +
-        `moving somebody. Nothing was written.`,
-      undefined,
-      CHAMPIONSHIP_SUBMIT_PATH,
-    )
-  }
-}
-
-/**
- * The description has to be on the page if the championship has one.
- *
- * It is posted from the page's `#ChampionshipInfoHolder`, which is what a
- * browser posts: ACSM stores images in it as `/content/...` URLs. The export
- * inlines those as base64, so it can't be the source — posted, it stored a
- * 12 KB description as 2 MB inline, and a description with a few large images
- * exceeds Go's 10 MB form limit outright (measured on 2.4.15). A page and an
- * export that disagree about whether there is one at all is a page champctl
- * doesn't understand.
- */
-function checkDescription(before: Championship, form: ChampionshipForm): void {
-  const stored = typeof before.Info === "string" ? before.Info.trim() : ""
-  if (Boolean(stored) !== Boolean(form.description)) {
-    throw new AcsmWriteError(
-      `The championship ${stored ? "has a description the edit page doesn't show" : "edit page shows a description the export doesn't have"}, ` +
-        `so champctl can't tell what saving the form would leave behind. Nothing was written.`,
-      undefined,
-      CHAMPIONSHIP_SUBMIT_PATH,
-    )
-  }
-}
-
-/**
- * The registration deadline, as fields that can't move it.
- *
- * The form renders the deadline's date and time and leaves its timezone to the
- * page's script, which fills in the browser's. Posted empty, ACSM read the wall
- * clock as UTC: a 19:00 Los Angeles deadline came back as 19:00 UTC, seven
- * hours earlier, on every save (measured on 2.4.15).
- *
- * So it is sent from the export, in the offset it was stored in, named as the
- * fixed-offset zone ACSM's Go can load: `-07:00` is `Etc/GMT+7` (the sign is
- * POSIX's, inverted). Sent as UTC instead it kept the instant but came back
- * written as `Z`, which is a different stored value. An offset that isn't a
- * whole hour has no such zone, so a deadline in one is refused rather than
- * moved. Undefined when no deadline is set, which the form already posts
- * correctly.
- */
-function registrationDeadline(
-  before: Championship,
-): { date: string; time: string; timezone: string } | undefined {
-  const raw: unknown = before.SignUpForm?.RegistrationDeadline
-  if (typeof raw !== "string" || raw.startsWith("0001-01-01")) return undefined
-  const m =
-    /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?(Z|([+-])(\d{2}):(\d{2}))$/.exec(raw)
-  const whole = m && (m[3] === "Z" || m[6] === "00")
-  if (!m || !whole || (m[3] !== "Z" && Number.isNaN(Number(m[5])))) {
-    throw new AcsmWriteError(
-      `The championship's registration deadline is "${raw}", which champctl can't send back ` +
-        `without moving it. Nothing was written.`,
-      undefined,
-      CHAMPIONSHIP_SUBMIT_PATH,
-    )
-  }
-  const hours = m[3] === "Z" ? 0 : Number(m[5])
-  const timezone = hours === 0 ? "UTC" : `Etc/GMT${m[4] === "-" ? "+" : "-"}${hours}`
-  return { date: m[1]!, time: m[2]!, timezone }
-}
-
-async function saveChampionshipSkins(
-  session: AcsmSession,
-  plan: LiveryPlan,
-  checked: Preflight,
-): Promise<void> {
-  // The championship has to be as it was when it was backed up. An admin
-  // editing it in the meantime would otherwise read, after the save, as drift
-  // champctl caused — and the backup would not have their edit in it.
-  const nowText = await session.getText(exportPath(plan.championshipId))
-  if (nowText !== checked.beforeText) {
-    throw new RosterChangedError(
-      `The championship changed between champctl's checks and its save — someone edited it, or ` +
-        `a sign-up arrived. Nothing was written to it; the next pass will start again from the ` +
-        `championship as it now is.`,
-    )
-  }
-
-  const { form, rows } = await readChampionshipForm(session, plan)
-  checkDescription(checked.before, form)
-  checkSpectatorRows(checked.before, form)
-
-  const fields = [...form.fields]
-  for (const assignment of plan.assignments) {
-    setEntrantSkin(fields, rows.get(assignment.driverName)!, assignment.skinFolder)
-  }
-
-  const deadline = registrationDeadline(checked.before)
-  if (deadline) {
-    setOne(fields, "Championship.SignUpForm.RegistrationDeadlineDate", deadline.date)
-    setOne(fields, "Championship.SignUpForm.RegistrationDeadlineTime", deadline.time)
-    setOne(fields, "Championship.SignUpForm.RegistrationDeadlineTimezone", deadline.timezone)
-  }
-
-  // Which save this is. `Editing` is rendered by the form so this only restates
-  // it; the ACSM UI carries `action` on the submit button, and `parseForm` drops
-  // buttons on purpose, so a payload built purely from the parsed form lacks it.
-  setOne(fields, "action", "saveChampionship")
-
-  let res: Response | undefined
-  let sendError: unknown
-  try {
-    res = await session.postForm(CHAMPIONSHIP_SUBMIT_PATH, fields, {
-      // The event form's list would refuse this outright: the championship form
-      // genuinely renders no EntryList.EntrantID. See the constant's comment.
-      requiredEntryListFields: CHAMPIONSHIP_REQUIRED_ENTRY_LIST_FIELDS,
-      // Marks the spectator cars' rows; findChampionshipForm has counted them.
-      entryListMarkers: [SPECTATOR_MARKER],
-    })
-  } catch (e) {
-    // Refused before sending, or lost on the way. Either way ACSM may or may
-    // not have it, so the check below runs regardless.
-    sendError = e
-  }
-
-  // Then check what it did, whatever the response said. A redirect says ACSM
-  // took the form, not what it made of it: the save that moved every driver a
-  // row redirected exactly like a good one. And a 500 or a timeout does not
-  // prove nothing was written. Everything but the skins champctl set has to
-  // come back as it went in — the export for the championship, and the edit
-  // page for the description, which the export can't show (it inlines images,
-  // whatever is stored).
-  let drift: string[]
-  try {
-    const after = JSON.parse(await session.getText(exportPath(plan.championshipId))) as Championship
-    const expected = new Map(
-      plan.assignments.map((a) => [a.driverName.normalize("NFC").trim(), a.skinFolder]),
-    )
-    drift = championshipDrift(checked.before, after, expected)
-    const pageAfter = await session.getText(championshipEditPath(plan.championshipId))
-    if (descriptionOf(pageAfter) !== form.description) drift.push(".Info changed on the page")
-  } catch (e) {
-    throw new ChampionshipUnverifiedError(plan.championshipId, e, checked.backup)
-  }
-  if (drift.length > 0) throw new ChampionshipDriftError(plan.championshipId, drift, checked.backup)
-
-  if (sendError !== undefined) throw sendError
-  if (!res || !isRedirectStatus(res.status)) {
-    throw new AcsmWriteError(
-      `ACSM didn't accept the championship save (HTTP ${res?.status}, no redirect), and the ` +
-        `championship is unchanged. It reports form errors by re-rendering the page rather than ` +
-        `in the response; the skins are uploaded either way.`,
-      res?.status,
-      CHAMPIONSHIP_SUBMIT_PATH,
-    )
-  }
-
-  // Which championship it landed on, not just that it landed somewhere.
-  //
-  // `/championships/new/submit` serves create *and* edit — an edit is a create
-  // carrying an existing ID (`paths.ts`, docs §4.5) — so the 3xx alone does not
-  // say this was an edit of the intended championship, and two ordinary
-  // failures both arrive as a 302. A session that lapsed between the form GET
-  // and this POST redirects to the login page: nothing written, reported as
-  // saved. And a payload whose identity field didn't survive the round trip is
-  // treated as a *create*: the real championship is untouched and a duplicate
-  // now holds the entry list, again reported as saved.
-  //
-  // The `Location` header is the only place the answer is written down.
-  const landedOn = championshipIdFromRedirect(res)
-  if (!sameChampionshipId(landedOn, plan.championshipId)) {
-    throw new AcsmWriteError(
-      `The championship save redirected to ${landedOn ? `championship ${landedOn}` : `"${res.headers.get("location") ?? ""}"`}, ` +
-        `not to ${plan.championshipId}. ACSM serves create and edit from the same endpoint, so ` +
-        `this is either a session that expired mid-write — in which case nothing was saved — or ` +
-        `a save that ACSM took as a new championship, in which case ${plan.championshipId} is ` +
-        `untouched and there is a duplicate to delete. Check ` +
-        `${championshipPath(plan.championshipId)}; the skins are uploaded either way and are ` +
-        `harmless on their own.`,
-      res.status,
-      CHAMPIONSHIP_SUBMIT_PATH,
-    )
-  }
-}
-
-/** The description as the edit page holds it, for comparing before and after. */
-function descriptionOf(editPage: string): string {
-  return cheerio.load(editPage)("#ChampionshipInfoHolder").html()?.trim() ?? ""
-}
-
-/**
- * The save changed something champctl didn't ask it to.
- *
- * Not recoverable from here: the championship is already written. The backup
- * is what to put back, with an import of the same id — read logged in, it has
- * everything the public export leaves out. The drain stops on this and stays
- * stopped (see `SqliteSubmissionQueue.haltDrain`): another pass would plan
- * against the damaged championship and save over it again.
- */
-export class ChampionshipDriftError extends AcsmWriteError {
-  constructor(
-    championshipId: string,
-    readonly drift: readonly string[],
-    readonly backup?: string,
-  ) {
-    super(
-      `The championship save for ${championshipId} changed more than the liveries: ` +
-        `${drift.slice(0, 8).join("; ")}${drift.length > 8 ? `; and ${drift.length - 8} more` : ""}. ` +
-        (backup
-          ? `The championship as it was before is in ${backup}. The drain has stopped; restore it before anything else is saved.`
-          : `There is no backup of it from this run. The drain has stopped; check the championship in ACSM.`),
-      undefined,
-      CHAMPIONSHIP_SUBMIT_PATH,
-    )
-    this.name = "ChampionshipDriftError"
-  }
-}
-
-/**
- * A save reached ACSM and champctl couldn't read back what it did.
- *
- * Treated like drift: a save that can't be checked is not one to repeat.
- */
-export class ChampionshipUnverifiedError extends AcsmWriteError {
-  constructor(
-    championshipId: string,
-    override readonly cause: unknown,
-    readonly backup?: string,
-  ) {
-    super(
-      `champctl saved championship ${championshipId} and then couldn't read it back to check the ` +
-        `save (${cause instanceof Error ? cause.message : String(cause)}). The drain has stopped ` +
-        `until someone looks${backup ? `; the championship as it was before is in ${backup}` : ""}.`,
-      undefined,
-      CHAMPIONSHIP_SUBMIT_PATH,
-    )
-    this.name = "ChampionshipUnverifiedError"
-  }
-}
-
-const NIL_UUID = "00000000-0000-0000-0000-000000000000"
-
-/**
- * Every difference between two exports except the ones a livery save makes.
- *
- * Allowed: `Updated`; the `Skin` of an entrant named in `skins` changing to the
- * folder given for them; and an entrant's `ClassID` becoming the nil UUID or
- * its class's id, which ACSM does on every save of this form — a browser saving
- * it unchanged does the same, measured on 2.4.15. Anything else — an entrant in
- * a different slot, a spectator car gone, a description emptied — is listed by
- * path.
- *
- * Class entrants are compared by pit box rather than by `CAR_n` key: a save
- * re-keys them so `CAR_n` holds pit box n, and BATL's exports had keys out of
- * that order. Their InternalUUIDs are all nil, so can't be the key instead.
- * Spectator cars come back with pit box i and race number 0, the form having
- * no field for either, and not necessarily in the order they were posted in,
- * so they are compared by GUID (all measured on 2.4.15).
- */
-export function championshipDrift(
-  before: unknown,
-  after: unknown,
-  skins: ReadonlyMap<string, string>,
-): string[] {
-  const out: string[] = []
-  const walk = (x: unknown, y: unknown, path: string, entrant?: string, classId?: string) => {
-    if (x !== null && y !== null && typeof x === "object" && typeof y === "object") {
-      if (Array.isArray(x) !== Array.isArray(y)) {
-        out.push(`${path} changed`)
-        return
-      }
-      const xo = x as Record<string, unknown>
-      const yo = y as Record<string, unknown>
-      // The class a run of entrants belongs to, for the ClassID allowance.
-      const cls = /\.Classes\.\d+$/.test(path) ? String(yo["ID"] ?? "") : classId
-      for (const key of new Set([...Object.keys(xo), ...Object.keys(yo)])) {
-        const here = `${path}.${key}`
-        if (here === ".Updated") continue
-        if (!(key in xo) || !(key in yo)) {
-          out.push(`${here} ${key in xo ? "removed" : "added"}`)
-          continue
-        }
-        const name = /\.Classes\.\d+\.Entrants\.[^.]+$/.test(here)
-          ? String((yo[key] as { Name?: unknown })?.Name ?? "")
-          : entrant
-        if (
-          key === "ClassID" &&
-          entrant !== undefined &&
-          (yo[key] === NIL_UUID || (cls !== undefined && cls !== "" && yo[key] === cls))
-        ) {
-          continue
-        }
-        if (
-          key === "Skin" &&
-          entrant !== undefined &&
-          skins.get(entrant.normalize("NFC").trim()) === yo[key] &&
-          String((xo as { Name?: unknown }).Name ?? "") === entrant
-        ) {
-          continue
-        }
-        walk(xo[key], yo[key], here, name, cls)
-      }
-      return
-    }
-    if (JSON.stringify(x) !== JSON.stringify(y)) out.push(`${path} changed`)
-  }
-  walk(asSaved(before), inOrderOf(before, after), "")
-  return out
-}
-
-/** `before` as a save that changed nothing would return it, for `championshipDrift`. */
-function asSaved(before: unknown): unknown {
-  if (before === null || typeof before !== "object") return before
-  const c = structuredClone(before) as Championship
-  if (c.SpectatorCars) {
-    c.SpectatorCars = c.SpectatorCars.map((car, i) => ({ ...car, PitBox: i, RaceNumber: 0 }))
-  }
-  for (const cls of c.Classes ?? []) {
-    const entrants = Object.values(cls.Entrants ?? {})
-    const boxes = new Set(entrants.map((e) => e.PitBox))
-    // Ambiguous or missing pit boxes stay keyed as they were, and checkPitBoxes
-    // refuses such a championship before it is written.
-    if (boxes.size !== entrants.length || entrants.some((e) => typeof e.PitBox !== "number")) {
-      continue
-    }
-    cls.Entrants = Object.fromEntries(entrants.map((e) => [`CAR_${e.PitBox}`, e]))
-  }
-  return c
-}
-
-/**
- * `after` with its spectator cars in `before`'s order, matched by GUID. A GUID
- * that isn't unique on both sides leaves the order alone, for the walk to flag.
- */
-function inOrderOf(before: unknown, after: unknown): unknown {
-  const guids = (c: unknown) =>
-    ((c as Championship | null)?.SpectatorCars ?? []).map((car) => car.GUID)
-  const was = guids(before)
-  const now = guids(after)
-  if (new Set(was).size !== was.length || new Set(now).size !== now.length) return after
-  const cars = (after as Championship).SpectatorCars
-  if (!cars) return after
-  const rank = (g: string | undefined) => {
-    const i = was.indexOf(g)
-    return i < 0 ? was.length : i
-  }
-  return {
-    ...(after as Championship),
-    SpectatorCars: [...cars].sort((a, b) => rank(a.GUID) - rank(b.GUID)),
-  }
-}
-
-/** Backups kept per championship; older ones are removed as new ones land. */
-const BACKUPS_KEPT = 20
-
-export async function writeBackup(
-  dir: string,
-  championshipId: string,
-  text: string,
-): Promise<string> {
-  await mkdir(dir, { recursive: true, mode: 0o700 })
-  const stamp = new Date().toISOString().replaceAll(":", "")
-  const file = join(dir, `${championshipId}-${stamp}-${randomBytes(3).toString("hex")}.json`)
-  // 0600: a logged-in export carries the sign-up responses and the server
-  // password. `wx`, so a collision fails rather than overwriting a backup.
-  await writeFile(file, text, { mode: 0o600, flag: "wx" })
-
-  // Oldest first by name, which starts with the timestamp.
-  const mine = (await readdir(dir))
-    .filter((f) => f.startsWith(`${championshipId}-`) && f.endsWith(".json"))
-    .sort()
-  for (const old of mine.slice(0, Math.max(0, mine.length - BACKUPS_KEPT))) {
-    await rm(join(dir, old), { force: true })
-  }
-  return file
 }
 
 /**

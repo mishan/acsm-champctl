@@ -437,7 +437,7 @@ queues it — so a refusal arrives while they are still looking at Discord rathe
 than at drain time in a channel nobody reads, and a driver in the wrong channel
 never costs the bot the download. `--drain` applies the lot in **one**
 championship save. One save rather than one
-per driver is the point — `saveChampionshipSkins` is a full-form replace, so
+per driver is the point — the championship save is a full-form replace, so
 three separate applies are three overlapping read-modify-writes, and
 `RosterChangedError` doesn't catch it because a concurrent skin write doesn't
 change any names.

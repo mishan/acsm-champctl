@@ -519,7 +519,7 @@ from all of them, and hands it to `planLiveries` and `applyLiveries` exactly as
 the `--zip` path does today.
 
 One pack, not one per submission, and this is the part worth being careful
-about. `saveChampionshipSkins` does GET the form → mutate → POST the whole form.
+about. The championship save does GET the form → mutate → POST the whole form.
 Draining three submissions as three applies is three overlapping
 read-modify-write cycles against a full-form replace, which is a lost update
 waiting for the week three people upload at once. `RosterChangedError` does not
