@@ -735,6 +735,48 @@ export const spectatorCarWithoutModel: Check = {
   },
 }
 
+/**
+ * Each of the league's spectator cars has to be in the championship, by GUID,
+ * in the league's car: a stream car or race recorder that isn't there can't
+ * join. A WARN rather than an ERROR, because the race runs without it and an
+ * ERROR would block other edits in champctl web.
+ */
+export const leagueSpectatorCarMissing: Check = {
+  id: "entry.spectator-missing",
+  section: "6.1",
+  run(ctx, emit) {
+    const present = spectatorCarRefs(ctx.championship)
+    for (const car of ctx.profile.entryList.spectatorCars ?? []) {
+      const found = present.find((r) => normGuid(r.entrant.GUID) === normGuid(car.guid))
+      if (!found) {
+        // Where spectatorCarRefs would read it from, had the switch been on.
+        const c = ctx.championship
+        const field = c.SpectatorCars?.length ? "SpectatorCars" : "SpectatorCar"
+        const stored = c.SpectatorCars?.length ? c.SpectatorCars : [c.SpectatorCar]
+        const off = stored.some((e) => e && normGuid(e.GUID) === normGuid(car.guid))
+        emit(
+          "WARN",
+          "entry.spectator-missing",
+          `The league's spectator car ${car.name} (${car.guid}) ` +
+            `${off ? "is in this championship, but spectator cars are switched off" : "isn't in this championship"}, ` +
+            `so it can't join its sessions.`,
+          { path: off ? field : "SpectatorCars" },
+          { guid: car.guid, name: car.name },
+        )
+      } else if ((found.entrant.Model ?? "").trim() !== car.model) {
+        emit(
+          "WARN",
+          "entry.spectator-missing",
+          `The league's spectator car ${car.name} is in this championship driving ` +
+            `${found.entrant.Model || "no car"}, where the league's is ${car.model}.`,
+          { path: `${found.field}.Model` },
+          { guid: car.guid, name: car.name, model: found.entrant.Model ?? "" },
+        )
+      }
+    }
+  },
+}
+
 export const entryChecks: readonly Check[] = [
   duplicatePitBox,
   maxClientsExceedsPits,
@@ -749,6 +791,7 @@ export const entryChecks: readonly Check[] = [
   acceptedSignUpWithoutSlot,
   unclaimedSlotNotSentinel,
   spectatorCarWithoutModel,
+  leagueSpectatorCarMissing,
 ]
 
 // Re-exported for the emit signature's benefit; keeps imports honest.

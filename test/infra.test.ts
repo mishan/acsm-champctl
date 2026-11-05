@@ -448,6 +448,44 @@ describe("profile validation", () => {
     ).toThrow(message)
   })
 
+  it.each([
+    [[{ name: "", model: "m", guid: "90000000000000001" }], /spectatorCars\[0\].name/],
+    [[{ name: "A", model: "", guid: "90000000000000001" }], /spectatorCars\[0\].model/],
+    [
+      [{ name: "A", model: "ford_transit ", guid: "90000000000000001" }],
+      /spectatorCars\[0\].model/,
+    ],
+    [[{ name: "A", model: "m", guid: "90000000000000001", skin: 3 }], /spectatorCars\[0\].skin/],
+    [[{ name: "A", model: "m", guid: "123" }], /spectatorCars\[0\].guid. must be a Steam id/],
+    [
+      [
+        { name: "A", model: "m", guid: "90000000000000001" },
+        { name: "B", model: "m", guid: "90000000000000001" },
+      ],
+      /spectatorCars\[1\].guid. is already/,
+    ],
+    [
+      [{ name: "A", model: "m", guid: "90000000000000001", team: "x" }],
+      /spectatorCars\[0\].team. isn't/,
+    ],
+    [{ name: "A" }, /spectatorCars. must be a list/],
+  ])("rejects league spectator cars %j", (spectatorCars, message) => {
+    expect(() =>
+      validateProfile({
+        id: "x",
+        name: "X",
+        schedule: {
+          weekday: 3,
+          qualiStart: "20:00",
+          timezone: "UTC",
+          practiceMinutes: 60,
+          qualiMinutes: 20,
+        },
+        entryList: { targetSlots: 10, spectatorCars },
+      }),
+    ).toThrow(message)
+  })
+
   it("rejects a weekday outside 1..7", () => {
     expect(() =>
       validateProfile({

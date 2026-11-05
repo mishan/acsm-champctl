@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 
+import type { Entrant } from "../src/acsm/types.js"
 import { check } from "../src/gridmom/index.js"
 import { entryChecks } from "../src/gridmom/checks/entry.js"
 import {
@@ -716,5 +717,97 @@ describe("unclaimed slots in a multi-model class", () => {
       Events: [raceEvent({ EntryList: entryList(emptySlots(2)) })],
     })
     expect(codes(c)).not.toContain("entry.unclaimed-not-sentinel")
+  })
+})
+
+describe("the league's spectator cars", () => {
+  const league = testProfile({
+    entryList: {
+      targetSlots: 30,
+      spectatorCars: [
+        { name: "Stream", model: "ford_transit", guid: "90000000000000001" },
+        { name: "Recorder", model: "ford_transit", guid: "90000000000000002" },
+      ],
+    },
+  })
+  const findings = (c: Parameters<typeof check>[0]) =>
+    check(c, league, {
+      pits: pitTable([suzukaPits]),
+      now: NOW,
+      checks: entryChecks,
+    }).findings.filter((f) => f.code === "entry.spectator-missing")
+  const car = (Name: string, GUID: string, Model = "ford_transit") => ({ Name, GUID, Model })
+
+  it("warns about each one a championship doesn't have, matched by GUID", () => {
+    // Names drift; the slot is locked to the GUID, which is what joins.
+    const c = championship({
+      SpectatorCarEnabled: true,
+      SpectatorCars: [car("Renamed stream", "90000000000000001")],
+    })
+    const f = findings(c)
+    expect(f.map((x) => [x.severity, x.message])).toEqual([
+      [
+        "WARN",
+        "The league's spectator car Recorder (90000000000000002) isn't in this championship, so it can't join its sessions.",
+      ],
+    ])
+  })
+
+  it("warns when one is there in the wrong car", () => {
+    const c = championship({
+      SpectatorCarEnabled: true,
+      SpectatorCars: [
+        car("Stream", "90000000000000001"),
+        car("Recorder", "90000000000000002", "abarth500"),
+      ],
+    })
+    expect(findings(c).map((x) => x.message)).toEqual([
+      "The league's spectator car Recorder is in this championship driving abarth500, where the league's is ford_transit.",
+    ])
+  })
+
+  it("counts none as there when spectator cars are switched off", () => {
+    const c = championship({
+      SpectatorCarEnabled: false,
+      SpectatorCars: [car("Stream", "90000000000000001"), car("Recorder", "90000000000000002")],
+    })
+    expect(
+      findings(c)
+        .map((x) => x.message)
+        .sort(),
+    ).toEqual([
+      "The league's spectator car Recorder (90000000000000002) is in this championship, but spectator cars are switched off, so it can't join its sessions.",
+      "The league's spectator car Stream (90000000000000001) is in this championship, but spectator cars are switched off, so it can't join its sessions.",
+    ])
+  })
+
+  it("reads a switched-off car from the singular field on a build that only has that", () => {
+    const c = championship({
+      SpectatorCarEnabled: false,
+      SpectatorCar: car("Stream", "90000000000000001"),
+    })
+    delete c.SpectatorCars
+    const stream = findings(c).find((x) => x.message.includes("Stream"))
+    expect(stream?.message).toMatch(/is in this championship, but spectator cars are switched off/)
+    expect(stream?.location?.path).toBe("SpectatorCar")
+  })
+
+  it("survives a null among the spectator cars", () => {
+    const c = championship({
+      SpectatorCarEnabled: false,
+      SpectatorCars: [null as unknown as Entrant, car("Stream", "90000000000000001")],
+    })
+    expect(findings(c)).toHaveLength(2)
+  })
+
+  it("says nothing when the league has none, or the championship has them all", () => {
+    expect(codes(championship({ SpectatorCarEnabled: false }))).not.toContain(
+      "entry.spectator-missing",
+    )
+    const c = championship({
+      SpectatorCarEnabled: true,
+      SpectatorCars: [car("Recorder", "90000000000000002"), car("Stream", "90000000000000001")],
+    })
+    expect(findings(c)).toEqual([])
   })
 })

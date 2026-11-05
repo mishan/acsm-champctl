@@ -62,6 +62,20 @@ export interface EntryListPolicy {
    * identical cars is confusing on a broadcast, not a broken or unfair race.
    */
   uniqueSkins?: boolean
+  /**
+   * The spectator cars every championship should have, such as a stream car
+   * and a race recorder. gridmom warns about one that's missing. Matched by
+   * GUID, which is what an ACSM slot is locked to; the name is for messages.
+   */
+  spectatorCars?: LeagueSpectatorCar[]
+}
+
+export interface LeagueSpectatorCar {
+  name: string
+  model: string
+  /** The Steam id the car joins as. */
+  guid: string
+  skin?: string
 }
 
 /**
