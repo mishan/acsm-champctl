@@ -513,7 +513,10 @@ describe.skipIf(!LIVE)("champctl flows against a real ACSM", () => {
       expect(new Set(models)).toEqual(new Set(["any_car_model"]))
     }, 60_000)
 
-    it("adds the league's spectator cars, and ACSM keeps them", async () => {
+    it("adds the league's spectator cars, and ACSM keeps them", async (ctx) => {
+      // Spectator cars are premium, 2.x; CI's 1.7.9 build doesn't keep them.
+      const health = await live().getJson<{ Version?: string }>("/healthcheck.json")
+      if (!/^v?2\./.test(health.Version ?? "")) ctx.skip()
       const league = testProfile({
         entryList: {
           targetSlots: 6,
