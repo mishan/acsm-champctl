@@ -273,6 +273,8 @@ restart ends that recording; `--during-session` overrides.
 A release whose databases have gained a table refuses to roll back past it:
 the older one stops rather than write to tables it doesn't know. Rolling back
 then means restoring the databases from a [backup](#backups) older than it.
+The archive is the exception: it has no such check, so an older release
+opens it regardless.
 
 Restarting `serve` signs everyone out, since sessions are held in memory. The
 drain finishes the pass it is on before stopping, which can take a few minutes

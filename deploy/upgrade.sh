@@ -20,12 +20,13 @@ for arg in "$@"; do
   esac
 done
 
-git -C .. fetch --quiet --tags origin
+# Pruned too, so a release deleted upstream isn't deployed from a stale tag.
+git -C .. fetch --quiet --prune --prune-tags origin
 if [ -z "$version" ]; then
   version=$(git -C .. tag --list '[0-9]*.*.*' --sort=-v:refname | head -1)
 fi
-# A tag, never a branch: what runs should be something scripts/release.sh made.
-if [ -z "$version" ] || ! git -C .. rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+# Exactly a tag: not a branch, and not an expression like 2026.11.0~1.
+if [ -z "$version" ] || ! git -C .. show-ref --verify --quiet "refs/tags/$version"; then
   echo "No release ${version:-at all} to deploy; scripts/release.sh makes one." >&2
   exit 1
 fi
@@ -51,6 +52,13 @@ if [ -n "$live" ] && [ "$during" = no ]; then
   exit 1
 fi
 
+# Checkout carries an edit to a tracked file along, and the image would build
+# it under the release's name.
+if ! git -C .. diff --quiet HEAD; then
+  echo "The checkout has local changes; commit or discard them first:" >&2
+  git -C .. status --short --untracked-files=no >&2
+  exit 1
+fi
 was=$(git -C .. describe --tags --always)
 git -C .. checkout --quiet --detach "refs/tags/$version"
 export CHAMPCTL_VERSION="$version"
