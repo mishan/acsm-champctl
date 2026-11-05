@@ -188,6 +188,21 @@ const MIGRATIONS: Migration[] = [
       // under several spellings, one stays: the earliest halt, whose backup
       // predates the damage, and the lease that runs longest, so a live holder
       // isn't dropped for an expired one.
+      // Two live leases under different spellings are two writers that may
+      // both still be saving; keeping either would let a third in when it
+      // lets go. Refused until they've expired, ten minutes at most.
+      const live = db
+        .prepare(
+          `SELECT group_concat(holder, ', ') AS holders FROM drain_lease WHERE expires_at > ?
+           GROUP BY lower(championship_id) HAVING count(*) > 1`,
+        )
+        .get(new Date().toISOString()) as { holders: string } | undefined
+      if (live) {
+        throw new Error(
+          `Drains ${live.holders} are still running on one championship under differently ` +
+            `capitalized ids. Stop them, or wait for their leases to run out, then start this again.`,
+        )
+      }
       for (const [table, keep] of [
         ["drain_halt", "halted_at ASC"],
         ["drain_lease", "expires_at DESC"],

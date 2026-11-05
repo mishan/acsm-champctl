@@ -469,6 +469,23 @@ describe("which championship a halt or lease is for", () => {
     }
   })
 
+  it("won't open while two spellings each have a live lease, rather than drop one", async () => {
+    // Both holders may still be writing; keeping either lets a third in when
+    // it lets go.
+    const db = await premigration((raw) => {
+      const lease = raw.prepare(
+        "INSERT INTO drain_lease (championship_id, holder, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
+      )
+      lease.run(CHAMP, "one", MON.toISOString(), "2999-01-01T00:00:00.000Z")
+      lease.run(UPPER, "two", MON.toISOString(), "2999-01-01T00:00:00.000Z")
+    })
+    try {
+      await expect(SqliteSubmissionQueue.open(db.path)).rejects.toThrow(/one, two.*still/)
+    } finally {
+      await db.done()
+    }
+  })
+
   it("still finds a halt written under another spelling before this", async () => {
     const dir = await mkdtemp(join(tmpdir(), "champctl-queue-"))
     const path = join(dir, "liveries.db")
