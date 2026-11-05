@@ -344,6 +344,8 @@ export function renderPlan(plan: LiveryPlan, restartRound?: number): string {
           `championship is saved once.`,
   )
 
+  if (plan.skinChanges.length > 0) for (const r of plan.spectatorResets) lines.push(`  ${r}`)
+
   const unreachable = unreachableRounds(plan)
   if (unreachable.length > 0) {
     lines.push("")

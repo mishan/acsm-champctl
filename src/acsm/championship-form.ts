@@ -25,8 +25,8 @@
  * ACSM simply never reads them. This module does what the page does: removes
  * them before parsing.
  *
- * **2. Row 0 is the spectator car, not a driver.** `HandleCreateChampionship`
- * on premium reads one row for `championship.SpectatorCar` before it reads any
+ * **2. The leading rows are spectator cars, not drivers.** `HandleCreateChampionship`
+ * on premium reads one row per `EntryList.Spectator` value before it reads any
  * class, then walks each class for its own `EntryList.NumEntrants` rows.
  *
  * **3. `EntryList.EntrantID` is not rendered here at all**, unlike the event
@@ -62,15 +62,16 @@ export class ChampionshipFormError extends Error {
 export const ENTRANT_TEMPLATE_ID = "entrantTemplate"
 
 /**
- * The hidden input that marks the spectator car's row: `value="true"`, once.
+ * The hidden input that marks a spectator car's row: `value="true"`, once per
+ * spectator car.
  *
  * Older ACSM source never read it — the line in `BuildEntryList` was commented
  * out — so champctl stripped it as noise. BATL's September 2026 build reads it:
  * a livery push that left it out had ACSM take the spectator car as the first
  * class entrant, move every driver down a row and drop the last one off the
  * end. A browser sends it, so champctl sends it, exactly as rendered. It marks
- * one row rather than describing every row, so it is exempt from the arity
- * check and counted here instead.
+ * some rows rather than describing every row, so it is exempt from the arity
+ * check and counted in `championshipRows` instead.
  */
 export const SPECTATOR_MARKER = "EntryList.Spectator"
 
@@ -216,9 +217,9 @@ export interface ChampionshipForm {
   droppedTemplateRows: number
   /** `EntryList.NumEntrants`, one per class, in document order. */
   entrantsPerClass: number[]
-  /** True when a spectator row precedes the classes — premium only. */
-  hasSpectatorRow: boolean
-  /** Total entrant rows in the payload, spectator included. */
+  /** Spectator-car rows ahead of the classes: none on OSS, one or more on premium. */
+  spectatorRows: number
+  /** Total entrant rows in the payload, spectator cars included. */
   rows: number
   /**
    * The championship description as the page holds it, for the editor to load:
@@ -270,6 +271,36 @@ export function findChampionshipForm(html: string, pageUrl: string): Championshi
     setOne(fields, "ChampionshipInfo", description)
   }
 
+  const { entrantsPerClass, spectatorRows, rows } = championshipRows(fields, stripped)
+
+  return {
+    fields,
+    action: form.action,
+    description,
+    droppedClassTemplates: stripped.classTemplates,
+    droppedTemplateRows: stripped.entrantTemplates,
+    entrantsPerClass,
+    spectatorRows,
+    rows,
+  }
+}
+
+/** The most spectator cars measured on one championship (docs/acsm-champ-form.md §4.7). */
+const MAX_SPECTATOR_ROWS = 3
+
+/** How the entrant rows divide between spectator cars and classes, or a refusal. */
+function championshipRows(
+  fields: readonly FormField[],
+  stripped: StrippedTemplates,
+): { entrantsPerClass: number[]; spectatorRows: number; rows: number } {
+  const removed =
+    `champctl dropped ${stripped.classTemplates} #${CLASS_TEMPLATE_ID}, ` +
+    `${stripped.entrantTemplates} #${ENTRANT_TEMPLATE_ID} and ` +
+    `${stripped.spectatorTemplates} #${SPECTATOR_TEMPLATE_ID} already. `
+  const recon =
+    `Run \`npm run recon:champ-form -- <championship-id>\` against this manager — it only ` +
+    `reads — and compare with docs/acsm-champ-form.md §4.2.`
+
   const entrantsPerClass = getAll(fields, "EntryList.NumEntrants").map((v) =>
     Number.parseInt(v, 10),
   )
@@ -297,77 +328,77 @@ export function findChampionshipForm(html: string, pageUrl: string): Championshi
         `EntryList.NumEntrants (${entrantsPerClass.join(", ")}). ACSM builds one class per ` +
         `ClassName and takes the entrant count from the same position, so a payload where those ` +
         `two disagree drops whichever classes the shorter list doesn't reach — without an error, ` +
-        `and after the save. champctl dropped ${stripped.classTemplates} #${CLASS_TEMPLATE_ID}, ` +
-        `${stripped.entrantTemplates} #${ENTRANT_TEMPLATE_ID} and ` +
-        `${stripped.spectatorTemplates} #${SPECTATOR_TEMPLATE_ID} already. Run ` +
-        `\`npm run recon:champ-form -- <championship-id>\` against this manager — it only ` +
-        `reads — and compare with docs/acsm-champ-form.md §4.2.`,
+        `and after the save. ${removed}${recon}`,
     )
   }
 
   const rows = count(fields, "EntryList.Name")
   const classTotal = entrantsPerClass.reduce((a, b) => a + b, 0)
 
-  // Premium reads one row for the spectator car before any class; the OSS build
-  // has no spectator car and reads none. Deriving it from the arithmetic rather
-  // than from a version string means a build that changes this is caught here
-  // instead of by an entry list arriving one place out.
-  // A second spectator car, such as a race recorder beside a stream car, adds
-  // up too. Nobody has measured how ACSM numbers those rows, so it's refused
-  // by name rather than written on a guess.
-  const spectators = count(fields, SPECTATOR_MARKER)
-  if (spectators > 1 && rows === classTotal + spectators) {
-    throw new ChampionshipFormError(
-      `Refusing to write the championship form: it has ${spectators} spectator cars, and champctl ` +
-        `only knows how ACSM lays out the form with one. Edit this championship in ACSM itself ` +
-        `while it has more than one. If it has only one, a spectator template row champctl ` +
-        `couldn't strip would look the same (it removed ${stripped.spectatorTemplates} ` +
-        `#${SPECTATOR_TEMPLATE_ID}): run \`npm run recon:champ-form -- <championship-id>\` against ` +
-        `this manager and compare with docs/acsm-champ-form.md §4.2.`,
-    )
-  }
-  let hasSpectatorRow: boolean
-  if (rows === classTotal + 1) hasSpectatorRow = true
-  else if (rows === classTotal) hasSpectatorRow = false
-  else {
+  // ACSM takes the first N rows as spectator cars, N being how many
+  // EntryList.Spectator values arrive, and then each class's rows in turn. It
+  // checks neither the values nor where they sit: one marker short and the
+  // last spectator car becomes the first driver, everyone moves down a row and
+  // the last driver is dropped (measured, §4.7). The OSS build has no spectator
+  // car and renders no marker. So the count has to make the rows add up, and
+  // the markers have to be where the page put them, on the leading rows.
+  const markers = getAll(fields, SPECTATOR_MARKER)
+  const spectatorRows = markers.length
+  if (rows !== classTotal + spectatorRows) {
     throw new ChampionshipFormError(
       `Refusing to write the championship form: it has ${rows} entrant rows, and the classes ` +
-        `account for ${classTotal} (${entrantsPerClass.join(" + ")}) — with or without a leading ` +
-        `spectator-car row, that doesn't add up. champctl dropped ` +
-        `${stripped.classTemplates} #${CLASS_TEMPLATE_ID}, ` +
-        `${stripped.entrantTemplates} #${ENTRANT_TEMPLATE_ID} and ` +
-        `${stripped.spectatorTemplates} #${SPECTATOR_TEMPLATE_ID} already, and found ` +
-        `${count(fields, "ClassName")} ClassName ${count(fields, "ClassName") === 1 ? "field" : "fields"}. ` +
-        `ACSM reads these as parallel positional arrays, so writing a payload champctl can't ` +
-        `account for would give entrants each other's cars. Run \`npm run recon:champ-form -- ` +
-        `<championship-id>\` against this manager — it only reads — and compare with ` +
-        `docs/acsm-champ-form.md §4.2.`,
+        `account for ${classTotal} (${entrantsPerClass.join(" + ")}) with ${spectatorRows} ` +
+        `spectator ${spectatorRows === 1 ? "car" : "cars"} marked ahead of them — that doesn't ` +
+        `add up. ACSM reads these as parallel positional arrays, so writing a payload champctl ` +
+        `can't account for would give entrants each other's cars. ${removed}${recon}`,
     )
   }
-
-  const markers = getAll(fields, SPECTATOR_MARKER)
-  const expectedMarkers = hasSpectatorRow ? 1 : 0
-  if (markers.length !== expectedMarkers || markers.some((v) => v !== "true")) {
+  if (spectatorRows > MAX_SPECTATOR_ROWS) {
     throw new ChampionshipFormError(
-      `Refusing to write the championship form: it carries ${SPECTATOR_MARKER} ` +
-        `${markers.length === 0 ? "nowhere" : `as ${markers.map((v) => JSON.stringify(v)).join(", ")}`}, ` +
-        `where the row count says ${expectedMarkers === 1 ? 'one row, marked "true"' : "none"}. ACSM reads that marker to tell the ` +
-        `spectator car from the drivers, and getting it wrong moves every driver a row. Run ` +
-        `\`npm run recon:champ-form -- <championship-id>\` against this manager and compare with ` +
-        `docs/acsm-champ-form.md §4.2.`,
+      `Refusing to write the championship form: it has ${spectatorRows} spectator cars, and ` +
+        `champctl has measured how ACSM lays out at most ${MAX_SPECTATOR_ROWS}. Edit this ` +
+        `championship in ACSM itself.`,
+    )
+  }
+  if (markers.some((v) => v !== "true")) {
+    throw new ChampionshipFormError(
+      `Refusing to write the championship form: it carries ${SPECTATOR_MARKER} as ` +
+        `${markers.map((v) => JSON.stringify(v)).join(", ")}, where every spectator car's row ` +
+        `has always rendered it as "true". ${recon}`,
     )
   }
 
-  return {
-    fields,
-    action: form.action,
-    description,
-    droppedClassTemplates: stripped.classTemplates,
-    droppedTemplateRows: stripped.entrantTemplates,
-    entrantsPerClass,
-    hasSpectatorRow,
-    rows,
+  // A row starts at its InternalUUID, whichever order the rest of its keys
+  // come in, so a field's row is how many InternalUUIDs precede it.
+  let row = -1
+  const markerRows: number[] = []
+  const transferRows: number[] = []
+  for (const f of fields) {
+    if (f.name === "EntryList.InternalUUID") row++
+    else if (f.name === SPECTATOR_MARKER) markerRows.push(row)
+    else if (f.name === "EntryList.TransferTeamPoints") transferRows.push(row)
   }
+  if (markerRows.some((r, i) => r !== i)) {
+    throw new ChampionshipFormError(
+      `Refusing to write the championship form: its spectator markers are on rows ` +
+        `${markerRows.join(", ")}, where ACSM will read the first ${spectatorRows} rows as the ` +
+        `spectator cars. ${recon}`,
+    )
+  }
+  // A class row renders TransferTeamPoints and a spectator row doesn't, which
+  // tells the two apart independently of the markers.
+  if (
+    transferRows.length > 0 &&
+    (transferRows.length !== classTotal || transferRows.some((r) => r < spectatorRows))
+  ) {
+    throw new ChampionshipFormError(
+      `Refusing to write the championship form: EntryList.TransferTeamPoints, which only class ` +
+        `entrants render, is on ${transferRows.length} rows starting at row ${transferRows[0]}, ` +
+        `where the classes have ${classTotal} starting at row ${spectatorRows}. ${recon}`,
+    )
+  }
+
+  return { entrantsPerClass, spectatorRows, rows }
 }
 
 /**
@@ -395,7 +426,7 @@ export function entrantRowIndex(
     )
   }
   const before = form.entrantsPerClass.slice(0, classIndex).reduce((a, b) => a + b, 0)
-  return (form.hasSpectatorRow ? 1 : 0) + before + entrantIndex
+  return form.spectatorRows + before + entrantIndex
 }
 
 /**

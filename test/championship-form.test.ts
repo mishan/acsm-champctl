@@ -117,6 +117,17 @@ function championshipPage(
   </body></html>`
 }
 
+/** The page with this many spectator cars, as 2.4.15 renders them: first, each marked. */
+function withSpectators(n: number): string {
+  const vans = Array.from({ length: n }, (_, i) =>
+    entrantRow({ name: `Van ${i}`, skin: "van", spectator: true }),
+  ).join("")
+  return championshipPage([{ entrants: roster }], { spectator: false }).replace(
+    '<input type="text" name="ChampionshipName" value="September 2026">',
+    `<input type="text" name="ChampionshipName" value="September 2026">${vans}`,
+  )
+}
+
 const roster = [
   { name: "Misha", skin: "misha_old" },
   { name: "postaL", skin: "postal_01" },
@@ -136,7 +147,7 @@ describe("the spectator car's template", () => {
       PAGE_URL,
     )
     expect(form.rows).toBe(roster.length + 1)
-    expect(form.hasSpectatorRow).toBe(true)
+    expect(form.spectatorRows).toBe(1)
     expect(getAll(form.fields, "EntryList.Name")[0]).toBe("Stream Van")
   })
 
@@ -231,7 +242,7 @@ describe("findChampionshipForm", () => {
       droppedClassTemplates: 1,
       droppedTemplateRows: 1,
       entrantsPerClass: [3],
-      hasSpectatorRow: true,
+      spectatorRows: 1,
       rows: 4,
     })
   })
@@ -274,7 +285,7 @@ describe("findChampionshipForm", () => {
     // row for one. Derived from the arithmetic rather than a version string.
     const page = championshipPage([{ entrants: roster }], { spectator: false })
     expect(findChampionshipForm(page, PAGE_URL)).toMatchObject({
-      hasSpectatorRow: false,
+      spectatorRows: 0,
       rows: 3,
     })
   })
@@ -286,7 +297,7 @@ describe("findChampionshipForm", () => {
     ])
     expect(findChampionshipForm(page, PAGE_URL)).toMatchObject({
       entrantsPerClass: [2, 1],
-      hasSpectatorRow: true,
+      spectatorRows: 1,
       rows: 4,
       droppedClassTemplates: 1,
       droppedTemplateRows: 2,
@@ -306,7 +317,7 @@ describe("findChampionshipForm", () => {
       '<input type="hidden" name="EntryList.Spectator" value="true">',
       "",
     )
-    expect(() => findChampionshipForm(page, PAGE_URL)).toThrowError(/EntryList.Spectator nowhere/)
+    expect(() => findChampionshipForm(page, PAGE_URL)).toThrowError(/0 spectator cars marked/)
   })
 
   it("refuses a form whose ClassName and NumEntrants counts disagree", () => {
@@ -346,18 +357,64 @@ describe("findChampionshipForm", () => {
     )
   })
 
-  it("refuses, by name, a championship with two spectator cars", () => {
-    // A race recorder beside the stream car: the rows add up, but how ACSM
-    // pairs them with the marker has never been measured.
-    const page = championshipPage([{ entrants: roster }]).replace(
-      '<div class="visible-spectator-enabled" style="display: none">',
-      `<div class="visible-spectator-enabled" style="display: none">${entrantRow({ name: "Recorder", spectator: true })}`,
+  it.each([0, 1, 2, 3])("reads %i spectator cars as the leading rows", (spectators) => {
+    // ACSM 2.4.15 takes the first N rows as spectator cars, N being how many
+    // EntryList.Spectator values arrive, and the classes after them.
+    const f = findChampionshipForm(withSpectators(spectators), PAGE_URL)
+    expect(f).toMatchObject({ spectatorRows: spectators, rows: roster.length + spectators })
+    expect(entrantRowIndex(f, 0, 0)).toBe(spectators)
+    expect(currentNames(f).slice(spectators)).toEqual(roster.map((r) => r.name))
+  })
+
+  it("refuses four spectator cars, a layout nobody has measured", () => {
+    expect(() => findChampionshipForm(withSpectators(4), PAGE_URL)).toThrowError(
+      /4 spectator cars.*at most 3/,
     )
-    expect(() => findChampionshipForm(page, PAGE_URL)).toThrowError(/it has 2 spectator cars/)
-    // A template ACSM renamed, which champctl couldn't strip, adds up the same.
+  })
+
+  it("refuses a spectator car whose row lost its marker", () => {
+    // The 2026-10-06 shape: ACSM counts markers, so one missing makes the
+    // second spectator car the first driver and drops the last driver.
+    const page = withSpectators(2).replace(
+      '<input type="hidden" name="EntryList.Spectator" value="true">',
+      "",
+    )
+    expect(() => findChampionshipForm(page, PAGE_URL)).toThrowError(/doesn't add up/)
+  })
+
+  it("refuses a marker that isn't on one of the leading rows", () => {
+    // Moves the second spectator car's marker onto the first driver's row: the
+    // counts still add up, and the page is no longer the one measured.
+    const page = withSpectators(2)
+      .replace(
+        '<input type="hidden" name="EntryList.Spectator" value="true">\n    </div>',
+        "</div>",
+      )
+      .replace(
+        '<input type="text" name="EntryList.Name" value="Misha">',
+        '<input type="text" name="EntryList.Name" value="Misha"><input type="hidden" name="EntryList.Spectator" value="true">',
+      )
     expect(() => findChampionshipForm(page, PAGE_URL)).toThrowError(
-      /removed 0 #spectatorTemplate.*recon/,
+      /rows 1, 2, where ACSM will read the first 2/,
     )
+  })
+
+  it("refuses a spectator row that renders a class entrant's field", () => {
+    const page = withSpectators(1).replace(
+      '<input type="hidden" name="EntryList.Spectator" value="true">',
+      '<input type="hidden" name="EntryList.Spectator" value="true"><input type="checkbox" name="EntryList.TransferTeamPoints">',
+    )
+    expect(() => findChampionshipForm(page, PAGE_URL)).toThrowError(
+      /TransferTeamPoints.*starting at row 0/,
+    )
+  })
+
+  it('refuses a spectator marker that isn\'t "true"', () => {
+    const page = withSpectators(2).replace(
+      'name="EntryList.Spectator" value="true">\n    </div>\n    <div class="entrant">',
+      'name="EntryList.Spectator" value="false">\n    </div>\n    <div class="entrant">',
+    )
+    expect(() => findChampionshipForm(page, PAGE_URL)).toThrowError(/"false"/)
   })
 
   it("refuses a page whose template rows it could not remove", () => {

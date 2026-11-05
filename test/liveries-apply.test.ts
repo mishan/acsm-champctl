@@ -71,6 +71,7 @@ function editPage(
     secondClass?: string[]
     info?: string
     deadline?: string | undefined
+    spectators?: { Name?: string; GUID?: string; Skin?: string }[]
   } = {},
 ): string {
   // The deadline's wall clock in the league's zone, as ACSM renders it, with
@@ -84,14 +85,14 @@ function editPage(
     <input type="time" name="Championship.SignUpForm.RegistrationDeadlineTime" value="${wall.slice(11, 16)}">
     <input type="hidden" name="Championship.SignUpForm.RegistrationDeadlineTimezone" class="event-schedule-timezone">`
   // The skin select carries the current skin only, as ACSM renders it.
-  const row = (name: string, spectator = false, skin = "") => `
+  const row = (name: string, spectator = false, skin = "", guid = "") => `
     <div class="entrant">
       <input type="hidden" name="EntryList.InternalUUID" value="00000000-0000-0000-0000-000000000000">
       <select name="EntryList.Car"><option value="${CAR}" selected>c</option></select>
       <select name="EntryList.Skin">${skin ? `<option value="${skin}" selected>${skin}</option>` : ""}</select>
       <input type="text" name="EntryList.Name" value="${name}">
       <input type="text" name="EntryList.Team" value="">
-      <input type="text" name="EntryList.GUID" value="">
+      <input type="text" name="EntryList.GUID" value="${guid}">
       <input type="number" name="EntryList.Ballast" value="0">
       <input type="number" name="EntryList.Restrictor" value="0">
       <select name="EntryList.FixedSetup"><option value="" selected></option></select>
@@ -126,7 +127,7 @@ function editPage(
     <div class="d-none" id="ChampionshipInfoHolder">${options.info ?? ""}</div>
     <div class="visible-spectator-enabled">
       <div id="spectatorTemplate" class="entrant">${row("", true)}</div>
-      ${row("Stream Van", true, "van")}
+      ${(options.spectators ?? [{ Name: "Stream Van", Skin: "van" }]).map((c) => row(c.Name ?? "", true, c.Skin ?? "", c.GUID ?? "")).join("")}
     </div>
     ${classTemplate}
     <input type="text" name="ClassName" value="RSS">
@@ -198,6 +199,14 @@ async function fakeSession(
     editedAfterChecks?: boolean
     /** Reading the championship back after the save fails. */
     exportFailsAfterSave?: boolean
+    /** The championship's spectator cars; one stream van unless given. */
+    spectators?: Partial<Entrant>[]
+    /** The GUIDs the edit page shows on the spectator rows, where they differ from the export's. */
+    formSpectatorGuids?: string[]
+    /** Each class entrant's PitBox, by CAR_n key; 0, 1, ... unless given. */
+    pitBoxes?: number[]
+    /** The class rows the edit page renders, where they differ from the championship's. */
+    pageNames?: string[]
   } = {},
 ) {
   const requests: Recorded[] = []
@@ -206,10 +215,22 @@ async function fakeSession(
   // What ACSM holds, served as a logged-in export and replaced by a save the
   // way the updated build read the payload: one leading spectator car per
   // `EntryList.Spectator`, then the class's rows, the description as posted.
+  const spectators = options.spectators ?? [
+    { Name: "Stream Van", GUID: "", Model: CAR, Skin: "van", PitBox: 0, RaceNumber: 0 },
+  ]
+  const base = champ(names)
+  if (options.pitBoxes) {
+    // Keyed out of PitBox order, as BATL's October export was; the form lists
+    // them by PitBox, which is the order `names` gives.
+    const byBox = Object.values(base.Classes![0]!.Entrants!)
+    base.Classes![0]!.Entrants = Object.fromEntries(
+      options.pitBoxes.map((box, i) => [`CAR_${i}`, { ...(byBox[box] ?? byBox[i]!), PitBox: box }]),
+    )
+  }
   const state = championship({
-    ...champ(names),
+    ...base,
     Info: INFO,
-    SpectatorCars: [{ Name: "Stream Van", Model: CAR, Skin: "van" }],
+    SpectatorCars: spectators,
     ...(options.deadline
       ? { SignUpForm: { ...champ(names).SignUpForm, RegistrationDeadline: options.deadline } }
       : {}),
@@ -246,11 +267,22 @@ async function fakeSession(
         Name: rowNames[r] ?? "",
         Skin: skins[r] ?? "",
         Model: cars[r] ?? "",
+        PitBox: i,
       }
     }
-    state["SpectatorCars"] = rowNames
-      .slice(0, spectators)
-      .map((Name, i) => ({ Name, Model: cars[i] ?? "", Skin: skins[i] ?? "" }))
+    // Spectator cars come back numbered from 0 and without a race number, which
+    // the form has no field for (measured on 2.4.15).
+    const guids = form.getAll("EntryList.GUID")
+    const previousSpectators = (state["SpectatorCars"] ?? []) as Partial<Entrant>[]
+    state["SpectatorCars"] = rowNames.slice(0, spectators).map((Name, i) => ({
+      ...previousSpectators.find((c) => (c.GUID ?? "") === guids[i]),
+      Name,
+      GUID: guids[i] ?? "",
+      Model: cars[i] ?? "",
+      Skin: skins[i] ?? "",
+      PitBox: i,
+      RaceNumber: 0,
+    }))
     state["Info"] = form.get("ChampionshipInfo") ?? ""
     // The deadline's wall clock in the posted timezone — read as UTC when the
     // timezone is blank, which is what moved a set deadline on every save.
@@ -320,10 +352,14 @@ async function fakeSession(
     }
     if (url.includes("/edit")) {
       return new Response(
-        editPage(names, {
+        editPage(options.pageNames ?? names, {
           ...(options.classTemplate ? { classTemplate: true } : {}),
           ...(options.secondClass ? { secondClass: options.secondClass } : {}),
           info: options.descriptionMismatch ? "" : String(state["Info"] ?? ""),
+          spectators: ((state["SpectatorCars"] ?? []) as Partial<Entrant>[]).map((c, i) => ({
+            ...c,
+            GUID: options.formSpectatorGuids?.[i] ?? c.GUID ?? "",
+          })),
           deadline: (state.SignUpForm as { RegistrationDeadline?: string } | undefined)
             ?.RegistrationDeadline,
         }),
@@ -342,6 +378,25 @@ async function fakeSession(
   await session.login({ username: "admin", password: "x" })
   return { session, requests, state }
 }
+
+const TWO_SPECTATORS: Partial<Entrant>[] = [
+  {
+    Name: "BATL TV",
+    GUID: "76561190000000001",
+    Model: CAR,
+    Skin: "tv",
+    PitBox: 23,
+    RaceNumber: 420,
+  },
+  {
+    Name: "GridMom",
+    GUID: "90000000000000001",
+    Model: CAR,
+    Skin: "tv",
+    PitBox: 24,
+    RaceNumber: 420,
+  },
+]
 
 const plan = (names?: string[], ...l: Livery[]) =>
   planLiveries(champ(names), CHAMP_ID, packOf(...(l.length ? l : [livery("Misha")])))
@@ -619,6 +674,59 @@ describe("what a championship save leaves behind", () => {
     expect(entrants["CAR_0"]?.Skin).toBe("Misha")
   })
 
+  it("saves a championship with two spectator cars, keeping both", async () => {
+    // BATL's stream car and race recorder. A browser save of October numbered
+    // them from 0 and cleared their race numbers, which the form has no field
+    // for; that is the only change allowed to them.
+    const { session, requests, state } = await fakeSession({ spectators: TWO_SPECTATORS })
+    await applyLiveries(session, plan())
+
+    const save = requests.find((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))!
+    expect(new URLSearchParams(save.body).getAll("EntryList.Spectator")).toEqual(["true", "true"])
+    const cars = (state as { SpectatorCars?: Partial<Entrant>[] }).SpectatorCars!
+    expect(cars.map((c) => [c.Name, c.GUID, c.PitBox])).toEqual([
+      ["BATL TV", "76561190000000001", 0],
+      ["GridMom", "90000000000000001", 1],
+    ])
+    expect(state.Classes![0]!.Entrants!["CAR_0"]?.Skin).toBe("Misha")
+  })
+
+  it("accepts ACSM keying entrants by pit box when the export had them out of order", async () => {
+    // October's export had CAR_12 holding pit box 23; a save re-keys them so
+    // CAR_n holds pit box n. Same drivers in the same boxes.
+    const { session } = await fakeSession({ pitBoxes: [1, 0] })
+    await expect(applyLiveries(session, plan())).resolves.toMatchObject({ championshipSaved: true })
+  })
+
+  it("refuses before any upload when the spectator rows aren't the championship's spectator cars", async () => {
+    const { session, requests } = await fakeSession({
+      spectators: TWO_SPECTATORS,
+      formSpectatorGuids: ["90000000000000001", "76561190000000001"],
+    })
+    await expect(applyLiveries(session, plan())).rejects.toThrow(/spectator/)
+    expect(requests.filter((r) => r.url.includes("/skin") || r.method === "POST")).toEqual(
+      requests.filter((r) => r.url.includes("/login")),
+    )
+  })
+
+  it("refuses before any upload when the form doesn't list drivers in pit-box order", async () => {
+    // A save numbers class rows by position, so a form in any other order
+    // would move drivers. Measured to be pit-box order; checked, not assumed.
+    const { session, requests } = await fakeSession({
+      pitBoxes: [1, 0],
+      pageNames: ["postaL", "Misha"],
+    })
+    await expect(applyLiveries(session, plan())).rejects.toThrow(/pit-box order/)
+    expect(requests.filter((r) => r.url.includes("/skin"))).toEqual([])
+  })
+
+  it("refuses before any upload when the pit boxes aren't 0 to n-1", async () => {
+    // A save renumbers them by position, so a gap moves somebody.
+    const { session, requests } = await fakeSession({ pitBoxes: [0, 2] })
+    await expect(applyLiveries(session, plan())).rejects.toThrow(/pit box/)
+    expect(requests.filter((r) => r.url.includes("/skin"))).toEqual([])
+  })
+
   it("posts the spectator car's marker, once", async () => {
     const { session, requests } = await fakeSession()
     await applyLiveries(session, plan())
@@ -774,6 +882,68 @@ describe("championshipDrift", () => {
     expect(championshipDrift(before, after, new Map())).toEqual([
       ".Classes.0.Entrants.CAR_0.ClassID changed",
     ])
+  })
+
+  it("allows a spectator car's pit box becoming its position and its race number clearing", () => {
+    const car = (Name: string, PitBox: number, RaceNumber: number) => ({
+      Name,
+      GUID: Name,
+      PitBox,
+      RaceNumber,
+    })
+    const before = of({}, { SpectatorCars: [car("TV", 23, 420), car("Rec", 24, 420)] })
+    const after = of({}, { SpectatorCars: [car("TV", 0, 0), car("Rec", 1, 0)] })
+    expect(championshipDrift(before, after, new Map())).toEqual([])
+  })
+
+  it("matches spectator cars by GUID, since a save can store them in another order", () => {
+    // Measured on 2.4.15: posted in one order, exported in another, each with
+    // the pit box of the row it was posted on.
+    const car = (Name: string, PitBox: number, RaceNumber: number) => ({
+      Name,
+      GUID: Name,
+      PitBox,
+      RaceNumber,
+    })
+    const before = of({}, { SpectatorCars: [car("TV", 23, 420), car("Rec", 24, 420)] })
+    const reordered = of({}, { SpectatorCars: [car("Rec", 1, 0), car("TV", 0, 0)] })
+    expect(championshipDrift(before, reordered, new Map())).toEqual([])
+    const swappedBoxes = of({}, { SpectatorCars: [car("Rec", 0, 0), car("TV", 1, 0)] })
+    expect(championshipDrift(before, swappedBoxes, new Map())).toEqual([
+      ".SpectatorCars.0.PitBox changed",
+      ".SpectatorCars.1.PitBox changed",
+    ])
+  })
+
+  it("matches entrants by pit box, so a re-key passes and a seat change doesn't", () => {
+    const at = (Name: string, PitBox: number) => ({ ...entrant(Name, "s"), PitBox })
+    const before = of({ CAR_0: at("Bo", 1), CAR_1: at("Ann", 0) })
+    expect(
+      championshipDrift(before, of({ CAR_0: at("Ann", 0), CAR_1: at("Bo", 1) }), new Map()),
+    ).toEqual([])
+    expect(
+      championshipDrift(before, of({ CAR_0: at("Bo", 0), CAR_1: at("Ann", 1) }), new Map()),
+    ).not.toEqual([])
+  })
+
+  it("names the 2026-10-06 shape with two spectator cars: the second one in a driver's seat", () => {
+    const at = (Name: string, PitBox: number) => ({ ...entrant(Name, "s"), PitBox })
+    const before = of(
+      { CAR_0: at("Ann", 0), CAR_1: at("Bo", 1) },
+      {
+        SpectatorCars: [
+          { Name: "TV", GUID: "1", PitBox: 23, RaceNumber: 420 },
+          { Name: "Rec", GUID: "2", PitBox: 24, RaceNumber: 420 },
+        ],
+      },
+    )
+    const after = of(
+      { CAR_0: { ...at("Rec", 0), GUID: "2" }, CAR_1: at("Ann", 1) },
+      { SpectatorCars: [{ Name: "TV", GUID: "1", PitBox: 0, RaceNumber: 0 }] },
+    )
+    const drift = championshipDrift(before, after, new Map())
+    expect(drift).toContain(".SpectatorCars.1 removed")
+    expect(drift).toContain(".Classes.0.Entrants.CAR_0.Name changed")
   })
 
   it("names a list that became an object", () => {
@@ -987,7 +1157,8 @@ describe("applyLiveries refusals", () => {
           return new Response(editPage(["Misha", "postaL"]), { status: 200 })
         }
         if (String(input).endsWith("/export")) {
-          return new Response(JSON.stringify(champ()), { status: 200 })
+          const exported = { ...champ(), SpectatorCars: [{ Name: "Stream Van", GUID: "" }] }
+          return new Response(JSON.stringify(exported), { status: 200 })
         }
         return new Response("", { status: 302, headers: { location: "/" } })
       },
