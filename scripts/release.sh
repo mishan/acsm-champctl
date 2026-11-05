@@ -24,4 +24,3 @@ if [ -n "$released" ]; then
 fi
 
 gh release create "$tag" --target "$(git rev-parse origin/main)" --title "$tag" --generate-notes
-git fetch --quiet --tags origin
