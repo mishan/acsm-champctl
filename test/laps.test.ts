@@ -6,6 +6,9 @@ import { HttpAcsmReader } from "../src/acsm/client.js"
 import type { Championship, ResultLap, ResultsListing, SessionResults } from "../src/acsm/types.js"
 import { practiceSessions, type ResultsReader } from "../src/laps/practice.js"
 import { practiceWindow, proposeLaps, raceMinutes, roundCars } from "../src/laps/propose.js"
+import { check } from "../src/gridmom/index.js"
+import { lapsForRound } from "../src/laps/round.js"
+import { loadProfile } from "../src/profile/load.js"
 
 const CHAMP = "11111111-2222-3333-4444-555555555555"
 const fixture = JSON.parse(
@@ -326,5 +329,109 @@ describe("HttpAcsmReader results", () => {
       "https://acsm.example/results/download/2026_10_29_13_10_PRACTICE.json",
     ])
     cache.close()
+  })
+})
+
+describe("lapsForRound", () => {
+  const ev = (race: { Laps?: number; Time?: number }) => ({
+    ID: "ev1",
+    Scheduled: "2026-11-04T19:00:00-08:00",
+    RaceSetup: {
+      Track: "rt_lime_rock_park",
+      TrackLayout: "chicane",
+      Cars: "jtc_honda_civic_eg_gra;ford_transit",
+      Sessions: { RACE: { Name: "Race", ...race } },
+    },
+  })
+  const champ = (race: { Laps?: number; Time?: number }): Championship => ({
+    ID: CHAMP,
+    Events: [ev(race)],
+  })
+  const practice = readerOver([[listing("2026-11-03T11:42:00Z")]], {
+    "2026-11-03T11:42:00Z_PRACTICE": sessionWith([lap({ LapTime: 54_694 })], {
+      ChampionshipID: CHAMP,
+    }),
+  }).reader
+
+  async function profileWith(lapCount?: { raceMinutes: number }) {
+    const { lapCount: _, ...batl } = await loadProfile("batl")
+    return lapCount ? { ...batl, lapCount } : batl
+  }
+
+  it("proposes from the round's practice and the league's minutes, and says what it replaces", async () => {
+    const r = await lapsForRound(
+      practice,
+      champ({ Laps: 13 }),
+      CHAMP,
+      1,
+      await profileWith({ raceMinutes: 20 }),
+    )
+    expect(r).toMatchObject({
+      round: 1,
+      eventId: "ev1",
+      currentLaps: 13,
+      proposal: { laps: 22, minutes: 20 },
+    })
+  })
+
+  it("prefers minutes it was given over the round's and the league's", async () => {
+    const r = await lapsForRound(
+      practice,
+      champ({ Time: 40 }),
+      CHAMP,
+      1,
+      await profileWith({ raceMinutes: 20 }),
+      {
+        minutes: 10,
+      },
+    )
+    expect(r.proposal).toMatchObject({ minutes: 10, laps: 11 })
+  })
+
+  it("has gridmom check the championship with the proposed count, not the current one", async () => {
+    // A race with neither laps nor minutes is something gridmom reports; once
+    // the count is set it has nothing to say about the length.
+    const profile = await profileWith({ raceMinutes: 20 })
+    expect(check(champ({}), profile).findings.map((f) => f.code)).toContain(
+      "format.race-length-missing",
+    )
+    const r = await lapsForRound(practice, champ({}), CHAMP, 1, profile)
+    expect(r.gridmom?.findings.map((f) => f.code)).not.toContain("format.race-length-missing")
+  })
+
+  it("works from a timed round's own minutes without the league's", async () => {
+    const r = await lapsForRound(practice, champ({ Time: 20 }), CHAMP, 1, await profileWith())
+    expect(r.proposal).toMatchObject({ minutes: 20, laps: 22 })
+  })
+
+  it("refuses a round in laps without any race length to work from", async () => {
+    await expect(
+      lapsForRound(practice, champ({ Laps: 13 }), CHAMP, 1, await profileWith()),
+    ).rejects.toThrow(/lapCount.raceMinutes/)
+  })
+
+  it("refuses a round with no track rather than call its week empty", async () => {
+    const c = champ({ Laps: 13 })
+    const [only] = c.Events ?? []
+    c.Events = [{ ...only, RaceSetup: { ...only?.RaceSetup, Track: "" } }]
+    await expect(
+      lapsForRound(practice, c, CHAMP, 1, await profileWith({ raceMinutes: 20 })),
+    ).rejects.toThrow(/no track/)
+  })
+
+  it("leaves out what the league suppresses", async () => {
+    const profile = await profileWith({ raceMinutes: 20 })
+    const codes = async (suppress: string[]) =>
+      (
+        await lapsForRound(practice, champ({}), CHAMP, 1, profile, { suppress })
+      ).gridmom?.findings.map((f) => f.code)
+    expect(await codes([])).toContain("content.pit-count-unknown")
+    expect(await codes(["content.pit-count-unknown"])).not.toContain("content.pit-count-unknown")
+  })
+
+  it("refuses a round the championship doesn't have", async () => {
+    await expect(
+      lapsForRound(practice, champ({}), CHAMP, 2, await profileWith({ raceMinutes: 20 })),
+    ).rejects.toThrow(/no round 2; it has 1/)
   })
 })

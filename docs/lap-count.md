@@ -2,7 +2,7 @@
 
 Each race's lap count, worked out from that week's practice. The plan is for the
 bot to propose it on race day and track staff to apply it with a button; so far,
-champctl can read the practice and work out the count. The rule is the league's
+`gridmom laps` works out the count and prints it. The rule is the league's
 own:
 
 ```

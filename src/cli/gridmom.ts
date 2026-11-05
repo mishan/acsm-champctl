@@ -12,13 +12,17 @@ import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { CACHE_FILE, SqliteCache } from "../acsm/cache.js"
-import { HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
+import { type AcsmReader, HttpAcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { loadProfile } from "../profile/load.js"
 import { defaultProfile, loadPits, reportUsageError, runCli, UsageError } from "./args.js"
 import { check } from "../gridmom/index.js"
 import type { Severity } from "../gridmom/finding.js"
 import { formatReport, type ReportFormat } from "../gridmom/report.js"
+import { DateTime } from "luxon"
+import { nextRound } from "../bot/announce.js"
+import type { ResultsReader } from "../laps/practice.js"
+import { lapsForRound, type RoundLaps, roundFindings } from "../laps/round.js"
 
 const USAGE = `gridmom — championship sanity checker
 
@@ -26,6 +30,7 @@ Usage:
   gridmom check <championship-id>     check a championship on the league's ACSM
   gridmom check --file <export.json>  check an export already on disk
   gridmom list                        list championships on the league's ACSM
+  gridmom laps <championship-id>      propose a round's race laps from its practice
 
 Options:
   --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
@@ -37,11 +42,14 @@ Options:
   --base-url <url>      override the profile's ACSM base URL
   --no-cache            bypass the on-disk response cache
   --now <iso>           pretend it is this time (for testing schedule checks)
+  --round <n>           laps: which round (default: the next one)
+  --minutes <n>         laps: minutes per race (default: the round's while it is
+                        timed, else the profile's lapCount.raceMinutes)
   -h, --help            this
 
 Exit codes:
   0  nothing worth reporting
-  1  warnings only
+  1  warnings only; for laps, only this round's, or nothing to propose
   2  at least one error
   3  gridmom itself failed
 `
@@ -58,6 +66,8 @@ interface Args {
   baseUrl?: string
   cache: boolean
   now?: Date
+  round?: number
+  minutes?: number
   help: boolean
 }
 
@@ -119,6 +129,12 @@ export function parseArgs(argv: readonly string[]): Args {
         args.now = d
         break
       }
+      case "--round":
+        args.round = wholeFromOne(a, next())
+        break
+      case "--minutes":
+        args.minutes = wholeFromOne(a, next())
+        break
       default:
         if (a.startsWith("-")) throw new UsageError(`Unknown option ${a}`)
         rest.push(a)
@@ -128,6 +144,12 @@ export function parseArgs(argv: readonly string[]): Args {
   args.command = rest[0] ?? ""
   if (rest[1] !== undefined) args.target = rest[1]
   return args
+}
+
+function wholeFromOne(flag: string, v: string): number {
+  const n = Number(v)
+  if (!Number.isInteger(n) || n < 1) throw new UsageError(`${flag} must be a whole number from 1`)
+  return n
 }
 
 function parseFormat(v: string): ReportFormat {
@@ -154,7 +176,7 @@ function parseSeverity(v: string): Severity {
 async function withReader<T>(
   args: Args,
   baseUrl: string,
-  use: (reader: AcsmReader) => Promise<T>,
+  use: (reader: AcsmReader & ResultsReader) => Promise<T>,
 ): Promise<T> {
   const cache = args.cache
     ? await SqliteCache.open({ path: resolve(process.cwd(), CACHE_FILE) })
@@ -199,6 +221,36 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     return 0
   }
 
+  if (args.command === "laps") {
+    if (!args.target) throw new UsageError("laps needs a championship id")
+    if (!baseUrl)
+      throw new UsageError(`No ACSM base URL; set one in the profile or pass --base-url`)
+    const id = args.target
+    const now = args.now ?? new Date()
+    const pits = await loadPits(args.pits)
+    const result = await withReader(args, baseUrl, async (reader) => {
+      const c = await reader.exportChampionship(id)
+      const rounds = c.Events?.length ?? 0
+      if (args.round !== undefined && args.round > rounds) {
+        throw new UsageError(`--round ${args.round}: the championship has ${rounds} rounds`)
+      }
+      const round = args.round ?? nextRound(c, profile, now)
+      if (round === undefined) return undefined
+      return lapsForRound(reader, c, id, round, profile, {
+        pits,
+        now,
+        suppress: args.suppress,
+        ...(args.minutes ? { minutes: args.minutes } : {}),
+      })
+    })
+    if (!result) {
+      process.stdout.write("No round left to propose laps for. Pass --round for one already run.\n")
+      return 1
+    }
+    process.stdout.write(`${describeLaps(result, profile.schedule.timezone)}\n`)
+    return lapsExitCode(result)
+  }
+
   if (args.command !== "check") {
     throw new UsageError(`Unknown command ${args.command}`)
   }
@@ -232,6 +284,57 @@ async function runCommand(argv: readonly string[]): Promise<number> {
   if (report.counts.ERROR > 0) return 2
   if (report.counts.WARN > 0) return 1
   return 0
+}
+
+/** A lap time as people read one: `54.694 s`, or `1:54.694` past a minute. */
+function lapTime(ms: number): string {
+  const s = (ms % 60_000) / 1000
+  return ms < 60_000
+    ? `${s.toFixed(3)} s`
+    : `${Math.floor(ms / 60_000)}:${s.toFixed(3).padStart(6, "0")}`
+}
+
+/** As for `check`, counting only what bears on this round; 1 too when there is nothing to propose. */
+export function lapsExitCode(r: RoundLaps): number {
+  if (r.proposal.kind === "none") return 1
+  const { here } = roundFindings(r)
+  if (here.some((f) => f.severity === "ERROR")) return 2
+  return here.length > 0 ? 1 : 0
+}
+
+export function describeLaps(r: RoundLaps, zone: string): string {
+  const at = (d: Date) => DateTime.fromJSDate(d).setZone(zone).toFormat("ccc d LLL HH:mm")
+  const span = `between ${r.window.since ? at(r.window.since) : "the last race night"} and ${at(r.window.until)}`
+  const lines = [`Round ${r.round}, ${r.label}`]
+  const p = r.proposal
+  if (p.kind === "none") {
+    lines.push(`No lap count to propose: ${p.reason}, ${span}.`)
+    return lines.join("\n")
+  }
+  const now =
+    r.currentLaps === p.laps
+      ? "already set"
+      : r.currentLaps > 0
+        ? `now ${r.currentLaps}`
+        : r.currentMinutes > 0
+          ? `now ${r.currentMinutes} minutes`
+          : "now unset"
+  lines.push(
+    `${p.laps} laps for ${p.minutes}-minute races (${now}).`,
+    `Fastest clean practice lap: ${lapTime(p.best.lapMs)} by ${p.best.driver} in ${p.best.car}.`,
+    `From ${p.sessions} practice sessions ${span}: ${p.validLaps} clean laps by ${p.drivers} drivers.`,
+  )
+  const { here, elsewhere } = roundFindings(r)
+  if (here.length > 0) {
+    lines.push("", `With ${p.laps} laps, gridmom reports:`)
+    for (const f of here) lines.push(`  ${f.severity} ${f.message}`)
+  }
+  if (elsewhere > 0) {
+    lines.push(
+      `${here.length > 0 ? "" : "\n"}Plus ${elsewhere} for other rounds; \`gridmom check\` lists them.`,
+    )
+  }
+  return lines.join("\n")
 }
 
 /** Entry point used by both `bin/gridmom.js` and `npm run gridmom`. */
