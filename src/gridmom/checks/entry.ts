@@ -749,9 +749,10 @@ export const leagueSpectatorCarMissing: Check = {
     for (const car of ctx.profile.entryList.spectatorCars ?? []) {
       const found = present.find((r) => normGuid(r.entrant.GUID) === normGuid(car.guid))
       if (!found) {
-        const off = (ctx.championship.SpectatorCars ?? []).some(
-          (e) => normGuid(e.GUID) === normGuid(car.guid),
-        )
+        // Where spectatorCarRefs would read it from, had the switch been on.
+        const c = ctx.championship
+        const stored = c.SpectatorCars?.length ? c.SpectatorCars : [c.SpectatorCar]
+        const off = stored.some((e) => e && normGuid(e.GUID) === normGuid(car.guid))
         emit(
           "WARN",
           "entry.spectator-missing",

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 
+import type { Entrant } from "../src/acsm/types.js"
 import { check } from "../src/gridmom/index.js"
 import { entryChecks } from "../src/gridmom/checks/entry.js"
 import {
@@ -778,6 +779,27 @@ describe("the league's spectator cars", () => {
       "The league's spectator car Recorder (90000000000000002) is in this championship, but spectator cars are switched off, so it can't join its sessions.",
       "The league's spectator car Stream (90000000000000001) is in this championship, but spectator cars are switched off, so it can't join its sessions.",
     ])
+  })
+
+  it("reads a switched-off car from the singular field on a build that only has that", () => {
+    const c = championship({
+      SpectatorCarEnabled: false,
+      SpectatorCar: car("Stream", "90000000000000001"),
+    })
+    delete c.SpectatorCars
+    expect(
+      findings(c)
+        .map((x) => x.message)
+        .sort()[1],
+    ).toMatch(/Stream .* is in this championship, but spectator cars are switched off/)
+  })
+
+  it("survives a null among the spectator cars", () => {
+    const c = championship({
+      SpectatorCarEnabled: false,
+      SpectatorCars: [null as unknown as Entrant, car("Stream", "90000000000000001")],
+    })
+    expect(findings(c)).toHaveLength(2)
   })
 
   it("says nothing when the league has none, or the championship has them all", () => {
