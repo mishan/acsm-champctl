@@ -52,10 +52,14 @@ async function saveUnchanged(session: AcsmSession, id: string): Promise<void> {
 
 describe.skipIf(!LIVE)("livery saves against a real ACSM", () => {
   let session: AcsmSession | undefined
+  let premium = false
   const created: string[] = []
 
   beforeAll(async () => {
     session = await liveSession()
+    // Spectator cars are premium, 2.x; CI's 1.7.9 build has none to save.
+    const health = await session.getJson<{ Version?: string }>("/healthcheck.json")
+    premium = /^v?2\./.test(health.Version ?? "")
   }, 60_000)
 
   afterAll(async () => {
@@ -63,9 +67,11 @@ describe.skipIf(!LIVE)("livery saves against a real ACSM", () => {
     for (const id of created) await deleteChampionship(session, id)
   })
 
-  it.each([1, 2, 3])(
+  it.for([1, 2, 3])(
     "assigns a skin with %i spectator cars and changes nothing else",
-    async (spectators) => {
+    { timeout: 60_000 },
+    async (spectators, ctx) => {
+      if (!premium) ctx.skip()
       const live = session!
       const seed = JSON.parse(
         JSON.stringify(await loadFixture(SEED)).replaceAll('"rss_formula_hybrid_2021"', `"${CAR}"`),
@@ -122,6 +128,5 @@ describe.skipIf(!LIVE)("livery saves against a real ACSM", () => {
         [],
       )
     },
-    60_000,
   )
 })
