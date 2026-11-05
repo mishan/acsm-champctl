@@ -9,7 +9,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-git fetch --quiet --tags origin main
+git fetch --quiet --prune origin main '+refs/tags/*:refs/tags/*'
 month=$(date +%Y.%-m)
 last=$(git tag --list "$month.*" | sed "s/^$month\.//" | grep -E '^[0-9]+$' | sort -n | tail -1)
 tag="$month.$((${last:--1} + 1))"
