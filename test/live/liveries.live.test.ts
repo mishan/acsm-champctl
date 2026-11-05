@@ -22,7 +22,8 @@ import { CHAMPIONSHIP_SUBMIT_PATH, championshipEditPath } from "../../src/acsm/p
 import type { AcsmSession } from "../../src/acsm/session.js"
 import type { Championship, Entrant } from "../../src/acsm/types.js"
 import { importChampionship } from "../../src/acsm/write.js"
-import { applyLiveries, championshipDrift } from "../../src/liveries/apply.js"
+import { applyLiveries } from "../../src/liveries/apply.js"
+import { championshipDrift } from "../../src/acsm/championship-save.js"
 import { planLiveries } from "../../src/liveries/plan.js"
 import { deleteChampionship, LIVE, liveSession, loadFixture, SEED } from "./harness.js"
 

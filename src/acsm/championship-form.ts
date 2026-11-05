@@ -288,15 +288,20 @@ export function findChampionshipForm(html: string, pageUrl: string): Championshi
 /** The most spectator cars measured on one championship (docs/acsm-champ-form.md §4.7). */
 const MAX_SPECTATOR_ROWS = 3
 
-/** How the entrant rows divide between spectator cars and classes, or a refusal. */
-function championshipRows(
+/**
+ * How the entrant rows divide between spectator cars and classes, or a refusal.
+ *
+ * Run on the form as parsed and again on the payload about to be posted.
+ */
+export function championshipRows(
   fields: readonly FormField[],
-  stripped: StrippedTemplates,
+  stripped?: StrippedTemplates,
 ): { entrantsPerClass: number[]; spectatorRows: number; rows: number } {
-  const removed =
-    `champctl dropped ${stripped.classTemplates} #${CLASS_TEMPLATE_ID}, ` +
-    `${stripped.entrantTemplates} #${ENTRANT_TEMPLATE_ID} and ` +
-    `${stripped.spectatorTemplates} #${SPECTATOR_TEMPLATE_ID} already. `
+  const removed = stripped
+    ? `champctl dropped ${stripped.classTemplates} #${CLASS_TEMPLATE_ID}, ` +
+      `${stripped.entrantTemplates} #${ENTRANT_TEMPLATE_ID} and ` +
+      `${stripped.spectatorTemplates} #${SPECTATOR_TEMPLATE_ID} already. `
+    : ""
   const recon =
     `Run \`npm run recon:champ-form -- <championship-id>\` against this manager — it only ` +
     `reads — and compare with docs/acsm-champ-form.md §4.2.`

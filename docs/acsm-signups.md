@@ -160,7 +160,7 @@ every event. What that hits depends on the UUIDs:
   matches `types.ts:253-258`).
 - **Logged-in export** (`GET /championship/{id}/export` with the session) carries
   the full array, so use it. `session.getJson(exportPath(id))` already does
-  this (`write.ts:67`, `liveries/apply.ts:474`). Don't use the cached public
+  this (`write.ts:67`, `checkChampionshipSave` in `acsm/championship-save.ts`). Don't use the cached public
   `AcsmReader`. Shape on 2.4.15 (measured):
   ```json
   {"Created":"2026-10-29T00:06:37.057309321Z","Name":"…","GUID":"7656119…",
@@ -204,7 +204,7 @@ every event. What that hits depends on the UUIDs:
 - **Side finding:** `types.ts:252` `RegistrationClosesAt`, read by
   `gridmom/checks/championship.ts:196` and `racers/watch.ts:277`, doesn't
   exist on 2.4.15. The field there is `RegistrationDeadline`, which
-  `liveries/apply.ts:528` already reads. So `champ.signup-deadline` can't fire
+  `registrationDeadline` in `acsm/championship-save.ts` already reads. So `champ.signup-deadline` can't fire
   on BATL.
 
 ## 6. Open questions
