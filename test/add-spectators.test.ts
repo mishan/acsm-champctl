@@ -76,6 +76,24 @@ describe("addSpectatorCars", () => {
     expect(() => addSpectatorCars(cars).check?.(f)).toThrow(message)
   })
 
+  it("refuses when the championship's own spectator cars share a GUID", () => {
+    // The read-back matches spectator cars by GUID, so it couldn't tell a good
+    // add from a bad one and would stop champctl writing after a good save.
+    const f = form(
+      [...spectatorRow("A", "", "u1"), ...spectatorRow("B", "", "u2")].map((x) => ({ ...x })),
+      2,
+    )
+    expect(() => addSpectatorCars([GRIDMOM]).check?.(f)).toThrow(/share a GUID/)
+  })
+
+  it("copies OverwriteAllEvents wherever in the row a build renders it", () => {
+    const fields = page()
+    const [oae] = fields.splice(2, 1)
+    fields.splice(12, 0, oae!)
+    addSpectatorCars([GRIDMOM]).apply(fields, form(fields))
+    expect(fields.filter((f) => f.name === "EntryList.OverwriteAllEvents")).toHaveLength(3)
+  })
+
   it("refuses to copy a spectator row with a field it doesn't know", () => {
     const fields = page()
     fields.splice(5, 0, { name: "EntryList.TransferTeamPoints", value: "0" })

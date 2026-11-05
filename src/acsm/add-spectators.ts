@@ -63,6 +63,13 @@ export function addSpectatorCars(cars: readonly LeagueSpectatorCar[]): Champions
         )
       }
       const present = getAll(form.fields, "EntryList.GUID").slice(0, form.spectatorRows)
+      // The read-back tells spectator cars apart by GUID.
+      if (new Set(present).size !== present.length) {
+        throw new ChampionshipFormError(
+          `Two of this championship's spectator cars share a GUID, so champctl couldn't check ` +
+            `what adding one did. Give each its own in ACSM first.`,
+        )
+      }
       for (const car of cars) {
         if (present.includes(car.guid)) {
           throw new ChampionshipFormError(
@@ -98,8 +105,8 @@ export function addSpectatorCars(cars: readonly LeagueSpectatorCar[]): Champions
 
 /**
  * Where the last spectator row's fields are: its InternalUUID, the leading
- * fields just before it, and the row fields after it up to the next row's
- * leading field, a field that isn't a row's, or a repeat.
+ * fields just before it, and the row fields after it up to a field that isn't
+ * a row's or one the row already has, which is where the next row starts.
  */
 function lastSpectatorRow(
   fields: readonly FormField[],
@@ -117,7 +124,7 @@ function lastSpectatorRow(
   let end = at + 1
   for (; end < fields.length; end++) {
     const name = fields[end]!.name
-    if (!name.startsWith("EntryList.") || LEADING.has(name) || names.has(name)) break
+    if (!(name.startsWith("EntryList.") || LEADING.has(name)) || names.has(name)) break
     names.add(name)
   }
   return { start, end }

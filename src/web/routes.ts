@@ -202,8 +202,12 @@ function missingSpectatorCars(c: Championship, profile: LeagueProfile): LeagueSp
   return (profile.entryList.spectatorCars ?? []).filter((car) => !have.includes(car.guid))
 }
 
-/** As long as one save could take; the lease is the drain's, which renews its own. */
-const SPECTATOR_LEASE_MS = 5 * 60 * 1000
+/**
+ * The drain's lease length. One save is a handful of requests, each with a
+ * 30-second timeout, behind the rate limiter, so this is generous rather than
+ * renewed.
+ */
+const SPECTATOR_LEASE_MS = 10 * 60 * 1000
 
 export interface ApiContextOptions extends Partial<ApiContext> {
   profile: LeagueProfile
@@ -1104,6 +1108,16 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
             )
           }
           try {
+            // Again under the lease: a drain whose save drifted halts and then
+            // lets go of it, after the check above. No test reaches this; the
+            // window is between two statements with nothing to hook in it.
+            if (await queue.drainHalt(id)) {
+              throw new ApiError(
+                409,
+                "liveries-halted",
+                "champctl has just stopped writing this championship after a save went wrong. Nothing was written.",
+              )
+            }
             // Read again: someone may have added a car in ACSM since the preview.
             const now = missingSpectatorCars(
               await s.acsm.getJson<Championship>(exportPath(id)),
@@ -1457,6 +1471,7 @@ export function dropPlansFor(ctx: ApiContext, sessionId: string): void {
   ctx.plans.dropForSession(sessionId)
   ctx.newChampionships.dropForSession(sessionId)
   ctx.reorders.dropForSession(sessionId)
+  ctx.spectatorPlans.dropForSession(sessionId)
 }
 
 /**

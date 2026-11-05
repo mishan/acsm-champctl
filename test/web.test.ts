@@ -2320,6 +2320,17 @@ describe("adding the league's spectator cars", () => {
     expect((await apply(h, p.json().planId)).statusCode).toBe(404)
   })
 
+  it("gives the drain its lease back afterwards", async () => {
+    const liveriesStore = await store()
+    const m = manager()
+    const h = harness({ profile, acsm: m.answer, liveriesStore })
+    await h.login()
+    expect((await apply(h, (await plan(h)).json().planId)).statusCode).toBe(200)
+    const q = await SqliteSubmissionQueue.open(liveriesStore)
+    expect((await q.acquireDrainLease(CHAMP_ID, "drain", NOW, 60_000)).ok).toBe(true)
+    q.close()
+  })
+
   it("refuses, writing nothing, when the car was added in ACSM after the preview", async () => {
     const m = manager({ addedInAcsm: true })
     const h = harness({ profile, acsm: m.answer })
