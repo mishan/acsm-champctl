@@ -7,7 +7,7 @@ import type { Championship, ResultLap, ResultsListing, SessionResults } from "..
 import { practiceSessions, type ResultsReader } from "../src/laps/practice.js"
 import { practiceWindow, proposeLaps, raceMinutes, roundCars } from "../src/laps/propose.js"
 import { check } from "../src/gridmom/index.js"
-import { lapsForRound } from "../src/laps/round.js"
+import { lapsForRound, roundFindings } from "../src/laps/round.js"
 import { loadProfile } from "../src/profile/load.js"
 
 const CHAMP = "11111111-2222-3333-4444-555555555555"
@@ -417,6 +417,24 @@ describe("lapsForRound", () => {
     await expect(
       lapsForRound(practice, c, CHAMP, 1, await profileWith({ raceMinutes: 20 })),
     ).rejects.toThrow(/no track/)
+  })
+
+  it("counts a track's findings for a round revisiting it, though gridmom files them on the first", async () => {
+    const c = champ({ Laps: 13 })
+    const [first] = c.Events ?? []
+    c.Events = [
+      {
+        ...first,
+        ID: "ev0",
+        CompletedTime: "2026-10-29T04:17:00Z",
+        Scheduled: "2026-10-28T19:00:00-07:00",
+      },
+      { ...first, ID: "ev1" },
+    ]
+    const r = await lapsForRound(practice, c, CHAMP, 2, await profileWith({ raceMinutes: 20 }))
+    const pits = r.gridmom?.findings.find((f) => f.code === "content.pit-count-unknown")
+    expect(pits?.location?.round, "gridmom files it on the first round").toBe(1)
+    expect(roundFindings(r).here).toContain(pits)
   })
 
   it("leaves out what the league suppresses", async () => {

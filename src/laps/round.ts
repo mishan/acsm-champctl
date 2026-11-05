@@ -101,14 +101,19 @@ export async function lapsForRound(
 }
 
 /**
- * gridmom's warnings and errors that bear on this round: its own and the
- * championship's. Other rounds' are no reason to doubt this round's count, and
- * listed in full they bury the ones that are, so they are only counted.
+ * gridmom's warnings and errors that bear on this round: its own, its
+ * track's and the championship's. Other rounds' are no reason to doubt this
+ * round's count, and listed in full they bury the ones that are, so they are
+ * only counted. A track's findings come once per track, on its first round, so
+ * a round revisiting a track is matched by the track instead.
  */
 export function roundFindings(r: RoundLaps): { here: Finding[]; elsewhere: number } {
   const serious = r.gridmom?.findings.filter((f) => f.severity !== "INFO") ?? []
   const here = serious.filter(
-    (f) => f.location?.round === undefined || f.location.round === r.round,
+    (f) =>
+      f.location?.round === undefined ||
+      f.location.round === r.round ||
+      f.data?.["track"] === r.label,
   )
   return { here, elsewhere: serious.length - here.length }
 }
