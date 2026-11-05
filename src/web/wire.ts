@@ -48,6 +48,8 @@ export interface ConfigResponse {
   practiceMinutes: number
   /** The league's named shorthands — "1x40", "2x20" — from its profile. */
   formats: FormatPreset[]
+  /** The champctl release serving this, or `dev`. */
+  version: string
 }
 
 /** `GET /api/session`. 200 either way; not being logged in is not an error. */

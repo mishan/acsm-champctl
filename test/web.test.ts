@@ -85,6 +85,7 @@ const champ = (over: Partial<Championship> = {}): Championship =>
 
 interface HarnessOptions {
   baseUrl?: string
+  version?: string
   /** Over the test profile. */
   newChampionshipTemplate?: string
   championship?: Championship
@@ -240,6 +241,7 @@ function harness(options: HarnessOptions = {}): Harness {
     ...(options.newChampionships ? { newChampionships: options.newChampionships } : {}),
     ...(options.content ? { content: options.content } : {}),
     ...(options.throttle ? { throttle: options.throttle } : {}),
+    ...(options.version ? { version: options.version } : {}),
     // Off so the Set-Cookie assertions below are about SameSite and HttpOnly
     // rather than about a flag every test would have to opt out of anyway.
     secureCookies: false,
@@ -415,6 +417,13 @@ describe("authentication", () => {
   it("sends a theme even when the profile sets none, since the client reads one", async () => {
     const res = await harness().app.inject({ method: "GET", url: "/api/config" })
     expect(res.json().theme).toEqual({})
+  })
+
+  it("reports the release it was given, or dev without one", async () => {
+    const version = async (o: HarnessOptions) =>
+      (await harness(o).app.inject({ method: "GET", url: "/api/config" })).json().version
+    expect(await version({ version: "2026.11.0" })).toBe("2026.11.0")
+    expect(await version({})).toBe("dev")
   })
 
   it("offers no blank template unless the profile names one", async () => {

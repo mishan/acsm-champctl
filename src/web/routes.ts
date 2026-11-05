@@ -146,6 +146,8 @@ export interface ApiContext {
    * that Brands Hatch is `ks_brands_hatch`.
    */
   content: ContentCache
+  /** The release this is, from the image's `CHAMPCTL_VERSION`; `dev` outside one. */
+  version: string
   /**
    * Track layouts, held the same way — but read on a caller's session rather
    * than at boot, because the only page that lists them needs a login. See
@@ -185,6 +187,7 @@ export function apiContext(options: ApiContextOptions): ApiContext {
       options.newChampionships ?? new PlanStore({ label: "unconfirmed new championships" }),
     reorders: options.reorders ?? new PlanStore({ label: "unconfirmed round reorders" }),
     content: options.content ?? new ContentCache({ load: () => options.reader.listContent() }),
+    version: options.version ?? "dev",
     layouts: options.layouts ?? new ContentCache<TrackLayouts | null>(),
     throttle: options.throttle ?? new LoginThrottle(),
     createSession: options.createSession ?? ((baseUrl) => new AcsmSession({ baseUrl })),
@@ -467,6 +470,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
         // They come from the profile rather than from the client so that another
         // league's names and numbers are a config change, not a fork.
         formats: ctx.profile.formats ?? [],
+        version: ctx.version,
       }),
     )
 

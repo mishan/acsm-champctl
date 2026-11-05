@@ -351,6 +351,7 @@ async function main(argv: readonly string[]): Promise<number> {
       ...(recordings ? { recordings } : {}),
       secureCookies: !args.insecureCookies,
       trustProxy: args.trustProxy,
+      ...(process.env.CHAMPCTL_VERSION ? { version: process.env.CHAMPCTL_VERSION } : {}),
       logger: true,
     })
 

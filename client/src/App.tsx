@@ -9,6 +9,7 @@ import { Login } from "./components/Login"
 import { NewChampionship } from "./components/NewChampionship"
 import { Message } from "./components/Message"
 import { RoundList } from "./components/RoundList"
+import { Version } from "./components/Version"
 import { confirmLeave, useRoute } from "./route"
 
 /**
@@ -132,6 +133,7 @@ export function App(): React.JSX.Element {
           />
         )}
       </main>
+      <Version version={config.version} />
     </div>
   )
 }
