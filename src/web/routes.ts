@@ -83,6 +83,9 @@ import type {
   ChampionshipListResponse,
   ChampionshipResponse,
   ConfigResponse,
+  LiveriesHaltView,
+  SpectatorAddResponse,
+  SpectatorPlanResponse,
   ContentResponse,
   LoginResponse,
   NewChampionshipResponse,
@@ -100,6 +103,18 @@ import type {
 } from "./wire.js"
 import { entrantStatusPath, exportPath } from "../acsm/paths.js"
 import { PENDING, signUps } from "../signups/queue.js"
+import { addSpectatorCars } from "../acsm/add-spectators.js"
+import {
+  ChampionshipDriftError,
+  ChampionshipUnverifiedError,
+  checkChampionshipSave,
+  spectatorSaveEffects,
+} from "../acsm/championship-save.js"
+import { normGuid } from "../acsm/view.js"
+import { SqliteSubmissionQueue } from "../liveries/queue.js"
+import type { LeagueSpectatorCar } from "../profile/types.js"
+import { defaultStorePath } from "../sqlite.js"
+import { dirname, join } from "node:path"
 
 declare module "fastify" {
   interface FastifyContextConfig {
@@ -140,6 +155,14 @@ export interface ApiContext {
    * expire when another is spent.
    */
   reorders: PlanStore<ReorderPlan>
+  /** Spectator cars awaiting confirmation, per championship. */
+  spectatorPlans: PlanStore<SpectatorPlan>
+  /**
+   * The livery queue's database, shared with the drain: a halt there stops
+   * every champctl write of a championship's form, and its lease keeps two
+   * such writes from overlapping. Backups go in `backups` beside it.
+   */
+  liveriesStore: string
   /**
    * Installed cars and tracks, held for an hour. The new-championship screen
    * offers only what is in here, so this is what stops anyone having to know
@@ -164,6 +187,24 @@ export interface ApiContext {
   now: () => Date
 }
 
+/** The spectator cars a preview showed, which confirming adds if they're still missing. */
+interface SpectatorPlan {
+  championshipId: string
+  cars: LeagueSpectatorCar[]
+}
+
+/**
+ * The league's spectator cars a championship doesn't have at all, by GUID. A
+ * car that's there but switched off isn't one: adding it again would make two.
+ */
+function missingSpectatorCars(c: Championship, profile: LeagueProfile): LeagueSpectatorCar[] {
+  const have = (c.SpectatorCars ?? []).map((e) => normGuid(e.GUID))
+  return (profile.entryList.spectatorCars ?? []).filter((car) => !have.includes(car.guid))
+}
+
+/** As long as one save could take; the lease is the drain's, which renews its own. */
+const SPECTATOR_LEASE_MS = 5 * 60 * 1000
+
 export interface ApiContextOptions extends Partial<ApiContext> {
   profile: LeagueProfile
   baseUrl: string
@@ -186,6 +227,9 @@ export function apiContext(options: ApiContextOptions): ApiContext {
     newChampionships:
       options.newChampionships ?? new PlanStore({ label: "unconfirmed new championships" }),
     reorders: options.reorders ?? new PlanStore({ label: "unconfirmed round reorders" }),
+    spectatorPlans:
+      options.spectatorPlans ?? new PlanStore({ label: "unconfirmed spectator cars" }),
+    liveriesStore: options.liveriesStore ?? defaultStorePath(),
     content: options.content ?? new ContentCache({ load: () => options.reader.listContent() }),
     version: options.version ?? "dev",
     layouts: options.layouts ?? new ContentCache<TrackLayouts | null>(),
@@ -615,6 +659,28 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           return null
         })
 
+    /** The livery queue, opened for one request and closed after it. */
+    const withQueue = async <T>(f: (q: SqliteSubmissionQueue) => Promise<T>): Promise<T> => {
+      const queue = await SqliteSubmissionQueue.open(ctx.liveriesStore)
+      try {
+        return await f(queue)
+      } finally {
+        queue.close()
+      }
+    }
+
+    const liveriesHalt = (championshipId: string): Promise<LiveriesHaltView | null> =>
+      withQueue(async (q) => {
+        const halt = await q.drainHalt(championshipId)
+        return halt
+          ? {
+              reason: halt.reason,
+              backup: halt.backup ?? null,
+              haltedAt: halt.haltedAt.toISOString(),
+            }
+          : null
+      })
+
     /** The manager's track names for gridmom's messages; folder names do without them. */
     const trackNamesFor = async (): Promise<ReadonlyMap<string, string> | undefined> =>
       ctx.content.get().then(
@@ -750,16 +816,18 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
       },
       async (req): Promise<ChampionshipResponse> => {
         const s = requireSession(ctx, req)
-        const [c, layouts, content] = await Promise.all([
+        const [c, layouts, content, halt] = await Promise.all([
           ctx.reader.exportChampionship(req.params.id),
           // Costs a page fetch the first time and nothing for the hour after.
           // Worth it here of all places: this is the screen that shows a round
           // with no layout set, and the screen where it gets fixed.
           layoutsFor(s, req),
           contentFor(req),
+          liveriesHalt(req.params.id),
         ])
         return {
           championship: championshipView(c, ctx.profile),
+          liveriesHalt: halt,
           // The championship as it stands, before anyone edits anything. Plan
           // §1's third job — "checking a championship for mistakes before
           // people show up to race" — is most of this tool's value and costs
@@ -949,6 +1017,136 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           }
           throw e
         }
+      },
+    )
+
+    // -----------------------------------------------------------------------
+    // The league's spectator cars, and the halt a bad save leaves
+    // -----------------------------------------------------------------------
+
+    const idParamsSchema = {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string", minLength: 1, maxLength: 200 } },
+    } as const
+
+    /**
+     * Which of the league's spectator cars this championship lacks, and what
+     * adding them would also do. Writes nothing; the client sends nothing but
+     * the championship, so what gets added is only ever the profile's.
+     */
+    app.post<{ Params: { id: string } }>(
+      "/championships/:id/spectators/plan",
+      { config: { writesNothing: true }, schema: { params: idParamsSchema } },
+      async (req): Promise<SpectatorPlanResponse> => {
+        const s = requireSession(ctx, req)
+        const { id } = req.params
+        const c = await s.acsm.getJson<Championship>(exportPath(id))
+        const cars = missingSpectatorCars(c, ctx.profile)
+        if (cars.length === 0) {
+          throw new ApiError(
+            422,
+            "nothing-to-add",
+            "This championship already has every one of the league's spectator cars.",
+          )
+        }
+        return {
+          planId: ctx.spectatorPlans.create(s.id, { championshipId: id, cars }),
+          cars: cars.map(({ name, model, guid }) => ({ name, model, guid })),
+          effects: spectatorSaveEffects(c),
+        }
+      },
+    )
+
+    /**
+     * Adds the cars the preview showed, through the same save the liveries use,
+     * under the same halt and lease: two whole-championship saves at once
+     * would lose one of them.
+     */
+    app.post<{ Params: { planId: string } }>(
+      "/spectator-plans/:planId/apply",
+      { schema: { params: planIdParamsSchema } },
+      async (req): Promise<SpectatorAddResponse> => {
+        const s = requireSession(ctx, req)
+        const { planId } = req.params
+        const taken = ctx.spectatorPlans.acquire(planId, s.id)
+        if (taken.kind !== "acquired") {
+          throw new ApiError(
+            taken.kind === "not-found" ? 404 : 409,
+            taken.kind === "not-found" ? "no-such-plan" : "plan-in-flight",
+            taken.kind === "not-found"
+              ? "That preview has expired, or it was already used. Nothing was written."
+              : "These cars are already being added. Nothing extra was written.",
+          )
+        }
+        const { championshipId: id, cars } = taken.plan
+        // Single use whatever happens: a refusal below means the championship
+        // has moved on, and a fresh preview is how to see it as it is.
+        ctx.spectatorPlans.destroy(planId, s.id)
+
+        return withQueue(async (queue) => {
+          const halt = await queue.drainHalt(id)
+          if (halt) {
+            throw new ApiError(
+              409,
+              "liveries-halted",
+              `champctl has stopped writing this championship since a save on ` +
+                `${halt.haltedAt.toISOString()}: ${halt.reason} Check it, resume it here, and try again.`,
+            )
+          }
+          const holder = `web:${s.username}:${planId}`
+          const lease = await queue.acquireDrainLease(id, holder, ctx.now(), SPECTATOR_LEASE_MS)
+          if (!lease.ok) {
+            throw new ApiError(
+              409,
+              "save-running",
+              "A livery save is running on this championship. Nothing was written; try again in a minute.",
+            )
+          }
+          try {
+            // Read again: someone may have added a car in ACSM since the preview.
+            const now = missingSpectatorCars(
+              await s.acsm.getJson<Championship>(exportPath(id)),
+              ctx.profile,
+            )
+            if (now.map((c) => c.guid).join() !== cars.map((c) => c.guid).join()) {
+              throw new ApiError(
+                409,
+                "spectators-changed",
+                "The championship's spectator cars changed since the preview. Nothing was written; " +
+                  "open it again to see what's missing now.",
+              )
+            }
+            const checked = await checkChampionshipSave(
+              s.acsm,
+              id,
+              addSpectatorCars(cars),
+              join(dirname(ctx.liveriesStore), "backups"),
+            )
+            await checked.save().catch(async (e: unknown) => {
+              if (e instanceof ChampionshipDriftError || e instanceof ChampionshipUnverifiedError) {
+                await queue.haltDrain(id, e.message, e.backup, ctx.now())
+              }
+              throw e
+            })
+            return { added: cars.map((c) => c.name) }
+          } finally {
+            await queue.releaseDrainLease(id, holder)
+          }
+        })
+      },
+    )
+
+    /**
+     * Lets champctl write this championship's form again after a halt. The
+     * staff who'd check the championship have no CLI, so this is theirs.
+     */
+    app.post<{ Params: { id: string } }>(
+      "/championships/:id/liveries-halt/clear",
+      { schema: { params: idParamsSchema } },
+      async (req): Promise<{ cleared: boolean }> => {
+        requireSession(ctx, req)
+        return { cleared: await withQueue((q) => q.clearDrainHalt(req.params.id)) }
       },
     )
 

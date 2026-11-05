@@ -182,6 +182,7 @@ beforeEach(() => {
       rounds: [],
     },
     gridmom: report(),
+    liveriesHalt: null,
   })
   planMock.mockResolvedValue({ plan: planView() })
   createMock.mockResolvedValue({
@@ -363,6 +364,7 @@ describe("the car list", () => {
         rounds: [],
       },
       gridmom: report(),
+      liveriesHalt: null,
     })
     await waitFor(() => expect(screen.getByText("RSS Formula Hybrid 2021")).toBeTruthy())
   })
@@ -954,6 +956,7 @@ describe("starting blank", () => {
           rounds: [],
         },
         gridmom: report(),
+        liveriesHalt: null,
       })
     })
     expect(screen.queryByText("RSS Formula Hybrid 2021")).toBeNull()

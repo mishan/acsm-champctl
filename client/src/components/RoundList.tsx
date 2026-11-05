@@ -6,6 +6,7 @@ import {
   type CheckReport,
   type ChampionshipView,
   type InstalledItem,
+  type LiveriesHaltView,
   type ReorderPlanView,
   type RoundView,
 } from "../api"
@@ -13,6 +14,7 @@ import { describeFormat, venueLabel } from "../format"
 import { moveItem, movedPositions, useReorder } from "../reorder"
 import { Findings, findingSummary } from "./Findings"
 import { Message } from "./Message"
+import { SpectatorCars } from "./SpectatorCars"
 import { Venue } from "./Venue"
 
 interface RoundListProps {
@@ -31,9 +33,11 @@ export function RoundList({
   onOpenSignUps,
   onAuthLost,
 }: RoundListProps): React.JSX.Element {
-  const [data, setData] = useState<{ championship: ChampionshipView; gridmom: CheckReport } | null>(
-    null,
-  )
+  const [data, setData] = useState<{
+    championship: ChampionshipView
+    gridmom: CheckReport
+    liveriesHalt: LiveriesHaltView | null
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showFindings, setShowFindings] = useState(false)
   /** The running order being tried, as 1-based source rounds. Null when not reordering. */
@@ -87,8 +91,21 @@ export function RoundList({
   if (error) return <Message kind="error" title="Couldn't load that championship" body={error} />
   if (!data) return <p className="muted">Loading…</p>
 
-  const { championship, gridmom } = data
+  const { championship, gridmom, liveriesHalt } = data
   const blocking = gridmom.counts.ERROR > 0
+
+  // Re-read rather than patch what is on screen: the export is the only thing
+  // that knows what the championship now says, gridmom included.
+  const reload = () => {
+    setData(null)
+    void (async () => {
+      try {
+        setData(await api.championship(championshipId))
+      } catch (e) {
+        setError(describe(e))
+      }
+    })()
+  }
 
   if (order) {
     return (
@@ -98,18 +115,8 @@ export function RoundList({
         order={order}
         onOrder={setOrder}
         onDone={() => {
-          // Re-read rather than patch what is on screen. The championship has
-          // changed underneath this component and the export is the only thing
-          // that knows what it now says — gridmom included.
-          setData(null)
           setOrder(null)
-          void (async () => {
-            try {
-              setData(await api.championship(championshipId))
-            } catch (e) {
-              setError(describe(e))
-            }
-          })()
+          reload()
         }}
         onCancel={() => setOrder(null)}
         onAuthLost={onAuthLost}
@@ -146,6 +153,13 @@ export function RoundList({
         <span aria-hidden="true">{showFindings ? "▾" : "▸"}</span>
       </button>
       {showFindings && <Findings report={gridmom} />}
+      <SpectatorCars
+        championshipId={championshipId}
+        halt={liveriesHalt}
+        missing={gridmom.findings.some((f) => f.code === "entry.spectator-missing")}
+        onChanged={reload}
+        describe={describe}
+      />
 
       <ul className="list">
         {championship.rounds.map((r) => (

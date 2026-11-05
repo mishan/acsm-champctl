@@ -438,8 +438,11 @@ fields and the backup; a read-back that fails is a `ChampionshipUnverifiedError`
 Either one halts liveries for that championship in the queue database: every
 later drain, the watcher's included, refuses before it logs in, and writes no
 heartbeat, so the bot stops promising drivers their uploads apply themselves.
-`champctl-liveries <id> --clear-halt` lifts it once the championship is
-restored. The first halt keeps its backup; a later one would name a backup of
+Resume on the championship in champctl web, or `champctl-liveries <id>
+--clear-halt`, lifts it once the championship is restored. The halt covers every
+champctl save of the form, not only liveries: champctl web's "Add the missing
+spectator cars" checks it, takes the drain's lease, and halts on drift the same
+way. The first halt keeps its backup; a later one would name a backup of
 the damage. On the harness copy, the remaining differences were `ACSR` and
 `AvailableCars`, which a browser's save changes there too because the harness has
 neither BATL's cars nor its ACSR integration; on BATL's manager both rendered
@@ -473,7 +476,12 @@ November (one) championships, and a third added by hand:
   a three-car copy rotated the order twice before it settled. Nothing should
   take `SpectatorCars[0]` to be any particular car; match them by GUID.
 - "Add Spectator(s)" in ACSM's UI inserts the new row after the last spectator
-  row with an empty `InternalUUID`; ACSM assigns one.
+  row with an empty `InternalUUID`; ACSM assigns one. champctl web's "Add the
+  missing spectator cars" inserts the same row, copied from the last spectator
+  car's, for each of the profile's `entryList.spectatorCars` the championship
+  lacks. It refuses a championship with none to copy, a layout nobody has
+  measured. The added car is in the practice server's `entry_list.ini` the next
+  time a round's practice starts (measured).
 
 **What champctl does.** `championshipRows` takes the marker count as the number
 of spectator rows, requires the rows to equal the classes plus that, each marker

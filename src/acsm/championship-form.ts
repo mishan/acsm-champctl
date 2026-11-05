@@ -286,7 +286,7 @@ export function findChampionshipForm(html: string, pageUrl: string): Championshi
 }
 
 /** The most spectator cars measured on one championship (docs/acsm-champ-form.md §4.7). */
-const MAX_SPECTATOR_ROWS = 3
+export const MAX_SPECTATOR_ROWS = 3
 
 /**
  * How the entrant rows divide between spectator cars and classes, or a refusal.

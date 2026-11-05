@@ -37,6 +37,7 @@ import type {
   PlanResponse,
   PlanView,
   RaceFormat,
+  LiveriesHaltView,
   ReorderedRoundView,
   ReorderPlanResponse,
   ReorderPlanView,
@@ -46,6 +47,8 @@ import type {
   SignUpActionRequest,
   SignUpsResponse,
   SignUpView,
+  SpectatorAddResponse,
+  SpectatorPlanResponse,
   TrackRequest,
 } from "../../src/web/wire.js"
 
@@ -83,6 +86,9 @@ export type {
   SignUpsResponse,
   SignUpView,
   TrackRequest,
+  LiveriesHaltView,
+  SpectatorAddResponse,
+  SpectatorPlanResponse,
 }
 
 /** Local aliases for the two the components read most. */
@@ -258,6 +264,18 @@ export const api = {
    */
   applyReorder: (planId: string, acknowledgeWarnings: boolean): Promise<ReorderResponse> =>
     request(`/reorders/${encodeURIComponent(planId)}/apply`, json({ acknowledgeWarnings })),
+
+  /** Which of the league's spectator cars it lacks. Writes nothing. */
+  planSpectators: (id: string): Promise<SpectatorPlanResponse> =>
+    request(`/championships/${encodeURIComponent(id)}/spectators/plan`, { method: "POST" }),
+
+  /** Add them. Takes the plan id, so what lands is what was previewed. */
+  addSpectators: (planId: string): Promise<SpectatorAddResponse> =>
+    request(`/spectator-plans/${encodeURIComponent(planId)}/apply`, { method: "POST" }),
+
+  /** Let champctl write the championship again after a save went wrong. */
+  clearLiveriesHalt: (id: string): Promise<{ cleared: boolean }> =>
+    request(`/championships/${encodeURIComponent(id)}/liveries-halt/clear`, { method: "POST" }),
 
   /** A championship's sign-ups, read logged in: the public export leaves them out. */
   signUps: (id: string): Promise<SignUpsResponse> =>

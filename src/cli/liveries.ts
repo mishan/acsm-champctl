@@ -1082,7 +1082,8 @@ export class DrainHaltedError extends Error {
       `Not applying liveries to ${championshipId}: a save on ${halt.haltedAt.toISOString()} ` +
         `changed more than the liveries, or couldn't be checked. ${halt.reason}` +
         `${halt.backup ? ` The championship as it was is in ${halt.backup}.` : ""} Once it is ` +
-        `restored, run champctl-liveries ${championshipId} --clear-halt.`,
+        `restored, press Resume on the championship in champctl web, or run ` +
+        `champctl-liveries ${championshipId} --clear-halt.`,
     )
     this.name = "DrainHaltedError"
   }

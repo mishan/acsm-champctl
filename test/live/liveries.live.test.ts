@@ -22,8 +22,9 @@ import { CHAMPIONSHIP_SUBMIT_PATH, championshipEditPath } from "../../src/acsm/p
 import type { AcsmSession } from "../../src/acsm/session.js"
 import type { Championship, Entrant } from "../../src/acsm/types.js"
 import { importChampionship } from "../../src/acsm/write.js"
+import { addSpectatorCars } from "../../src/acsm/add-spectators.js"
 import { applyLiveries } from "../../src/liveries/apply.js"
-import { championshipDrift } from "../../src/acsm/championship-save.js"
+import { checkChampionshipSave, championshipDrift } from "../../src/acsm/championship-save.js"
 import { planLiveries } from "../../src/liveries/plan.js"
 import { deleteChampionship, LIVE, liveSession, loadFixture, SEED } from "./harness.js"
 
@@ -130,4 +131,33 @@ describe.skipIf(!LIVE)("livery saves against a real ACSM", () => {
       )
     },
   )
+
+  it("adds a spectator car the way ACSM's own button does", { timeout: 60_000 }, async (ctx) => {
+    if (!premium) ctx.skip()
+    const live = session!
+    const seed = JSON.parse(
+      JSON.stringify(await loadFixture(SEED)).replaceAll('"rss_formula_hybrid_2021"', `"${CAR}"`),
+    ) as Championship
+    seed.SpectatorCarEnabled = true
+    seed.SpectatorCars = [
+      {
+        ...Object.values(seed.Classes![0]!.Entrants!)[0]!,
+        Name: "Stream",
+        GUID: "90000000000000001",
+        InternalUUID: "00000000-0000-4000-8000-000000000301",
+        ConnectAsSpectator: true,
+      },
+    ] as Entrant[]
+    const first = await importInto(live, seed, created)
+    await saveUnchanged(live, first)
+
+    const recorder = { name: "Recorder", model: CAR, guid: "90000000000000002" }
+    await (await checkChampionshipSave(live, first, addSpectatorCars([recorder]))).save()
+
+    const after = await live.getJson<Championship>(`/championship/${first}/export`)
+    expect(after.SpectatorCars?.map((c) => [c.Name, c.GUID, c.Model, c.PitBox]).sort()).toEqual([
+      ["Recorder", "90000000000000002", CAR, 1],
+      ["Stream", "90000000000000001", CAR, 0],
+    ])
+  })
 })

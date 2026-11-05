@@ -181,6 +181,34 @@ export interface ChampionshipResponse {
   championship: ChampionshipView
   /** The championship as it stands, before anyone edits anything. */
   gridmom: CheckReport
+  /** Set when a save went wrong and champctl has stopped writing liveries to it. */
+  liveriesHalt: LiveriesHaltView | null
+}
+
+export interface LiveriesHaltView {
+  reason: string
+  /** Where the championship as it was before that save is kept, on the server. */
+  backup: string | null
+  haltedAt: string
+}
+
+/** One of the league's spectator cars, as the profile names it. */
+export interface SpectatorCarView {
+  name: string
+  model: string
+  guid: string
+}
+
+export interface SpectatorPlanResponse {
+  planId: string
+  /** The league's spectator cars this championship lacks, which confirming adds. */
+  cars: SpectatorCarView[]
+  /** What the save also does to the cars already there, said rather than hidden. */
+  effects: string[]
+}
+
+export interface SpectatorAddResponse {
+  added: string[]
 }
 
 // ---------------------------------------------------------------------------

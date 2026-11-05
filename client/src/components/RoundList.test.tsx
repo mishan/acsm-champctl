@@ -69,6 +69,7 @@ function response(name: string, rounds: RoundView[] = [round()]): ChampionshipRe
       rounds,
     },
     gridmom: { findings: [], counts: { ERROR: 0, WARN: 0, INFO: 0 }, ok: true },
+    liveriesHalt: null,
   }
 }
 
