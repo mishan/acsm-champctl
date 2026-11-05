@@ -834,11 +834,20 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
           // with no layout set, and the screen where it gets fixed.
           layoutsFor(s, req),
           contentFor(req),
-          liveriesHalt(req.params.id),
+          // Never fatal to the screen: a queue that can't be opened, say while
+          // its migration waits out a lease, is reported as unknown, not absent.
+          liveriesHalt(req.params.id).then(
+            (h) => ({ h }),
+            (e: unknown) => {
+              req.log.warn({ err: e }, "could not read the livery queue")
+              return { h: null, unknown: e instanceof Error ? e.message : String(e) }
+            },
+          ),
         ])
         return {
           championship: championshipView(c, ctx.profile),
-          liveriesHalt: halt,
+          liveriesHalt: halt.h,
+          ...("unknown" in halt ? { liveriesHaltUnknown: halt.unknown } : {}),
           // The championship as it stands, before anyone edits anything. Plan
           // §1's third job — "checking a championship for mistakes before
           // people show up to race" — is most of this tool's value and costs

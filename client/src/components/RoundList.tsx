@@ -37,6 +37,7 @@ export function RoundList({
     championship: ChampionshipView
     gridmom: CheckReport
     liveriesHalt: LiveriesHaltView | null
+    liveriesHaltUnknown?: string
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showFindings, setShowFindings] = useState(false)
@@ -94,7 +95,7 @@ export function RoundList({
   if (error) return <Message kind="error" title="Couldn't load that championship" body={error} />
   if (!data) return <p className="muted">Loading…</p>
 
-  const { championship, gridmom, liveriesHalt } = data
+  const { championship, gridmom, liveriesHalt, liveriesHaltUnknown } = data
   const blocking = gridmom.counts.ERROR > 0
 
   // Re-read rather than patch what is on screen: the export is the only thing
@@ -164,6 +165,7 @@ export function RoundList({
         key={championshipId}
         championshipId={championshipId}
         halt={liveriesHalt}
+        haltUnknown={liveriesHaltUnknown}
         missing={gridmom.findings.some((f) => f.code === "entry.spectator-missing")}
         onChanged={refresh}
         describe={describe}

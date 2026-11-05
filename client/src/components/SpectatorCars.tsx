@@ -9,6 +9,8 @@ interface SpectatorCarsProps {
   halt: LiveriesHaltView | null
   /** True when gridmom says one of the league's spectator cars is missing. */
   missing: boolean
+  /** Why it's unknown whether champctl has stopped writing this championship, if it is. */
+  haltUnknown?: string | undefined
   /** Called once the championship has changed, to read it again. */
   onChanged: () => void
   describe: (e: unknown) => string
@@ -26,6 +28,7 @@ export function SpectatorCars({
   championshipId,
   halt,
   missing,
+  haltUnknown,
   onChanged,
   describe,
 }: SpectatorCarsProps): React.JSX.Element | null {
@@ -130,6 +133,15 @@ export function SpectatorCars({
   }
 
   if (!missing) return null
+  if (haltUnknown) {
+    return (
+      <Message
+        kind="error"
+        title="Can't add the missing spectator cars right now"
+        body={`champctl couldn't tell whether it has stopped writing this championship: ${haltUnknown}`}
+      />
+    )
+  }
   return (
     <>
       <button

@@ -30,13 +30,14 @@ const HALT = {
   haltedAt: "2026-11-05T20:00:00.000Z",
 }
 
-function show(props: { halt?: typeof HALT | null; missing?: boolean } = {}) {
+function show(props: { halt?: typeof HALT | null; missing?: boolean; unknown?: string } = {}) {
   const onChanged = vi.fn()
   const view = render(
     <SpectatorCars
       championshipId="champ-1"
       halt={props.halt ?? null}
       missing={props.missing ?? false}
+      haltUnknown={props.unknown}
       onChanged={onChanged}
       describe={(e) => String(e)}
     />,
@@ -92,6 +93,12 @@ describe("the league's spectator cars", () => {
     expect(await screen.findByText(/The save came back wrong/)).toBeTruthy()
     expect(screen.queryByText(/Recorder, in ford_transit/)).toBeNull()
     expect(onChanged).toHaveBeenCalled()
+  })
+
+  it("offers no add while it can't tell whether the championship is halted", () => {
+    show({ missing: true, unknown: "The queue's database is locked." })
+    expect(screen.getByText(/The queue's database is locked/)).toBeTruthy()
+    expect(screen.queryByText("Add the missing spectator cars")).toBeNull()
   })
 
   it("offers nothing when every car is there", () => {

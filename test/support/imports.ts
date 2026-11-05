@@ -7,9 +7,10 @@
  */
 import { existsSync, readFileSync } from "node:fs"
 import { dirname, relative, resolve, sep } from "node:path"
+import { fileURLToPath } from "node:url"
 
 /** The source tree, which forbidden paths are named from. */
-const SRC = resolve(dirname(new URL(import.meta.url).pathname), "../../src")
+const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "../../src")
 
 /**
  * Every module specifier a file pulls in.

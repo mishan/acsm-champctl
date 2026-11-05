@@ -183,6 +183,8 @@ export interface ChampionshipResponse {
   gridmom: CheckReport
   /** Set when a save went wrong and champctl has stopped writing liveries to it. */
   liveriesHalt: LiveriesHaltView | null
+  /** Set, to why, when the livery queue couldn't be read, so whether it's halted is unknown. */
+  liveriesHaltUnknown?: string
 }
 
 export interface LiveriesHaltView {

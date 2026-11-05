@@ -2491,6 +2491,21 @@ describe("adding the league's spectator cars", () => {
     expect((await read()).json().liveriesHalt).toBeNull()
   })
 
+  it("still shows the championship when the livery queue can't be read, and says so", async () => {
+    // A directory where the database should be: it can't be opened.
+    const liveriesStore = await mkdtemp(join(tmpdir(), "champctl-web-"))
+    const h = harness({ liveriesStore })
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/api/championships/${CHAMP_ID}`,
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().liveriesHalt).toBeNull()
+    expect(res.json().liveriesHaltUnknown).toMatch(/\S/)
+  })
+
   it("won't let an account that can't edit championships lift a halt", async () => {
     // The halt stops the drain, which writes with the league's own account.
     const liveriesStore = await store()
