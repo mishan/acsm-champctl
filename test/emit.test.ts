@@ -569,6 +569,19 @@ describe("emitting a championship", () => {
       for (const ev of events(c)) expect(ev.RaceSetup?.Cars).toContain("ks_van")
     })
 
+    it("numbers an added car after the template's highest pit box, so none share one", () => {
+      const { championship: c } = emit({
+        profile: league,
+        template: template({
+          SpectatorCarEnabled: true,
+          SpectatorCars: [
+            { Name: "Stream", GUID: "90000000000000001", Model: "ford_transit", PitBox: 1 },
+          ],
+        }),
+      })
+      expect(c.SpectatorCars?.map((x) => x.PitBox)).toEqual([1, 2])
+    })
+
     it("switches spectator cars on when the template had them off", () => {
       const { championship: c } = emit({
         profile: league,

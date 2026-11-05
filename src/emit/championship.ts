@@ -470,6 +470,7 @@ function withLeagueSpectatorCars(
   )
   if (missing.length === 0 && c.SpectatorCarEnabled) return c
   if (!c.SpectatorCarEnabled) derived.push("spectator cars switched on, for the league's")
+  const next = Math.max(-1, ...existing.map((e) => e.PitBox ?? -1)) + 1
   for (const car of missing) derived.push(`the league's spectator car ${car.name} added`)
   return {
     ...c,
@@ -484,8 +485,9 @@ function withLeagueSpectatorCars(
           Model: car.model,
           Skin: car.skin ?? "",
           InternalUUID: randomUUID(),
-          // Numbered after the others, as a save in ACSM would number them.
-          PitBox: existing.length + i,
+          // After the highest, so none share a box; a save in ACSM then
+          // numbers them all from 0.
+          PitBox: next + i,
           RaceNumber: 0,
           Ballast: 0,
           Restrictor: 0,
