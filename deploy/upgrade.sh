@@ -1,6 +1,7 @@
 #!/bin/sh
-# Pulls, builds, and restarts the services already running, so a profile
-# left off (the drain, say) stays off.
+# Checks out a release, builds it, and restarts the services already
+# running, so a profile left off (the drain, say) stays off. Deploys the
+# newest release unless given one; an older one is how to roll back.
 #
 # Refuses while the recorder is writing a qualifying or a race: restarting it
 # ends that recording, and race night's is the one the stewards need.
@@ -9,11 +10,25 @@
 set -eu
 cd "$(dirname "$0")"
 
-case "${1:-}" in
-  "") during=no ;;
-  --during-session) during=yes ;;
-  *) echo "usage: $0 [--during-session]" >&2; exit 2 ;;
-esac
+during=no
+version=
+for arg in "$@"; do
+  case "$arg" in
+    --during-session) during=yes ;;
+    -*) echo "usage: $0 [--during-session] [version]" >&2; exit 2 ;;
+    *) version=$arg ;;
+  esac
+done
+
+git -C .. fetch --quiet --tags origin
+if [ -z "$version" ]; then
+  version=$(git -C .. tag --list '[0-9]*.*.*' --sort=-v:refname | head -1)
+fi
+# A tag, never a branch: what runs should be something scripts/release.sh made.
+if [ -z "$version" ] || ! git -C .. rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+  echo "No release ${version:-at all} to deploy; scripts/release.sh makes one." >&2
+  exit 1
+fi
 
 # Not one-off `docker compose run` containers, such as an MCP session's.
 services=$(docker ps --filter label=com.docker.compose.project=champctl \
@@ -36,6 +51,9 @@ if [ -n "$live" ] && [ "$during" = no ]; then
   exit 1
 fi
 
-git -C .. pull --ff-only
+was=$(git -C .. describe --tags --always)
+git -C .. checkout --quiet --detach "refs/tags/$version"
+export CHAMPCTL_VERSION="$version"
 docker compose --profile '*' build -q $services
 docker compose --profile '*' up -d $services
+echo "Deployed $version (was $was)."

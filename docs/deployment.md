@@ -249,13 +249,30 @@ commands that write. Both prompt before writing and take `--yes` in a script.
 
 ## Upgrading
 
+What runs in production is a release: a tag on `main` named for the year and
+month it shipped, `2026.11.0` then `2026.11.1`, with notes listing the pull
+requests in it. Whoever is cutting one runs, from a checkout with `gh` signed
+in:
+
 ```sh
-acsm-champctl/deploy/upgrade.sh
+scripts/release.sh
 ```
 
-It pulls, builds, and restarts whichever services are running, so one left
-off stays off. While the recorder is writing a qualifying or a race it
-refuses, since a restart ends that recording; `--during-session` overrides.
+Then, on the host:
+
+```sh
+acsm-champctl/deploy/upgrade.sh             # the newest release
+acsm-champctl/deploy/upgrade.sh 2026.11.0   # that one, to roll back
+```
+
+It checks out the release, builds it, and restarts whichever services are
+running, so one left off stays off. It deploys only a tag, never a branch.
+While the recorder is writing a qualifying or a race it refuses, since a
+restart ends that recording; `--during-session` overrides.
+
+A release whose databases have gained a table refuses to roll back past it:
+the older one stops rather than write to tables it doesn't know. Rolling back
+then means restoring the databases from a [backup](#backups) older than it.
 
 Restarting `serve` signs everyone out, since sessions are held in memory. The
 drain finishes the pass it is on before stopping, which can take a few minutes
