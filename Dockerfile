@@ -36,6 +36,11 @@ COPY profiles profiles
 COPY --from=build /src/dist dist
 RUN for f in bin/*.js; do ln -s "/app/$f" "/usr/local/bin/$(basename "$f" .js)"; done
 
+# The release deploy/upgrade.sh checked out. Late, so a new one rebuilds
+# nothing above it.
+ARG CHAMPCTL_VERSION=dev
+ENV CHAMPCTL_VERSION=$CHAMPCTL_VERSION
+
 # Every default path — the response cache, the archive, the livery queue — is
 # relative to the working directory, so running from the data volume puts all
 # of it there without a flag. Created here and owned by `node` so a fresh named

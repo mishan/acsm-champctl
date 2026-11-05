@@ -17,6 +17,8 @@ x-champctl: &champctl
   image: ${CHAMPCTL_IMAGE:-champctl:local}
   build:
     context: ..
+    args:
+      CHAMPCTL_VERSION: ${CHAMPCTL_VERSION:-dev}
   init: true
   # The host's journal outlives the container, which a deploy recreates and
   # json-file's logs go with.
