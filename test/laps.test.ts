@@ -9,6 +9,7 @@ import { practiceWindow, proposeLaps, raceMinutes, roundCars } from "../src/laps
 import { check } from "../src/gridmom/index.js"
 import { lapsForRound, roundFindings } from "../src/laps/round.js"
 import { loadProfile } from "../src/profile/load.js"
+import { InMemoryPitTable } from "../src/pits/table.js"
 
 const CHAMP = "11111111-2222-3333-4444-555555555555"
 const fixture = JSON.parse(
@@ -419,7 +420,7 @@ describe("lapsForRound", () => {
     ).rejects.toThrow(/no track/)
   })
 
-  it("counts a track's findings for a round revisiting it, though gridmom files them on the first", async () => {
+  it("counts a track's pit count for a round revisiting it, but not the earlier round's own findings", async () => {
     const c = champ({ Laps: 13 })
     const [first] = c.Events ?? []
     c.Events = [
@@ -428,13 +429,23 @@ describe("lapsForRound", () => {
         ID: "ev0",
         CompletedTime: "2026-10-29T04:17:00Z",
         Scheduled: "2026-10-28T19:00:00-07:00",
+        RaceSetup: { ...first?.RaceSetup, MaxClients: 30 },
       },
       { ...first, ID: "ev1" },
     ]
-    const r = await lapsForRound(practice, c, CHAMP, 2, await profileWith({ raceMinutes: 20 }))
-    const pits = r.gridmom?.findings.find((f) => f.code === "content.pit-count-unknown")
-    expect(pits?.location?.round, "gridmom files it on the first round").toBe(1)
-    expect(roundFindings(r).here).toContain(pits)
+    const pits = new InMemoryPitTable([
+      { track: "rt_lime_rock_park", layout: "chicane", pitboxes: 20, source: "acsm" },
+    ])
+    const r = await lapsForRound(practice, c, CHAMP, 2, await profileWith({ raceMinutes: 20 }), {
+      pits,
+    })
+    const find = (code: string) => r.gridmom?.findings.find((f) => f.code === code)
+    const unverified = find("content.pit-count-unverified")
+    const overfull = find("grid.max-clients")
+    expect(unverified?.location?.round, "gridmom files it on the first round").toBe(1)
+    expect(overfull?.location?.round).toBe(1)
+    expect(roundFindings(r).here).toContain(unverified)
+    expect(roundFindings(r).here).not.toContain(overfull)
   })
 
   it("leaves out what the league suppresses", async () => {

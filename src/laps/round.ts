@@ -104,8 +104,9 @@ export async function lapsForRound(
  * gridmom's warnings and errors that bear on this round: its own, its
  * track's and the championship's. Other rounds' are no reason to doubt this
  * round's count, and listed in full they bury the ones that are, so they are
- * only counted. A track's findings come once per track, on its first round, so
- * a round revisiting a track is matched by the track instead.
+ * only counted. Pit-count findings come once per track, on its first round, so
+ * a round revisiting a track is matched by the track instead; other findings
+ * name the track too, but each round gets its own.
  */
 export function roundFindings(r: RoundLaps): { here: Finding[]; elsewhere: number } {
   const serious = r.gridmom?.findings.filter((f) => f.severity !== "INFO") ?? []
@@ -113,7 +114,7 @@ export function roundFindings(r: RoundLaps): { here: Finding[]; elsewhere: numbe
     (f) =>
       f.location?.round === undefined ||
       f.location.round === r.round ||
-      f.data?.["track"] === r.label,
+      (f.code.startsWith("content.pit-count-") && f.data?.["track"] === r.label),
   )
   return { here, elsewhere: serious.length - here.length }
 }
