@@ -58,8 +58,9 @@ comes from the template, so name its class for the league rather than a car.
 "newChampionshipTemplate": "be7446cd-b2c0-4157-8094-4d16add5be9d"
 ```
 
-`lapCount` turns on the race-day lap count proposal (see
-[`lap-count.md`](lap-count.md)). `raceMinutes` is the length of each race for a
+`lapCount` is for the race-day lap count proposal (see
+[`lap-count.md`](lap-count.md)), which is still being built: nothing posts or
+applies one yet. `raceMinutes` is the length of each race for a
 round that no longer says, which is any round whose laps are already set.
 `proposeAt` is when, league-local on race day, and defaults to `09:00`.
 `approverRoleId` is the Discord role allowed to apply one; without it the

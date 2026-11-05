@@ -58,7 +58,7 @@ export type ProposalStatus =
   | "applied"
   | "stale"
   | "failed"
-  /** Nobody applied it before practice started. */
+  /** Not applied before practice started. */
   | "expired"
 
 /** What the proposal message says beyond the numbers it acts on. */
@@ -226,12 +226,15 @@ export class SqliteLapProposals {
     )
   }
 
-  /** Closes what nobody applied before practice started, so its message can say so. */
+  /**
+   * Closes what wasn't applied before practice started, approved or not, so
+   * its message can say so.
+   */
   expire(now: Date): void {
     this.#db
       .prepare(
         `UPDATE lap_proposal SET status = 'expired', updated_at = ?
-         WHERE status = 'pending' AND cutoff <= ?`,
+         WHERE status IN ('pending', 'approved') AND cutoff <= ?`,
       )
       .run(now.toISOString(), now.toISOString())
   }
@@ -245,10 +248,11 @@ export class SqliteLapProposals {
     const row = this.#db
       .prepare(
         `UPDATE lap_proposal SET status = 'applying', updated_at = ?
-         WHERE id = (SELECT id FROM lap_proposal WHERE status = 'approved' ORDER BY id LIMIT 1)
+         WHERE id = (SELECT id FROM lap_proposal
+                     WHERE status = 'approved' AND cutoff > ? ORDER BY id LIMIT 1)
          RETURNING *`,
       )
-      .get(now.toISOString()) as Row | undefined
+      .get(now.toISOString(), now.toISOString()) as Row | undefined
     return row ? fromRow(row) : undefined
   }
 

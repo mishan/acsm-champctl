@@ -62,6 +62,17 @@ describe("lap proposals", () => {
     s.close()
   })
 
+  it("won't hand out an approval once practice has started", async () => {
+    const s = await open()
+    const { id } = s.create(round, NOW)
+    s.approve(id, 22, "staff", NOW)
+    const started = new Date(round.cutoff)
+    expect(s.claim(started)).toBeUndefined()
+    s.expire(started)
+    expect(s.get(id)?.status).toBe("expired")
+    s.close()
+  })
+
   it("recomputes for new minutes only while nobody has approved it", async () => {
     const s = await open()
     const { id } = s.create(round, NOW)
