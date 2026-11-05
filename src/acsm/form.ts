@@ -451,7 +451,7 @@ export interface EntryListShapeOptions {
   /**
    * `EntryList.*` keys that mark particular rows rather than describe every
    * one, so their count is not the entrant count. The championship form's
-   * `EntryList.Spectator` is the one: rendered once, on the spectator car. The
+   * `EntryList.Spectator` is the one: rendered once on each spectator car. The
    * caller that names a marker checks its count itself.
    */
   markers?: readonly string[]

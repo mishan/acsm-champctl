@@ -121,6 +121,12 @@ export interface LiveryPlan {
   skinChanges: LiveryAssignment[]
   /** Rounds that already have results, 1-based. Not blocking; a skin is cosmetic. */
   racedRounds: number[]
+  /**
+   * What saving the form does to the spectator cars, which ACSM numbers from 0
+   * and stores without a race number (measured on 2.4.15). Said rather than
+   * hidden, since the drift check lets it through.
+   */
+  spectatorResets: string[]
 }
 
 /**
@@ -213,6 +219,15 @@ export function planLiveries(
     racedRounds: events(championship)
       .map((ev, i) => (eventHasResults(ev) ? i + 1 : 0))
       .filter((n) => n > 0),
+    spectatorResets: (championship.SpectatorCars ?? []).flatMap((car, i) => {
+      const what = [
+        ...(car.RaceNumber ? [`its race number ${car.RaceNumber} will be cleared`] : []),
+        ...(car.PitBox !== i ? [`its pit box will become ${i}`] : []),
+      ]
+      return what.length === 0
+        ? []
+        : [`${car.Name}: ${what.join(" and ")}, as any save of the championship form does.`]
+    }),
   }
 }
 

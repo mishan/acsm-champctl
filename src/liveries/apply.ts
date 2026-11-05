@@ -479,8 +479,52 @@ async function preflightChampionshipSave(
 
   const { form } = await readChampionshipForm(session, plan)
   checkDescription(before, form)
+  checkSpectatorRows(before, form)
+  checkPitBoxes(before)
   registrationDeadline(before)
   return { beforeText, before, backup }
+}
+
+/**
+ * The form's leading rows have to be the championship's spectator cars, in
+ * order. ACSM reads them as such by count alone, so this is the check that
+ * they are what the count says.
+ */
+function checkSpectatorRows(before: Championship, form: ChampionshipForm): void {
+  const stored = (before.SpectatorCars ?? []).map((c) => c.GUID ?? "")
+  const onForm = getAll(form.fields, "EntryList.GUID").slice(0, form.spectatorRows)
+  if (stored.length !== onForm.length || stored.some((g, i) => g !== onForm[i])) {
+    throw new AcsmWriteError(
+      `The edit page's ${form.spectatorRows} spectator-car rows don't match the ` +
+        `championship's ${stored.length} spectator cars, by GUID and in order, so champctl ` +
+        `can't tell which rows ACSM would read as drivers. Nothing was written.`,
+      undefined,
+      CHAMPIONSHIP_SUBMIT_PATH,
+    )
+  }
+}
+
+/**
+ * Every class's pit boxes have to be 0 to n-1 already. The form has no
+ * EntrantID, so a save numbers each class's entrants by position (§4.4): any
+ * other numbering would move somebody, and the drift check matches entrants by
+ * pit box on that understanding.
+ */
+function checkPitBoxes(before: Championship): void {
+  for (const [i, cls] of (before.Classes ?? []).entries()) {
+    const boxes = Object.values(cls.Entrants ?? {})
+      .map((e) => e.PitBox)
+      .sort((a, b) => (a ?? -1) - (b ?? -1))
+    if (boxes.some((b, n) => b !== n)) {
+      throw new AcsmWriteError(
+        `Class ${i + 1}'s pit boxes are ${boxes.join(", ")}, and saving the championship form ` +
+          `renumbers them 0 to ${boxes.length - 1} by position, which would move somebody. ` +
+          `Nothing was written. Saving the championship once in ACSM renumbers them.`,
+        undefined,
+        CHAMPIONSHIP_SUBMIT_PATH,
+      )
+    }
+  }
 }
 
 /**
@@ -562,6 +606,7 @@ async function saveChampionshipSkins(
 
   const { form, rows } = await readChampionshipForm(session, plan)
   checkDescription(checked.before, form)
+  checkSpectatorRows(checked.before, form)
 
   const fields = [...form.fields]
   for (const assignment of plan.assignments) {
@@ -587,7 +632,7 @@ async function saveChampionshipSkins(
       // The event form's list would refuse this outright: the championship form
       // genuinely renders no EntryList.EntrantID. See the constant's comment.
       requiredEntryListFields: CHAMPIONSHIP_REQUIRED_ENTRY_LIST_FIELDS,
-      // Marks the spectator car's row; findChampionshipForm has counted it.
+      // Marks the spectator cars' rows; findChampionshipForm has counted them.
       entryListMarkers: [SPECTATOR_MARKER],
     })
   } catch (e) {
@@ -722,6 +767,13 @@ const NIL_UUID = "00000000-0000-0000-0000-000000000000"
  * it unchanged does the same, measured on 2.4.15. Anything else — an entrant in
  * a different slot, a spectator car gone, a description emptied — is listed by
  * path.
+ *
+ * Class entrants are compared by pit box rather than by `CAR_n` key: a save
+ * re-keys them so `CAR_n` holds pit box n, and BATL's exports had keys out of
+ * that order. Their InternalUUIDs are all nil, so can't be the key instead.
+ * Spectator cars come back with pit box i and race number 0, the form having
+ * no field for either, and not necessarily in the order they were posted in,
+ * so they are compared by GUID (all measured on 2.4.15).
  */
 export function championshipDrift(
   before: unknown,
@@ -770,8 +822,50 @@ export function championshipDrift(
     }
     if (JSON.stringify(x) !== JSON.stringify(y)) out.push(`${path} changed`)
   }
-  walk(before, after, "")
+  walk(asSaved(before), inOrderOf(before, after), "")
   return out
+}
+
+/** `before` as a save that changed nothing would return it, for `championshipDrift`. */
+function asSaved(before: unknown): unknown {
+  if (before === null || typeof before !== "object") return before
+  const c = structuredClone(before) as Championship
+  if (c.SpectatorCars) {
+    c.SpectatorCars = c.SpectatorCars.map((car, i) => ({ ...car, PitBox: i, RaceNumber: 0 }))
+  }
+  for (const cls of c.Classes ?? []) {
+    const entrants = Object.values(cls.Entrants ?? {})
+    const boxes = new Set(entrants.map((e) => e.PitBox))
+    // Ambiguous or missing pit boxes stay keyed as they were, and checkPitBoxes
+    // refuses such a championship before it is written.
+    if (boxes.size !== entrants.length || entrants.some((e) => typeof e.PitBox !== "number")) {
+      continue
+    }
+    cls.Entrants = Object.fromEntries(entrants.map((e) => [`CAR_${e.PitBox}`, e]))
+  }
+  return c
+}
+
+/**
+ * `after` with its spectator cars in `before`'s order, matched by GUID. A GUID
+ * that isn't unique on both sides leaves the order alone, for the walk to flag.
+ */
+function inOrderOf(before: unknown, after: unknown): unknown {
+  const guids = (c: unknown) =>
+    ((c as Championship | null)?.SpectatorCars ?? []).map((car) => car.GUID)
+  const was = guids(before)
+  const now = guids(after)
+  if (new Set(was).size !== was.length || new Set(now).size !== now.length) return after
+  const cars = (after as Championship).SpectatorCars
+  if (!cars) return after
+  const rank = (g: string | undefined) => {
+    const i = was.indexOf(g)
+    return i < 0 ? was.length : i
+  }
+  return {
+    ...(after as Championship),
+    SpectatorCars: [...cars].sort((a, b) => rank(a.GUID) - rank(b.GUID)),
+  }
 }
 
 /** Backups kept per championship; older ones are removed as new ones land. */

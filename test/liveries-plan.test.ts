@@ -54,6 +54,16 @@ describe("planLiveries", () => {
     expect(plan.skinChanges).toHaveLength(1)
   })
 
+  it("says which spectator cars a save renumbers, since the form can't keep their race numbers", () => {
+    const car = (Name: string, PitBox: number, RaceNumber: number) => ({ Name, PitBox, RaceNumber })
+    const c = champWith([person({ Name: "Misha" })], {
+      SpectatorCars: [car("BATL TV", 23, 420), car("GridMom", 1, 0)],
+    } as Partial<Championship>)
+    expect(planLiveries(c, "champ-1", packOf(livery("Misha"))).spectatorResets).toEqual([
+      "BATL TV: its race number 420 will be cleared and its pit box will become 0, as any save of the championship form does.",
+    ])
+  })
+
   it("places an entrant at its CAR_n position, not its position in the pack", () => {
     // slots() sorts by the CAR_n key, which is the order the championship form
     // renders rows in. If these two orders disagree, a livery lands on the

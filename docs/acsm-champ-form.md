@@ -448,6 +448,45 @@ and round-tripped in the incident's own diff.
 On the harness copy, the description (12,013 characters, one image URL) and a
 `-07:00` registration deadline both came back byte for byte.
 
+### 4.7 More than one spectator car
+
+BATL's championships carry two spectator cars, the stream car and the race
+recorder. Measured on the 2.4.15 harness with copies of BATL's October (two) and
+November (one) championships, and a third added by hand:
+
+- The form renders each spectator car as a leading row with its own hidden
+  `EntryList.Spectator=true` and no `TransferTeamPoints`, before any class row.
+  After champctl strips the templates its payload matches a browser's key for
+  key and value for value.
+- **ACSM takes the first N rows as spectator cars, N being the number of
+  `EntryList.Spectator` values posted.** It checks neither the values nor where
+  they sit in the body (Go's `r.Form` can't see the interleaving). One marker
+  more than the rows allow is a 500 with nothing written; **one fewer is
+  accepted**: the second spectator car becomes the first driver, every driver
+  moves down a seat and the last is dropped, the 2026-10-06 failure again.
+- A browser save sets each spectator car's `PitBox` to its position and its
+  `RaceNumber` to 0 (the form has no field for either), and re-keys each class's
+  entrants so `CAR_n` holds `PitBox` n. October's export had `CAR_12` and
+  `CAR_23` the other way round; the save swapped the keys, not the drivers.
+- **A save can store the spectator cars in a different order than they were
+  posted**, each keeping the pit box of its posted row. Eight unchanged saves of
+  a three-car copy rotated the order twice before it settled. Nothing should
+  take `SpectatorCars[0]` to be any particular car; match them by GUID.
+- "Add Spectator(s)" in ACSM's UI inserts the new row after the last spectator
+  row with an empty `InternalUUID`; ACSM assigns one.
+
+**What champctl does.** `championshipRows` takes the marker count as the number
+of spectator rows, requires the rows to equal the classes plus that, each marker
+on its own leading row, `TransferTeamPoints` only on class rows, every marker
+`"true"`, and at most three spectator cars, the most measured. Before writing,
+the leading rows' GUIDs have to be the export's `SpectatorCars`, in order, and
+each class's pit boxes 0 to n-1, since a save numbers them by position. The
+drift check compares class entrants by pit box rather than by key (their
+`InternalUUID`s are nil on BATL's manager, so can't be the key), spectator cars
+by GUID, and lets the spectator cars' pit box and race number change as above;
+the livery preview says when that will happen. `test/live/liveries.live.test.ts`
+repeats the measurement with one, two and three spectator cars.
+
 ## 5. Restart: the practice endpoint, not the process one
 
 **Source, and this one is easy to get wrong.**
