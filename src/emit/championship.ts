@@ -458,7 +458,13 @@ function withLeagueSpectatorCars(
 ): Championship {
   const league = profile.entryList.spectatorCars ?? []
   if (league.length === 0) return c
-  const existing = c.SpectatorCars ?? []
+  // An older build keeps the car in the singular field; 2.4.x leaves that one
+  // blank and uses the list.
+  const existing = c.SpectatorCars?.length
+    ? c.SpectatorCars
+    : c.SpectatorCar?.Model?.trim()
+      ? [c.SpectatorCar]
+      : []
   const missing = league.filter(
     (car) => !existing.some((e) => normGuid(e.GUID) === normGuid(car.guid)),
   )

@@ -556,6 +556,19 @@ describe("emitting a championship", () => {
       for (const ev of events(c)) expect(ev.RaceSetup?.Cars).toContain("ford_transit")
     })
 
+    it("keeps an older build's singular spectator car when adding the league's", () => {
+      // Before 2.4.x the car lived in `SpectatorCar`; reading only the list
+      // would hide it behind the added ones and drop its model from Cars.
+      const t = template({
+        SpectatorCarEnabled: true,
+        SpectatorCar: { Name: "Van", GUID: "90000000000000009", Model: "ks_van", PitBox: 0 },
+      })
+      delete t.SpectatorCars
+      const { championship: c } = emit({ profile: league, template: t })
+      expect(c.SpectatorCars?.map((x) => x.Name)).toEqual(["Van", "Stream", "Recorder"])
+      for (const ev of events(c)) expect(ev.RaceSetup?.Cars).toContain("ks_van")
+    })
+
     it("switches spectator cars on when the template had them off", () => {
       const { championship: c } = emit({
         profile: league,
