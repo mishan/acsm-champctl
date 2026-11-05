@@ -306,6 +306,16 @@ export const THEME_COLORS = [
 ] as const
 export type ThemeColor = (typeof THEME_COLORS)[number]
 
+/** Proposing each race's lap count from the week's practice; see docs/lap-count.md. */
+export interface LapCountSettings {
+  /** Minutes per race, for a round that no longer says: once laps are set, its minutes are gone. */
+  raceMinutes: number
+  /** League-local `HH:mm` on race day. Default 09:00. */
+  proposeAt?: string
+  /** Who may apply a proposal. Absent: nobody, and proposals carry no buttons. */
+  approverRoleId?: string
+}
+
 export interface LeagueProfile {
   id: string
   name: string
@@ -324,6 +334,8 @@ export interface LeagueProfile {
   newChampionshipTemplate?: string
   /** Where `champctl-bot` posts. Absent means the league has no bot. */
   discord?: DiscordSettings
+  /** Absent means nothing proposes a lap count. */
+  lapCount?: LapCountSettings
   /** The web UI's colors, as `#rgb` or `#rrggbb`. Unset ones keep the defaults. */
   theme?: Partial<Record<ThemeColor, string>>
   /**

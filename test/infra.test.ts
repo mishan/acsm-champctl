@@ -507,6 +507,39 @@ describe("profile validation", () => {
   })
 
   it.each([
+    [{ raceMinutes: 20 }, null],
+    [{ raceMinutes: 20, proposeAt: "07:30", approverRoleId: "832679478579953666" }, null],
+    [{}, /lapCount.raceMinutes. must be a whole number between 1 and/],
+    [{ raceMinutes: 0 }, /lapCount.raceMinutes. must be a whole number between 1 and/],
+    [{ raceMinutes: 20.5 }, /lapCount.raceMinutes. must be a whole number between 1 and/],
+    [{ raceMinutes: 20, proposeAt: "9:00" }, /lapCount.proposeAt. must be a time/],
+    [{ raceMinutes: 20, proposeAt: "25:00" }, /lapCount.proposeAt. must be a time/],
+    [
+      { raceMinutes: 20, approverRoleId: "@Track Staff" },
+      /lapCount.approverRoleId. must be a Discord role id/,
+    ],
+    [{ raceMinutes: 20, proposeAT: "07:30" }, /lapCount.proposeAT. isn't a setting/],
+    [[], /.lapCount. must be an object/],
+  ])("checks the lap count settings %j", (lapCount, problem) => {
+    const load = () =>
+      validateProfile({
+        id: "x",
+        name: "X",
+        schedule: {
+          weekday: 3,
+          qualiStart: "20:00",
+          timezone: "UTC",
+          practiceMinutes: 60,
+          qualiMinutes: 20,
+        },
+        entryList: { targetSlots: 10 },
+        lapCount,
+      })
+    if (problem) expect(load).toThrow(problem)
+    else expect(load).not.toThrow()
+  })
+
+  it.each([
     [{ accent: "#f7a8c8", surface2: "#222" }, null],
     [{ accnet: "#f7a8c8" }, /isn't a color champctl knows/],
     [{ accent: "pink" }, /must be a hex color/],

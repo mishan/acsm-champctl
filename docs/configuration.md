@@ -58,6 +58,19 @@ comes from the template, so name its class for the league rather than a car.
 "newChampionshipTemplate": "be7446cd-b2c0-4157-8094-4d16add5be9d"
 ```
 
+`lapCount` is for the race-day lap count proposal (see
+[`lap-count.md`](lap-count.md)), which is still being built: nothing posts or
+applies one yet. `raceMinutes` is the length of each race for a
+round that no longer says, which is any round whose laps are already set.
+`proposeAt` is when, league-local on race day, and defaults to `09:00`.
+`approverRoleId` is the Discord role allowed to apply one; without it the
+proposal is posted for information and nobody can apply it. An unknown key is an
+error, as in `announce`.
+
+```json
+"lapCount": { "raceMinutes": 20, "proposeAt": "09:00", "approverRoleId": "1234567890123456789" }
+```
+
 **Track pit counts.** `data/track-pits.json`, an array of records — see
 [`data/track-pits.example.json`](../data/track-pits.example.json). Three sources,
 with `manual` always winning, because mod tracks routinely lie in their ui file.
