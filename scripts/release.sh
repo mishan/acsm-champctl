@@ -9,12 +9,15 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-git fetch --quiet --prune origin main '+refs/tags/*:refs/tags/*'
+# As deploy/upgrade.sh does: origin's tags, pruned, apart from local ones.
+git fetch --quiet --prune origin main '+refs/tags/*:refs/origin-tags/*'
 month=$(date +%Y.%-m)
-last=$(git tag --list "$month.*" | sed "s/^$month\.//" | grep -E '^[0-9]+$' | sort -n | tail -1)
+last=$(git for-each-ref --format='%(refname:lstrip=2)' "refs/origin-tags/$month.*" |
+  sed "s/^$month\.//" | grep -E '^[0-9]+$' | sort -n | tail -1)
 tag="$month.$((${last:--1} + 1))"
 
-released=$(git tag --points-at origin/main --list '[0-9]*.*.*')
+released=$(git for-each-ref --points-at origin/main --format='%(refname:lstrip=2)' \
+  'refs/origin-tags/[0-9]*.*.*')
 if [ -n "$released" ]; then
   echo "main is already released, as $released." >&2
   exit 1

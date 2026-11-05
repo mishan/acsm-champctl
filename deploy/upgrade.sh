@@ -20,13 +20,15 @@ for arg in "$@"; do
   esac
 done
 
-# Pruned too, so a release deleted upstream isn't deployed from a stale tag.
-git -C .. fetch --quiet --prune --prune-tags origin
+# origin's tags, pruned so a release deleted there can't be deployed, in a
+# namespace of their own so the pruning leaves tags made here alone.
+git -C .. fetch --quiet --prune origin '+refs/tags/*:refs/origin-tags/*'
 if [ -z "$version" ]; then
-  version=$(git -C .. tag --list '[0-9]*.*.*' --sort=-v:refname | head -1)
+  version=$(git -C .. for-each-ref --sort=-v:refname --format='%(refname:lstrip=2)' \
+    'refs/origin-tags/[0-9]*.*.*' | head -1)
 fi
 # Exactly a tag: not a branch, and not an expression like 2026.11.0~1.
-if [ -z "$version" ] || ! git -C .. show-ref --verify --quiet "refs/tags/$version"; then
+if [ -z "$version" ] || ! git -C .. show-ref --verify --quiet "refs/origin-tags/$version"; then
   echo "No release ${version:-at all} to deploy; scripts/release.sh makes one." >&2
   exit 1
 fi
@@ -59,8 +61,9 @@ if ! git -C .. diff --quiet HEAD; then
   git -C .. status --short --untracked-files=no >&2
   exit 1
 fi
-was=$(git -C .. describe --tags --always)
-git -C .. checkout --quiet --detach "refs/tags/$version"
+was=$(git -C .. for-each-ref --points-at HEAD --format='%(refname:lstrip=2)' refs/origin-tags | head -1)
+was=${was:-$(git -C .. rev-parse --short HEAD)}
+git -C .. checkout --quiet --detach "refs/origin-tags/$version"
 export CHAMPCTL_VERSION="$version"
 docker compose --profile '*' build -q $services
 docker compose --profile '*' up -d $services
