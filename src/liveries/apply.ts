@@ -481,6 +481,7 @@ async function preflightChampionshipSave(
   checkDescription(before, form)
   checkSpectatorRows(before, form)
   checkPitBoxes(before)
+  checkClassRows(before, form)
   registrationDeadline(before)
   return { beforeText, before, backup }
 }
@@ -524,6 +525,30 @@ function checkPitBoxes(before: Championship): void {
         CHAMPIONSHIP_SUBMIT_PATH,
       )
     }
+  }
+}
+
+/**
+ * The form's class rows have to be the export's entrants in pit-box order,
+ * which is how 2.4.15 renders them and what a save numbers them by. Any other
+ * order would move drivers, and the drift check would only see it afterwards.
+ * Single class only, as `readChampionshipForm` refuses more.
+ */
+function checkClassRows(before: Championship, form: ChampionshipForm): void {
+  const byBox = Object.values(before.Classes?.[0]?.Entrants ?? {}).sort(
+    (a, b) => (a.PitBox ?? 0) - (b.PitBox ?? 0),
+  )
+  const names = currentNames(form).slice(form.spectatorRows)
+  const guids = getAll(form.fields, "EntryList.GUID").slice(form.spectatorRows)
+  const out = byBox.findIndex((e, i) => (e.Name ?? "") !== names[i] || (e.GUID ?? "") !== guids[i])
+  if (out >= 0 || names.length !== byBox.length) {
+    throw new AcsmWriteError(
+      `The edit page doesn't list the drivers in pit-box order (first difference at pit box ` +
+        `${out >= 0 ? out : byBox.length}), and saving it would number them by that order, ` +
+        `moving somebody. Nothing was written.`,
+      undefined,
+      CHAMPIONSHIP_SUBMIT_PATH,
+    )
   }
 }
 

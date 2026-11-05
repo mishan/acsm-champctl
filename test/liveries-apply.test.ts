@@ -205,6 +205,8 @@ async function fakeSession(
     formSpectatorGuids?: string[]
     /** Each class entrant's PitBox, by CAR_n key; 0, 1, ... unless given. */
     pitBoxes?: number[]
+    /** The class rows the edit page renders, where they differ from the championship's. */
+    pageNames?: string[]
   } = {},
 ) {
   const requests: Recorded[] = []
@@ -222,7 +224,7 @@ async function fakeSession(
     // them by PitBox, which is the order `names` gives.
     const byBox = Object.values(base.Classes![0]!.Entrants!)
     base.Classes![0]!.Entrants = Object.fromEntries(
-      options.pitBoxes.map((box, i) => [`CAR_${i}`, { ...byBox[box]!, PitBox: box }]),
+      options.pitBoxes.map((box, i) => [`CAR_${i}`, { ...(byBox[box] ?? byBox[i]!), PitBox: box }]),
     )
   }
   const state = championship({
@@ -350,7 +352,7 @@ async function fakeSession(
     }
     if (url.includes("/edit")) {
       return new Response(
-        editPage(names, {
+        editPage(options.pageNames ?? names, {
           ...(options.classTemplate ? { classTemplate: true } : {}),
           ...(options.secondClass ? { secondClass: options.secondClass } : {}),
           info: options.descriptionMismatch ? "" : String(state["Info"] ?? ""),
@@ -707,6 +709,17 @@ describe("what a championship save leaves behind", () => {
     )
   })
 
+  it("refuses before any upload when the form doesn't list drivers in pit-box order", async () => {
+    // A save numbers class rows by position, so a form in any other order
+    // would move drivers. Measured to be pit-box order; checked, not assumed.
+    const { session, requests } = await fakeSession({
+      pitBoxes: [1, 0],
+      pageNames: ["postaL", "Misha"],
+    })
+    await expect(applyLiveries(session, plan())).rejects.toThrow(/pit-box order/)
+    expect(requests.filter((r) => r.url.includes("/skin"))).toEqual([])
+  })
+
   it("refuses before any upload when the pit boxes aren't 0 to n-1", async () => {
     // A save renumbers them by position, so a gap moves somebody.
     const { session, requests } = await fakeSession({ pitBoxes: [0, 2] })
@@ -919,14 +932,14 @@ describe("championshipDrift", () => {
       { CAR_0: at("Ann", 0), CAR_1: at("Bo", 1) },
       {
         SpectatorCars: [
-          { Name: "TV", PitBox: 0, RaceNumber: 0 },
-          { Name: "Rec", PitBox: 1, RaceNumber: 0 },
+          { Name: "TV", GUID: "1", PitBox: 23, RaceNumber: 420 },
+          { Name: "Rec", GUID: "2", PitBox: 24, RaceNumber: 420 },
         ],
       },
     )
     const after = of(
-      { CAR_0: at("Rec", 0), CAR_1: at("Ann", 1) },
-      { SpectatorCars: [{ Name: "TV", PitBox: 0, RaceNumber: 0 }] },
+      { CAR_0: { ...at("Rec", 0), GUID: "2" }, CAR_1: at("Ann", 1) },
+      { SpectatorCars: [{ Name: "TV", GUID: "1", PitBox: 0, RaceNumber: 0 }] },
     )
     const drift = championshipDrift(before, after, new Map())
     expect(drift).toContain(".SpectatorCars.1 removed")

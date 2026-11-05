@@ -231,19 +231,19 @@ describe("champctl-liveries --drain", () => {
     const champ = { ...oneClass(["Ann"]), SpectatorCars: [{ Name: "Van", Model: CAR, Skin: "v" }] }
     let saved = false
     const exportNow = () => JSON.stringify(saved ? { ...champ, SpectatorCars: [] } : champ)
-    const row = (name: string, spectator = false) => `
+    const row = (name: string, spectator = false, guid = "") => `
       <input type="hidden" name="EntryList.InternalUUID" value="">
       <select name="EntryList.Car"><option value="${CAR}" selected>c</option></select>
       <select name="EntryList.Skin"></select>
       <input name="EntryList.Name" value="${name}">
-      <input name="EntryList.Team" value=""><input name="EntryList.GUID" value="">
+      <input name="EntryList.Team" value=""><input name="EntryList.GUID" value="${guid}">
       <input name="EntryList.Ballast" value="0"><input name="EntryList.Restrictor" value="0">
       <select name="EntryList.FixedSetup"><option value="" selected></option></select>
       ${spectator ? '<input type="hidden" name="EntryList.Spectator" value="true">' : ""}`
     const page = `<form action="/championships/new/submit" method="post">
       <textarea name="ChampionshipInfo"></textarea><div id="ChampionshipInfoHolder"></div>
       <div class="entrant">${row("Van", true)}</div>
-      <input name="ClassName" value="RSS"><div class="entrant">${row("Ann")}</div>
+      <input name="ClassName" value="RSS"><div class="entrant">${row("Ann", false, driver("Ann").GUID)}</div>
       <input type="hidden" name="EntryList.NumEntrants" value="1"></form>`
     const stub = await acsmStub(CHAMP, champ, {
       handle: ({ method, path }) => {

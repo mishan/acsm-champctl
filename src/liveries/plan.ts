@@ -244,10 +244,10 @@ export interface RosterEntry {
  * Every class entrant, with the position the championship form will render it
  * at.
  *
- * `slots()` sorts by the `CAR_n` key, which is the order
- * `ChampionshipClass.Entrants.AsSlice` renders and therefore the order the form
- * lays the rows out in. Getting that order wrong puts a livery on the wrong
- * driver, so it is worth saying out loud that these two sorts are the same one.
+ * `slots()` sorts by the `CAR_n` key. The form lays rows out by pit box, which
+ * is usually the same order but wasn't in BATL's October export
+ * (docs/acsm-champ-form.md §4.7), so the write path finds each driver's row by
+ * name rather than by this index.
  */
 export function rosterOf(championship: Championship): RosterEntry[] {
   const out: RosterEntry[] = []
