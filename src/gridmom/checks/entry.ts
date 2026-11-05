@@ -751,6 +751,7 @@ export const leagueSpectatorCarMissing: Check = {
       if (!found) {
         // Where spectatorCarRefs would read it from, had the switch been on.
         const c = ctx.championship
+        const field = c.SpectatorCars?.length ? "SpectatorCars" : "SpectatorCar"
         const stored = c.SpectatorCars?.length ? c.SpectatorCars : [c.SpectatorCar]
         const off = stored.some((e) => e && normGuid(e.GUID) === normGuid(car.guid))
         emit(
@@ -759,7 +760,7 @@ export const leagueSpectatorCarMissing: Check = {
           `The league's spectator car ${car.name} (${car.guid}) ` +
             `${off ? "is in this championship, but spectator cars are switched off" : "isn't in this championship"}, ` +
             `so it can't join its sessions.`,
-          { path: "SpectatorCars" },
+          { path: off ? field : "SpectatorCars" },
           { guid: car.guid, name: car.name },
         )
       } else if ((found.entrant.Model ?? "").trim() !== car.model) {

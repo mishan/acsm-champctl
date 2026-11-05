@@ -787,11 +787,9 @@ describe("the league's spectator cars", () => {
       SpectatorCar: car("Stream", "90000000000000001"),
     })
     delete c.SpectatorCars
-    expect(
-      findings(c)
-        .map((x) => x.message)
-        .sort()[1],
-    ).toMatch(/Stream .* is in this championship, but spectator cars are switched off/)
+    const stream = findings(c).find((x) => x.message.includes("Stream"))
+    expect(stream?.message).toMatch(/is in this championship, but spectator cars are switched off/)
+    expect(stream?.location?.path).toBe("SpectatorCar")
   })
 
   it("survives a null among the spectator cars", () => {
