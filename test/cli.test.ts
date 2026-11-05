@@ -19,7 +19,8 @@ import {
 import { confirm, loadPits, UsageError } from "../src/cli/args.js"
 import { parseArgs as parseArchiveArgs } from "../src/cli/archive.js"
 import { parseArgs as parseBotArgs } from "../src/cli/bot.js"
-import { parseArgs as parseGridmomArgs } from "../src/cli/gridmom.js"
+import { describeLaps, lapsExitCode, parseArgs as parseGridmomArgs } from "../src/cli/gridmom.js"
+import type { RoundLaps } from "../src/laps/round.js"
 import { parseArgs as parseLiveriesArgs } from "../src/cli/liveries.js"
 import { clientRootFor, parseArgs as parseServeArgs } from "../src/cli/serve.js"
 import type { RaceFormat } from "../src/finalize/format.js"
@@ -613,5 +614,105 @@ describe("finding the built client", () => {
     // This suite runs from `src/`, so the assertion is about the fallback.
     const root = clientRootFor(undefined)
     expect(root).toBe(resolve(process.cwd(), "dist/client"))
+  })
+})
+
+describe("gridmom laps", () => {
+  it("takes a round and minutes as whole numbers from 1", () => {
+    expect(parseGridmomArgs(["laps", "c1", "--round", "2", "--minutes", "40"])).toMatchObject({
+      command: "laps",
+      target: "c1",
+      round: 2,
+      minutes: 40,
+    })
+    for (const bad of ["0", "1.5", "x"]) {
+      expect(() => parseGridmomArgs(["laps", "c1", "--round", bad])).toThrow(UsageError)
+      expect(() => parseGridmomArgs(["laps", "c1", "--minutes", bad])).toThrow(UsageError)
+    }
+  })
+
+  const base: RoundLaps = {
+    round: 1,
+    label: "rt_lime_rock_park/chicane",
+    eventId: "e1",
+    window: { since: new Date("2026-10-29T04:17:00Z"), until: new Date("2026-11-05T03:00:00Z") },
+    currentLaps: 13,
+    currentMinutes: 0,
+    proposal: {
+      kind: "laps",
+      laps: 22,
+      minutes: 20,
+      best: { lapMs: 94_694, driver: "Driver 1", car: "civic", sessionFile: "f" },
+      sessions: 13,
+      validLaps: 270,
+      drivers: 11,
+    },
+  }
+  const warn = (round: number | undefined, message: string) => ({
+    code: "x",
+    severity: "WARN" as const,
+    message,
+    location: round === undefined ? {} : { round },
+  })
+
+  it("says the count, what it replaces, and where it came from, in the league's time", () => {
+    expect(describeLaps(base, "America/Los_Angeles")).toBe(
+      [
+        "Round 1, rt_lime_rock_park/chicane",
+        "22 laps for 20-minute races (now 13).",
+        "Fastest clean practice lap: 1:34.694 by Driver 1 in civic.",
+        "From 13 practice sessions between Wed 28 Oct 21:17 and Wed 4 Nov 19:00: 270 clean laps by 11 drivers.",
+      ].join("\n"),
+    )
+  })
+
+  it.each([
+    [22, 0, "(already set)"],
+    [0, 40, "(now 40 minutes)"],
+    [0, 0, "(now unset)"],
+  ])("with the round at %i laps and %i minutes, says %s", (currentLaps, currentMinutes, phrase) => {
+    expect(describeLaps({ ...base, currentLaps, currentMinutes }, "UTC")).toContain(
+      `22 laps for 20-minute races ${phrase}.`,
+    )
+  })
+
+  it.each([
+    ["nothing to propose", { proposal: { kind: "none", reason: "x" } }, 1],
+    ["a clean proposal", {}, 0],
+    ["a warning here", { findings: [warn(1, "w")] }, 1],
+    ["an error here", { findings: [{ ...warn(1, "e"), severity: "ERROR" }] }, 2],
+    ["an error on another round only", { findings: [{ ...warn(2, "e"), severity: "ERROR" }] }, 0],
+  ])("exits for %s", (_, over, code) => {
+    const { findings = [], ...rest } = over as { findings?: unknown[] }
+    const r = {
+      ...base,
+      ...rest,
+      gridmom: { findings, counts: { ERROR: 1, WARN: 1, INFO: 0 }, ok: false },
+    } as RoundLaps
+    expect(lapsExitCode(r)).toBe(code)
+  })
+
+  it("lists this round's warnings and only counts the others'", () => {
+    const r: RoundLaps = {
+      ...base,
+      gridmom: {
+        findings: [warn(1, "here"), warn(undefined, "everywhere"), warn(2, "elsewhere")],
+        counts: { ERROR: 0, WARN: 3, INFO: 0 },
+        ok: false,
+      },
+    } as RoundLaps
+    const out = describeLaps(r, "UTC")
+    expect(out).toContain("  WARN here\n  WARN everywhere\nPlus 1 for other rounds")
+    expect(out).not.toContain("elsewhere")
+  })
+
+  it("says why there is nothing to propose", () => {
+    const r: RoundLaps = {
+      ...base,
+      proposal: { kind: "none", reason: "nobody has run this round's practice yet" },
+    }
+    expect(describeLaps(r, "UTC")).toContain(
+      "No lap count to propose: nobody has run this round's practice yet, between",
+    )
   })
 })

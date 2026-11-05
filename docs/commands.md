@@ -13,6 +13,7 @@ championship needs no credentials — the export is public.
 gridmom check <championship-id>     check a championship on the league's ACSM
 gridmom check --file <export.json>  check an export already on disk
 gridmom list                        list championships on the league's ACSM
+gridmom laps <championship-id>      propose a round's race laps from its practice
 
   --profile <id|path>   league profile (default: $CHAMPCTL_PROFILE, else batl)
   --pits <path>         track pit table JSON
@@ -23,6 +24,9 @@ gridmom list                        list championships on the league's ACSM
   --base-url <url>      override the profile's ACSM base URL
   --no-cache            bypass the on-disk response cache
   --now <iso>           pretend it is this time (for the schedule checks)
+  --round <n>           laps: which round (default: the next one)
+  --minutes <n>         laps: minutes per race (default: the round's while it is
+                        timed, else the profile's lapCount.raceMinutes)
 ```
 
 ```
@@ -57,6 +61,23 @@ there's no mandatory stop.
 Exit codes are the contract for cron: `0` clean, `1` warnings, `2` errors, `3`
 gridmom itself failed. A nightly job can decide whether to post without parsing
 anything.
+
+`gridmom laps` works out a round's race laps from that week's practice, the
+way [`lap-count.md`](lap-count.md) describes, and changes nothing:
+
+```
+$ gridmom laps <id>
+
+Round 1, rt_lime_rock_park/chicane
+22 laps for 20-minute races (now 13).
+Fastest clean practice lap: 54.694 s by Driver 1 in jtc_honda_civic_eg_gra.
+From 13 practice sessions between the last race night and Wed 4 Nov 19:00: 270 clean laps by 11 drivers.
+```
+
+It also lists what gridmom finds in the championship with that count set,
+for this round and the whole championship, and counts other rounds' findings.
+The exit code is `check`'s, from those findings only; it is also `1` when there
+is nothing to propose. `--suppress` applies as for `check`.
 
 `--suppress` takes exact codes, dotted prefixes or a check id, so `--suppress
 format` hides every format finding and `--suppress champ.repeated-track` hides
