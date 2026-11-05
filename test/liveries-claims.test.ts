@@ -388,7 +388,8 @@ describe("migrating a database written before claims were per championship", () 
     dir = await mkdtemp(join(tmpdir(), "champctl-claims-migrate-"))
   })
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true })
+    if (dir) await rm(dir, { recursive: true, force: true })
+    dir = ""
   })
 
   const openGlobal = async (dir: string) => {
