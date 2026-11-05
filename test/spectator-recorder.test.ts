@@ -151,10 +151,14 @@ describe("Recorder", () => {
     await settle()
     server.sendTcp(sessionUpdate("Qualify"), sessionUpdate("Race"))
     // Race begins only once Practice has finished closing; a stop before then rightly skips it.
-    await vi.waitFor(async () =>
-      expect(await readdir(dir)).toContainEqual(expect.stringMatching(/-race\.ndjson\.gz$/)),
-    )
-    await rec.stop()
+    try {
+      await vi.waitFor(async () =>
+        expect(await readdir(dir)).toContainEqual(expect.stringMatching(/-race\.ndjson\.gz$/)),
+      )
+    } finally {
+      // A timed-out wait would otherwise leave the recorder's retry timer and client running.
+      await rec.stop()
+    }
     const names = (await journals()).map((r) => r.find((x) => x.t === "session"))
     expect(names.map((x) => x?.t === "session" && x.name)).toEqual(["Practice", "Race"])
   })
