@@ -184,12 +184,22 @@ const MIGRATIONS: Migration[] = [
     name: "queue: key halts and leases by the lowercase championship id",
     up: (db) => {
       // ACSM reads ids case-insensitively, and the CLI, the drain and champctl
-      // web get theirs from different places. Where both spellings exist, the
-      // lowercase row stays.
-      for (const table of ["drain_halt", "drain_lease"]) {
+      // web get theirs from different places. Where one championship has rows
+      // under several spellings, one stays: the earliest halt, whose backup
+      // predates the damage, and the lease that runs longest, so a live holder
+      // isn't dropped for an expired one.
+      for (const [table, keep] of [
+        ["drain_halt", "halted_at ASC"],
+        ["drain_lease", "expires_at DESC"],
+      ] as const) {
         db.exec(`
-          DELETE FROM ${table} WHERE championship_id <> lower(championship_id)
-            AND lower(championship_id) IN (SELECT championship_id FROM ${table});
+          DELETE FROM ${table} WHERE rowid NOT IN (
+            SELECT rowid FROM (
+              SELECT rowid, row_number() OVER (
+                PARTITION BY lower(championship_id) ORDER BY ${keep}, rowid
+              ) AS n FROM ${table}
+            ) WHERE n = 1
+          );
           UPDATE ${table} SET championship_id = lower(championship_id);
         `)
       }

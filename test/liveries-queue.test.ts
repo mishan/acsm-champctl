@@ -415,6 +415,60 @@ describe("which championship a halt or lease is for", () => {
     q.close()
   })
 
+  /** A database from before ids were lowercased, holding these rows. */
+  async function premigration(rows: (raw: DatabaseSync) => void) {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-queue-"))
+    const path = join(dir, "liveries.db")
+    ;(await SqliteSubmissionQueue.open(path)).close()
+    const raw = new DatabaseSync(path)
+    rows(raw)
+    raw.prepare("UPDATE champctl_schema SET version = version - 1 WHERE component = 'queue'").run()
+    raw.close()
+    return { path, done: () => rm(dir, { recursive: true, force: true }) }
+  }
+
+  it("keeps the earliest of a championship's halts, whose backup predates the damage", async () => {
+    const db = await premigration((raw) => {
+      const halt = raw.prepare(
+        "INSERT INTO drain_halt (championship_id, reason, backup, halted_at) VALUES (?, ?, ?, ?)",
+      )
+      halt.run(UPPER, "later", "/b/later.json", "2026-09-02T00:00:00.000Z")
+      halt.run(
+        "Aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "first",
+        "/b/first.json",
+        "2026-09-01T00:00:00.000Z",
+      )
+    })
+    try {
+      const q = await SqliteSubmissionQueue.open(db.path)
+      expect(await q.drainHalt(CHAMP)).toMatchObject({ reason: "first", backup: "/b/first.json" })
+      q.close()
+    } finally {
+      await db.done()
+    }
+  })
+
+  it("keeps a championship's live lease over an expired one", async () => {
+    const db = await premigration((raw) => {
+      const lease = raw.prepare(
+        "INSERT INTO drain_lease (championship_id, holder, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
+      )
+      lease.run(CHAMP, "gone", "2026-09-01T00:00:00.000Z", "2026-09-01T00:10:00.000Z")
+      lease.run(UPPER, "running", MON.toISOString(), "2026-09-01T20:10:00.000Z")
+    })
+    try {
+      const q = await SqliteSubmissionQueue.open(db.path)
+      expect(await q.acquireDrainLease(CHAMP, "new", MON, 60_000)).toMatchObject({
+        ok: false,
+        heldBy: "running",
+      })
+      q.close()
+    } finally {
+      await db.done()
+    }
+  })
+
   it("still finds a halt written under another spelling before this", async () => {
     const dir = await mkdtemp(join(tmpdir(), "champctl-queue-"))
     const path = join(dir, "liveries.db")
