@@ -451,6 +451,11 @@ describe("profile validation", () => {
   it.each([
     [[{ name: "", model: "m", guid: "90000000000000001" }], /spectatorCars\[0\].name/],
     [[{ name: "A", model: "", guid: "90000000000000001" }], /spectatorCars\[0\].model/],
+    [
+      [{ name: "A", model: "ford_transit ", guid: "90000000000000001" }],
+      /spectatorCars\[0\].model/,
+    ],
+    [[{ name: "A", model: "m", guid: "90000000000000001", skin: 3 }], /spectatorCars\[0\].skin/],
     [[{ name: "A", model: "m", guid: "123" }], /spectatorCars\[0\].guid. must be a Steam id/],
     [
       [

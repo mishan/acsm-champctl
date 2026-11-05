@@ -770,7 +770,14 @@ describe("the league's spectator cars", () => {
       SpectatorCarEnabled: false,
       SpectatorCars: [car("Stream", "90000000000000001"), car("Recorder", "90000000000000002")],
     })
-    expect(findings(c)).toHaveLength(2)
+    expect(
+      findings(c)
+        .map((x) => x.message)
+        .sort(),
+    ).toEqual([
+      "The league's spectator car Recorder (90000000000000002) is in this championship, but spectator cars are switched off, so it can't join its sessions.",
+      "The league's spectator car Stream (90000000000000001) is in this championship, but spectator cars are switched off, so it can't join its sessions.",
+    ])
   })
 
   it("says nothing when the league has none, or the championship has them all", () => {

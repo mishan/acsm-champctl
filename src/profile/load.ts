@@ -119,7 +119,10 @@ export function validateProfile(v: unknown, source = "<inline>"): LeagueProfile 
           bad(`${at}.${key}\` isn't a setting champctl knows`)
       }
       for (const key of ["name", "model"] as const) {
-        if (typeof c[key] !== "string" || !c[key].trim()) bad(`${at}.${key}\` must be set`)
+        // Compared exactly against ACSM's, so a stray space would warn forever.
+        if (typeof c[key] !== "string" || !c[key] || c[key] !== c[key].trim()) {
+          bad(`${at}.${key}\` must be set, with no spaces around it`)
+        }
       }
       if (c["skin"] !== undefined && typeof c["skin"] !== "string") bad(`${at}.skin\` must be text`)
       if (typeof c["guid"] !== "string" || !/^\d{17}$/.test(c["guid"])) {

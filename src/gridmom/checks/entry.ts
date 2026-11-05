@@ -749,11 +749,15 @@ export const leagueSpectatorCarMissing: Check = {
     for (const car of ctx.profile.entryList.spectatorCars ?? []) {
       const found = present.find((r) => normGuid(r.entrant.GUID) === normGuid(car.guid))
       if (!found) {
+        const off = (ctx.championship.SpectatorCars ?? []).some(
+          (e) => normGuid(e.GUID) === normGuid(car.guid),
+        )
         emit(
           "WARN",
           "entry.spectator-missing",
-          `The league's spectator car ${car.name} (${car.guid}) isn't in this championship, so ` +
-            `it can't join its sessions.`,
+          `The league's spectator car ${car.name} (${car.guid}) ` +
+            `${off ? "is in this championship, but spectator cars are switched off" : "isn't in this championship"}, ` +
+            `so it can't join its sessions.`,
           { path: "SpectatorCars" },
           { guid: car.guid, name: car.name },
         )
