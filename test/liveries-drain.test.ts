@@ -20,6 +20,13 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { Championship } from "../src/acsm/types.js"
 import { main } from "../src/cli/liveries.js"
+
+// The operator's answer at the prompt, so a test can act while it is open.
+const { confirmMock } = vi.hoisted(() => ({ confirmMock: vi.fn(async () => true) }))
+vi.mock("../src/cli/args.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/cli/args.js")>()),
+  confirm: confirmMock,
+}))
 import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
 import { acsmStub, type AcsmStub } from "./support/acsm-stub.js"
 import { championship, championshipClass, driver, entryList, raceEvent } from "./support/build.js"
@@ -405,5 +412,37 @@ describe("champctl-liveries --drain", () => {
     expect(code).toBe(3)
     expect(said.join("")).toMatch(/Another drain is running \(drain/)
     expect(stub.requests.filter((r) => r.includes("/skin") || r.includes("/submit"))).toEqual([])
+  })
+
+  it("doesn't push a pack to a championship halted while the prompt was open", async () => {
+    // A drain's save drifted, halted the championship and let go of its lease
+    // while the operator was reading the preview.
+    const { db, dir } = await seeded([], oneClass(["Ann"]))
+    const stub = await acsmStub(CHAMP, oneClass(["Ann"]), {
+      handle: ({ path }) =>
+        path === "/login"
+          ? { status: 302, headers: { location: "/", "set-cookie": "_acsm_data=x; Path=/" } }
+          : undefined,
+    })
+    open.push({ dir, stub })
+    const pack = join(dir, "pack.zip")
+    await writeFile(pack, zipSync({ [`${CAR}/Ann.zip`]: skinZip() }))
+    confirmMock.mockImplementationOnce(async () => {
+      const q = await SqliteSubmissionQueue.open(db)
+      await q.haltDrain(CHAMP, "A save moved a driver.", undefined, NOW)
+      q.close()
+      return true
+    })
+
+    vi.stubEnv("CHAMPCTL_USERNAME", "operator")
+    vi.stubEnv("CHAMPCTL_PASSWORD", "secret")
+    // 4 is the halt's own exit code.
+    expect(
+      await main([CHAMP, "--zip", pack, "--push", "--base-url", stub.baseUrl, "--store", db]),
+    ).toBe(4)
+    expect(stub.requests.filter((r) => r.includes("/skin") || r.includes("/submit"))).toEqual([])
+    const q = await SqliteSubmissionQueue.open(db)
+    expect((await q.acquireDrainLease(CHAMP, "drain", new Date(), 60_000)).ok).toBe(true)
+    q.close()
   })
 })

@@ -595,6 +595,14 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     )
     return 3
   }
+  // Again under the lease: a drain whose save drifted may have halted the
+  // championship and let go while the prompt above was open.
+  const haltedSince = await queue.drainHalt(args.championshipId!)
+  if (haltedSince) {
+    await queue.releaseDrainLease(args.championshipId!, holder)
+    queue.close()
+    throw new DrainHaltedError(args.championshipId!, haltedSince)
+  }
 
   const store = args.noStore ? undefined : await SqliteLiveryStore.open(storePath(args))
   try {
