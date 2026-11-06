@@ -604,7 +604,9 @@ async function runCommand(argv: readonly string[]): Promise<number> {
       .then((held) => {
         if (!held) lostLease = true
       })
-      .catch(() => {})
+      .catch(() => {
+        lostLease = true
+      })
   }, DRAIN_LEASE_MS / 3)
   renewal.unref()
   try {
@@ -619,17 +621,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
       eventIds,
       backupDir: backupDirFor(args),
       ...(store ? { record: store, source: "zip" as const } : {}),
-      beforePost: async () => {
-        if (
-          lostLease ||
-          !(await queue.renewDrainLease(args.championshipId!, holder, new Date(), DRAIN_LEASE_MS))
-        ) {
-          throw new LiveryApplyError(
-            `Another drain took ${args.championshipId} over while the skins were uploading, so ` +
-              `the championship wasn't saved. The skins are on the server; run this again.`,
-          )
-        }
-      },
+      beforePost: leaseGuard(queue, args.championshipId!, holder, () => lostLease),
     }).catch((e: unknown) => haltOnDamage(args, args.championshipId!, e))
     say(
       `Uploaded ${result.uploaded.length} ${result.uploaded.length === 1 ? "livery" : "liveries"}` +
@@ -737,7 +729,9 @@ async function drain(
         .then((held) => {
           if (!held) lostLease = true
         })
-        .catch(() => {})
+        .catch(() => {
+          lostLease = true
+        })
     }, DRAIN_LEASE_MS / 3)
     renewal.unref()
 
@@ -910,6 +904,7 @@ async function drain(
       const result = await applyLiveries(session, plan, {
         ...(store ? { record: store, source: "discord" as const } : {}),
         backupDir: backupDirFor(args),
+        beforePost: leaseGuard(queue, championshipId, holder, () => lostLease),
       }).catch(async (e: unknown) => {
         if (e instanceof ChampionshipDriftError || e instanceof ChampionshipUnverifiedError) {
           await queue.haltDrain(championshipId, e.message, e.backup, new Date())
@@ -1125,6 +1120,31 @@ export function wontComeRight(e: unknown): e is AcsmAuthError {
 const EXIT_HALTED = 4
 
 /** A write refused because an earlier save to this championship went wrong. */
+/**
+ * The last check before a championship save is sent, for a run holding the
+ * drain's lease: the lease has to be still this run's, renewed then and there.
+ * A large upload or the rate limiter can outlast it, and whoever took it may
+ * be saving the whole championship already.
+ */
+function leaseGuard(
+  queue: SqliteSubmissionQueue,
+  championshipId: string,
+  holder: string,
+  lost: () => boolean,
+): () => Promise<void> {
+  return async () => {
+    if (
+      lost() ||
+      !(await queue.renewDrainLease(championshipId, holder, new Date(), DRAIN_LEASE_MS))
+    ) {
+      throw new LiveryApplyError(
+        `Another drain took ${championshipId} over while this one was running, so the ` +
+          `championship wasn't saved. Any skins uploaded are on the server; run this again.`,
+      )
+    }
+  }
+}
+
 export class DrainHaltedError extends Error {
   constructor(championshipId: string, halt: DrainHalt) {
     super(

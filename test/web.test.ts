@@ -2460,10 +2460,14 @@ describe("adding the league's spectator cars", () => {
     // whole championship already.
     const liveriesStore = await store()
     let reads = 0
-    const m = manager({
+    // Declared before the manager so its hook can reach the state.
+    let m: ReturnType<typeof manager> | undefined
+    m = manager({
       onEditRead: () => {
         // The save's own read of the form, after the checks' one.
         if (++reads !== 2) return
+        // The new holder saves the championship as it takes the lease.
+        m!.state.Name = "Saved by the drain"
         const other = new DatabaseSync(liveriesStore)
         other
           .prepare(
@@ -2478,6 +2482,10 @@ describe("adding the league's spectator cars", () => {
     const res = await apply(h, (await plan(h)).json().planId)
     expect(res.statusCode).toBe(409)
     expect(m.posts).toEqual([])
+    // Nothing was sent, so the drain's save isn't this one's drift to halt on.
+    const q = await SqliteSubmissionQueue.open(liveriesStore)
+    expect(await q.drainHalt(CHAMP_ID)).toBeUndefined()
+    q.close()
   })
 
   it("says there's nothing to add when every car is there", async () => {

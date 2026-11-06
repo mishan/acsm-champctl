@@ -333,6 +333,12 @@ export interface PostFormOptions {
   requiredEntryListFields?: readonly string[]
   /** Row-marker keys exempt from the arity check; see `EntryListShapeOptions.markers`. */
   entryListMarkers?: readonly string[]
+  /**
+   * Runs after the rate limiter's wait, immediately before the request goes
+   * out; throwing stops it unsent. For a caller holding a lease, whose check
+   * made before the wait could be stale by the time the request leaves.
+   */
+  beforeSend?: () => Promise<void>
 }
 
 export class AcsmSession {
@@ -359,9 +365,14 @@ export class AcsmSession {
   }
 
   /** `#request` for a write, telling `afterWrite` once it has gone out. */
-  async #write(path: string, init: RequestInit, timeoutMs?: number): Promise<Response> {
+  async #write(
+    path: string,
+    init: RequestInit,
+    timeoutMs?: number,
+    beforeSend?: () => Promise<void>,
+  ): Promise<Response> {
     try {
-      return await this.#request(path, init, timeoutMs)
+      return await this.#request(path, init, timeoutMs, beforeSend)
     } finally {
       await this.#afterWrite?.()
     }
@@ -625,12 +636,17 @@ export class AcsmSession {
       )
     }
 
-    const res = await this.#write(path, {
-      method: "POST",
-      body: toBody(sent),
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      redirect: "manual",
-    })
+    const res = await this.#write(
+      path,
+      {
+        method: "POST",
+        body: toBody(sent),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        redirect: "manual",
+      },
+      undefined,
+      options.beforeSend,
+    )
 
     // ACSM redirects on success and re-renders the page on failure.
     if (res.status >= 400) {
@@ -734,9 +750,14 @@ export class AcsmSession {
    * default is sized for a page of HTML, and a livery upload is tens of
    * megabytes — see `postFiles`.
    */
-  async #request(path: string, init: RequestInit, timeoutMs?: number): Promise<Response> {
+  async #request(
+    path: string,
+    init: RequestInit,
+    timeoutMs?: number,
+    beforeSend?: () => Promise<void>,
+  ): Promise<Response> {
     const wantsRawRedirect = init.redirect === "manual"
-    let res = await this.#fetchOnce(path, init, timeoutMs)
+    let res = await this.#fetchOnce(path, init, timeoutMs, beforeSend)
 
     for (let hop = 0; !wantsRawRedirect && isRedirect(res) && hop < MAX_REDIRECTS; hop++) {
       const location = res.headers.get("location")
@@ -773,7 +794,12 @@ export class AcsmSession {
     return res
   }
 
-  async #fetchOnce(path: string, init: RequestInit, timeoutMs?: number): Promise<Response> {
+  async #fetchOnce(
+    path: string,
+    init: RequestInit,
+    timeoutMs?: number,
+    beforeSend?: () => Promise<void>,
+  ): Promise<Response> {
     // Resolve before opening the timer, so an off-origin URL fails loudly
     // rather than being reported as a request failure.
     const url = this.url(path)
@@ -781,6 +807,7 @@ export class AcsmSession {
     // Before the timeout starts, so time spent queueing behind the limiter
     // isn't counted against the request's own deadline.
     await this.#limiter?.acquire()
+    await beforeSend?.()
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs ?? this.#timeoutMs)

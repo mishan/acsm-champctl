@@ -1373,3 +1373,57 @@ describe("diff", () => {
     expect(formatChanges([])).toBe("No differences.")
   })
 })
+
+describe("a last check before a form goes out", () => {
+  // A caller holding a lease checks it here: queued behind the rate limiter,
+  // a check made before the wait can be stale by the time the request leaves.
+  const fields = [{ name: "Name", value: "x" }]
+
+  it("runs after the rate limiter's wait, immediately before the request", async () => {
+    const events: string[] = []
+    let clock = 0
+    const s = new AcsmSession({
+      baseUrl: "https://acsm.example",
+      fetch: async () => {
+        events.push(`sent at ${clock}`)
+        return new Response("", { status: 302, headers: { location: "/" } })
+      },
+      rateLimit: {
+        limit: 1,
+        windowMs: 1000,
+        now: () => clock,
+        sleep: async (ms) => {
+          events.push(`waited ${ms}`)
+          clock += ms
+        },
+      },
+    })
+    await s.postForm("/a", fields)
+    await s.postForm("/b", fields, {
+      beforeSend: async () => {
+        events.push(`checked at ${clock}`)
+      },
+    })
+    expect(events).toEqual(["sent at 0", "waited 1000", "checked at 1000", "sent at 1000"])
+  })
+
+  it("sends nothing when the check refuses", async () => {
+    let sent = 0
+    const s = new AcsmSession({
+      baseUrl: "https://acsm.example",
+      fetch: async () => {
+        sent++
+        return new Response("", { status: 302, headers: { location: "/" } })
+      },
+      rateLimit: false,
+    })
+    await expect(
+      s.postForm("/a", fields, {
+        beforeSend: async () => {
+          throw new Error("lease lost")
+        },
+      }),
+    ).rejects.toThrow("lease lost")
+    expect(sent).toBe(0)
+  })
+})

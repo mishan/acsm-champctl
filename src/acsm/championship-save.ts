@@ -201,10 +201,10 @@ async function saveChampionship(
   // buttons on purpose, so a payload built purely from the parsed form lacks it.
   setOne(fields, "action", "saveChampionship")
 
-  await edit.beforePost?.()
-
   let res: Response | undefined
   let sendError: unknown
+  let refusedUnsent = false
+  const beforePost = edit.beforePost
   try {
     res = await session.postForm(CHAMPIONSHIP_SUBMIT_PATH, fields, {
       // The event form's list would refuse this outright: the championship form
@@ -212,8 +212,21 @@ async function saveChampionship(
       requiredEntryListFields: CHAMPIONSHIP_REQUIRED_ENTRY_LIST_FIELDS,
       // Marks the spectator cars' rows; findChampionshipForm has counted them.
       entryListMarkers: [SPECTATOR_MARKER],
+      // After the rate limiter's wait, immediately before the request leaves.
+      ...(beforePost
+        ? {
+            beforeSend: () =>
+              beforePost().catch((e: unknown) => {
+                refusedUnsent = true
+                throw e
+              }),
+          }
+        : {}),
     })
   } catch (e) {
+    // Refused by the caller, nothing was sent, and whoever it deferred to may
+    // be saving: their change would read back below as this save's drift.
+    if (refusedUnsent) throw e
     // Refused before sending, or lost on the way. Either way ACSM may or may
     // not have it, so the check below runs regardless.
     sendError = e

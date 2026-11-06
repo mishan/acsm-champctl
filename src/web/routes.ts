@@ -1134,7 +1134,9 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
               .then((held) => {
                 if (!held) lostLease = true
               })
-              .catch(() => {})
+              .catch(() => {
+                lostLease = true
+              })
           }, SPECTATOR_LEASE_MS / 3)
           renewal.unref()
           try {
