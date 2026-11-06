@@ -179,11 +179,8 @@ export interface ApplyLiveriesOptions {
   backupDir?: string
   /** The most one skin upload request carries; `MAX_UPLOAD_REQUEST_BYTES` unless set. */
   maxRequestBytes?: number
-  /**
-   * Called after the uploads and right before the championship save, to
-   * refuse it: a caller holding the drain's lease checks it still does.
-   */
-  beforeSave?: () => Promise<void>
+  /** Passed to the championship save as its `beforePost`. */
+  beforePost?: () => Promise<void>
 }
 
 export interface ApplyLiveriesResult {
@@ -213,7 +210,15 @@ export async function applyLiveries(
   const checked =
     plan.skinChanges.length > 0
       ? await liveryChanged(() =>
-          checkChampionshipSave(session, plan.championshipId, skinEdit(plan), options.backupDir),
+          checkChampionshipSave(
+            session,
+            plan.championshipId,
+            {
+              ...skinEdit(plan),
+              ...(options.beforePost ? { beforePost: options.beforePost } : {}),
+            },
+            options.backupDir,
+          ),
         )
       : undefined
 
@@ -237,7 +242,6 @@ export async function applyLiveries(
   // are already assigned needs no write — and this write is a
   // whole-championship replace, which is not a thing to do for nothing.
   if (plan.skinChanges.length > 0) {
-    await options.beforeSave?.()
     await liveryChanged(() => checked!.save())
     result.championshipSaved = true
   }

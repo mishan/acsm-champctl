@@ -65,6 +65,11 @@ export interface ChampionshipEdit {
   apply(fields: FormField[], form: ChampionshipForm): void
   /** Entrants whose skin the save may change, by NFC-trimmed name, to which folder. */
   skins?: ReadonlyMap<string, string>
+  /**
+   * Called immediately before the POST, after every read the save makes, to
+   * refuse it: a caller holding the drain's lease checks it still does.
+   */
+  beforePost?(): Promise<void>
   /** Spectator cars the edit adds after the championship's own, in order. */
   addsSpectators?: readonly AddedSpectator[]
 }
@@ -195,6 +200,8 @@ async function saveChampionship(
   // it; the ACSM UI carries `action` on the submit button, and `parseForm` drops
   // buttons on purpose, so a payload built purely from the parsed form lacks it.
   setOne(fields, "action", "saveChampionship")
+
+  await edit.beforePost?.()
 
   let res: Response | undefined
   let sendError: unknown

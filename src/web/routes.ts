@@ -1124,6 +1124,19 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
               "A livery save is running on this championship. Nothing was written; try again in a minute.",
             )
           }
+          // Renewed as the drain renews its own, and checked again right before
+          // the POST: a slow read or the rate limiter can outlast the lease,
+          // and whoever takes it may be saving the whole championship already.
+          let lostLease = false
+          const renewal = setInterval(() => {
+            void queue
+              .renewDrainLease(id, holder, ctx.now(), SPECTATOR_LEASE_MS)
+              .then((held) => {
+                if (!held) lostLease = true
+              })
+              .catch(() => {})
+          }, SPECTATOR_LEASE_MS / 3)
+          renewal.unref()
           try {
             // Again under the lease: a drain whose save drifted halts and then
             // lets go of it, after the check above. No test reaches this; the
@@ -1140,6 +1153,19 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
               id,
               {
                 ...addSpectatorCars(cars),
+                beforePost: async () => {
+                  if (
+                    lostLease ||
+                    !(await queue.renewDrainLease(id, holder, ctx.now(), SPECTATOR_LEASE_MS))
+                  ) {
+                    throw new ApiError(
+                      409,
+                      "save-running",
+                      "A livery save took this championship over while it was being read. " +
+                        "Nothing was written; try again in a minute.",
+                    )
+                  }
+                },
                 // On the export the save backs up and holds itself to: someone
                 // may have added a car in ACSM since the preview, or changed
                 // what the save would do to the ones there.
@@ -1168,6 +1194,7 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
             })
             return { added: cars.map((c) => c.name) }
           } finally {
+            clearInterval(renewal)
             await queue.releaseDrainLease(id, holder)
           }
         })

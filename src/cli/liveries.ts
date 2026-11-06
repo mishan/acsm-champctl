@@ -619,7 +619,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
       eventIds,
       backupDir: backupDirFor(args),
       ...(store ? { record: store, source: "zip" as const } : {}),
-      beforeSave: async () => {
+      beforePost: async () => {
         if (
           lostLease ||
           !(await queue.renewDrainLease(args.championshipId!, holder, new Date(), DRAIN_LEASE_MS))

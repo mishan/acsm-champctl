@@ -529,5 +529,6 @@ describe("champctl-liveries --drain", () => {
     ]).catch(() => {})
     expect(stub.requests.filter((r) => r.includes("/skin"))).not.toEqual([])
     expect(stub.requests.filter((r) => r.includes("/submit"))).toEqual([])
-  })
+    // Through the session's rate limiter, as the drain's own runs are.
+  }, 60_000)
 })

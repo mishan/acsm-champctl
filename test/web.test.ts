@@ -15,6 +15,7 @@
  */
 
 import { mkdtempSync } from "node:fs"
+import { DatabaseSync } from "node:sqlite"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -2211,6 +2212,8 @@ describe("adding the league's spectator cars", () => {
    */
   function manager(
     options: {
+      /** Called when the edit form is read, which the save does just before posting. */
+      onEditRead?: () => void
       addedInAcsm?: boolean
       dropsNewRows?: boolean
       editedDuringSave?: boolean
@@ -2259,6 +2262,7 @@ describe("adding the league's spectator cars", () => {
         return new Response(JSON.stringify(state), { status: 200 })
       }
       if (url.endsWith(`/championship/${CHAMP_ID}/edit`)) {
+        options.onEditRead?.()
         return new Response(
           `<form action="/championships/new/submit" method="post">
             <textarea name="ChampionshipInfo"></textarea><div id="ChampionshipInfoHolder"></div>
@@ -2448,6 +2452,31 @@ describe("adding the league's spectator cars", () => {
     const res = await apply(h, (await plan(h)).json().planId)
     expect(res.statusCode).toBe(422)
     expect(res.json().error.message).toMatch(/no spectator cars/)
+    expect(m.posts).toEqual([])
+  })
+
+  it("won't post once another writer has taken the lease mid-save", async () => {
+    // A slow read can outlast the lease; whoever took it may be saving the
+    // whole championship already.
+    const liveriesStore = await store()
+    let reads = 0
+    const m = manager({
+      onEditRead: () => {
+        // The save's own read of the form, after the checks' one.
+        if (++reads !== 2) return
+        const other = new DatabaseSync(liveriesStore)
+        other
+          .prepare(
+            "UPDATE drain_lease SET holder = ?, expires_at = ? WHERE lower(championship_id) = ?",
+          )
+          .run("drain", "2999-01-01T00:00:00.000Z", CHAMP_ID)
+        other.close()
+      },
+    })
+    const h = harness({ profile, acsm: m.answer, liveriesStore })
+    await h.login()
+    const res = await apply(h, (await plan(h)).json().planId)
+    expect(res.statusCode).toBe(409)
     expect(m.posts).toEqual([])
   })
 
