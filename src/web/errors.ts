@@ -16,6 +16,8 @@
  */
 
 import { AcsmError, AcsmNotJsonError } from "../acsm/client.js"
+import { ChampionshipFormError } from "../acsm/championship-form.js"
+import { ChampionshipChangedError } from "../acsm/championship-save.js"
 import {
   AcsmAuthError,
   AcsmSessionLapsedError,
@@ -96,6 +98,26 @@ export function describeError(e: unknown): DescribedError {
   // rearrangement, a round has already been raced. Understood, and declined.
   if (e instanceof ReorderError) {
     return { status: 422, body: { error: { code: "reorder", message: e.message } }, ...OK }
+  }
+
+  // The championship form is one champctl won't write, or this edit of it:
+  // understood, and declined, before anything was sent.
+  if (e instanceof ChampionshipFormError) {
+    return {
+      status: 422,
+      body: { error: { code: "championship-form", message: e.message } },
+      ...OK,
+    }
+  }
+
+  // Before the AcsmWriteError it extends: nothing was written, and the remedy
+  // is to look again.
+  if (e instanceof ChampionshipChangedError) {
+    return {
+      status: 409,
+      body: { error: { code: "championship-changed", message: e.message } },
+      ...OK,
+    }
   }
 
   // Something the person typed: a date the zone doesn't have, an ambiguous

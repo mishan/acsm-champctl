@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "vitest"
 
+import { addSpectatorCars } from "../src/acsm/add-spectators.js"
 import { setOne } from "../src/acsm/form.js"
 import { CHAMPIONSHIP_SUBMIT_PATH } from "../src/acsm/paths.js"
 import { AcsmSession } from "../src/acsm/session.js"
@@ -279,7 +281,14 @@ async function fakeSession(
     const guids = form.getAll("EntryList.GUID")
     const previousSpectators = (state["SpectatorCars"] ?? []) as Partial<Entrant>[]
     state["SpectatorCars"] = rowNames.slice(0, spectators).map((Name, i) => ({
-      ...previousSpectators.find((c) => (c.GUID ?? "") === guids[i]),
+      ...(previousSpectators.find((c) => (c.GUID ?? "") === guids[i]) ?? {
+        InternalUUID: randomUUID(),
+        Team: "",
+        Ballast: 0,
+        Restrictor: 0,
+        FixedSetup: "",
+        ConnectAsSpectator: true,
+      }),
       Name,
       GUID: guids[i] ?? "",
       Model: cars[i] ?? "",
@@ -860,6 +869,29 @@ describe("the shared championship save", () => {
   })
 })
 
+describe("adding spectator cars through the shared save", () => {
+  it("adds them after the championship's own, and nothing else changes", async () => {
+    const { session, requests, state } = await fakeSession()
+    const checked = await checkChampionshipSave(
+      session,
+      CHAMP_ID,
+      addSpectatorCars([{ name: "Recorder", model: CAR, guid: "90000000000000002" }]),
+    )
+    await checked.save()
+    const save = requests.find((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))!
+    expect(new URLSearchParams(save.body).getAll("EntryList.Spectator")).toEqual(["true", "true"])
+    expect(
+      (state as { SpectatorCars?: Partial<Entrant>[] }).SpectatorCars?.map((c) => [
+        c.Name,
+        c.PitBox,
+      ]),
+    ).toEqual([
+      ["Stream Van", 0],
+      ["Recorder", 1],
+    ])
+  })
+})
+
 describe("the backups a save keeps", () => {
   it("keeps the last twenty per championship, never overwriting one", async () => {
     const dir = await mkdtemp(join(tmpdir(), "champctl-backup-"))
@@ -880,6 +912,63 @@ describe("the backups a save keeps", () => {
 })
 
 describe("championshipDrift", () => {
+  it("allows the spectator cars an edit added, at the end, as asked", () => {
+    const tv = { Name: "TV", GUID: "1", Model: "van", Skin: "s", PitBox: 0, RaceNumber: 0 }
+    const rec = { Name: "Rec", GUID: "2", Model: "van", Skin: "r" }
+    // As 2.4.15 stores a car added through the form, with its own defaults
+    // for what nobody posted (measured).
+    const added = [
+      {
+        ...rec,
+        PitBox: 1,
+        RaceNumber: 0,
+        InternalUUID: "6c1b1a52-1111-4111-8111-111111111111",
+        Team: "",
+        Ballast: 0,
+        Restrictor: 0,
+        FixedSetup: "",
+        ConnectAsSpectator: true,
+        VIP: false,
+        CSPCarFlags: { allow_teleporting: false },
+      },
+    ]
+    const before = of({}, { SpectatorCars: [tv] })
+    const asked = [rec]
+    expect(
+      championshipDrift(before, of({}, { SpectatorCars: [...added, tv] }), new Map(), asked),
+    ).toEqual([])
+    expect(
+      championshipDrift(
+        before,
+        of({}, { SpectatorCars: [tv, { ...added[0], Model: "car" }] }),
+        new Map(),
+        asked,
+      ),
+    ).toEqual([".SpectatorCars.1.Model changed"])
+    expect(
+      championshipDrift(
+        before,
+        of({}, { SpectatorCars: [tv, { ...added[0], InternalUUID: "" }] }),
+        new Map(),
+        asked,
+      ),
+    ).toEqual([".SpectatorCars.1.InternalUUID changed"])
+    expect(championshipDrift(before, of({}, { SpectatorCars: [tv] }), new Map(), asked)).toEqual([
+      ".SpectatorCars.1 removed",
+    ])
+    const wrong = (over: Record<string, unknown>) =>
+      championshipDrift(
+        before,
+        of({}, { SpectatorCars: [tv, { ...added[0], ...over }] }),
+        new Map(),
+        asked,
+      )
+    expect(wrong({ Ballast: 5 })).toEqual([".SpectatorCars.1.Ballast changed"])
+    expect(wrong({ ConnectAsSpectator: false })).toEqual([
+      ".SpectatorCars.1.ConnectAsSpectator changed",
+    ])
+  })
+
   const entrant = (Name: string, Skin: string) => ({ Name, Skin, Model: CAR, GUID: Name })
   const of = (entrants: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
     Updated: "then",

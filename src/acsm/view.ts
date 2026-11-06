@@ -335,3 +335,20 @@ export function splitGuids(g: string | undefined | null): string[] {
     .map((s) => s.trim())
     .filter(Boolean)
 }
+
+/**
+ * What any save of the form does to the spectator cars, which ACSM numbers
+ * from 0 and stores without a race number (measured on 2.4.15). For previews:
+ * the drift check lets it through, so it's said rather than hidden.
+ */
+export function spectatorSaveEffects(championship: Championship): string[] {
+  return (championship.SpectatorCars ?? []).flatMap((car, i) => {
+    const what = [
+      ...(car.RaceNumber ? [`its race number ${car.RaceNumber} will be cleared`] : []),
+      ...(car.PitBox !== i ? [`its pit box will become ${i}`] : []),
+    ]
+    return what.length === 0
+      ? []
+      : [`${car.Name}: ${what.join(" and ")}, as any save of the championship form does.`]
+  })
+}

@@ -6,7 +6,15 @@
  * each had their own regex and each had the same two holes in it.
  */
 import { existsSync, readFileSync } from "node:fs"
-import { dirname, resolve } from "node:path"
+import { dirname, relative, resolve, sep } from "node:path"
+import { fileURLToPath } from "node:url"
+
+/**
+ * The source tree, which forbidden paths are named from. Through
+ * `fileURLToPath`, since a URL's pathname keeps a space as %20. No test covers
+ * that: it would take a second checkout under a path with a space in it.
+ */
+const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "../../src")
 
 /**
  * Every module specifier a file pulls in.
@@ -58,11 +66,16 @@ export function reachesAny(entries: readonly string[], forbidden: readonly strin
     seen.add(file)
     const here = [...trail, file]
     for (const specifier of importsOf(file)) {
-      if (forbidden.some((f) => specifier.includes(f))) {
+      const next = resolveSpecifier(file, specifier)
+      // The resolved path as well as the specifier: inside src/acsm/, the
+      // session is imported as "./session.js", which names no "acsm/". Taken
+      // relative to src/ with forward slashes, so neither Windows nor a
+      // checkout under a folder called "web" changes what matches.
+      const target = next ? relative(SRC, next).split(sep).join("/").replace(/\.ts$/, ".js") : ""
+      if (forbidden.some((f) => specifier.includes(f) || target.startsWith(f))) {
         offences.push([...here, specifier].join(" → "))
         continue
       }
-      const next = resolveSpecifier(file, specifier)
       if (next) walk(next, here)
     }
   }

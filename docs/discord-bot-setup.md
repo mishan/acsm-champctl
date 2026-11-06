@@ -211,7 +211,8 @@ Every championship save is checked after it lands. champctl backs the
 championship up first (logged in, beside the queue database) and compares it
 afterwards; if anything besides the liveries changed, or the check couldn't run,
 liveries stop for that championship — the watcher stays up and writes nothing —
-until someone restores it from the backup the error names and runs
+until someone restores it from the backup the error names and presses Resume on
+the championship in champctl web, or runs
 `champctl-liveries <championship-id> --clear-halt`.
 
 **Now turn on `autoApply`** in the profile and restart the bot. The setting is

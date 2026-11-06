@@ -54,12 +54,32 @@ export interface ChampionshipEdit {
   what: string
   /** Said after a refusal, about anything the caller did before the save. */
   leftBehind?: string
+  /**
+   * Refusals that need the championship as the save will hold itself to it:
+   * the export it backs up, which nothing may change before the POST.
+   */
+  checkChampionship?(before: Championship): void
   /** Refusals that need the form, made before anything is written and again at the save. */
   check?(form: ChampionshipForm): void
   /** Makes the change, in place, on a fresh read of the form. */
   apply(fields: FormField[], form: ChampionshipForm): void
   /** Entrants whose skin the save may change, by NFC-trimmed name, to which folder. */
   skins?: ReadonlyMap<string, string>
+  /**
+   * Called immediately before the POST, after every read the save makes, to
+   * refuse it: a caller holding the drain's lease checks it still does.
+   */
+  beforePost?(): Promise<void>
+  /** Spectator cars the edit adds after the championship's own, in order. */
+  addsSpectators?: readonly AddedSpectator[]
+}
+
+/** What a spectator car added by an edit has to come back as. */
+export interface AddedSpectator {
+  Name: string
+  GUID: string
+  Model: string
+  Skin: string
 }
 
 /** A save every check has passed, to be made once the caller is ready. */
@@ -93,6 +113,7 @@ export async function checkChampionshipSave(
   const beforeText = await session.getText(exportPath(championshipId))
   const before = JSON.parse(beforeText) as Championship
   const backup = backupDir ? await writeBackup(backupDir, championshipId, beforeText) : undefined
+  edit.checkChampionship?.(before)
 
   const form = await readForm(session, championshipId, edit)
   checkDescription(before, form)
@@ -157,11 +178,12 @@ async function saveChampionship(
   // Held to the same rules as the page it came from, so an edit can't post a
   // payload ACSM would read rows of differently.
   const shape = championshipRows(fields)
-  if (shape.spectatorRows !== form.spectatorRows || shape.rows !== form.rows) {
+  const adds = edit.addsSpectators?.length ?? 0
+  if (shape.spectatorRows !== form.spectatorRows + adds || shape.rows !== form.rows + adds) {
     throw new AcsmWriteError(
       `Editing the championship form changed its rows (${form.rows} to ${shape.rows}, ` +
-        `${form.spectatorRows} to ${shape.spectatorRows} spectator cars), which this edit ` +
-        `doesn't. Nothing was written.`,
+        `${form.spectatorRows} to ${shape.spectatorRows} spectator cars), where the edit adds ` +
+        `${adds}. Nothing was written.`,
       undefined,
       CHAMPIONSHIP_SUBMIT_PATH,
     )
@@ -181,6 +203,8 @@ async function saveChampionship(
 
   let res: Response | undefined
   let sendError: unknown
+  let refusedUnsent = false
+  const beforePost = edit.beforePost
   try {
     res = await session.postForm(CHAMPIONSHIP_SUBMIT_PATH, fields, {
       // The event form's list would refuse this outright: the championship form
@@ -188,8 +212,21 @@ async function saveChampionship(
       requiredEntryListFields: CHAMPIONSHIP_REQUIRED_ENTRY_LIST_FIELDS,
       // Marks the spectator cars' rows; findChampionshipForm has counted them.
       entryListMarkers: [SPECTATOR_MARKER],
+      // After the rate limiter's wait, immediately before the request leaves.
+      ...(beforePost
+        ? {
+            beforeSend: () =>
+              beforePost().catch((e: unknown) => {
+                refusedUnsent = true
+                throw e
+              }),
+          }
+        : {}),
     })
   } catch (e) {
+    // Refused by the caller, nothing was sent, and whoever it deferred to may
+    // be saving: their change would read back below as this save's drift.
+    if (refusedUnsent) throw e
     // Refused before sending, or lost on the way. Either way ACSM may or may
     // not have it, so the check below runs regardless.
     sendError = e
@@ -205,7 +242,12 @@ async function saveChampionship(
   let drift: string[]
   try {
     const after = JSON.parse(await session.getText(exportPath(championshipId))) as Championship
-    drift = championshipDrift(checked.before, after, edit.skins ?? new Map())
+    drift = championshipDrift(
+      checked.before,
+      after,
+      edit.skins ?? new Map(),
+      edit.addsSpectators ?? [],
+    )
     const pageAfter = await session.getText(championshipEditPath(championshipId))
     if (descriptionOf(pageAfter) !== form.description) drift.push(".Info changed on the page")
   } catch (e) {
@@ -419,8 +461,8 @@ export class ChampionshipDriftError extends AcsmWriteError {
       `The championship save for ${championshipId} changed more than ${what}: ` +
         `${drift.slice(0, 8).join("; ")}${drift.length > 8 ? `; and ${drift.length - 8} more` : ""}. ` +
         (backup
-          ? `The championship as it was before is in ${backup}. The drain has stopped; restore it before anything else is saved.`
-          : `There is no backup of it from this run. The drain has stopped; check the championship in ACSM.`),
+          ? `The championship as it was before is in ${backup}. champctl has stopped writing it; restore it before anything else is saved.`
+          : `There is no backup of it from this run. champctl has stopped writing it; check the championship in ACSM.`),
       undefined,
       CHAMPIONSHIP_SUBMIT_PATH,
     )
@@ -441,7 +483,7 @@ export class ChampionshipUnverifiedError extends AcsmWriteError {
   ) {
     super(
       `champctl saved championship ${championshipId} and then couldn't read it back to check the ` +
-        `save (${cause instanceof Error ? cause.message : String(cause)}). The drain has stopped ` +
+        `save (${cause instanceof Error ? cause.message : String(cause)}). champctl has stopped writing it ` +
         `until someone looks${backup ? `; the championship as it was before is in ${backup}` : ""}.`,
       undefined,
       CHAMPIONSHIP_SUBMIT_PATH,
@@ -473,6 +515,7 @@ export function championshipDrift(
   before: unknown,
   after: unknown,
   skins: ReadonlyMap<string, string>,
+  added: readonly AddedSpectator[] = [],
 ): string[] {
   const out: string[] = []
   const walk = (x: unknown, y: unknown, path: string, entrant?: string, classId?: string) => {
@@ -516,16 +559,29 @@ export function championshipDrift(
     }
     if (JSON.stringify(x) !== JSON.stringify(y)) out.push(`${path} changed`)
   }
-  walk(asSaved(before), inOrderOf(before, after), "")
+  walk(asSaved(before, added), inOrderOf(before, after, added), "")
   return out
 }
 
 /** `before` as a save that changed nothing would return it, for `championshipDrift`. */
-function asSaved(before: unknown): unknown {
+function asSaved(before: unknown, added: readonly AddedSpectator[]): unknown {
   if (before === null || typeof before !== "object") return before
   const c = structuredClone(before) as Championship
   if (c.SpectatorCars) {
     c.SpectatorCars = c.SpectatorCars.map((car, i) => ({ ...car, PitBox: i, RaceNumber: 0 }))
+  }
+  if (added.length > 0) {
+    const own = c.SpectatorCars?.length ?? 0
+    c.SpectatorCars = [
+      ...(c.SpectatorCars ?? []),
+      ...added.map((car, i) => ({
+        ...car,
+        ...ADDED_ROW,
+        PitBox: own + i,
+        RaceNumber: 0,
+        InternalUUID: ASSIGNED,
+      })),
+    ]
   }
   for (const cls of c.Classes ?? []) {
     const entrants = Object.values(cls.Entrants ?? {})
@@ -541,13 +597,14 @@ function asSaved(before: unknown): unknown {
 }
 
 /**
- * `after` with its spectator cars in `before`'s order, matched by GUID. A GUID
- * that isn't unique on both sides leaves the order alone, for the walk to flag.
+ * `after` with its spectator cars in `before`'s order, matched by GUID, then
+ * the ones the edit added. A GUID that isn't unique on both sides leaves the
+ * order alone, for the walk to flag.
  */
-function inOrderOf(before: unknown, after: unknown): unknown {
+function inOrderOf(before: unknown, after: unknown, added: readonly AddedSpectator[]): unknown {
   const guids = (c: unknown) =>
     ((c as Championship | null)?.SpectatorCars ?? []).map((car) => car.GUID)
-  const was = guids(before)
+  const was = [...guids(before), ...added.map((a) => a.GUID)]
   const now = guids(after)
   if (new Set(was).size !== was.length || new Set(now).size !== now.length) return after
   const cars = (after as Championship).SpectatorCars
@@ -556,11 +613,48 @@ function inOrderOf(before: unknown, after: unknown): unknown {
     const i = was.indexOf(g)
     return i < 0 ? was.length : i
   }
+  const own = was.length - added.length
   return {
     ...(after as Championship),
-    SpectatorCars: [...cars].sort((a, b) => rank(a.GUID) - rank(b.GUID)),
+    // An added car is held to what the edit set and ACSM is known to: the
+    // rest of it is ACSM's defaults for a new row, which nobody asked for.
+    SpectatorCars: [...cars]
+      .sort((a, b) => rank(a.GUID) - rank(b.GUID))
+      .map((car) => {
+        const i = rank(car.GUID)
+        if (i < own || i >= was.length) return car
+        const uuid = car.InternalUUID
+        return {
+          Name: car.Name,
+          GUID: car.GUID,
+          Model: car.Model,
+          Skin: car.Skin,
+          ...Object.fromEntries(
+            Object.keys(ADDED_ROW).map((k) => [k, (car as Record<string, unknown>)[k]]),
+          ),
+          PitBox: car.PitBox,
+          RaceNumber: car.RaceNumber,
+          InternalUUID: uuid && uuid !== NIL_UUID ? ASSIGNED : uuid,
+        }
+      }),
   }
 }
+
+/**
+ * What an added car comes back with for the rest of what `addSpectatorCars`
+ * posts, and the spectator flag (measured on 2.4.15). ACSM's own defaults for
+ * what nobody posts, such as CSPCarFlags, aren't held to anything.
+ */
+const ADDED_ROW = {
+  Team: "",
+  Ballast: 0,
+  Restrictor: 0,
+  FixedSetup: "",
+  ConnectAsSpectator: true,
+}
+
+/** Stands for whatever InternalUUID ACSM gave a car it was sent without one. */
+const ASSIGNED = "assigned by ACSM"
 
 /** Backups kept per championship; older ones are removed as new ones land. */
 const BACKUPS_KEPT = 20

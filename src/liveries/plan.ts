@@ -32,7 +32,7 @@
  */
 
 import type { Championship, Entrant } from "../acsm/types.js"
-import { classes, events, eventHasResults, slots } from "../acsm/view.js"
+import { classes, events, eventHasResults, slots, spectatorSaveEffects } from "../acsm/view.js"
 import type { Livery, LiveryPack } from "./pack.js"
 
 /**
@@ -219,15 +219,7 @@ export function planLiveries(
     racedRounds: events(championship)
       .map((ev, i) => (eventHasResults(ev) ? i + 1 : 0))
       .filter((n) => n > 0),
-    spectatorResets: (championship.SpectatorCars ?? []).flatMap((car, i) => {
-      const what = [
-        ...(car.RaceNumber ? [`its race number ${car.RaceNumber} will be cleared`] : []),
-        ...(car.PitBox !== i ? [`its pit box will become ${i}`] : []),
-      ]
-      return what.length === 0
-        ? []
-        : [`${car.Name}: ${what.join(" and ")}, as any save of the championship form does.`]
-    }),
+    spectatorResets: spectatorSaveEffects(championship),
   }
 }
 

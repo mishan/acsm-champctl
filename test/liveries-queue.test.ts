@@ -396,3 +396,82 @@ describe("the drain lease", () => {
     await close()
   })
 })
+
+describe("which championship a halt or lease is for", () => {
+  // ACSM reads ids case-insensitively, and the CLI, the drain and champctl web
+  // each get theirs from somewhere different. Rows already written under
+  // another spelling, by this version or an older one still running during an
+  // upgrade, have to count too.
+  const UPPER = CHAMP.toUpperCase()
+  const MIXED = "Aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+  /** A queue, and a second connection writing rows as an older champctl did. */
+  async function withOldWriter() {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-queue-"))
+    const path = join(dir, "liveries.db")
+    const q = await SqliteSubmissionQueue.open(path)
+    const old = new DatabaseSync(path)
+    return {
+      q,
+      old,
+      done: async () => {
+        q.close()
+        old.close()
+        await rm(dir, { recursive: true, force: true })
+      },
+    }
+  }
+
+  it("holds a halt or lease against every spelling of the id", async () => {
+    const q = await open()
+    await q.haltDrain(UPPER, "x", undefined, MON)
+    expect(await q.drainHalt(CHAMP)).toBeDefined()
+    expect(await q.clearDrainHalt(CHAMP)).toBe(true)
+
+    expect((await q.acquireDrainLease(UPPER, "cli", MON, 60_000)).ok).toBe(true)
+    expect((await q.acquireDrainLease(CHAMP, "web", MON, 60_000)).ok).toBe(false)
+    await q.releaseDrainLease(CHAMP, "cli")
+    expect((await q.acquireDrainLease(CHAMP, "web", MON, 60_000)).ok).toBe(true)
+    q.close()
+  })
+
+  it("sees a halt an older writer records under its own spelling, and keeps the earliest", async () => {
+    const { q, old, done } = await withOldWriter()
+    try {
+      const halt = old.prepare(
+        "INSERT INTO drain_halt (championship_id, reason, backup, halted_at) VALUES (?, ?, ?, ?)",
+      )
+      halt.run(UPPER, "later", "/b/later.json", "2026-09-02T00:00:00.000Z")
+      halt.run(MIXED, "first", "/b/first.json", "2026-09-01T00:00:00.000Z")
+      expect(await q.drainHalt(CHAMP)).toMatchObject({ reason: "first", backup: "/b/first.json" })
+      // A new halt doesn't replace the first, whatever spelling that has.
+      await q.haltDrain(CHAMP, "newest", undefined, MON)
+      expect((await q.drainHalt(CHAMP))?.reason).toBe("first")
+      expect(await q.clearDrainHalt(CHAMP)).toBe(true)
+      expect(await q.drainHalt(UPPER)).toBeUndefined()
+    } finally {
+      await done()
+    }
+  })
+
+  it("respects an older writer's live lease under its own spelling, and lets it release it", async () => {
+    const { q, old, done } = await withOldWriter()
+    try {
+      old
+        .prepare(
+          "INSERT INTO drain_lease (championship_id, holder, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(UPPER, "old-drain", MON.toISOString(), "2999-01-01T00:00:00.000Z")
+      expect(await q.acquireDrainLease(CHAMP, "web", MON, 60_000)).toMatchObject({
+        ok: false,
+        heldBy: "old-drain",
+      })
+      old
+        .prepare("DELETE FROM drain_lease WHERE championship_id = ? AND holder = ?")
+        .run(UPPER, "old-drain")
+      expect((await q.acquireDrainLease(CHAMP, "web", MON, 60_000)).ok).toBe(true)
+    } finally {
+      await done()
+    }
+  })
+})

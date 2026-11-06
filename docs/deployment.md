@@ -323,7 +323,8 @@ as the server.
   changed more than the liveries, or couldn't be checked afterwards. The log
   names what changed and a backup of the championship from just before, in the
   volume under `data/liveries/backups/`. Restore it (an import of that file over
-  the same championship id does it exactly), then
+  the same championship id does it exactly), then press Resume on the
+  championship in champctl web, or run
   `docker compose run --rm admin champctl-liveries <championship-id> --clear-halt`.
 - **A login in the UI doesn't stick:** it isn't being served over HTTPS.
 - **Every save fails with 403:** the proxy is rewriting `Host`.

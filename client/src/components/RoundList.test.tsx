@@ -11,9 +11,24 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ApiFailure } from "../api"
-import type { ChampionshipResponse, ContentResponse, ReorderPlanView, RoundView } from "../api"
+import type {
+  ChampionshipResponse,
+  ContentResponse,
+  ReorderPlanView,
+  RoundView,
+  SpectatorPlanResponse,
+} from "../api"
 
-const { championshipMock, planReorderMock, applyReorderMock, contentMock } = vi.hoisted(() => ({
+const {
+  championshipMock,
+  planReorderMock,
+  applyReorderMock,
+  contentMock,
+  planSpectatorsMock,
+  addSpectatorsMock,
+} = vi.hoisted(() => ({
+  planSpectatorsMock: vi.fn<(...args: unknown[]) => Promise<SpectatorPlanResponse>>(),
+  addSpectatorsMock: vi.fn<(...args: unknown[]) => Promise<{ added: string[] }>>(),
   contentMock: vi.fn<() => Promise<ContentResponse>>(),
   championshipMock: vi.fn<(...args: unknown[]) => Promise<ChampionshipResponse>>(),
   planReorderMock: vi.fn<(...args: unknown[]) => Promise<{ plan: ReorderPlanView }>>(),
@@ -30,6 +45,8 @@ vi.mock("../api", async (importOriginal) => {
       planReorder: planReorderMock,
       applyReorder: applyReorderMock,
       content: contentMock,
+      planSpectators: planSpectatorsMock,
+      addSpectators: addSpectatorsMock,
     },
   }
 })
@@ -69,6 +86,7 @@ function response(name: string, rounds: RoundView[] = [round()]): ChampionshipRe
       rounds,
     },
     gridmom: { findings: [], counts: { ERROR: 0, WARN: 0, INFO: 0 }, ok: true },
+    liveriesHalt: null,
   }
 }
 
@@ -480,5 +498,156 @@ describe("reordering the rounds", () => {
 
     expect(await screen.findByText("Summer Series")).toBeTruthy()
     expect(applyReorderMock).not.toHaveBeenCalled()
+  })
+})
+
+describe("the league's spectator cars", () => {
+  it("doesn't carry one championship's preview to the next", async () => {
+    // Pressing Add on the second would otherwise spend the first one's plan.
+    const missing = (name: string): ChampionshipResponse => ({
+      ...response(name),
+      gridmom: {
+        findings: [
+          {
+            severity: "WARN",
+            code: "entry.spectator-missing",
+            message: "The league's spectator car Recorder isn't in this championship.",
+          },
+        ],
+        counts: { ERROR: 0, WARN: 1, INFO: 0 },
+        ok: true,
+      } as ChampionshipResponse["gridmom"],
+    })
+    championshipMock.mockImplementation(async (id) => missing(String(id)))
+    planSpectatorsMock.mockResolvedValue({
+      planId: "p1",
+      cars: [{ name: "Recorder", model: "ford_transit", guid: "90000000000000002" }],
+      effects: [],
+    })
+    const view = renderList("champ-1")
+    fireEvent.click(await screen.findByText("Add the missing spectator cars"))
+    expect(await screen.findByText(/Recorder, in ford_transit/)).toBeTruthy()
+
+    view.rerender(
+      <RoundList
+        championshipId="champ-2"
+        baseUrl="https://acsm.example"
+        onOpenRound={() => {}}
+        onOpenSignUps={() => {}}
+        onAuthLost={() => {}}
+      />,
+    )
+    expect(await screen.findByText("champ-2")).toBeTruthy()
+    expect(screen.queryByText(/Recorder, in ford_transit/)).toBeNull()
+  })
+
+  it("doesn't let an add that finishes late repaint the next championship", async () => {
+    const missing = (name: string): ChampionshipResponse => ({
+      ...response(name),
+      gridmom: {
+        findings: [{ severity: "WARN", code: "entry.spectator-missing", message: "missing" }],
+        counts: { ERROR: 0, WARN: 1, INFO: 0 },
+        ok: true,
+      } as ChampionshipResponse["gridmom"],
+    })
+    championshipMock.mockImplementation(async (id) => missing(`Championship ${String(id)}`))
+    planSpectatorsMock.mockResolvedValue({
+      planId: "p1",
+      cars: [{ name: "Recorder", model: "ford_transit", guid: "90000000000000002" }],
+      effects: [],
+    })
+    let finish: (v: { added: string[] }) => void = () => {}
+    addSpectatorsMock.mockImplementation(() => new Promise((r) => (finish = r)))
+
+    const view = renderList("champ-1")
+    fireEvent.click(await screen.findByText("Add the missing spectator cars"))
+    fireEvent.click(await screen.findByText("Add"))
+    view.rerender(
+      <RoundList
+        championshipId="champ-2"
+        baseUrl="https://acsm.example"
+        onOpenRound={() => {}}
+        onOpenSignUps={() => {}}
+        onAuthLost={() => {}}
+      />,
+    )
+    expect(await screen.findByText("Championship champ-2")).toBeTruthy()
+    await act(async () => finish({ added: ["Recorder"] }))
+    await act(async () => {})
+    expect(screen.getByText("Championship champ-2")).toBeTruthy()
+    expect(screen.queryByText("Championship champ-1")).toBeNull()
+  })
+
+  it("shows nothing of one championship's halt while the next is loading", async () => {
+    // Resume there would clear the next one's halt without showing its reason.
+    championshipMock.mockResolvedValueOnce({
+      ...response("Championship A"),
+      liveriesHalt: {
+        reason: "A's save moved a driver.",
+        backup: null,
+        haltedAt: "2026-11-05T20:00:00Z",
+      },
+    })
+    championshipMock.mockImplementationOnce(() => new Promise(() => {}))
+    const view = renderList("champ-1")
+    expect(await screen.findByText("Resume")).toBeTruthy()
+    view.rerender(
+      <RoundList
+        championshipId="champ-2"
+        baseUrl="https://acsm.example"
+        onOpenRound={() => {}}
+        onOpenSignUps={() => {}}
+        onAuthLost={() => {}}
+      />,
+    )
+    expect(screen.queryByText("Resume")).toBeNull()
+    expect(screen.queryByText("Championship A")).toBeNull()
+  })
+
+  it("drops a refresh begun before leaving, even after coming back", async () => {
+    // A, then B, then A again: the first A's late answer would replace the
+    // newer one, since the id matches again.
+    const missing = (name: string): ChampionshipResponse => ({
+      ...response(name),
+      gridmom: {
+        findings: [{ severity: "WARN", code: "entry.spectator-missing", message: "missing" }],
+        counts: { ERROR: 0, WARN: 1, INFO: 0 },
+        ok: true,
+      } as ChampionshipResponse["gridmom"],
+    })
+    let late: (v: ChampionshipResponse) => void = () => {}
+    championshipMock
+      .mockResolvedValueOnce(missing("First look at A"))
+      .mockImplementationOnce(() => new Promise((r) => (late = r)))
+      .mockResolvedValueOnce(missing("B"))
+      .mockResolvedValueOnce(missing("Second look at A"))
+    planSpectatorsMock.mockResolvedValue({
+      planId: "p1",
+      cars: [{ name: "Recorder", model: "ford_transit", guid: "90000000000000002" }],
+      effects: [],
+    })
+    addSpectatorsMock.mockRejectedValue(new Error("refused"))
+    const at = (id: string) => (
+      <RoundList
+        championshipId={id}
+        baseUrl="https://acsm.example"
+        onOpenRound={() => {}}
+        onOpenSignUps={() => {}}
+        onAuthLost={() => {}}
+      />
+    )
+    const view = render(at("champ-1"))
+    await screen.findByText("First look at A")
+    // An add that fails still refreshes, and this refresh is the late one.
+    fireEvent.click(screen.getByText("Add the missing spectator cars"))
+    fireEvent.click(await screen.findByText("Add"))
+    await waitFor(() => expect(championshipMock).toHaveBeenCalledTimes(2))
+    view.rerender(at("champ-2"))
+    await screen.findByText("B")
+    view.rerender(at("champ-1"))
+    await screen.findByText("Second look at A")
+    await act(async () => late(missing("Stale A")))
+    expect(screen.queryByText("Stale A")).toBeNull()
+    expect(screen.getByText("Second look at A")).toBeTruthy()
   })
 })

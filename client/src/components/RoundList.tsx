@@ -6,6 +6,7 @@ import {
   type CheckReport,
   type ChampionshipView,
   type InstalledItem,
+  type LiveriesHaltView,
   type ReorderPlanView,
   type RoundView,
 } from "../api"
@@ -13,6 +14,7 @@ import { describeFormat, venueLabel } from "../format"
 import { moveItem, movedPositions, useReorder } from "../reorder"
 import { Findings, findingSummary } from "./Findings"
 import { Message } from "./Message"
+import { SpectatorCars } from "./SpectatorCars"
 import { Venue } from "./Venue"
 
 interface RoundListProps {
@@ -31,11 +33,19 @@ export function RoundList({
   onOpenSignUps,
   onAuthLost,
 }: RoundListProps): React.JSX.Element {
-  const [data, setData] = useState<{ championship: ChampionshipView; gridmom: CheckReport } | null>(
-    null,
-  )
+  const [data, setData] = useState<{
+    championship: ChampionshipView
+    gridmom: CheckReport
+    liveriesHalt: LiveriesHaltView | null
+    liveriesHaltUnknown?: string
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showFindings, setShowFindings] = useState(false)
+  // Bumped each time a championship is opened, coming back to one included,
+  // so an answer to an earlier visit can't land on a later one. The state is
+  // the visit a render belongs to; the ref is the one on screen now.
+  const visit = useRef(0)
+  const [thisVisit, setThisVisit] = useState(0)
   /** The running order being tried, as 1-based source rounds. Null when not reordering. */
   const [order, setOrder] = useState<number[] | null>(null)
   const describe = useAuthAware(onAuthLost)
@@ -62,6 +72,11 @@ export function RoundList({
     // returned early on the stale error anyway. The failure of one
     // championship is not a fact about the next one.
     setError(null)
+    // And the championship itself: shown under another's id until that one
+    // loads, its halt's Resume would act on the wrong championship.
+    setData(null)
+    visit.current++
+    setThisVisit(visit.current)
     // And the reorder, which is about the championship that was on screen. A
     // running order carried across to a different championship would be a
     // rearrangement of rounds that are not the ones it describes.
@@ -87,8 +102,24 @@ export function RoundList({
   if (error) return <Message kind="error" title="Couldn't load that championship" body={error} />
   if (!data) return <p className="muted">Loading…</p>
 
-  const { championship, gridmom } = data
+  const { championship, gridmom, liveriesHalt, liveriesHaltUnknown } = data
   const blocking = gridmom.counts.ERROR > 0
+
+  // Re-read rather than patch what is on screen: the export is the only thing
+  // that knows what the championship now says, gridmom included. What's on
+  // screen stays meanwhile, so a message below it stays up.
+  const refresh = () => {
+    const id = championshipId
+    const mine = thisVisit
+    void (async () => {
+      try {
+        const next = await api.championship(id)
+        if (visit.current === mine) setData(next)
+      } catch (e) {
+        if (visit.current === mine) setError(describe(e))
+      }
+    })()
+  }
 
   if (order) {
     return (
@@ -98,18 +129,9 @@ export function RoundList({
         order={order}
         onOrder={setOrder}
         onDone={() => {
-          // Re-read rather than patch what is on screen. The championship has
-          // changed underneath this component and the export is the only thing
-          // that knows what it now says — gridmom included.
           setData(null)
           setOrder(null)
-          void (async () => {
-            try {
-              setData(await api.championship(championshipId))
-            } catch (e) {
-              setError(describe(e))
-            }
-          })()
+          refresh()
         }}
         onCancel={() => setOrder(null)}
         onAuthLost={onAuthLost}
@@ -146,6 +168,16 @@ export function RoundList({
         <span aria-hidden="true">{showFindings ? "▾" : "▸"}</span>
       </button>
       {showFindings && <Findings report={gridmom} />}
+      <SpectatorCars
+        // A preview belongs to its championship; keyed, it can't be spent on another.
+        key={championshipId}
+        championshipId={championshipId}
+        halt={liveriesHalt}
+        haltUnknown={liveriesHaltUnknown}
+        missing={gridmom.findings.some((f) => f.code === "entry.spectator-missing")}
+        onChanged={refresh}
+        describe={describe}
+      />
 
       <ul className="list">
         {championship.rounds.map((r) => (

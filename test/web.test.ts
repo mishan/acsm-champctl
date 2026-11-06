@@ -14,6 +14,8 @@
  * refusal that silently stopped refusing looks exactly like everything working.
  */
 
+import { mkdtempSync } from "node:fs"
+import { DatabaseSync } from "node:sqlite"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -29,6 +31,8 @@ import type { Championship, ChampionshipEvent } from "../src/acsm/types.js"
 import type { FinalizePlan } from "../src/finalize/plan.js"
 import { ContentCache } from "../src/web/content-cache.js"
 import { PlanStore } from "../src/web/plans.js"
+import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
+import type { LeagueProfile } from "../src/profile/types.js"
 import type { HeldChampionship } from "../src/web/routes.js"
 import type {
   NewChampionshipResponse,
@@ -124,6 +128,12 @@ interface HarnessOptions {
   reader?: AcsmReader
   /** Collects the server's log lines; silent otherwise. */
   log?: string[]
+  /** Layered on the test profile. */
+  profile?: Partial<LeagueProfile>
+  /** The livery queue's database. Default: a fresh one per harness. */
+  liveriesStore?: string
+  /** Answers a request before anything else does, for a test playing one championship's ACSM. */
+  acsm?: (url: string, init: RequestInit) => Response | undefined
 }
 
 interface Harness {
@@ -158,6 +168,8 @@ function harness(options: HarnessOptions = {}): Harness {
 
   const fetchImpl: typeof globalThis.fetch = async (input, init = {}) => {
     const url = String(input)
+    const answered = url.endsWith("/login") ? undefined : options.acsm?.(url, init)
+    if (answered) return answered
     if (url.endsWith("/login")) {
       // A wrong password is ACSM re-rendering the login page with a 200, not a
       // 401. Getting that wrong is how a failed login used to look like a
@@ -224,8 +236,11 @@ function harness(options: HarnessOptions = {}): Harness {
   }
 
   const app = buildServer({
+    liveriesStore:
+      options.liveriesStore ?? join(mkdtempSync(join(tmpdir(), "champctl-web-")), "liveries.db"),
     profile: {
       ...testProfile(),
+      ...options.profile,
       ...(options.newChampionshipTemplate
         ? { newChampionshipTemplate: options.newChampionshipTemplate }
         : {}),
@@ -306,6 +321,9 @@ const ROUTES: { method: "GET" | "POST"; url: string; public: boolean }[] = [
   { method: "POST", url: "/api/reorders/whatever/apply", public: false },
   { method: "POST", url: "/api/championships/plan", public: false },
   { method: "POST", url: "/api/championships/whatever/create", public: false },
+  { method: "POST", url: `/api/championships/${CHAMP_ID}/spectators/plan`, public: false },
+  { method: "POST", url: "/api/spectator-plans/whatever/apply", public: false },
+  { method: "POST", url: `/api/championships/${CHAMP_ID}/liveries-halt/clear`, public: false },
 ]
 
 describe("authentication", () => {
@@ -2175,5 +2193,399 @@ describe("serving the client", () => {
       expect(res.statusCode).toBe(404)
       expect(res.json().error.code).toBe("not-found")
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The league's spectator cars, and the halt a bad save leaves
+// ---------------------------------------------------------------------------
+
+describe("adding the league's spectator cars", () => {
+  const STREAM = { name: "Stream", model: "ford_transit", guid: "90000000000000001" }
+  const RECORDER = { name: "Recorder", model: "ford_transit", guid: "90000000000000002" }
+  const profile = { entryList: { targetSlots: 30, spectatorCars: [STREAM, RECORDER] } }
+
+  /**
+   * One championship's ACSM: its logged-in export, its edit form with a row
+   * per spectator car then one driver, and a save that reads the rows the way
+   * 2.4.15 does: one spectator car per EntryList.Spectator.
+   */
+  function manager(
+    options: {
+      /** Called when the edit form is read, which the save does just before posting. */
+      onEditRead?: () => void
+      addedInAcsm?: boolean
+      dropsNewRows?: boolean
+      editedDuringSave?: boolean
+      /** Which export read gives the stream car a race number. */
+      raceNumberAt?: number
+    } = {},
+  ) {
+    const car = (c: typeof STREAM, i: number) => ({
+      Name: c.name,
+      GUID: c.guid,
+      Model: c.model,
+      Skin: "",
+      PitBox: i,
+      RaceNumber: 0,
+      InternalUUID: `00000000-0000-4000-8000-00000000000${i + 1}`,
+    })
+    const state = {
+      ID: CHAMP_ID,
+      Name: "November",
+      SpectatorCarEnabled: true,
+      SpectatorCars: [car(STREAM, 0)],
+      Classes: [
+        { Entrants: { CAR_0: { Name: "Ann", GUID: "76561190000000003", PitBox: 0, Model: "m" } } },
+      ],
+    }
+    let exports = 0
+    const row = (c: { Name: string; GUID: string; Model: string }, spectator: boolean) => `
+      <input type="hidden" name="EntryList.InternalUUID" value="">
+      ${spectator ? '<input type="hidden" name="EntryList.Spectator" value="true">' : ""}
+      <input name="EntryList.Name" value="${c.Name}"><input name="EntryList.Team" value="">
+      <input name="EntryList.GUID" value="${c.GUID}">
+      <select name="EntryList.Car"><option value="${c.Model}" selected>c</option></select>
+      <select name="EntryList.Skin"></select>
+      <input name="EntryList.Ballast" value="0"><input name="EntryList.Restrictor" value="0">
+      <select name="EntryList.FixedSetup"><option value="" selected></option></select>`
+    const posts: string[] = []
+    const answer = (url: string, init: RequestInit): Response | undefined => {
+      if (url.endsWith(`/championship/${CHAMP_ID}/export`)) {
+        // Someone adds the recorder in ACSM after the preview was read.
+        // Reads: the preview, the save's checks, its last look before the
+        // POST, then its read-back.
+        exports++
+        if (options.addedInAcsm && exports === 2) state.SpectatorCars.push(car(RECORDER, 1))
+        if (options.editedDuringSave && exports === 3) state.Name = "Renamed by an admin"
+        if (exports === options.raceNumberAt) state.SpectatorCars[0]!.RaceNumber = 420
+        return new Response(JSON.stringify(state), { status: 200 })
+      }
+      if (url.endsWith(`/championship/${CHAMP_ID}/edit`)) {
+        options.onEditRead?.()
+        return new Response(
+          `<form action="/championships/new/submit" method="post">
+            <textarea name="ChampionshipInfo"></textarea><div id="ChampionshipInfoHolder"></div>
+            ${state.SpectatorCars.map((c) => row(c, true)).join("")}
+            <input name="ClassName" value="GT">${row(state.Classes[0]!.Entrants.CAR_0, false)}
+            <input type="hidden" name="EntryList.NumEntrants" value="1"></form>`,
+          { status: 200 },
+        )
+      }
+      if (url.endsWith("/championships/new/submit") && init.method === "POST") {
+        const form = new URLSearchParams(String(init.body))
+        posts.push(String(init.body))
+        const names = form.getAll("EntryList.Name")
+        const guids = form.getAll("EntryList.GUID")
+        const cars = form.getAll("EntryList.Car")
+        const markers = form.getAll("EntryList.Spectator")
+        if (options.dropsNewRows) markers.splice(state.SpectatorCars.length)
+        state.SpectatorCars = markers.map((_, i) => ({
+          ...(state.SpectatorCars.find((c) => c.GUID === guids[i]) ?? {
+            InternalUUID: "6c1b1a52-1111-4111-8111-111111111111",
+            Team: "",
+            Ballast: 0,
+            Restrictor: 0,
+            FixedSetup: "",
+            ConnectAsSpectator: true,
+          }),
+          Name: names[i]!,
+          GUID: guids[i]!,
+          Model: cars[i]!,
+          Skin: "",
+          PitBox: i,
+          RaceNumber: 0,
+        })) as typeof state.SpectatorCars
+        return new Response("", { status: 302, headers: { location: `/championship/${CHAMP_ID}` } })
+      }
+      return undefined
+    }
+    return { state, posts, answer }
+  }
+
+  const plan = (h: Harness) =>
+    h.app.inject({
+      method: "POST",
+      url: `/api/championships/${CHAMP_ID}/spectators/plan`,
+      headers: { cookie: h.cookie() },
+    })
+  const apply = (h: Harness, planId: string) =>
+    h.app.inject({
+      method: "POST",
+      url: `/api/spectator-plans/${planId}/apply`,
+      headers: { cookie: h.cookie() },
+    })
+
+  async function store() {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-web-"))
+    return join(dir, "liveries.db")
+  }
+
+  it("previews only the profile's missing cars, then adds them on confirm", async () => {
+    const m = manager()
+    const h = harness({ profile, acsm: m.answer })
+    await h.login()
+    const p = await plan(h)
+    expect(p.statusCode).toBe(200)
+    expect(p.json().cars).toEqual([RECORDER])
+
+    const res = await apply(h, p.json().planId)
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ added: ["Recorder"] })
+    expect(m.state.SpectatorCars.map((c) => c.Name)).toEqual(["Stream", "Recorder"])
+    // Used once: a second confirm is a fresh preview's job.
+    expect((await apply(h, p.json().planId)).statusCode).toBe(404)
+  })
+
+  it("gives the drain its lease back afterwards", async () => {
+    const liveriesStore = await store()
+    const m = manager()
+    const h = harness({ profile, acsm: m.answer, liveriesStore })
+    await h.login()
+    expect((await apply(h, (await plan(h)).json().planId)).statusCode).toBe(200)
+    const q = await SqliteSubmissionQueue.open(liveriesStore)
+    expect((await q.acquireDrainLease(CHAMP_ID, "drain", NOW, 60_000)).ok).toBe(true)
+    q.close()
+  })
+
+  it("refuses, writing nothing, when the car was added in ACSM after the preview", async () => {
+    const m = manager({ addedInAcsm: true })
+    const h = harness({ profile, acsm: m.answer })
+    await h.login()
+    const res = await apply(h, (await plan(h)).json().planId)
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error.code).toBe("spectators-changed")
+    expect(m.posts).toEqual([])
+  })
+
+  it.each([2, 3])(
+    "refuses, writing nothing, when what the save does changed by read %i",
+    async (at) => {
+      // Someone gave the stream car a race number, which the save would clear
+      // without the preview having said so, at any read after the preview's.
+      const m = manager({ raceNumberAt: at })
+      const h = harness({ profile, acsm: m.answer })
+      await h.login()
+      const res = await apply(h, (await plan(h)).json().planId)
+      expect(res.statusCode).toBe(409)
+      expect(m.posts).toEqual([])
+    },
+  )
+
+  /** An account that may edit championships: ACSM serves it the edit form. */
+  const editor = (url: string): Response | undefined =>
+    url.endsWith("/edit")
+      ? new Response('<form action="/championships/new/submit" method="post"></form>')
+      : undefined
+
+  it("keys a halt by the championship however its id is capitalized", async () => {
+    // ACSM reads ids case-insensitively, so the halt has to as well.
+    const liveriesStore = await store()
+    const q = await SqliteSubmissionQueue.open(liveriesStore)
+    await q.haltDrain("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "x", undefined, NOW)
+    q.close()
+    const h = harness({ liveriesStore, acsm: editor })
+    await h.login()
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/api/championships/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/liveries-halt/clear",
+      headers: { cookie: h.cookie() },
+      payload: { haltedAt: NOW.toISOString() },
+    })
+    expect(res.json()).toEqual({ cleared: true })
+  })
+
+  it("refuses, writing nothing, while liveries are halted for the championship", async () => {
+    const liveriesStore = await store()
+    const q = await SqliteSubmissionQueue.open(liveriesStore)
+    await q.haltDrain(CHAMP_ID, "A save moved a driver.", "/backups/x.json", NOW)
+    q.close()
+    const m = manager()
+    const h = harness({ profile, acsm: m.answer, liveriesStore })
+    await h.login()
+    const res = await apply(h, (await plan(h)).json().planId)
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error.code).toBe("liveries-halted")
+    expect(m.posts).toEqual([])
+  })
+
+  it("refuses, writing nothing, while the drain holds the championship", async () => {
+    const liveriesStore = await store()
+    const q = await SqliteSubmissionQueue.open(liveriesStore)
+    await q.acquireDrainLease(CHAMP_ID, "drain", NOW, 60_000)
+    q.close()
+    const m = manager()
+    const h = harness({ profile, acsm: m.answer, liveriesStore })
+    await h.login()
+    const res = await apply(h, (await plan(h)).json().planId)
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error.code).toBe("save-running")
+    expect(m.posts).toEqual([])
+  })
+
+  it("stops champctl writing the championship when the save comes back wrong", async () => {
+    const liveriesStore = await store()
+    const m = manager({ dropsNewRows: true })
+    const h = harness({ profile, acsm: m.answer, liveriesStore })
+    await h.login()
+    const res = await apply(h, (await plan(h)).json().planId)
+    expect(res.statusCode).toBe(502)
+    const q = await SqliteSubmissionQueue.open(liveriesStore)
+    expect((await q.drainHalt(CHAMP_ID))?.reason).toMatch(/SpectatorCars.1 removed/)
+    q.close()
+  })
+
+  it("refuses, writing nothing, when someone edits the championship during the save", async () => {
+    const m = manager({ editedDuringSave: true })
+    const h = harness({ profile, acsm: m.answer })
+    await h.login()
+    const res = await apply(h, (await plan(h)).json().planId)
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error.code).toBe("championship-changed")
+    expect(m.posts).toEqual([])
+  })
+
+  it("declines a championship with no spectator car to copy", async () => {
+    const m = manager()
+    m.state.SpectatorCars = []
+    const h = harness({ profile, acsm: m.answer })
+    await h.login()
+    const res = await apply(h, (await plan(h)).json().planId)
+    expect(res.statusCode).toBe(422)
+    expect(res.json().error.message).toMatch(/no spectator cars/)
+    expect(m.posts).toEqual([])
+  })
+
+  it("won't post once another writer has taken the lease mid-save", async () => {
+    // A slow read can outlast the lease; whoever took it may be saving the
+    // whole championship already.
+    const liveriesStore = await store()
+    let reads = 0
+    // Declared before the manager so its hook can reach the state.
+    let m: ReturnType<typeof manager> | undefined
+    m = manager({
+      onEditRead: () => {
+        // The save's own read of the form, after the checks' one.
+        if (++reads !== 2) return
+        // The new holder saves the championship as it takes the lease.
+        m!.state.Name = "Saved by the drain"
+        const other = new DatabaseSync(liveriesStore)
+        other
+          .prepare(
+            "UPDATE drain_lease SET holder = ?, expires_at = ? WHERE lower(championship_id) = ?",
+          )
+          .run("drain", "2999-01-01T00:00:00.000Z", CHAMP_ID)
+        other.close()
+      },
+    })
+    const h = harness({ profile, acsm: m.answer, liveriesStore })
+    await h.login()
+    const res = await apply(h, (await plan(h)).json().planId)
+    expect(res.statusCode).toBe(409)
+    expect(m.posts).toEqual([])
+    // Nothing was sent, so the drain's save isn't this one's drift to halt on.
+    const q = await SqliteSubmissionQueue.open(liveriesStore)
+    expect(await q.drainHalt(CHAMP_ID)).toBeUndefined()
+    q.close()
+  })
+
+  it("says there's nothing to add when every car is there", async () => {
+    const m = manager()
+    m.state.SpectatorCars.push({
+      ...m.state.SpectatorCars[0]!,
+      Name: "Recorder",
+      GUID: RECORDER.guid,
+      PitBox: 1,
+    })
+    const h = harness({ profile, acsm: m.answer })
+    await h.login()
+    expect((await plan(h)).json().error.code).toBe("nothing-to-add")
+  })
+
+  it("shows a halt with the championship, and lets someone signed in lift it", async () => {
+    const liveriesStore = await store()
+    const q = await SqliteSubmissionQueue.open(liveriesStore)
+    await q.haltDrain(CHAMP_ID, "A save moved a driver.", "/backups/x.json", NOW)
+    q.close()
+    const h = harness({ liveriesStore, acsm: editor })
+    await h.login()
+    const read = () =>
+      h.app.inject({
+        method: "GET",
+        url: `/api/championships/${CHAMP_ID}`,
+        headers: { cookie: h.cookie() },
+      })
+    expect((await read()).json().liveriesHalt).toEqual({
+      reason: "A save moved a driver.",
+      backup: "/backups/x.json",
+      haltedAt: NOW.toISOString(),
+    })
+    const cleared = await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${CHAMP_ID}/liveries-halt/clear`,
+      headers: { cookie: h.cookie() },
+      payload: { haltedAt: NOW.toISOString() },
+    })
+    expect(cleared.json()).toEqual({ cleared: true })
+    expect((await read()).json().liveriesHalt).toBeNull()
+  })
+
+  it("won't clear a halt other than the one the person was shown", async () => {
+    // Someone resumed it meanwhile, and a later save halted it again: a stale
+    // Resume would drop the new halt before anyone had looked at it.
+    const liveriesStore = await store()
+    const q = await SqliteSubmissionQueue.open(liveriesStore)
+    await q.haltDrain(CHAMP_ID, "A later save moved a driver.", "/backups/y.json", NOW)
+    q.close()
+    const h = harness({ liveriesStore, acsm: editor })
+    await h.login()
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${CHAMP_ID}/liveries-halt/clear`,
+      headers: { cookie: h.cookie() },
+      payload: { haltedAt: "2026-01-01T00:00:00.000Z" },
+    })
+    expect(res.statusCode).toBe(409)
+    const after = await SqliteSubmissionQueue.open(liveriesStore)
+    expect((await after.drainHalt(CHAMP_ID))?.reason).toBe("A later save moved a driver.")
+    after.close()
+  })
+
+  it("still shows the championship when the livery queue can't be read, and says so", async () => {
+    // A directory where the database should be: it can't be opened.
+    const liveriesStore = await mkdtemp(join(tmpdir(), "champctl-web-"))
+    const h = harness({ liveriesStore })
+    await h.login()
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/api/championships/${CHAMP_ID}`,
+      headers: { cookie: h.cookie() },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().liveriesHalt).toBeNull()
+    expect(res.json().liveriesHaltUnknown).toMatch(/\S/)
+  })
+
+  it("won't let an account that can't edit championships lift a halt", async () => {
+    // The halt stops the drain, which writes with the league's own account.
+    const liveriesStore = await store()
+    const q = await SqliteSubmissionQueue.open(liveriesStore)
+    await q.haltDrain(CHAMP_ID, "A save moved a driver.", undefined, NOW)
+    q.close()
+    const h = harness({
+      liveriesStore,
+      acsm: (url) => (url.endsWith("/edit") ? new Response("<p>Not allowed.</p>") : undefined),
+    })
+    await h.login()
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${CHAMP_ID}/liveries-halt/clear`,
+      headers: { cookie: h.cookie() },
+      payload: { haltedAt: NOW.toISOString() },
+    })
+    expect(res.statusCode).toBe(403)
+    const after = await SqliteSubmissionQueue.open(liveriesStore)
+    expect(await after.drainHalt(CHAMP_ID)).toBeDefined()
+    after.close()
   })
 })

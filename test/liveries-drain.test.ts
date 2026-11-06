@@ -10,7 +10,7 @@
  * branches that settle rows without writing to ACSM all run before
  * `login()`, which is what makes them testable and is also worth knowing.
  */
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -20,7 +20,15 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { Championship } from "../src/acsm/types.js"
 import { main } from "../src/cli/liveries.js"
+
+// The operator's answer at the prompt, so a test can act while it is open.
+const { confirmMock } = vi.hoisted(() => ({ confirmMock: vi.fn(async () => true) }))
+vi.mock("../src/cli/args.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/cli/args.js")>()),
+  confirm: confirmMock,
+}))
 import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
+import { SqliteLiveryStore } from "../src/liveries/store.js"
 import { acsmStub, type AcsmStub } from "./support/acsm-stub.js"
 import { championship, championshipClass, driver, entryList, raceEvent } from "./support/build.js"
 import { dds } from "./support/dds.js"
@@ -60,6 +68,7 @@ let open: { dir: string; stub?: AcsmStub }[] = []
 
 afterEach(async () => {
   vi.unstubAllEnvs()
+  vi.restoreAllMocks()
   for (const o of open) {
     await o.stub?.close()
     await rm(o.dir, { recursive: true, force: true })
@@ -367,4 +376,165 @@ describe("champctl-liveries --drain", () => {
     after.close()
     expect(lease).toMatchObject({ ok: true })
   })
+
+  it("doesn't push a pack while the drain holds the championship", async () => {
+    // Two whole-championship saves at once lose one of them, whichever path
+    // each came in by.
+    const { db, dir } = await seeded([], oneClass(["Ann"]))
+    const stub = await acsmStub(CHAMP, oneClass(["Ann"]), {
+      handle: ({ path }) =>
+        path === "/login"
+          ? { status: 302, headers: { location: "/", "set-cookie": "_acsm_data=x; Path=/" } }
+          : undefined,
+    })
+    open.push({ dir, stub })
+    const q = await SqliteSubmissionQueue.open(db)
+    await q.acquireDrainLease(CHAMP, "drain", new Date(), 60_000)
+    q.close()
+    const pack = join(dir, "pack.zip")
+    await writeFile(pack, zipSync({ [`${CAR}/Ann.zip`]: skinZip() }))
+
+    vi.stubEnv("CHAMPCTL_USERNAME", "operator")
+    vi.stubEnv("CHAMPCTL_PASSWORD", "secret")
+    const said: string[] = []
+    vi.spyOn(process.stdout, "write").mockImplementation((s) => (said.push(String(s)), true))
+    vi.spyOn(process.stderr, "write").mockImplementation((s) => (said.push(String(s)), true))
+    const code = await main([
+      CHAMP,
+      "--zip",
+      pack,
+      "--push",
+      "--yes",
+      "--base-url",
+      stub.baseUrl,
+      "--store",
+      db,
+    ])
+    expect(code).toBe(3)
+    expect(said.join("")).toMatch(/Another drain is running \(drain/)
+    expect(stub.requests.filter((r) => r.includes("/skin") || r.includes("/submit"))).toEqual([])
+  })
+
+  it("doesn't push a pack to a championship halted while the prompt was open", async () => {
+    // A drain's save drifted, halted the championship and let go of its lease
+    // while the operator was reading the preview.
+    const { db, dir } = await seeded([], oneClass(["Ann"]))
+    const stub = await acsmStub(CHAMP, oneClass(["Ann"]), {
+      handle: ({ path }) =>
+        path === "/login"
+          ? { status: 302, headers: { location: "/", "set-cookie": "_acsm_data=x; Path=/" } }
+          : undefined,
+    })
+    open.push({ dir, stub })
+    const pack = join(dir, "pack.zip")
+    await writeFile(pack, zipSync({ [`${CAR}/Ann.zip`]: skinZip() }))
+    confirmMock.mockImplementationOnce(async () => {
+      const q = await SqliteSubmissionQueue.open(db)
+      await q.haltDrain(CHAMP, "A save moved a driver.", undefined, NOW)
+      q.close()
+      return true
+    })
+
+    vi.stubEnv("CHAMPCTL_USERNAME", "operator")
+    vi.stubEnv("CHAMPCTL_PASSWORD", "secret")
+    // 4 is the halt's own exit code.
+    expect(
+      await main([CHAMP, "--zip", pack, "--push", "--base-url", stub.baseUrl, "--store", db]),
+    ).toBe(4)
+    expect(stub.requests.filter((r) => r.includes("/skin") || r.includes("/submit"))).toEqual([])
+    const q = await SqliteSubmissionQueue.open(db)
+    expect((await q.acquireDrainLease(CHAMP, "drain", new Date(), 60_000)).ok).toBe(true)
+    q.close()
+  })
+
+  it("gives the lease back when a manual push fails before it starts", async () => {
+    const { db, dir } = await seeded([], oneClass(["Ann"]))
+    const stub = await acsmStub(CHAMP, oneClass(["Ann"]), {
+      handle: ({ path }) =>
+        path === "/login"
+          ? { status: 302, headers: { location: "/", "set-cookie": "_acsm_data=x; Path=/" } }
+          : undefined,
+    })
+    open.push({ dir, stub })
+    const pack = join(dir, "pack.zip")
+    await writeFile(pack, zipSync({ [`${CAR}/Ann.zip`]: skinZip() }))
+    vi.spyOn(SqliteLiveryStore, "open").mockRejectedValueOnce(new Error("database is locked"))
+
+    vi.stubEnv("CHAMPCTL_USERNAME", "operator")
+    vi.stubEnv("CHAMPCTL_PASSWORD", "secret")
+    await expect(
+      main([CHAMP, "--zip", pack, "--push", "--yes", "--base-url", stub.baseUrl, "--store", db]),
+    ).rejects.toThrow(/database is locked/)
+    const q = await SqliteSubmissionQueue.open(db)
+    expect((await q.acquireDrainLease(CHAMP, "drain", new Date(), 60_000)).ok).toBe(true)
+    q.close()
+  })
+
+  it.each(["drain", "pack"])(
+    "won't save the championship once another has taken the lease mid-upload (%s)",
+    async (path) => {
+      // A large upload can outlast the lease; whoever took it may be saving the
+      // championship already.
+      const { db, dir } = await seeded(path === "drain" ? ["Ann"] : [], oneClass(["Ann"]))
+      const champ = {
+        ...oneClass(["Ann"]),
+        SpectatorCars: [{ Name: "Van", Model: CAR, Skin: "v" }],
+      }
+      const row = (name: string, spectator = false, guid = "") => `
+      <input type="hidden" name="EntryList.InternalUUID" value="">
+      <select name="EntryList.Car"><option value="${CAR}" selected>c</option></select>
+      <select name="EntryList.Skin"></select>
+      <input name="EntryList.Name" value="${name}">
+      <input name="EntryList.Team" value=""><input name="EntryList.GUID" value="${guid}">
+      <input name="EntryList.Ballast" value="0"><input name="EntryList.Restrictor" value="0">
+      <select name="EntryList.FixedSetup"><option value="" selected></option></select>
+      ${spectator ? '<input type="hidden" name="EntryList.Spectator" value="true">' : ""}`
+      const page = `<form action="/championships/new/submit" method="post">
+      <textarea name="ChampionshipInfo"></textarea><div id="ChampionshipInfoHolder"></div>
+      <div class="entrant">${row("Van", true)}</div>
+      <input name="ClassName" value="RSS"><div class="entrant">${row("Ann", false, driver("Ann").GUID)}</div>
+      <input type="hidden" name="EntryList.NumEntrants" value="1"></form>`
+      const stub = await acsmStub(CHAMP, champ, {
+        handle: ({ path }) => {
+          if (path === "/login") {
+            return { status: 302, headers: { location: "/", "set-cookie": "_acsm_data=x; Path=/" } }
+          }
+          if (path.endsWith("/edit")) return { status: 200, body: page }
+          if (path.includes("/skin")) {
+            const other = new DatabaseSync(db)
+            other
+              .prepare(
+                "UPDATE drain_lease SET holder = ?, expires_at = ? WHERE championship_id = ?",
+              )
+              .run("someone-else:1", new Date(Date.now() + 60_000).toISOString(), CHAMP)
+            other.close()
+            return { status: 302, headers: { location: "/cars" } }
+          }
+          if (path.endsWith("/submit")) {
+            return { status: 302, headers: { location: `/championship/${CHAMP}` } }
+          }
+          return undefined
+        },
+      })
+      open.push({ dir, stub })
+      const pack = join(dir, "pack.zip")
+      await writeFile(pack, zipSync({ [`${CAR}/Ann.zip`]: skinZip() }))
+
+      vi.stubEnv("CHAMPCTL_USERNAME", "operator")
+      vi.stubEnv("CHAMPCTL_PASSWORD", "secret")
+      const how = path === "drain" ? ["--drain"] : ["--zip", pack, "--no-store"]
+      const said: string[] = []
+      vi.spyOn(process.stdout, "write").mockImplementation((s) => (said.push(String(s)), true))
+      vi.spyOn(process.stderr, "write").mockImplementation((s) => (said.push(String(s)), true))
+      // Refused by the lease guard itself, not by anything else after the upload.
+      expect(
+        await main([CHAMP, ...how, "--push", "--yes", "--base-url", stub.baseUrl, "--store", db]),
+      ).toBe(3)
+      expect(said.join("")).toMatch(/took .* over while this one was running/)
+      expect(stub.requests.filter((r) => r.includes("/skin"))).not.toEqual([])
+      expect(stub.requests.filter((r) => r.includes("/submit"))).toEqual([])
+      // Through the session's rate limiter, as the drain's own runs are.
+    },
+    60_000,
+  )
 })
