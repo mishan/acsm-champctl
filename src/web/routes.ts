@@ -1207,9 +1207,18 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
      * Lets champctl write this championship's form again after a halt. The
      * staff who'd check the championship have no CLI, so this is theirs.
      */
-    app.post<{ Params: { id: string } }>(
+    app.post<{ Params: { id: string }; Body: { haltedAt: string } }>(
       "/championships/:id/liveries-halt/clear",
-      { schema: { params: idParamsSchema } },
+      {
+        schema: {
+          params: idParamsSchema,
+          body: {
+            type: "object",
+            required: ["haltedAt"],
+            properties: { haltedAt: { type: "string", format: "date-time" } },
+          },
+        },
+      },
       async (req): Promise<{ cleared: boolean }> => {
         const s = requireSession(ctx, req)
         // Only someone ACSM would let edit this championship: the halt is what
@@ -1226,7 +1235,22 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
             "Server Manager won't let this account edit the championship, so it can't resume it either.",
           )
         }
-        return { cleared: await withQueue((q) => q.clearDrainHalt(req.params.id)) }
+        // Only the halt the person was shown: someone else may have resumed it
+        // since, and a later save halted it again for a reason they haven't seen.
+        return withQueue(async (q) => {
+          if (await q.clearDrainHalt(req.params.id, new Date(req.body.haltedAt))) {
+            return { cleared: true }
+          }
+          if (await q.drainHalt(req.params.id)) {
+            throw new ApiError(
+              409,
+              "halt-changed",
+              "champctl stopped writing this championship again since this was shown. " +
+                "Nothing was resumed; look at the new reason first.",
+            )
+          }
+          return { cleared: false }
+        })
       },
     )
 

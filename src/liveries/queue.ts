@@ -569,11 +569,18 @@ export class SqliteSubmissionQueue {
     }
   }
 
-  /** True when there was a halt to clear. */
-  async clearDrainHalt(championshipId: string): Promise<boolean> {
-    const r = this.#db
-      .prepare("DELETE FROM drain_halt WHERE lower(championship_id) = ?")
-      .run(key(championshipId))
+  /**
+   * True when there was a halt to clear. Given `haltedAt`, only the halt made
+   * then: one shown to somebody, so a later halt they haven't seen survives.
+   */
+  async clearDrainHalt(championshipId: string, haltedAt?: Date): Promise<boolean> {
+    const r = haltedAt
+      ? this.#db
+          .prepare("DELETE FROM drain_halt WHERE lower(championship_id) = ? AND halted_at = ?")
+          .run(key(championshipId), haltedAt.toISOString())
+      : this.#db
+          .prepare("DELETE FROM drain_halt WHERE lower(championship_id) = ?")
+          .run(key(championshipId))
     return Number(r.changes) > 0
   }
 

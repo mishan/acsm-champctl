@@ -274,8 +274,8 @@ export const api = {
     request(`/spectator-plans/${encodeURIComponent(planId)}/apply`, { method: "POST" }),
 
   /** Let champctl write the championship again after a save went wrong. */
-  clearLiveriesHalt: (id: string): Promise<{ cleared: boolean }> =>
-    request(`/championships/${encodeURIComponent(id)}/liveries-halt/clear`, { method: "POST" }),
+  clearLiveriesHalt: (id: string, haltedAt: string): Promise<{ cleared: boolean }> =>
+    request(`/championships/${encodeURIComponent(id)}/liveries-halt/clear`, json({ haltedAt })),
 
   /** A championship's sign-ups, read logged in: the public export leaves them out. */
   signUps: (id: string): Promise<SignUpsResponse> =>

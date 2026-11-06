@@ -41,11 +41,11 @@ export function RoundList({
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showFindings, setShowFindings] = useState(false)
-  // Which championship is on screen now, for an answer that arrives later.
-  const onScreen = useRef(championshipId)
-  useEffect(() => {
-    onScreen.current = championshipId
-  }, [championshipId])
+  // Bumped each time a championship is opened, coming back to one included,
+  // so an answer to an earlier visit can't land on a later one. The state is
+  // the visit a render belongs to; the ref is the one on screen now.
+  const visit = useRef(0)
+  const [thisVisit, setThisVisit] = useState(0)
   /** The running order being tried, as 1-based source rounds. Null when not reordering. */
   const [order, setOrder] = useState<number[] | null>(null)
   const describe = useAuthAware(onAuthLost)
@@ -75,6 +75,8 @@ export function RoundList({
     // And the championship itself: shown under another's id until that one
     // loads, its halt's Resume would act on the wrong championship.
     setData(null)
+    visit.current++
+    setThisVisit(visit.current)
     // And the reorder, which is about the championship that was on screen. A
     // running order carried across to a different championship would be a
     // rearrangement of rounds that are not the ones it describes.
@@ -108,12 +110,13 @@ export function RoundList({
   // screen stays meanwhile, so a message below it stays up.
   const refresh = () => {
     const id = championshipId
+    const mine = thisVisit
     void (async () => {
       try {
         const next = await api.championship(id)
-        if (onScreen.current === id) setData(next)
+        if (visit.current === mine) setData(next)
       } catch (e) {
-        if (onScreen.current === id) setError(describe(e))
+        if (visit.current === mine) setError(describe(e))
       }
     })()
   }

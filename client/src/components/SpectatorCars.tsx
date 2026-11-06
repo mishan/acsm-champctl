@@ -71,7 +71,7 @@ export function SpectatorCars({
           onClick={() => {
             if (!window.confirm("Has the championship been checked, or restored?")) return
             void run(async () => {
-              await api.clearLiveriesHalt(championshipId)
+              await api.clearLiveriesHalt(championshipId, halt.haltedAt)
               onChanged()
             })
           }}

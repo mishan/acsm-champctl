@@ -603,4 +603,51 @@ describe("the league's spectator cars", () => {
     expect(screen.queryByText("Resume")).toBeNull()
     expect(screen.queryByText("Championship A")).toBeNull()
   })
+
+  it("drops a refresh begun before leaving, even after coming back", async () => {
+    // A, then B, then A again: the first A's late answer would replace the
+    // newer one, since the id matches again.
+    const missing = (name: string): ChampionshipResponse => ({
+      ...response(name),
+      gridmom: {
+        findings: [{ severity: "WARN", code: "entry.spectator-missing", message: "missing" }],
+        counts: { ERROR: 0, WARN: 1, INFO: 0 },
+        ok: true,
+      } as ChampionshipResponse["gridmom"],
+    })
+    let late: (v: ChampionshipResponse) => void = () => {}
+    championshipMock
+      .mockResolvedValueOnce(missing("First look at A"))
+      .mockImplementationOnce(() => new Promise((r) => (late = r)))
+      .mockResolvedValueOnce(missing("B"))
+      .mockResolvedValueOnce(missing("Second look at A"))
+    planSpectatorsMock.mockResolvedValue({
+      planId: "p1",
+      cars: [{ name: "Recorder", model: "ford_transit", guid: "90000000000000002" }],
+      effects: [],
+    })
+    addSpectatorsMock.mockRejectedValue(new Error("refused"))
+    const at = (id: string) => (
+      <RoundList
+        championshipId={id}
+        baseUrl="https://acsm.example"
+        onOpenRound={() => {}}
+        onOpenSignUps={() => {}}
+        onAuthLost={() => {}}
+      />
+    )
+    const view = render(at("champ-1"))
+    await screen.findByText("First look at A")
+    // An add that fails still refreshes, and this refresh is the late one.
+    fireEvent.click(screen.getByText("Add the missing spectator cars"))
+    fireEvent.click(await screen.findByText("Add"))
+    await waitFor(() => expect(championshipMock).toHaveBeenCalledTimes(2))
+    view.rerender(at("champ-2"))
+    await screen.findByText("B")
+    view.rerender(at("champ-1"))
+    await screen.findByText("Second look at A")
+    await act(async () => late(missing("Stale A")))
+    expect(screen.queryByText("Stale A")).toBeNull()
+    expect(screen.getByText("Second look at A")).toBeTruthy()
+  })
 })

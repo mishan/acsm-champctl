@@ -6,7 +6,7 @@ import type { SpectatorPlanResponse } from "../api"
 const { planMock, addMock, clearMock } = vi.hoisted(() => ({
   planMock: vi.fn<(id: string) => Promise<SpectatorPlanResponse>>(),
   addMock: vi.fn<(planId: string) => Promise<{ added: string[] }>>(),
-  clearMock: vi.fn<(id: string) => Promise<{ cleared: boolean }>>(),
+  clearMock: vi.fn<(id: string, haltedAt: string) => Promise<{ cleared: boolean }>>(),
 }))
 
 vi.mock("../api", async (importOriginal) => {
@@ -142,7 +142,7 @@ describe("the league's spectator cars", () => {
     expect(clearMock).not.toHaveBeenCalled()
     fireEvent.click(screen.getByText("Resume"))
     await waitFor(() => expect(onChanged).toHaveBeenCalled())
-    expect(clearMock).toHaveBeenCalledWith("champ-1")
+    expect(clearMock).toHaveBeenCalledWith("champ-1", HALT.haltedAt)
     expect(confirm).toHaveBeenCalledTimes(2)
   })
 })

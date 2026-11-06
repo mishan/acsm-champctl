@@ -2390,6 +2390,7 @@ describe("adding the league's spectator cars", () => {
       method: "POST",
       url: "/api/championships/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/liveries-halt/clear",
       headers: { cookie: h.cookie() },
+      payload: { haltedAt: NOW.toISOString() },
     })
     expect(res.json()).toEqual({ cleared: true })
   })
@@ -2523,9 +2524,31 @@ describe("adding the league's spectator cars", () => {
       method: "POST",
       url: `/api/championships/${CHAMP_ID}/liveries-halt/clear`,
       headers: { cookie: h.cookie() },
+      payload: { haltedAt: NOW.toISOString() },
     })
     expect(cleared.json()).toEqual({ cleared: true })
     expect((await read()).json().liveriesHalt).toBeNull()
+  })
+
+  it("won't clear a halt other than the one the person was shown", async () => {
+    // Someone resumed it meanwhile, and a later save halted it again: a stale
+    // Resume would drop the new halt before anyone had looked at it.
+    const liveriesStore = await store()
+    const q = await SqliteSubmissionQueue.open(liveriesStore)
+    await q.haltDrain(CHAMP_ID, "A later save moved a driver.", "/backups/y.json", NOW)
+    q.close()
+    const h = harness({ liveriesStore, acsm: editor })
+    await h.login()
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/api/championships/${CHAMP_ID}/liveries-halt/clear`,
+      headers: { cookie: h.cookie() },
+      payload: { haltedAt: "2026-01-01T00:00:00.000Z" },
+    })
+    expect(res.statusCode).toBe(409)
+    const after = await SqliteSubmissionQueue.open(liveriesStore)
+    expect((await after.drainHalt(CHAMP_ID))?.reason).toBe("A later save moved a driver.")
+    after.close()
   })
 
   it("still shows the championship when the livery queue can't be read, and says so", async () => {
@@ -2558,6 +2581,7 @@ describe("adding the league's spectator cars", () => {
       method: "POST",
       url: `/api/championships/${CHAMP_ID}/liveries-halt/clear`,
       headers: { cookie: h.cookie() },
+      payload: { haltedAt: NOW.toISOString() },
     })
     expect(res.statusCode).toBe(403)
     const after = await SqliteSubmissionQueue.open(liveriesStore)
