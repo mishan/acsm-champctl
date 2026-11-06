@@ -442,7 +442,15 @@ Resume on the championship in champctl web, or `champctl-liveries <id>
 --clear-halt`, lifts it once the championship is restored. The halt covers every
 champctl save of the form, not only liveries: champctl web's "Add the missing
 spectator cars" checks it, takes the drain's lease, and halts on drift the same
-way. The first halt keeps its backup; a later one would name a backup of
+way.
+
+Every save holds the drain's lease and renews it while it runs, and checks it
+again after the rate limiter's wait, immediately before the POST. What no check
+can cover is a POST already sent: ACSM's save has no compare-and-set, so a
+request on the wire can't be called back, and a client timeout doesn't prove
+ACSM stopped working on it. Another writer can only get the lease after ten
+minutes of failed renewals, so this needs a holder that is alive enough to
+send and unable to renew for that long. The first halt keeps its backup; a later one would name a backup of
 the damage. On the harness copy, the remaining differences were `ACSR` and
 `AvailableCars`, which a browser's save changes there too because the harness has
 neither BATL's cars nor its ACSR integration; on BATL's manager both rendered
