@@ -28,6 +28,7 @@ vi.mock("../src/cli/args.js", async (importOriginal) => ({
   confirm: confirmMock,
 }))
 import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
+import { SqliteLiveryStore } from "../src/liveries/store.js"
 import { acsmStub, type AcsmStub } from "./support/acsm-stub.js"
 import { championship, championshipClass, driver, entryList, raceEvent } from "./support/build.js"
 import { dds } from "./support/dds.js"
@@ -441,6 +442,29 @@ describe("champctl-liveries --drain", () => {
       await main([CHAMP, "--zip", pack, "--push", "--base-url", stub.baseUrl, "--store", db]),
     ).toBe(4)
     expect(stub.requests.filter((r) => r.includes("/skin") || r.includes("/submit"))).toEqual([])
+    const q = await SqliteSubmissionQueue.open(db)
+    expect((await q.acquireDrainLease(CHAMP, "drain", new Date(), 60_000)).ok).toBe(true)
+    q.close()
+  })
+
+  it("gives the lease back when a manual push fails before it starts", async () => {
+    const { db, dir } = await seeded([], oneClass(["Ann"]))
+    const stub = await acsmStub(CHAMP, oneClass(["Ann"]), {
+      handle: ({ path }) =>
+        path === "/login"
+          ? { status: 302, headers: { location: "/", "set-cookie": "_acsm_data=x; Path=/" } }
+          : undefined,
+    })
+    open.push({ dir, stub })
+    const pack = join(dir, "pack.zip")
+    await writeFile(pack, zipSync({ [`${CAR}/Ann.zip`]: skinZip() }))
+    vi.spyOn(SqliteLiveryStore, "open").mockRejectedValueOnce(new Error("database is locked"))
+
+    vi.stubEnv("CHAMPCTL_USERNAME", "operator")
+    vi.stubEnv("CHAMPCTL_PASSWORD", "secret")
+    await expect(
+      main([CHAMP, "--zip", pack, "--push", "--yes", "--base-url", stub.baseUrl, "--store", db]),
+    ).rejects.toThrow(/database is locked/)
     const q = await SqliteSubmissionQueue.open(db)
     expect((await q.acquireDrainLease(CHAMP, "drain", new Date(), 60_000)).ok).toBe(true)
     q.close()
