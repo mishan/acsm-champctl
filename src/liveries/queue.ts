@@ -180,49 +180,15 @@ const MIGRATIONS: Migration[] = [
       `)
     },
   },
-  {
-    name: "queue: key halts and leases by the lowercase championship id",
-    up: (db) => {
-      // ACSM reads ids case-insensitively, and the CLI, the drain and champctl
-      // web get theirs from different places. Where one championship has rows
-      // under several spellings, one stays: the earliest halt, whose backup
-      // predates the damage, and the lease that runs longest, so a live holder
-      // isn't dropped for an expired one.
-      // Two live leases under different spellings are two writers that may
-      // both still be saving; keeping either would let a third in when it
-      // lets go. Refused until they've expired, ten minutes at most.
-      const live = db
-        .prepare(
-          `SELECT group_concat(holder, ', ') AS holders FROM drain_lease WHERE expires_at > ?
-           GROUP BY lower(championship_id) HAVING count(*) > 1`,
-        )
-        .get(new Date().toISOString()) as { holders: string } | undefined
-      if (live) {
-        throw new Error(
-          `Drains ${live.holders} are still running on one championship under differently ` +
-            `capitalized ids. Stop them, or wait for their leases to run out, then start this again.`,
-        )
-      }
-      for (const [table, keep] of [
-        ["drain_halt", "halted_at ASC"],
-        ["drain_lease", "expires_at DESC"],
-      ] as const) {
-        db.exec(`
-          DELETE FROM ${table} WHERE rowid NOT IN (
-            SELECT rowid FROM (
-              SELECT rowid, row_number() OVER (
-                PARTITION BY lower(championship_id) ORDER BY ${keep}, rowid
-              ) AS n FROM ${table}
-            ) WHERE n = 1
-          );
-          UPDATE ${table} SET championship_id = lower(championship_id);
-        `)
-      }
-    },
-  },
 ]
 
-/** A championship id as halts and leases are keyed: ACSM's ids are case-insensitive. */
+/**
+ * Halts and leases are found by the lowercase id, matched against the stored
+ * one lowercased: ACSM reads ids case-insensitively, the CLI, the drain and
+ * champctl web get theirs from different places, and a row an older champctl
+ * wrote under another spelling, during an upgrade say, still counts. New rows
+ * are written lowercase.
+ */
 const key = (championshipId: string): string => championshipId.toLowerCase()
 
 export interface DrainHalt {
@@ -455,14 +421,19 @@ export class SqliteSubmissionQueue {
     const expires = new Date(at.getTime() + ttlMs).toISOString()
     this.#db.exec("BEGIN IMMEDIATE")
     try {
+      // The live lease that runs longest, whoever holds it under whichever spelling.
       const held = this.#db
-        .prepare(`SELECT holder, expires_at FROM drain_lease WHERE championship_id = ?`)
-        .get(key(championshipId)) as { holder: string; expires_at: string } | undefined
+        .prepare(
+          `SELECT holder, expires_at FROM drain_lease
+           WHERE lower(championship_id) = ? AND holder <> ? AND expires_at > ?
+           ORDER BY expires_at DESC LIMIT 1`,
+        )
+        .get(key(championshipId), holder, now) as { holder: string; expires_at: string } | undefined
 
       // String comparison, and that is safe: both sides are `Date.toISOString`,
       // which is fixed-width UTC. Parsing them back would only add a way to be
       // wrong about a timezone.
-      if (held && held.expires_at > now && held.holder !== holder) {
+      if (held) {
         this.#db.exec("COMMIT")
         return { ok: false, heldBy: held.holder, until: held.expires_at }
       }
@@ -499,7 +470,9 @@ export class SqliteSubmissionQueue {
     ttlMs: number,
   ): Promise<boolean> {
     const changed = this.#db
-      .prepare(`UPDATE drain_lease SET expires_at = ? WHERE championship_id = ? AND holder = ?`)
+      .prepare(
+        `UPDATE drain_lease SET expires_at = ? WHERE lower(championship_id) = ? AND holder = ?`,
+      )
       .run(new Date(at.getTime() + ttlMs).toISOString(), key(championshipId), holder).changes
     return Number(changed) > 0
   }
@@ -507,7 +480,7 @@ export class SqliteSubmissionQueue {
   /** Gives the lease back. Guarded on the holder, for the same reason. */
   async releaseDrainLease(championshipId: string, holder: string): Promise<void> {
     this.#db
-      .prepare(`DELETE FROM drain_lease WHERE championship_id = ? AND holder = ?`)
+      .prepare(`DELETE FROM drain_lease WHERE lower(championship_id) = ? AND holder = ?`)
       .run(key(championshipId), holder)
   }
 
@@ -572,15 +545,19 @@ export class SqliteSubmissionQueue {
   ): Promise<void> {
     this.#db
       .prepare(
-        `INSERT INTO drain_halt (championship_id, reason, backup, halted_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(championship_id) DO NOTHING`,
+        `INSERT INTO drain_halt (championship_id, reason, backup, halted_at)
+         SELECT ?1, ?2, ?3, ?4
+         WHERE NOT EXISTS (SELECT 1 FROM drain_halt WHERE lower(championship_id) = ?1)`,
       )
       .run(key(championshipId), reason, backup ?? null, at.toISOString())
   }
 
   async drainHalt(championshipId: string): Promise<DrainHalt | undefined> {
     const row = this.#db
-      .prepare("SELECT reason, backup, halted_at FROM drain_halt WHERE championship_id = ?")
+      .prepare(
+        `SELECT reason, backup, halted_at FROM drain_halt WHERE lower(championship_id) = ?
+         ORDER BY halted_at LIMIT 1`,
+      )
       .get(key(championshipId)) as unknown as
       | { reason: string; backup: string | null; halted_at: string }
       | undefined
@@ -595,7 +572,7 @@ export class SqliteSubmissionQueue {
   /** True when there was a halt to clear. */
   async clearDrainHalt(championshipId: string): Promise<boolean> {
     const r = this.#db
-      .prepare("DELETE FROM drain_halt WHERE championship_id = ?")
+      .prepare("DELETE FROM drain_halt WHERE lower(championship_id) = ?")
       .run(key(championshipId))
     return Number(r.changes) > 0
   }

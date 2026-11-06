@@ -399,8 +399,28 @@ describe("the drain lease", () => {
 
 describe("which championship a halt or lease is for", () => {
   // ACSM reads ids case-insensitively, and the CLI, the drain and champctl web
-  // each get theirs from somewhere different.
+  // each get theirs from somewhere different. Rows already written under
+  // another spelling, by this version or an older one still running during an
+  // upgrade, have to count too.
   const UPPER = CHAMP.toUpperCase()
+  const MIXED = "Aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+  /** A queue, and a second connection writing rows as an older champctl did. */
+  async function withOldWriter() {
+    const dir = await mkdtemp(join(tmpdir(), "champctl-queue-"))
+    const path = join(dir, "liveries.db")
+    const q = await SqliteSubmissionQueue.open(path)
+    const old = new DatabaseSync(path)
+    return {
+      q,
+      old,
+      done: async () => {
+        q.close()
+        old.close()
+        await rm(dir, { recursive: true, force: true })
+      },
+    }
+  }
 
   it("holds a halt or lease against every spelling of the id", async () => {
     const q = await open()
@@ -415,96 +435,43 @@ describe("which championship a halt or lease is for", () => {
     q.close()
   })
 
-  /** A database from before ids were lowercased, holding these rows. */
-  async function premigration(rows: (raw: DatabaseSync) => void) {
-    const dir = await mkdtemp(join(tmpdir(), "champctl-queue-"))
-    const path = join(dir, "liveries.db")
-    ;(await SqliteSubmissionQueue.open(path)).close()
-    const raw = new DatabaseSync(path)
-    rows(raw)
-    raw.prepare("UPDATE champctl_schema SET version = version - 1 WHERE component = 'queue'").run()
-    raw.close()
-    return { path, done: () => rm(dir, { recursive: true, force: true }) }
-  }
-
-  it("keeps the earliest of a championship's halts, whose backup predates the damage", async () => {
-    const db = await premigration((raw) => {
-      const halt = raw.prepare(
+  it("sees a halt an older writer records under its own spelling, and keeps the earliest", async () => {
+    const { q, old, done } = await withOldWriter()
+    try {
+      const halt = old.prepare(
         "INSERT INTO drain_halt (championship_id, reason, backup, halted_at) VALUES (?, ?, ?, ?)",
       )
       halt.run(UPPER, "later", "/b/later.json", "2026-09-02T00:00:00.000Z")
-      halt.run(
-        "Aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-        "first",
-        "/b/first.json",
-        "2026-09-01T00:00:00.000Z",
-      )
-    })
-    try {
-      const q = await SqliteSubmissionQueue.open(db.path)
+      halt.run(MIXED, "first", "/b/first.json", "2026-09-01T00:00:00.000Z")
       expect(await q.drainHalt(CHAMP)).toMatchObject({ reason: "first", backup: "/b/first.json" })
-      q.close()
+      // A new halt doesn't replace the first, whatever spelling that has.
+      await q.haltDrain(CHAMP, "newest", undefined, MON)
+      expect((await q.drainHalt(CHAMP))?.reason).toBe("first")
+      expect(await q.clearDrainHalt(CHAMP)).toBe(true)
+      expect(await q.drainHalt(UPPER)).toBeUndefined()
     } finally {
-      await db.done()
+      await done()
     }
   })
 
-  it("keeps a championship's live lease over an expired one", async () => {
-    const db = await premigration((raw) => {
-      const lease = raw.prepare(
-        "INSERT INTO drain_lease (championship_id, holder, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
-      )
-      lease.run(CHAMP, "gone", "2026-09-01T00:00:00.000Z", "2026-09-01T00:10:00.000Z")
-      lease.run(UPPER, "running", MON.toISOString(), "2026-09-01T20:10:00.000Z")
-    })
+  it("respects an older writer's live lease under its own spelling, and lets it release it", async () => {
+    const { q, old, done } = await withOldWriter()
     try {
-      const q = await SqliteSubmissionQueue.open(db.path)
-      expect(await q.acquireDrainLease(CHAMP, "new", MON, 60_000)).toMatchObject({
+      old
+        .prepare(
+          "INSERT INTO drain_lease (championship_id, holder, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(UPPER, "old-drain", MON.toISOString(), "2999-01-01T00:00:00.000Z")
+      expect(await q.acquireDrainLease(CHAMP, "web", MON, 60_000)).toMatchObject({
         ok: false,
-        heldBy: "running",
+        heldBy: "old-drain",
       })
-      q.close()
+      old
+        .prepare("DELETE FROM drain_lease WHERE championship_id = ? AND holder = ?")
+        .run(UPPER, "old-drain")
+      expect((await q.acquireDrainLease(CHAMP, "web", MON, 60_000)).ok).toBe(true)
     } finally {
-      await db.done()
-    }
-  })
-
-  it("won't open while two spellings each have a live lease, rather than drop one", async () => {
-    // Both holders may still be writing; keeping either lets a third in when
-    // it lets go.
-    const db = await premigration((raw) => {
-      const lease = raw.prepare(
-        "INSERT INTO drain_lease (championship_id, holder, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
-      )
-      lease.run(CHAMP, "one", MON.toISOString(), "2999-01-01T00:00:00.000Z")
-      lease.run(UPPER, "two", MON.toISOString(), "2999-01-01T00:00:00.000Z")
-    })
-    try {
-      await expect(SqliteSubmissionQueue.open(db.path)).rejects.toThrow(/one, two.*still/)
-    } finally {
-      await db.done()
-    }
-  })
-
-  it("still finds a halt written under another spelling before this", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "champctl-queue-"))
-    const path = join(dir, "liveries.db")
-    try {
-      ;(await SqliteSubmissionQueue.open(path)).close()
-      const raw = new DatabaseSync(path)
-      raw
-        .prepare("INSERT INTO drain_halt (championship_id, reason, halted_at) VALUES (?, ?, ?)")
-        .run(UPPER, "old", MON.toISOString())
-      // As a database from before the ids were lowercased: one version back.
-      raw
-        .prepare("UPDATE champctl_schema SET version = version - 1 WHERE component = 'queue'")
-        .run()
-      raw.close()
-      const q = await SqliteSubmissionQueue.open(path)
-      expect((await q.drainHalt(CHAMP))?.reason).toBe("old")
-      q.close()
-    } finally {
-      await rm(dir, { recursive: true, force: true })
+      await done()
     }
   })
 })
