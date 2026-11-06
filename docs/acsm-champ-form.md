@@ -487,7 +487,12 @@ November (one) championships, and a third added by hand:
   row with an empty `InternalUUID`; ACSM assigns one. champctl web's "Add the
   missing spectator cars" inserts the same row, copied from the last spectator
   car's, for each of the profile's `entryList.spectatorCars` the championship
-  lacks. It refuses a championship with none to copy, a layout nobody has
+  lacks. The whole row: BATL's manager renders eight `EntryList.CarFlags.*`
+  fields (the Custom Shaders Patch car flags) before each row's
+  `InternalUUID`, which the harness doesn't. The first production add, on
+  2026-11-06, left them out, was refused unsent by the arity check, and then
+  halted November when the read-back found no new car; a refusal before
+  sending now stops without reading back. It refuses a championship with none to copy, a layout nobody has
   measured. The added car is in the practice server's `entry_list.ini` the next
   time a round's practice starts (measured).
 

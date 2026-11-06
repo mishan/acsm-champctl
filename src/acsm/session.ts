@@ -102,6 +102,14 @@ export class AcsmWriteError extends AcsmError {
   }
 }
 
+/** A write champctl refused to send: nothing reached ACSM. */
+export class UnsentWriteError extends AcsmWriteError {
+  constructor(message: string, url?: string) {
+    super(message, undefined, url)
+    this.name = "UnsentWriteError"
+  }
+}
+
 /**
  * Minimal cookie jar for a **single origin**.
  *
@@ -627,11 +635,10 @@ export class AcsmSession {
           `renders with REQUIRED_ENTRY_LIST_FIELDS in form.ts.`
         : `If one of those keys is a form-level field rather than a per-entrant ` +
           `array, add it to NON_ARRAY_ENTRY_LIST_FIELDS in form.ts.`
-      throw new AcsmWriteError(
+      throw new UnsentWriteError(
         `Refusing to POST ${path}: the entry list arrays don't line up ` +
           `(${problems[0]!.expected} entrants; ${detail}). ACSM reads these as parallel ` +
           `arrays, so sending this would give entrants each other's data. ${hint}`,
-        undefined,
         path,
       )
     }

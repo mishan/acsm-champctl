@@ -33,7 +33,7 @@ import {
   championshipPath,
   exportPath,
 } from "./paths.js"
-import { AcsmWriteError, isRedirectStatus, type AcsmSession } from "./session.js"
+import { AcsmWriteError, isRedirectStatus, type AcsmSession, UnsentWriteError } from "./session.js"
 import type { Championship } from "./types.js"
 import { championshipIdFromRedirect } from "./write.js"
 
@@ -225,8 +225,10 @@ async function saveChampionship(
     })
   } catch (e) {
     // Refused by the caller, nothing was sent, and whoever it deferred to may
-    // be saving: their change would read back below as this save's drift.
-    if (refusedUnsent) throw e
+    // be saving: their change would read back below as this save's drift. Or
+    // refused by the session's own checks, also unsent: read back, an added
+    // car's absence looked like damage and halted an untouched championship.
+    if (refusedUnsent || e instanceof UnsentWriteError) throw e
     // Refused before sending, or lost on the way. Either way ACSM may or may
     // not have it, so the check below runs regardless.
     sendError = e

@@ -94,6 +94,7 @@ function editPage(
   const row = (name: string, spectator = false, skin = "", guid = "") => `
     <div class="entrant">
       <input type="hidden" name="EntryList.InternalUUID" value="00000000-0000-0000-0000-000000000000">
+      ${spectator ? '<input type="hidden" name="EntryList.Spectator" value="true">' : ""}
       <select name="EntryList.Car"><option value="${CAR}" selected>c</option></select>
       <select name="EntryList.Skin">${skin ? `<option value="${skin}" selected>${skin}</option>` : ""}</select>
       <input type="text" name="EntryList.Name" value="${name}">
@@ -102,7 +103,6 @@ function editPage(
       <input type="number" name="EntryList.Ballast" value="0">
       <input type="number" name="EntryList.Restrictor" value="0">
       <select name="EntryList.FixedSetup"><option value="" selected></option></select>
-      ${spectator ? '<input type="hidden" name="EntryList.Spectator" value="true">' : ""}
     </div>`
 
   const classTemplate = options.classTemplate
@@ -858,7 +858,12 @@ describe("the shared championship save", () => {
       what: "a row",
       apply: (fields, form) => {
         const row = fields
-          .filter((f) => f.name.startsWith("EntryList.") && f.name !== "EntryList.NumEntrants")
+          .filter(
+            (f) =>
+              f.name.startsWith("EntryList.") &&
+              f.name !== "EntryList.NumEntrants" &&
+              f.name !== "EntryList.Spectator",
+          )
           .slice(0, 9)
         fields.push(...row.map((f) => ({ ...f })))
         setOne(fields, "EntryList.NumEntrants", String(form.rows))
@@ -870,6 +875,25 @@ describe("the shared championship save", () => {
 })
 
 describe("adding spectator cars through the shared save", () => {
+  it("stops without reading back when the session refuses the form unsent", async () => {
+    // November, 2026-11-06: the add left a row's car flags out, the arity check
+    // refused it before sending, and the read-back then found the car missing
+    // and called it damage, halting a championship nothing had touched.
+    const { session, requests } = await fakeSession()
+    const add = addSpectatorCars([{ name: "Recorder", model: CAR, guid: "90000000000000002" }])
+    const checked = await checkChampionshipSave(session, CHAMP_ID, {
+      ...add,
+      apply: (fields, form) => {
+        add.apply(fields, form)
+        fields.push({ name: "EntryList.Skin", value: "one too many" })
+      },
+    })
+    const err = await checked.save().catch((e: unknown) => e)
+    expect(err).not.toBeInstanceOf(ChampionshipDriftError)
+    expect((err as Error).message).toMatch(/Refusing to POST/)
+    expect(requests.filter((r) => r.url.includes(CHAMPIONSHIP_SUBMIT_PATH))).toEqual([])
+  })
+
   it("adds them after the championship's own, and nothing else changes", async () => {
     const { session, requests, state } = await fakeSession()
     const checked = await checkChampionshipSave(
