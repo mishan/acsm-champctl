@@ -546,10 +546,10 @@ export class SqliteSubmissionQueue {
     this.#db
       .prepare(
         `INSERT INTO drain_halt (championship_id, reason, backup, halted_at)
-         SELECT ?1, ?2, ?3, ?4
-         WHERE NOT EXISTS (SELECT 1 FROM drain_halt WHERE lower(championship_id) = ?1)`,
+         SELECT ?, ?, ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM drain_halt WHERE lower(championship_id) = ?)`,
       )
-      .run(key(championshipId), reason, backup ?? null, at.toISOString())
+      .run(key(championshipId), reason, backup ?? null, at.toISOString(), key(championshipId))
   }
 
   async drainHalt(championshipId: string): Promise<DrainHalt | undefined> {

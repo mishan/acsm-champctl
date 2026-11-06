@@ -43,7 +43,9 @@ export function RoundList({
   const [showFindings, setShowFindings] = useState(false)
   // Which championship is on screen now, for an answer that arrives later.
   const onScreen = useRef(championshipId)
-  onScreen.current = championshipId
+  useEffect(() => {
+    onScreen.current = championshipId
+  }, [championshipId])
   /** The running order being tried, as 1-based source rounds. Null when not reordering. */
   const [order, setOrder] = useState<number[] | null>(null)
   const describe = useAuthAware(onAuthLost)
