@@ -83,6 +83,18 @@ export function SpectatorCars({
     )
   }
 
+  // Before the preview and the add: neither is safe to offer, and staff
+  // should know even when nothing is missing.
+  if (haltUnknown !== undefined) {
+    return (
+      <Message
+        kind="error"
+        title="Can't change this championship's spectator cars right now"
+        body={`champctl couldn't tell whether it has stopped writing this championship${haltUnknown ? `: ${haltUnknown}` : "."}`}
+      />
+    )
+  }
+
   if (preview) {
     return (
       <Message kind="info" title="Add the league's spectator cars">
@@ -133,15 +145,6 @@ export function SpectatorCars({
   }
 
   if (!missing) return null
-  if (haltUnknown) {
-    return (
-      <Message
-        kind="error"
-        title="Can't add the missing spectator cars right now"
-        body={`champctl couldn't tell whether it has stopped writing this championship: ${haltUnknown}`}
-      />
-    )
-  }
   return (
     <>
       <button

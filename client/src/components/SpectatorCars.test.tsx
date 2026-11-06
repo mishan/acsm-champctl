@@ -95,10 +95,35 @@ describe("the league's spectator cars", () => {
     expect(onChanged).toHaveBeenCalled()
   })
 
-  it("offers no add while it can't tell whether the championship is halted", () => {
-    show({ missing: true, unknown: "The queue's database is locked." })
-    expect(screen.getByText(/The queue's database is locked/)).toBeTruthy()
-    expect(screen.queryByText("Add the missing spectator cars")).toBeNull()
+  it.each([true, false])(
+    "says it can't tell whether the championship is halted, whether or not a car is missing (%s)",
+    (missing) => {
+      show({ missing, unknown: "" })
+      expect(screen.getByText(/couldn't tell whether it has stopped writing/)).toBeTruthy()
+      expect(screen.queryByText("Add the missing spectator cars")).toBeNull()
+    },
+  )
+
+  it("takes Add away from an open preview once the halt is unknown", async () => {
+    planMock.mockResolvedValue({
+      planId: "p1",
+      cars: [{ name: "Recorder", model: "ford_transit", guid: "90000000000000002" }],
+      effects: [],
+    })
+    const { view } = show({ missing: true })
+    fireEvent.click(screen.getByText("Add the missing spectator cars"))
+    expect(await screen.findByText(/Recorder, in ford_transit/)).toBeTruthy()
+    view.rerender(
+      <SpectatorCars
+        championshipId="champ-1"
+        halt={null}
+        missing
+        haltUnknown="The queue's database is locked."
+        onChanged={() => {}}
+        describe={(e) => String(e)}
+      />,
+    )
+    expect(screen.queryByText("Add")).toBeNull()
   })
 
   it("offers nothing when every car is there", () => {
