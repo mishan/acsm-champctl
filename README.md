@@ -2,7 +2,8 @@
 
 [![CI](https://github.com/mishan/acsm-champctl/actions/workflows/ci.yml/badge.svg)](https://github.com/mishan/acsm-champctl/actions/workflows/ci.yml)
 
-Championship creation, validation and stats for Assetto Corsa Server Manager.
+Championships, liveries, race recordings and incident reports for Assetto Corsa
+Server Manager.
 Built for BATL, usable by any league.
 
 The commands:
