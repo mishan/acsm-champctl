@@ -523,16 +523,14 @@ describe("champctl-liveries --drain", () => {
       vi.stubEnv("CHAMPCTL_USERNAME", "operator")
       vi.stubEnv("CHAMPCTL_PASSWORD", "secret")
       const how = path === "drain" ? ["--drain"] : ["--zip", pack, "--no-store"]
-      await main([
-        CHAMP,
-        ...how,
-        "--push",
-        "--yes",
-        "--base-url",
-        stub.baseUrl,
-        "--store",
-        db,
-      ]).catch(() => {})
+      const said: string[] = []
+      vi.spyOn(process.stdout, "write").mockImplementation((s) => (said.push(String(s)), true))
+      vi.spyOn(process.stderr, "write").mockImplementation((s) => (said.push(String(s)), true))
+      // Refused by the lease guard itself, not by anything else after the upload.
+      expect(
+        await main([CHAMP, ...how, "--push", "--yes", "--base-url", stub.baseUrl, "--store", db]),
+      ).toBe(3)
+      expect(said.join("")).toMatch(/took .* over while this one was running/)
       expect(stub.requests.filter((r) => r.includes("/skin"))).not.toEqual([])
       expect(stub.requests.filter((r) => r.includes("/submit"))).toEqual([])
       // Through the session's rate limiter, as the drain's own runs are.
