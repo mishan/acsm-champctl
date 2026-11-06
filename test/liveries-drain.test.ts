@@ -469,4 +469,65 @@ describe("champctl-liveries --drain", () => {
     expect((await q.acquireDrainLease(CHAMP, "drain", new Date(), 60_000)).ok).toBe(true)
     q.close()
   })
+
+  it("won't save a pack's championship once another has taken the lease mid-upload", async () => {
+    // A large pack can outlast the lease; whoever took it may be saving the
+    // championship already.
+    const { db, dir } = await seeded([], oneClass(["Ann"]))
+    const champ = { ...oneClass(["Ann"]), SpectatorCars: [{ Name: "Van", Model: CAR, Skin: "v" }] }
+    const row = (name: string, spectator = false, guid = "") => `
+      <input type="hidden" name="EntryList.InternalUUID" value="">
+      <select name="EntryList.Car"><option value="${CAR}" selected>c</option></select>
+      <select name="EntryList.Skin"></select>
+      <input name="EntryList.Name" value="${name}">
+      <input name="EntryList.Team" value=""><input name="EntryList.GUID" value="${guid}">
+      <input name="EntryList.Ballast" value="0"><input name="EntryList.Restrictor" value="0">
+      <select name="EntryList.FixedSetup"><option value="" selected></option></select>
+      ${spectator ? '<input type="hidden" name="EntryList.Spectator" value="true">' : ""}`
+    const page = `<form action="/championships/new/submit" method="post">
+      <textarea name="ChampionshipInfo"></textarea><div id="ChampionshipInfoHolder"></div>
+      <div class="entrant">${row("Van", true)}</div>
+      <input name="ClassName" value="RSS"><div class="entrant">${row("Ann", false, driver("Ann").GUID)}</div>
+      <input type="hidden" name="EntryList.NumEntrants" value="1"></form>`
+    const stub = await acsmStub(CHAMP, champ, {
+      handle: ({ path }) => {
+        if (path === "/login") {
+          return { status: 302, headers: { location: "/", "set-cookie": "_acsm_data=x; Path=/" } }
+        }
+        if (path.endsWith("/edit")) return { status: 200, body: page }
+        if (path.includes("/skin")) {
+          const other = new DatabaseSync(db)
+          other
+            .prepare("UPDATE drain_lease SET holder = ?, expires_at = ? WHERE championship_id = ?")
+            .run("someone-else:1", new Date(Date.now() + 60_000).toISOString(), CHAMP)
+          other.close()
+          return { status: 302, headers: { location: "/cars" } }
+        }
+        if (path.endsWith("/submit")) {
+          return { status: 302, headers: { location: `/championship/${CHAMP}` } }
+        }
+        return undefined
+      },
+    })
+    open.push({ dir, stub })
+    const pack = join(dir, "pack.zip")
+    await writeFile(pack, zipSync({ [`${CAR}/Ann.zip`]: skinZip() }))
+
+    vi.stubEnv("CHAMPCTL_USERNAME", "operator")
+    vi.stubEnv("CHAMPCTL_PASSWORD", "secret")
+    await main([
+      CHAMP,
+      "--zip",
+      pack,
+      "--push",
+      "--yes",
+      "--base-url",
+      stub.baseUrl,
+      "--store",
+      db,
+      "--no-store",
+    ]).catch(() => {})
+    expect(stub.requests.filter((r) => r.includes("/skin"))).not.toEqual([])
+    expect(stub.requests.filter((r) => r.includes("/submit"))).toEqual([])
+  })
 })

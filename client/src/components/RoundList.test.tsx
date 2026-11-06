@@ -577,4 +577,30 @@ describe("the league's spectator cars", () => {
     expect(screen.getByText("Championship champ-2")).toBeTruthy()
     expect(screen.queryByText("Championship champ-1")).toBeNull()
   })
+
+  it("shows nothing of one championship's halt while the next is loading", async () => {
+    // Resume there would clear the next one's halt without showing its reason.
+    championshipMock.mockResolvedValueOnce({
+      ...response("Championship A"),
+      liveriesHalt: {
+        reason: "A's save moved a driver.",
+        backup: null,
+        haltedAt: "2026-11-05T20:00:00Z",
+      },
+    })
+    championshipMock.mockImplementationOnce(() => new Promise(() => {}))
+    const view = renderList("champ-1")
+    expect(await screen.findByText("Resume")).toBeTruthy()
+    view.rerender(
+      <RoundList
+        championshipId="champ-2"
+        baseUrl="https://acsm.example"
+        onOpenRound={() => {}}
+        onOpenSignUps={() => {}}
+        onAuthLost={() => {}}
+      />,
+    )
+    expect(screen.queryByText("Resume")).toBeNull()
+    expect(screen.queryByText("Championship A")).toBeNull()
+  })
 })

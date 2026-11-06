@@ -596,6 +596,17 @@ async function runCommand(argv: readonly string[]): Promise<number> {
     return 3
   }
   let store: SqliteLiveryStore | undefined
+  // Renewed as the drain renews its own: a large pack can outlast the lease.
+  let lostLease = false
+  const renewal = setInterval(() => {
+    void queue
+      .renewDrainLease(args.championshipId!, holder, new Date(), DRAIN_LEASE_MS)
+      .then((held) => {
+        if (!held) lostLease = true
+      })
+      .catch(() => {})
+  }, DRAIN_LEASE_MS / 3)
+  renewal.unref()
   try {
     // Again under the lease: a drain whose save drifted may have halted the
     // championship and let go while the prompt above was open.
@@ -608,6 +619,17 @@ async function runCommand(argv: readonly string[]): Promise<number> {
       eventIds,
       backupDir: backupDirFor(args),
       ...(store ? { record: store, source: "zip" as const } : {}),
+      beforeSave: async () => {
+        if (
+          lostLease ||
+          !(await queue.renewDrainLease(args.championshipId!, holder, new Date(), DRAIN_LEASE_MS))
+        ) {
+          throw new LiveryApplyError(
+            `Another drain took ${args.championshipId} over while the skins were uploading, so ` +
+              `the championship wasn't saved. The skins are on the server; run this again.`,
+          )
+        }
+      },
     }).catch((e: unknown) => haltOnDamage(args, args.championshipId!, e))
     say(
       `Uploaded ${result.uploaded.length} ${result.uploaded.length === 1 ? "livery" : "liveries"}` +
@@ -620,6 +642,7 @@ async function runCommand(argv: readonly string[]): Promise<number> {
       say(`Recorded ${plan.assignments.length} for the carset in ${storePath(args)}.\n`)
     }
   } finally {
+    clearInterval(renewal)
     store?.close()
     await queue.releaseDrainLease(args.championshipId!, holder)
     queue.close()

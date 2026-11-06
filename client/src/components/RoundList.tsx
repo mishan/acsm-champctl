@@ -70,6 +70,9 @@ export function RoundList({
     // returned early on the stale error anyway. The failure of one
     // championship is not a fact about the next one.
     setError(null)
+    // And the championship itself: shown under another's id until that one
+    // loads, its halt's Resume would act on the wrong championship.
+    setData(null)
     // And the reorder, which is about the championship that was on screen. A
     // running order carried across to a different championship would be a
     // rearrangement of rounds that are not the ones it describes.
