@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import { addSpectatorCars } from "../src/acsm/add-spectators.js"
 import type { ChampionshipForm } from "../src/acsm/championship-form.js"
-import type { FormField } from "../src/acsm/form.js"
+import { type FormField, getAll } from "../src/acsm/form.js"
 
 const GRIDMOM = { name: "Recorder", model: "ford_transit", guid: "90000000000000002", skin: "tv" }
 
@@ -40,7 +40,65 @@ const page = (): FormField[] => [
 const form = (fields: FormField[], spectatorRows = 1) =>
   ({ fields, spectatorRows, rows: spectatorRows + 1, entrantsPerClass: [1] }) as ChampionshipForm
 
+/**
+ * The same row as BATL's manager renders it, with the Custom Shaders Patch car
+ * flags its build puts before each row's InternalUUID (measured 2026-11-06).
+ * The first production add left them out, and the arity check refused it.
+ */
+const FLAGS = [
+  "BlockKeyboard",
+  "BlockJoystick",
+  "BlockSteeringWheel",
+  "ForceHeadlights",
+  "AllowColorChange",
+  "AllowTeleporting",
+  "AllowImmediateRepair",
+  "AllowImmediateRefuel",
+]
+const batlRow = (name: string, guid: string, uuid: string, flag = "0"): FormField[] => {
+  const row = spectatorRow(name, guid, uuid)
+  row.splice(2, 0, ...FLAGS.map((f) => ({ name: `EntryList.CarFlags.${f}`, value: flag })))
+  return row
+}
+const batlPage = (): FormField[] => [
+  { name: "Championship.SpectatorCar.Enabled", value: "1" },
+  ...batlRow("Stream", "90000000000000001", "7b8ec565-c77b-4907-bae1-9f4f703ced3b", "1"),
+  { name: "numEntrantsToAdd", value: "1" },
+  { name: "ClassName", value: "GT" },
+  { name: "EntrantAutoFill", value: "" },
+  { name: "EntryList.OverwriteAllEvents", value: "0" },
+  ...FLAGS.map((f) => ({ name: `EntryList.CarFlags.${f}`, value: "0" })),
+  { name: "EntryList.InternalUUID", value: "00000000-0000-0000-0000-000000000000" },
+  { name: "EntryList.Name", value: "Ann" },
+]
+
 describe("addSpectatorCars", () => {
+  it("copies every field of the row, the car flags a build adds included", () => {
+    const fields = batlPage()
+    addSpectatorCars([GRIDMOM]).apply(fields, form(fields))
+    const at = fields.findIndex((f) => f.name === "numEntrantsToAdd")
+    const added = fields.slice(at - 20, at)
+    expect(added.map((f) => f.name)).toEqual(batlRow("x", "x", "x").map((f) => f.name))
+    // Copied from the car the row was copied from, as ACSM's own Add does.
+    expect(
+      added.filter((f) => f.name.startsWith("EntryList.CarFlags.")).map((f) => f.value),
+    ).toEqual(FLAGS.map(() => "1"))
+    expect(added.find((f) => f.name === "EntryList.Name")?.value).toBe("Recorder")
+  })
+
+  it("finds a second spectator car's row without taking in the first one's tail", () => {
+    const fields = [
+      { name: "Championship.SpectatorCar.Enabled", value: "1" },
+      ...batlRow("Stream", "90000000000000001", "u1"),
+      ...batlRow("Other", "90000000000000003", "u2"),
+      { name: "numEntrantsToAdd", value: "1" },
+    ]
+    addSpectatorCars([GRIDMOM]).apply(fields, form(fields, 2))
+    const names = fields.map((f) => f.name)
+    expect(names.slice(-21, -1)).toEqual(batlRow("x", "x", "x").map((f) => f.name))
+    expect(names.filter((n) => n === "EntryList.FixedSetup")).toHaveLength(3)
+  })
+
   it("inserts the row ACSM's own Add button does, right after the last spectator car", () => {
     const fields = page()
     const edit = addSpectatorCars([GRIDMOM])
@@ -76,6 +134,15 @@ describe("addSpectatorCars", () => {
     expect(() => addSpectatorCars(cars).check?.(f)).toThrow(message)
   })
 
+  it("stops at the next row's leading fields when a class row follows directly", () => {
+    // The stream car's flags are on, the driver's off.
+    const fields = batlPage().filter((f) => f.name !== "numEntrantsToAdd" && f.name !== "ClassName")
+    addSpectatorCars([GRIDMOM]).apply(fields, form(fields))
+    // ACSM reads each key positionally: second value, the new car's; third, the driver's.
+    expect(getAll(fields, "EntryList.CarFlags.BlockKeyboard")).toEqual(["1", "1", "0"])
+    expect(getAll(fields, "EntryList.Name")).toEqual(["Stream", "Recorder", "Ann"])
+  })
+
   it("refuses when the championship's own spectator cars share a GUID", () => {
     // The read-back matches spectator cars by GUID, so it couldn't tell a good
     // add from a bad one and would stop champctl writing after a good save.
@@ -86,10 +153,11 @@ describe("addSpectatorCars", () => {
     expect(() => addSpectatorCars([GRIDMOM]).check?.(f)).toThrow(/share a GUID/)
   })
 
-  it("copies OverwriteAllEvents wherever in the row a build renders it", () => {
+  it("copies OverwriteAllEvents whether a build renders it before InternalUUID or after", () => {
     const fields = page()
+    // From before the stream car's InternalUUID to just after it.
     const [oae] = fields.splice(2, 1)
-    fields.splice(12, 0, oae!)
+    fields.splice(3, 0, oae!)
     addSpectatorCars([GRIDMOM]).apply(fields, form(fields))
     expect(fields.filter((f) => f.name === "EntryList.OverwriteAllEvents")).toHaveLength(3)
   })

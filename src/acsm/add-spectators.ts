@@ -13,8 +13,14 @@ import { ChampionshipFormError, MAX_SPECTATOR_ROWS, SPECTATOR_MARKER } from "./c
 import type { ChampionshipEdit } from "./championship-save.js"
 import { type FormField, getAll } from "./form.js"
 
-/** Every field a spectator row renders, and what a new one carries in it. */
-function newRowValue(name: string, car: LeagueSpectatorCar): string | undefined {
+/**
+ * Every field a spectator row renders, and what a new one carries in it, given
+ * the value in the row it's copied from.
+ */
+function newRowValue(name: string, car: LeagueSpectatorCar, copied: string): string | undefined {
+  // The Custom Shaders Patch car flags BATL's build renders on every row:
+  // ACSM's own Add copies a car's settings from the last spectator car.
+  if (name.startsWith("EntryList.CarFlags.")) return copied
   switch (name) {
     case "EntrantAutoFill":
     case "EntryList.InternalUUID":
@@ -39,9 +45,6 @@ function newRowValue(name: string, car: LeagueSpectatorCar): string | undefined 
       return undefined
   }
 }
-
-/** Fields that may come before a row's InternalUUID in it. */
-const LEADING = new Set(["EntrantAutoFill", "EntryList.OverwriteAllEvents"])
 
 export function addSpectatorCars(cars: readonly LeagueSpectatorCar[]): ChampionshipEdit {
   return {
@@ -82,7 +85,7 @@ export function addSpectatorCars(cars: readonly LeagueSpectatorCar[]): Champions
       const span = lastSpectatorRow(fields, form.spectatorRows)
       const rows: FormField[] = cars.flatMap((car) =>
         fields.slice(span.start, span.end).map((f) => {
-          const value = newRowValue(f.name, car)
+          const value = newRowValue(f.name, car, f.value)
           if (value === undefined) {
             throw new ChampionshipFormError(
               `The spectator car's row on the form has ${f.name}, which champctl doesn't know how ` +
@@ -104,28 +107,39 @@ export function addSpectatorCars(cars: readonly LeagueSpectatorCar[]): Champions
 }
 
 /**
- * Where the last spectator row's fields are: its InternalUUID, the leading
- * fields just before it, and the row fields after it up to a field that isn't
- * a row's or one the row already has, which is where the next row starts.
+ * Where the last spectator row's fields are: back from its InternalUUID
+ * through whatever a build renders before it (EntrantAutoFill,
+ * OverwriteAllEvents, BATL's car flags) to the previous row's last field, and
+ * forward to its FixedSetup, which ends every row on every build measured.
+ * Without one before the next non-row field, the row isn't one champctl knows.
  */
 function lastSpectatorRow(
   fields: readonly FormField[],
   spectatorRows: number,
 ): { start: number; end: number } {
+  const isRowField = (name: string) => name.startsWith("EntryList.") || name === "EntrantAutoFill"
   let seen = -1
   const at = fields.findIndex(
     (f) => f.name === "EntryList.InternalUUID" && ++seen === spectatorRows - 1,
   )
-  const names = new Set<string>(["EntryList.InternalUUID"])
-  let start = at
-  while (start > 0 && LEADING.has(fields[start - 1]!.name) && !names.has(fields[start - 1]!.name)) {
-    names.add(fields[--start]!.name)
-  }
+  const after = new Set<string>(["EntryList.InternalUUID"])
   let end = at + 1
-  for (; end < fields.length; end++) {
+  for (; end < fields.length && fields[end - 1]!.name !== "EntryList.FixedSetup"; end++) {
     const name = fields[end]!.name
-    if (!(name.startsWith("EntryList.") || LEADING.has(name)) || names.has(name)) break
-    names.add(name)
+    if (!isRowField(name) || after.has(name)) {
+      throw new ChampionshipFormError(
+        `The spectator car's row on the form doesn't end in EntryList.FixedSetup, so champctl ` +
+          `can't tell where it ends. Nothing was written.`,
+      )
+    }
+    after.add(name)
+  }
+  const before = new Set<string>()
+  let start = at
+  for (; start > 0; start--) {
+    const name = fields[start - 1]!.name
+    if (!isRowField(name) || after.has(name) || before.has(name)) break
+    before.add(name)
   }
   return { start, end }
 }
