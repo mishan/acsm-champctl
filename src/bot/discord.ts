@@ -175,7 +175,22 @@ export class GatewayTransport implements DiscordTransport {
     // with open sign-ups, and `@` passes SAFE_COMPONENT. Signing up as
     // "@everyone" and running /racer claim was a guild-wide ping on demand.
     // `pings` names users outright, by id: nothing in the text can widen it.
-    await channel.send({
+    const refused = (e: unknown) => {
+      // Only Discord refusing the bot: an upload's own failure, an abort above
+      // all, goes up as it is for the caller to tell apart.
+      const code = (e as { code?: unknown }).code
+      if (
+        code !== RESTJSONErrorCodes.MissingAccess &&
+        code !== RESTJSONErrorCodes.MissingPermissions
+      ) {
+        throw e
+      }
+      throw new BotError(
+        `${(e as Error).message} posting to Discord channel ${message.channelId}. Check ${source}, and ` +
+          `that the bot can see that channel and send messages in it.`,
+      )
+    }
+    const sending = channel.send({
       content: message.content,
       allowedMentions: {
         parse: [],
@@ -193,6 +208,7 @@ export class GatewayTransport implements DiscordTransport {
           }
         : {}),
     })
+    await sending.catch(refused)
   }
 
   /**

@@ -432,6 +432,26 @@ describe("GatewayTransport.post", () => {
     await expect(post).rejects.toThrow(/ordinary text channel; check discord\.announceChannelId/)
     await expect(post).rejects.not.toThrow(/gridmom/)
   })
+
+  it.each([
+    [50001, "Missing Access"],
+    [50013, "Missing Permissions"],
+  ])("names the channel and its setting when Discord refuses the post (%i)", async (code, text) => {
+    // Discord's own words name neither: the Racers watch failed every tick for
+    // days with only "Missing Access" in the log.
+    const refused = Object.assign(new Error(text), { code })
+    const channel = { isSendable: () => true, type: 0, send: () => Promise.reject(refused) }
+    const post = GatewayTransport.wrapping(clientFinding(channel)).post({
+      channelId: "444444444444444444",
+      content: "hi",
+      source: announceSource,
+    })
+    await expect(post).rejects.toThrow(
+      new RegExp(
+        `${text} posting to Discord channel 444444444444444444\\. Check discord\\.announceChannelId`,
+      ),
+    )
+  })
 })
 
 describe("GatewayTransport.listen", () => {
