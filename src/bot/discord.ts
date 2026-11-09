@@ -781,7 +781,7 @@ function firstLine(text: string): string {
 
 /** Discord refusing the bot, rather than the request failing. */
 function refusal(e: unknown): boolean {
-  const code = (e as { code?: unknown }).code
+  const code = (e as { code?: unknown } | null)?.code
   return code === RESTJSONErrorCodes.MissingAccess || code === RESTJSONErrorCodes.MissingPermissions
 }
 

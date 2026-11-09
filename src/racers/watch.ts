@@ -25,7 +25,7 @@ import type { Championship } from "../acsm/types.js"
 import { eventHasStarted, events, isZeroTime, rosterGuids } from "../acsm/view.js"
 import { signUpLink } from "../bot/announce.js"
 import type { FinishedChampionships } from "../bot/finished.js"
-import { MESSAGE_LIMIT } from "../bot/transport.js"
+import { MESSAGE_LIMIT, RefusedError } from "../bot/transport.js"
 import { finishedAt } from "../bot/trophies.js"
 import type { RacerMarks } from "./store.js"
 
@@ -89,6 +89,8 @@ export class RacersWatch {
   /** The last failure the admins were told about, so each tick doesn't repeat it. */
   #told = ""
   #stopped = false
+  /** A post that failed this tick other than by Discord's refusal, raised once the rest is done. */
+  #unsent: unknown
 
   constructor(options: RacersWatchOptions) {
     this.#o = options
@@ -132,6 +134,14 @@ export class RacersWatch {
   }
 
   async tick(now: Date): Promise<void> {
+    this.#unsent = undefined
+    await this.#tick(now)
+    // A refusal is a permission to grant; anything else, a broken connection
+    // say, is the watchdog's to restart for.
+    if (this.#unsent !== undefined) throw this.#unsent
+  }
+
+  async #tick(now: Date): Promise<void> {
     const t = now.getTime()
     const seasons = await this.#read(t)
     const marks = this.#o.marks
@@ -252,6 +262,7 @@ export class RacersWatch {
       () => true,
       (e: unknown) => {
         this.#o.log(`racers: couldn't post in the Racers' channel: ${asMessage(e)}`)
+        if (!(e instanceof RefusedError)) this.#unsent ??= e
         return false
       },
     )
@@ -263,6 +274,7 @@ export class RacersWatch {
     for (const { content } of mentioning(head, users, ` ${tail}`)) {
       await this.#o.notify(content).catch((e: unknown) => {
         this.#o.log(`racers: couldn't tell the admins: ${asMessage(e)}`)
+        if (!(e instanceof RefusedError)) this.#unsent ??= e
         told = false
       })
     }

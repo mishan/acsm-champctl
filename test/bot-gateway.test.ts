@@ -433,6 +433,15 @@ describe("GatewayTransport.post", () => {
     await expect(post).rejects.not.toThrow(/gridmom/)
   })
 
+  it("passes on a post failing with no error at all", async () => {
+    const channel = { isSendable: () => true, type: 0, send: () => Promise.reject(null) }
+    const post = GatewayTransport.wrapping(clientFinding(channel)).post({
+      channelId: "444444444444444444",
+      content: "hi",
+    })
+    await expect(post).rejects.toBeNull()
+  })
+
   it.each([
     [50001, "Missing Access"],
     [50013, "Missing Permissions"],

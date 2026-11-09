@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { Championship } from "../src/acsm/types.js"
 import { type FinishedChampionships, SqliteFinishedStore } from "../src/bot/finished.js"
+import { RefusedError } from "../src/bot/transport.js"
 import { type RacerRole, RacersWatch } from "../src/racers/watch.js"
 import { championship, championshipClass, driver, entryList, raceEvent } from "./support/build.js"
 
@@ -79,9 +80,10 @@ function harness(
   }
   const posts: { content: string; ping: { users?: string[]; roles?: string[] } }[] = []
   const told: string[] = []
-  const discord = { refusing: false }
+  const discord = { refusing: false, down: false }
   const refuse = async () => {
-    if (discord.refusing) throw new Error("Missing Access")
+    if (discord.refusing) throw new RefusedError("Missing Access")
+    if (discord.down) throw new Error("other side closed")
   }
   const build = () =>
     new RacersWatch({
@@ -257,6 +259,17 @@ describe("RacersWatch", () => {
     expect(h.holders.has(CAL)).toBe(true)
     await h.watch.tick(at(9.1))
     expect(h.holders.has(CAL)).toBe(false)
+  })
+
+  it("still gives the role when a post fails otherwise, then fails the tick for the watchdog", async () => {
+    const h = harness()
+    const DEE = "444444444444444444"
+    h.links.set(DEE, new Set(["d"]))
+    h.open()
+    h.signUp("d")
+    h.discord.down = true
+    await expect(h.watch.tick(at(-2))).rejects.toThrow("other side closed")
+    expect(h.holders.has(DEE)).toBe(true)
   })
 
   it("takes the role after a restart without reading the finished season again", async () => {
