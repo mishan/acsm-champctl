@@ -99,7 +99,10 @@ export class RacersWatch {
   }
 
   /** Ticks until the returned function is called; never two at once. */
-  start(everyMs = 15 * MINUTE, report?: (ok: boolean) => void): () => Promise<void> {
+  start(
+    everyMs = 15 * MINUTE,
+    report?: (ok: boolean, error?: unknown) => void,
+  ): () => Promise<void> {
     let timer: NodeJS.Timeout | undefined
     let ticking = Promise.resolve()
     const loop = () => {
@@ -109,7 +112,7 @@ export class RacersWatch {
           report?.(true)
         })
         .catch(async (e: unknown) => {
-          report?.(false)
+          report?.(false, e)
           const why = asMessage(e)
           this.#o.log(`racers: ${why}`)
           if (why === this.#told) return
@@ -174,21 +177,24 @@ export class RacersWatch {
       const opened = marks.get(`open:${s.id}`)
       const link = s.link ? `\nSign up: ${s.link}` : ""
       if (!opened) {
-        await this.#o.post(`<@&${this.#o.roleId}> Sign-ups are open for **${s.name}**!${link}`, {
-          roles: [this.#o.roleId],
-        })
+        const said = await this.#say(
+          `<@&${this.#o.roleId}> Sign-ups are open for **${s.name}**!${link}`,
+          { roles: [this.#o.roleId] },
+        )
+        if (!said) continue
         marks.set(`open:${s.id}`, now)
         marks.set(`remind:${s.id}`, now)
         continue
       }
       if (t - (marks.get(`remind:${s.id}`) ?? opened).getTime() < REMIND) continue
       const missing = [...holders].filter((u) => !on(u, s.guids))
+      // Not retried: the parts that did go out would ping their people again.
       for (const { content, users } of mentioning(
         `Still to sign up for **${s.name}**:`,
         missing,
         `${link}\nSigned up and still named here? Run \`/racer claim\` with your name on the entry list, so I know it's you.`,
       )) {
-        await this.#o.post(content, { users })
+        await this.#say(content, { users })
       }
       marks.set(`remind:${s.id}`, now)
     }
@@ -207,12 +213,14 @@ export class RacersWatch {
       if (t < deadline - DAY) return
       // A day's notice even when the bot was down for the day before.
       const when = Math.max(deadline, t + DAY)
+      // The admins' day's notice is the point: no role is taken until it's had.
       if (missing.length) {
-        await this.#tell(
+        const told = await this.#tell(
           `<t:${Math.floor(when / 1000)}:R> I'll take <@&${this.#o.roleId}> from`,
           missing,
           `who aren't signed up for ${nextNames}.`,
         )
+        if (!told) return
       }
       marks.set(`warned:${last.id}`, now)
       return
@@ -235,8 +243,30 @@ export class RacersWatch {
     }
   }
 
-  async #tell(head: string, users: string[], tail: string): Promise<void> {
-    for (const { content } of mentioning(head, users, ` ${tail}`)) await this.#o.notify(content)
+  /**
+   * A post that fails doesn't stop the tick: the roles are the watch's job, and
+   * a channel the bot can't post in would otherwise leave them undone for good.
+   */
+  async #say(content: string, ping: { users?: string[]; roles?: string[] }): Promise<boolean> {
+    return this.#o.post(content, ping).then(
+      () => true,
+      (e: unknown) => {
+        this.#o.log(`racers: couldn't post in the Racers' channel: ${asMessage(e)}`)
+        return false
+      },
+    )
+  }
+
+  /** Whether the admins heard all of it. */
+  async #tell(head: string, users: string[], tail: string): Promise<boolean> {
+    let told = true
+    for (const { content } of mentioning(head, users, ` ${tail}`)) {
+      await this.#o.notify(content).catch((e: unknown) => {
+        this.#o.log(`racers: couldn't tell the admins: ${asMessage(e)}`)
+        told = false
+      })
+    }
+    return told
   }
 
   async #read(t: number): Promise<Season[]> {

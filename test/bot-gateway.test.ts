@@ -30,7 +30,7 @@ import { Agent, getGlobalDispatcher, setGlobalDispatcher } from "undici"
 import { describe, expect, it, vi } from "vitest"
 
 import { GatewayTransport, restOptions, toSlashCommand } from "../src/bot/discord.js"
-import type { CommandRouter } from "../src/bot/transport.js"
+import { type CommandRouter, RefusedError } from "../src/bot/transport.js"
 
 interface Sent {
   channelId: string
@@ -451,6 +451,7 @@ describe("GatewayTransport.post", () => {
         `${text} posting to Discord channel 444444444444444444\\. Check discord\\.announceChannelId`,
       ),
     )
+    await expect(post).rejects.toBeInstanceOf(RefusedError)
   })
 })
 
@@ -734,6 +735,20 @@ describe("GatewayTransport embeds", () => {
     expect(await t.editEmbed("c", "m", embed)).toBe(false)
     code = 50013
     await expect(t.editEmbed("c", "m", embed)).rejects.toThrow(/nope/)
+    await expect(t.editEmbed("c", "m", embed)).rejects.toBeInstanceOf(RefusedError)
+    code = 50035
+    await expect(t.editEmbed("c", "m", embed)).rejects.not.toBeInstanceOf(RefusedError)
+  })
+
+  it("says Discord refused a new embed, for the watchdog to tell apart", async () => {
+    const send = async () => {
+      throw Object.assign(new Error("Missing Access"), { code: 50001 })
+    }
+    const client = { channels: { fetch: async () => ({ isSendable: () => true, send }) } }
+    const t = GatewayTransport.wrapping(client as unknown as Client)
+    await expect(
+      t.postEmbed("c", { title: "T", description: "", fields: [], footer: "" }),
+    ).rejects.toBeInstanceOf(RefusedError)
   })
 
   it("says how far an upload got when the connection drops", async () => {

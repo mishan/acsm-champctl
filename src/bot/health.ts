@@ -14,6 +14,7 @@ import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
 import { migrate, type Migration, restrictToOwner } from "../sqlite.js"
+import { RefusedError } from "./transport.js"
 
 const MINUTE = 60_000
 /** How long a loop may go without a good tick, at the least. */
@@ -34,11 +35,13 @@ export class Watchdog {
   }
 
   /** Registers a loop; call the returned function after each of its ticks. */
-  watch(name: string, everyMs: number): (ok: boolean) => void {
+  watch(name: string, everyMs: number): (ok: boolean, error?: unknown) => void {
     const loop = { everyMs, lastOk: this.#now() }
     this.#loops.set(name, loop)
-    return (ok) => {
-      if (ok) loop.lastOk = this.#now()
+    return (ok, error) => {
+      // A loop Discord won't let post is still working, and restarting would
+      // take every other loop and command down with it to no end.
+      if (ok || error instanceof RefusedError) loop.lastOk = this.#now()
     }
   }
 

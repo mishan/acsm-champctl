@@ -48,6 +48,7 @@ import type { InfoEmbed } from "../info/embed.js"
 import type { CommandDefinition } from "./commands.js"
 import {
   BotError,
+  RefusedError,
   type CommandRouter,
   type DiscordMessage,
   type DiscordTransport,
@@ -178,14 +179,8 @@ export class GatewayTransport implements DiscordTransport {
     const refused = (e: unknown) => {
       // Only Discord refusing the bot: an upload's own failure, an abort above
       // all, goes up as it is for the caller to tell apart.
-      const code = (e as { code?: unknown }).code
-      if (
-        code !== RESTJSONErrorCodes.MissingAccess &&
-        code !== RESTJSONErrorCodes.MissingPermissions
-      ) {
-        throw e
-      }
-      throw new BotError(
+      if (!refusal(e)) throw e
+      throw new RefusedError(
         `${(e as Error).message} posting to Discord channel ${message.channelId}. Check ${source}, and ` +
           `that the bot can see that channel and send messages in it.`,
       )
@@ -544,7 +539,7 @@ export class GatewayTransport implements DiscordTransport {
     try {
       return (await channel.send({ ...toEmbed(embed), allowedMentions: { parse: [] } })).id
     } catch (e) {
-      throw new BotError(message(e))
+      throw refusal(e) ? new RefusedError(message(e)) : new BotError(message(e))
     }
   }
 
@@ -558,7 +553,7 @@ export class GatewayTransport implements DiscordTransport {
       return true
     } catch (e) {
       if ((e as { code?: unknown }).code === RESTJSONErrorCodes.UnknownMessage) return false
-      throw new BotError(message(e))
+      throw refusal(e) ? new RefusedError(message(e)) : new BotError(message(e))
     }
   }
 
@@ -782,6 +777,12 @@ function commandLine(interaction: ChatInputCommandInteraction): string {
 function firstLine(text: string): string {
   const line = text.split("\n").find((l) => l.trim()) ?? ""
   return line.length > 160 ? `${line.slice(0, 159)}…` : line
+}
+
+/** Discord refusing the bot, rather than the request failing. */
+function refusal(e: unknown): boolean {
+  const code = (e as { code?: unknown }).code
+  return code === RESTJSONErrorCodes.MissingAccess || code === RESTJSONErrorCodes.MissingPermissions
 }
 
 function message(e: unknown): string {

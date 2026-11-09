@@ -79,6 +79,10 @@ function harness(
   }
   const posts: { content: string; ping: { users?: string[]; roles?: string[] } }[] = []
   const told: string[] = []
+  const discord = { refusing: false }
+  const refuse = async () => {
+    if (discord.refusing) throw new Error("Missing Access")
+  }
   const build = () =>
     new RacersWatch({
       reader,
@@ -90,9 +94,11 @@ function harness(
       graceDays: 7,
       baseUrl: "https://acsm.example",
       post: async (content, ping) => {
+        await refuse()
         posts.push({ content, ping })
       },
       notify: async (content) => {
+        await refuse()
         told.push(content)
       },
       log: () => {},
@@ -109,6 +115,7 @@ function harness(
     links,
     posts,
     told,
+    discord,
     finish: () => {
       september.Events = [
         raceEvent({ CompletedTime: "2026-09-24T05:00:00Z" }),
@@ -227,6 +234,29 @@ describe("RacersWatch", () => {
     h.holders.add(CAL)
     await h.watch.tick(at(8))
     expect(h.holders.has(CAL)).toBe(true)
+  })
+
+  it("looks after the role while Discord refuses its posts, and takes none until the admins are warned", async () => {
+    const h = harness({ october: ["a"] })
+    const DEE = "444444444444444444"
+    h.links.set(DEE, new Set(["d"]))
+    h.open()
+    await h.watch.tick(at(-1))
+    h.discord.refusing = true
+    h.finish()
+    h.signUp("d")
+    await h.watch.tick(at(0))
+    expect(h.holders.has(DEE)).toBe(true)
+    await h.watch.tick(at(6))
+    await h.watch.tick(at(8))
+    expect(h.holders.has(CAL)).toBe(true)
+    h.discord.refusing = false
+    await h.watch.tick(at(8.1))
+    expect(h.told).toEqual([expect.stringMatching(/I'll take <@&\d+> from <@222\d+> <@333\d+>/)])
+    await h.watch.tick(at(8.9))
+    expect(h.holders.has(CAL)).toBe(true)
+    await h.watch.tick(at(9.1))
+    expect(h.holders.has(CAL)).toBe(false)
   })
 
   it("takes the role after a restart without reading the finished season again", async () => {
