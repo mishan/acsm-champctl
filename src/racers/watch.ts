@@ -14,7 +14,8 @@
  * - Once the last season has finished and the next has opened (or, if it
  *   never took sign-ups, started), holders not signed up lose the role
  *   `graceDays` after whichever came later. The
- *   admins hear who a day before, and again once it's done.
+ *   admins hear who a day before, and again once it's done. No one loses it
+ *   while an entrant on the next season is claimed by no one.
  *
  * The seasons already finished when it first runs are left alone: their grace
  * ran out before anyone was told about it.
@@ -22,7 +23,15 @@
 
 import { type AcsmReader, asMessage } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
-import { eventHasStarted, events, isZeroTime, rosterGuids } from "../acsm/view.js"
+import {
+  classes,
+  eventHasStarted,
+  events,
+  isZeroTime,
+  rosterGuids,
+  slots,
+  splitGuids,
+} from "../acsm/view.js"
 import { signUpLink } from "../bot/announce.js"
 import type { FinishedChampionships } from "../bot/finished.js"
 import { MESSAGE_LIMIT, RefusedError } from "../bot/transport.js"
@@ -75,6 +84,8 @@ interface Season {
   /** When its first round started, if one has. */
   startedAt?: number
   guids: Set<string>
+  /** Each Steam id's entrant name; absent for a season kept from before it was recorded. */
+  entrants?: [guid: string, name: string][]
   /** Taking sign-ups, with no round started yet. */
   open: boolean
   link?: string
@@ -223,6 +234,23 @@ export class RacersWatch {
       Math.max(last.finishedAt as number, Math.min(...opens)) + this.#o.graceDays * DAY
     const missing = [...holders].filter((u) => !on(u, signedUp))
     const nextNames = after.map((s) => `**${s.name}**`).join(" or ")
+    const claimed = new Set([...links.values()].flatMap((g) => [...g]))
+    const unclaimed = new Set(
+      after.flatMap((s) =>
+        (s.entrants ?? []).flatMap(([g, name]) => (claimed.has(g) ? [] : [name])),
+      ),
+    )
+    // Any holder could be one of them, signed up under a name we can't tie to them.
+    if (unclaimed.size) {
+      if (t < deadline - DAY || marks.get(`held:${last.id}`)) return
+      const told = await this.#notify(
+        `I'm not taking <@&${this.#o.roleId}> from anyone yet: no one has claimed ` +
+          `${[...unclaimed].join(", ")} on ${nextNames}, so I can't tell who they are. Each needs ` +
+          "to run `/racer claim` with their name on the entry list.",
+      )
+      if (told) marks.set(`held:${last.id}`, now)
+      return
+    }
     const warned = marks.get(`warned:${last.id}`)
     if (!warned) {
       if (t < deadline - DAY) return
@@ -277,13 +305,20 @@ export class RacersWatch {
   async #tell(head: string, users: string[], tail: string): Promise<boolean> {
     let told = true
     for (const { content } of mentioning(head, users, ` ${tail}`)) {
-      await this.#o.notify(content).catch((e: unknown) => {
-        this.#o.log(`racers: couldn't tell the admins: ${asMessage(e)}`)
-        if (!(e instanceof RefusedError)) this.#unsent ??= { error: e }
-        told = false
-      })
+      if (!(await this.#notify(content))) told = false
     }
     return told
+  }
+
+  async #notify(content: string): Promise<boolean> {
+    return this.#o.notify(content).then(
+      () => true,
+      (e: unknown) => {
+        this.#o.log(`racers: couldn't tell the admins: ${asMessage(e)}`)
+        if (!(e instanceof RefusedError)) this.#unsent ??= { error: e }
+        return false
+      },
+    )
   }
 
   async #read(t: number): Promise<Season[]> {
@@ -332,6 +367,11 @@ export class RacersWatch {
         ...(done !== undefined ? { finishedAt: done } : {}),
         ...(Number.isFinite(started) ? { startedAt: started } : {}),
         guids: rosterGuids(c),
+        entrants: classes(c).flatMap((cls) =>
+          slots(cls.Entrants).flatMap(({ entrant }) =>
+            splitGuids(entrant.GUID).map((g): [string, string] => [g, entrant.Name?.trim() || g]),
+          ),
+        ),
         open:
           form?.Enabled === true &&
           !rounds.some(eventHasStarted) &&
