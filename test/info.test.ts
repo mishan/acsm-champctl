@@ -4,7 +4,8 @@ import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { Championship } from "../src/acsm/types.js"
 import { type InfoEmbed, infoEmbed, infoText } from "../src/info/embed.js"
 import { ChampionshipInfo, InfoRouter } from "../src/info/post.js"
-import type { SlashCommand } from "../src/bot/transport.js"
+import { Watchdog } from "../src/bot/health.js"
+import { RefusedError, type SlashCommand } from "../src/bot/transport.js"
 import { championship, raceEvent, testProfile } from "./support/build.js"
 
 const ADMIN = "777777777777777777"
@@ -169,6 +170,7 @@ function harness(
   championships: Championship[],
   unreadable: string[] = [],
   store = new Map<string, string>(),
+  postFails?: Error,
 ) {
   const inner = new StaticAcsmReader(championships)
   const exported: string[] = []
@@ -193,6 +195,7 @@ function harness(
     store: { get: (k) => store.get(k), set: (k, v) => void store.set(k, v) },
     channel: {
       post: async (embed) => {
+        if (postFails) throw postFails
         posted.push(embed)
         return `m${posted.length}`
       },
@@ -227,6 +230,22 @@ describe("ChampionshipInfo", () => {
   const running = season("00000000-0000-0000-0000-00000000000a", "2026-09-30T00:00:00Z", {
     Events: [raceEvent({ StartedTime: "2026-10-08T03:00:00Z" })],
   })
+
+  it.each([
+    ["Discord refused it", new RefusedError("Missing Access"), undefined],
+    ["anything else", new Error("timed out"), /^The info message has had no good tick/],
+  ])(
+    "tells the watchdog it's still working when its post fails because %s, not otherwise",
+    async (_, error, stale) => {
+      let now = 0
+      const dog = new Watchdog(() => now)
+      const report = dog.watch("The info message", 60_000)
+      now = 2 * 3_600_000
+      const h = harness([running], [], new Map(), error)
+      await h.info.start(60_000, report)()
+      expect(dog.stale()).toEqual(stale && expect.stringMatching(stale))
+    },
+  )
 
   it("posts once, edits only when it would say something new, and posts again if deleted", async () => {
     const h = harness([running])
