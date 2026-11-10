@@ -238,6 +238,42 @@ describe("RacersWatch", () => {
     expect(h.holders.has(CAL)).toBe(true)
   })
 
+  it("takes the role from nobody while someone signed up is claimed by no one", async () => {
+    const h = harness({ october: ["a", "x"] })
+    await h.watch.tick(at(-1))
+    h.open()
+    h.finish()
+    await h.watch.tick(at(0))
+    expect(h.told).toEqual([])
+    await h.watch.tick(at(6))
+    await h.watch.tick(at(8))
+    await h.watch.tick(at(9))
+    expect(h.holders).toEqual(new Set([ANN, BEA, CAL]))
+    expect(h.told).toEqual([
+      `I'm not taking <@&${ROLE}> from anyone yet: no one has claimed Driver x on **October**, ` +
+        "so I can't tell who they are. Each needs to run `/racer claim` with their name on the entry list.",
+    ])
+    h.links.set(BEA, new Set(["b", "x"]))
+    await h.watch.tick(at(9.1))
+    expect(h.told[1]).toMatch(/I'll take <@&\d+> from <@333\d+> who aren't/)
+    await h.watch.tick(at(10.2))
+    expect(h.holders).toEqual(new Set([ANN, BEA]))
+  })
+
+  it("takes nothing once warned if someone claimed by no one signs up before the day is out", async () => {
+    const h = harness({ october: ["a"] })
+    await h.watch.tick(at(-1))
+    h.open()
+    h.finish()
+    await h.watch.tick(at(0))
+    await h.watch.tick(at(6))
+    expect(h.told[0]).toMatch(/I'll take/)
+    h.signUp("x")
+    await h.watch.tick(at(7))
+    expect(h.holders).toEqual(new Set([ANN, BEA, CAL]))
+    expect(h.told[1]).toMatch(/^I'm not taking .* Driver x/)
+  })
+
   it("looks after the role while Discord refuses its posts, and takes none until the admins are warned", async () => {
     const h = harness({ october: ["a"] })
     const DEE = "444444444444444444"
