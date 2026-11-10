@@ -16,6 +16,9 @@ const ANN = "111111111111111111"
 const BEA = "222222222222222222"
 const CAL = "333333333333333333"
 
+/** The name the server shows: Ann for 111…, and so on, Dee_Dee for 444…. */
+const name = (u: string) => ["Ann", "Bea", "Cal", "Dee_Dee"][Number(u[0]) - 1] ?? u
+
 const roster = (guids: string[]) => [
   championshipClass({ Entrants: entryList(guids.map((g) => driver(`Driver ${g}`, { GUID: g }))) }),
 ]
@@ -69,7 +72,7 @@ function harness(
   ])
   const marks = new Map<string, Date>()
   const role: RacerRole = {
-    holders: async () => [...holders],
+    holders: async () => new Map([...holders].map((u) => [u, name(u)])),
     add: async (u) => {
       holders.add(u)
       return true
@@ -172,7 +175,7 @@ describe("RacersWatch", () => {
     h.signUp("d")
     await h.watch.tick(at(-2))
     expect(h.holders.has(DEE)).toBe(true)
-    expect(h.told).toEqual([`Gave <@&${ROLE}> to <@${DEE}> who signed up.`])
+    expect(h.told).toEqual([`Gave <@&${ROLE}> to the people who signed up: Dee\\_Dee.`])
   })
 
   it("gives nothing for a draft that hasn't opened or started", async () => {
@@ -227,15 +230,33 @@ describe("RacersWatch", () => {
     await h.watch.tick(at(5.9))
     expect(h.told).toEqual([])
     await h.watch.tick(at(6))
-    expect(h.told).toEqual([expect.stringMatching(/I'll take <@&\d+> from <@333\d+> who aren't/)])
+    expect(h.told).toEqual([
+      `I'll take <@&${ROLE}> <t:${(ENDS + 7 * DAY) / 1000}:R> from the people not signed up for **October**: Cal.`,
+    ])
     await h.watch.tick(at(6.9))
     expect(h.holders).toEqual(new Set([ANN, BEA, CAL]))
     await h.watch.tick(at(7))
     expect(h.holders).toEqual(new Set([ANN, BEA]))
-    expect(h.told[1]).toMatch(/^Took <@&\d+> from <@333\d+> who didn't sign up for \*\*October\*\*/)
+    expect(h.told[1]).toBe(
+      `Took <@&${ROLE}> from the people who didn't sign up for **October**: Cal.`,
+    )
     h.holders.add(CAL)
     await h.watch.tick(at(8))
     expect(h.holders.has(CAL)).toBe(true)
+  })
+
+  it("names everyone it will take the role from, over as many messages as that takes", async () => {
+    const h = harness({ october: ["a"] })
+    const many = Array.from({ length: 300 }, (_, i) => `9${String(i).padStart(17, "0")}`)
+    for (const u of many) h.holders.add(u)
+    await h.watch.tick(at(-1))
+    h.open()
+    h.finish()
+    await h.watch.tick(at(0))
+    await h.watch.tick(at(6))
+    expect(h.told.length).toBeGreaterThan(1)
+    for (const m of h.told) expect(m.length).toBeLessThanOrEqual(2000)
+    expect(h.told.join("").match(/9\d{17}|Bea|Cal/g)).toEqual(["Bea", "Cal", ...many])
   })
 
   it("takes the role from nobody while someone signed up is claimed by no one", async () => {
@@ -255,7 +276,7 @@ describe("RacersWatch", () => {
     ])
     h.links.set(BEA, new Set(["b", "x"]))
     await h.watch.tick(at(9.1))
-    expect(h.told[1]).toMatch(/I'll take <@&\d+> from <@333\d+> who aren't/)
+    expect(h.told[1]).toMatch(/: Cal\.$/)
     await h.watch.tick(at(10.2))
     expect(h.holders).toEqual(new Set([ANN, BEA]))
   })
@@ -290,7 +311,7 @@ describe("RacersWatch", () => {
     expect(h.holders.has(CAL)).toBe(true)
     h.discord.refusing = false
     await h.watch.tick(at(8.1))
-    expect(h.told).toEqual([expect.stringMatching(/I'll take <@&\d+> from <@222\d+> <@333\d+>/)])
+    expect(h.told).toEqual([expect.stringMatching(/^I'll take .*: Bea, Cal\.$/)])
     await h.watch.tick(at(8.9))
     expect(h.holders.has(CAL)).toBe(true)
     await h.watch.tick(at(9.1))

@@ -50,8 +50,8 @@ const REMIND = 3 * DAY
 const STALE = 42 * DAY
 
 export interface RacerRole {
-  /** Who holds the role, bots aside. */
-  holders(): Promise<string[]>
+  /** Who holds the role, bots aside, each with the name the server shows. */
+  holders(): Promise<Map<string, string>>
   /** False when they aren't in the server any more. */
   add(userId: string): Promise<boolean>
   remove(userId: string): Promise<void>
@@ -181,7 +181,7 @@ export class RacersWatch {
     const links = await this.#o.links.guidsByUser()
     const on = (user: string, guids: Set<string>) =>
       [...(links.get(user) ?? [])].some((g) => guids.has(g))
-    const holders = new Set(await this.#o.role.holders())
+    const holders = await this.#o.role.holders()
 
     const given: string[] = []
     for (const user of links.keys()) {
@@ -191,12 +191,16 @@ export class RacersWatch {
         this.#gone.add(user)
         continue
       }
-      holders.add(user)
+      holders.set(user, user)
       given.push(user)
     }
     if (given.length) {
       this.#o.log(`racers: gave the role to ${given.join(", ")}`)
-      await this.#tell(`Gave <@&${this.#o.roleId}> to`, given, "who signed up.")
+      const named = await this.#o.role.holders()
+      await this.#tell(
+        `Gave <@&${this.#o.roleId}> to the people who signed up`,
+        given.map((u) => named.get(u) ?? u),
+      )
     }
 
     for (const s of next.filter((s) => s.open)) {
@@ -213,7 +217,7 @@ export class RacersWatch {
         continue
       }
       if (t - (marks.get(`remind:${s.id}`) ?? opened).getTime() < REMIND) continue
-      const missing = [...holders].filter((u) => !on(u, s.guids))
+      const missing = [...holders.keys()].filter((u) => !on(u, s.guids))
       // Not retried: the parts that did go out would ping their people again.
       for (const { content, users } of mentioning(
         `Still to sign up for **${s.name}**:`,
@@ -232,7 +236,7 @@ export class RacersWatch {
     if (opens.length === 0) return
     const deadline =
       Math.max(last.finishedAt as number, Math.min(...opens)) + this.#o.graceDays * DAY
-    const missing = [...holders].filter((u) => !on(u, signedUp))
+    const missing = [...holders.keys()].filter((u) => !on(u, signedUp))
     const nextNames = after.map((s) => `**${s.name}**`).join(" or ")
     const claimed = new Set([...links.values()].flatMap((g) => [...g]))
     const unclaimed = new Set(
@@ -245,7 +249,7 @@ export class RacersWatch {
       if (t < deadline - DAY || marks.get(`held:${last.id}`)) return
       const told = await this.#notify(
         `I'm not taking <@&${this.#o.roleId}> from anyone yet: no one has claimed ` +
-          `${[...unclaimed].join(", ")} on ${nextNames}, so I can't tell who they are. Each needs ` +
+          `${[...unclaimed].map(plain).join(", ")} on ${nextNames}, so I can't tell who they are. Each needs ` +
           "to run `/racer claim` with their name on the entry list.",
       )
       if (told) marks.set(`held:${last.id}`, now)
@@ -259,9 +263,9 @@ export class RacersWatch {
       // The admins' day's notice is the point: no role is taken until it's had.
       if (missing.length) {
         const told = await this.#tell(
-          `<t:${Math.floor(when / 1000)}:R> I'll take <@&${this.#o.roleId}> from`,
-          missing,
-          `who aren't signed up for ${nextNames}.`,
+          `I'll take <@&${this.#o.roleId}> <t:${Math.floor(when / 1000)}:R> from the people ` +
+            `not signed up for ${nextNames}`,
+          missing.map((u) => holders.get(u) ?? u),
         )
         if (!told) return
       }
@@ -279,9 +283,8 @@ export class RacersWatch {
     if (taken.length) {
       this.#o.log(`racers: took the role from ${taken.join(", ")}`)
       await this.#tell(
-        `Took <@&${this.#o.roleId}> from`,
-        taken,
-        `who didn't sign up for ${nextNames}.`,
+        `Took <@&${this.#o.roleId}> from the people who didn't sign up for ${nextNames}`,
+        taken.map((u) => holders.get(u) ?? u),
       )
     }
   }
@@ -301,10 +304,14 @@ export class RacersWatch {
     )
   }
 
-  /** Whether the admins heard all of it. */
-  async #tell(head: string, users: string[], tail: string): Promise<boolean> {
+  /**
+   * Whether the admins heard all of it. Names rather than mentions: a mention
+   * that notifies no one shows as @unknown-user to anyone whose Discord hasn't
+   * loaded that member.
+   */
+  async #tell(head: string, names: string[]): Promise<boolean> {
     let told = true
-    for (const { content } of mentioning(head, users, ` ${tail}`)) {
+    for (const content of listing(`${head}:`, names.map(plain))) {
       if (!(await this.#notify(content))) told = false
     }
     return told
@@ -387,6 +394,27 @@ export class RacersWatch {
     }
     return seasons
   }
+}
+
+/** `head` and the names, comma-separated, in as few messages as fit. */
+function listing(head: string, names: readonly string[]): string[] {
+  const out: string[] = []
+  let line = head
+  names.forEach((n, i) => {
+    const add = ` ${n}${i === names.length - 1 ? "." : ","}`
+    if (line.length + add.length > MESSAGE_LIMIT) {
+      out.push(line)
+      line = ""
+    }
+    line += add
+  })
+  out.push(line)
+  return out
+}
+
+/** A name as written, not as Markdown: an underscore in it shouldn't italicize the rest. */
+function plain(name: string): string {
+  return name.replace(/[\\*_~`|]/g, "\\$&")
 }
 
 /**

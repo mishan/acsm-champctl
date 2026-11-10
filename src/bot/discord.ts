@@ -513,8 +513,8 @@ export class GatewayTransport implements DiscordTransport {
    * Members intent switched on in the Developer Portal but no subscription to
    * member events.
    */
-  async roleHolders(guildId: string, roleId: string): Promise<string[]> {
-    const holders: string[] = []
+  async roleHolders(guildId: string, roleId: string): Promise<Map<string, string>> {
+    const holders = new Map<string, string>()
     let after = "0"
     for (;;) {
       const page = (await this.#client.rest
@@ -528,7 +528,9 @@ export class GatewayTransport implements DiscordTransport {
           )
         })) as APIGuildMember[]
       for (const m of page) {
-        if (m.user && !m.user.bot && m.roles.includes(roleId)) holders.push(m.user.id)
+        if (m.user && !m.user.bot && m.roles.includes(roleId)) {
+          holders.set(m.user.id, m.nick ?? m.user.global_name ?? m.user.username)
+        }
       }
       const last = page.at(-1)?.user?.id
       if (page.length < 1000 || !last) return holders
