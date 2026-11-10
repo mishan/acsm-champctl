@@ -48,6 +48,7 @@ import type { InfoEmbed } from "../info/embed.js"
 import type { CommandDefinition } from "./commands.js"
 import {
   BotError,
+  RefusedError,
   type CommandRouter,
   type DiscordMessage,
   type DiscordTransport,
@@ -150,13 +151,17 @@ export class GatewayTransport implements DiscordTransport {
   }
 
   async post(message: DiscordMessage): Promise<void> {
-    const channel = await this.#client.channels.fetch(message.channelId).catch(() => null)
+    let hidden = false
+    const channel = await this.#client.channels.fetch(message.channelId).catch((e: unknown) => {
+      hidden = refusal(e)
+      return null
+    })
     // Where the id came from is the caller's to say. This named
     // discord.adminChannelId whatever was posting, so a wrong announce channel
     // sent the operator to check the one setting that was right.
     const source = message.source ?? "the channel id"
     if (!channel) {
-      throw new BotError(
+      throw new (hidden ? RefusedError : BotError)(
         `No Discord channel ${message.channelId}. Check ${source}, and that the bot has been ` +
           `invited to that server and can see the channel.`,
       )
@@ -175,7 +180,16 @@ export class GatewayTransport implements DiscordTransport {
     // with open sign-ups, and `@` passes SAFE_COMPONENT. Signing up as
     // "@everyone" and running /racer claim was a guild-wide ping on demand.
     // `pings` names users outright, by id: nothing in the text can widen it.
-    await channel.send({
+    const refused = (e: unknown) => {
+      // Only Discord refusing the bot: an upload's own failure, an abort above
+      // all, goes up as it is for the caller to tell apart.
+      if (!refusal(e)) throw e
+      throw new RefusedError(
+        `${(e as Error).message} posting to Discord channel ${message.channelId}. Check ${source}, and ` +
+          `that the bot can see that channel and send messages in it.`,
+      )
+    }
+    const sending = channel.send({
       content: message.content,
       allowedMentions: {
         parse: [],
@@ -193,6 +207,7 @@ export class GatewayTransport implements DiscordTransport {
           }
         : {}),
     })
+    await sending.catch(refused)
   }
 
   /**
@@ -521,20 +536,27 @@ export class GatewayTransport implements DiscordTransport {
     }
   }
 
+  /** A channel, with Discord refusing the bot it told apart from the lookup failing. */
+  async #channel(channelId: string) {
+    return this.#client.channels.fetch(channelId).catch((e: unknown) => {
+      throw refusal(e) ? refusedIn(channelId, e) : e
+    })
+  }
+
   /** An embed, mentioning nobody; its message id. */
   async postEmbed(channelId: string, embed: InfoEmbed): Promise<string> {
-    const channel = await this.#client.channels.fetch(channelId)
+    const channel = await this.#channel(channelId)
     if (!channel?.isSendable()) throw new BotError(`${channelId} isn't a channel I can post in.`)
     try {
       return (await channel.send({ ...toEmbed(embed), allowedMentions: { parse: [] } })).id
     } catch (e) {
-      throw new BotError(message(e))
+      throw refusal(e) ? refusedIn(channelId, e) : new BotError(message(e))
     }
   }
 
   /** Replaces one of the bot's embeds; false when the message is gone. */
   async editEmbed(channelId: string, messageId: string, embed: InfoEmbed): Promise<boolean> {
-    const channel = await this.#client.channels.fetch(channelId)
+    const channel = await this.#channel(channelId)
     if (!channel?.isTextBased()) throw new BotError(`${channelId} isn't a text channel I can see.`)
     try {
       // Without `attachments: []` an edit keeps the old picture beside the new.
@@ -542,19 +564,19 @@ export class GatewayTransport implements DiscordTransport {
       return true
     } catch (e) {
       if ((e as { code?: unknown }).code === RESTJSONErrorCodes.UnknownMessage) return false
-      throw new BotError(message(e))
+      throw refusal(e) ? refusedIn(channelId, e) : new BotError(message(e))
     }
   }
 
   async messageExists(channelId: string, messageId: string): Promise<boolean> {
-    const channel = await this.#client.channels.fetch(channelId)
+    const channel = await this.#channel(channelId)
     if (!channel?.isTextBased()) throw new BotError(`${channelId} isn't a text channel I can see.`)
     try {
       await channel.messages.fetch({ message: messageId, force: true })
       return true
     } catch (e) {
       if ((e as { code?: unknown }).code === RESTJSONErrorCodes.UnknownMessage) return false
-      throw e
+      throw refusal(e) ? refusedIn(channelId, e) : e
     }
   }
 
@@ -766,6 +788,19 @@ function commandLine(interaction: ChatInputCommandInteraction): string {
 function firstLine(text: string): string {
   const line = text.split("\n").find((l) => l.trim()) ?? ""
   return line.length > 160 ? `${line.slice(0, 159)}…` : line
+}
+
+/** Discord's refusal, which names no channel, with the one it was. */
+function refusedIn(channelId: string, e: unknown): RefusedError {
+  return new RefusedError(
+    `${message(e)} in Discord channel ${channelId}: the bot needs to see it and post in it.`,
+  )
+}
+
+/** Discord refusing the bot, rather than the request failing. */
+function refusal(e: unknown): boolean {
+  const code = (e as { code?: unknown } | null)?.code
+  return code === RESTJSONErrorCodes.MissingAccess || code === RESTJSONErrorCodes.MissingPermissions
 }
 
 function message(e: unknown): string {

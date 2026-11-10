@@ -30,7 +30,7 @@ import { Agent, getGlobalDispatcher, setGlobalDispatcher } from "undici"
 import { describe, expect, it, vi } from "vitest"
 
 import { GatewayTransport, restOptions, toSlashCommand } from "../src/bot/discord.js"
-import type { CommandRouter } from "../src/bot/transport.js"
+import { type CommandRouter, RefusedError } from "../src/bot/transport.js"
 
 interface Sent {
   channelId: string
@@ -432,6 +432,60 @@ describe("GatewayTransport.post", () => {
     await expect(post).rejects.toThrow(/ordinary text channel; check discord\.announceChannelId/)
     await expect(post).rejects.not.toThrow(/gridmom/)
   })
+
+  it.each([
+    [{ code: 50001, message: "Missing Access" }, true],
+    [new Error("timed out"), false],
+  ])(
+    "says whether Discord refused the bot a channel it couldn't look up (%o)",
+    async (lookup, refused) => {
+      const client = {
+        channels: { fetch: () => Promise.reject(lookup) },
+        on() {
+          return this
+        },
+      } as unknown as Client
+      const post = GatewayTransport.wrapping(client).post({
+        channelId: "444444444444444444",
+        content: "hi",
+        source: announceSource,
+      })
+      await expect(post).rejects.toThrow(
+        /No Discord channel 444444444444444444\. Check discord\.announceChannelId/,
+      )
+      expect((await post.catch((e: unknown) => e)) instanceof RefusedError).toBe(refused)
+    },
+  )
+
+  it("passes on a post failing with no error at all", async () => {
+    const channel = { isSendable: () => true, type: 0, send: () => Promise.reject(null) }
+    const post = GatewayTransport.wrapping(clientFinding(channel)).post({
+      channelId: "444444444444444444",
+      content: "hi",
+    })
+    await expect(post).rejects.toBeNull()
+  })
+
+  it.each([
+    [50001, "Missing Access"],
+    [50013, "Missing Permissions"],
+  ])("names the channel and its setting when Discord refuses the post (%i)", async (code, text) => {
+    // Discord's own words name neither: the Racers watch failed every tick for
+    // days with only "Missing Access" in the log.
+    const refused = Object.assign(new Error(text), { code })
+    const channel = { isSendable: () => true, type: 0, send: () => Promise.reject(refused) }
+    const post = GatewayTransport.wrapping(clientFinding(channel)).post({
+      channelId: "444444444444444444",
+      content: "hi",
+      source: announceSource,
+    })
+    await expect(post).rejects.toThrow(
+      new RegExp(
+        `${text} posting to Discord channel 444444444444444444\\. Check discord\\.announceChannelId`,
+      ),
+    )
+    await expect(post).rejects.toBeInstanceOf(RefusedError)
+  })
 })
 
 describe("GatewayTransport.listen", () => {
@@ -694,6 +748,8 @@ describe("GatewayTransport roles", () => {
   })
 })
 
+const refusedAccess = () => Object.assign(new Error("Missing Access"), { code: 50001 })
+
 describe("GatewayTransport embeds", () => {
   it("says a deleted message is gone, so it's posted again, and passes other failures on", async () => {
     let code = 10008
@@ -713,7 +769,48 @@ describe("GatewayTransport embeds", () => {
     const embed = { title: "T", description: "", fields: [], footer: "" }
     expect(await t.editEmbed("c", "m", embed)).toBe(false)
     code = 50013
-    await expect(t.editEmbed("c", "m", embed)).rejects.toThrow(/nope/)
+    await expect(t.editEmbed("c", "m", embed)).rejects.toThrow(/^nope in Discord channel c:/)
+    await expect(t.editEmbed("c", "m", embed)).rejects.toBeInstanceOf(RefusedError)
+    code = 50035
+    await expect(t.editEmbed("c", "m", embed)).rejects.not.toBeInstanceOf(RefusedError)
+  })
+
+  it.each([
+    ["looking up the channel", { channels: { fetch: () => Promise.reject(refusedAccess()) } }],
+    [
+      "checking the message is there",
+      {
+        channels: {
+          fetch: async () => ({
+            isTextBased: () => true,
+            messages: { fetch: () => Promise.reject(refusedAccess()) },
+          }),
+        },
+      },
+    ],
+  ])("says Discord refused the info message %s", async (_, client) => {
+    const t = GatewayTransport.wrapping(client as unknown as Client)
+    const refused = t.messageExists("c", "m")
+    await expect(refused).rejects.toBeInstanceOf(RefusedError)
+    await expect(refused).rejects.toThrow(/^Missing Access in Discord channel c:/)
+  })
+
+  it("passes on a lookup that fails for another reason", async () => {
+    const timedOut = new Error("timed out")
+    const client = { channels: { fetch: () => Promise.reject(timedOut) } }
+    const t = GatewayTransport.wrapping(client as unknown as Client)
+    await expect(t.messageExists("c", "m")).rejects.toBe(timedOut)
+  })
+
+  it("says Discord refused a new embed, for the watchdog to tell apart", async () => {
+    const send = async () => {
+      throw Object.assign(new Error("Missing Access"), { code: 50001 })
+    }
+    const client = { channels: { fetch: async () => ({ isSendable: () => true, send }) } }
+    const t = GatewayTransport.wrapping(client as unknown as Client)
+    const posted = t.postEmbed("c", { title: "T", description: "", fields: [], footer: "" })
+    await expect(posted).rejects.toBeInstanceOf(RefusedError)
+    await expect(posted).rejects.toThrow(/^Missing Access in Discord channel c:/)
   })
 
   it("says how far an upload got when the connection drops", async () => {

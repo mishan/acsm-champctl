@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { Championship } from "../src/acsm/types.js"
 import { type FinishedChampionships, SqliteFinishedStore } from "../src/bot/finished.js"
+import { RefusedError } from "../src/bot/transport.js"
 import { type RacerRole, RacersWatch } from "../src/racers/watch.js"
 import { championship, championshipClass, driver, entryList, raceEvent } from "./support/build.js"
 
@@ -79,6 +80,11 @@ function harness(
   }
   const posts: { content: string; ping: { users?: string[]; roles?: string[] } }[] = []
   const told: string[] = []
+  const discord = { refusing: false, down: false as false | { error: unknown } }
+  const refuse = async () => {
+    if (discord.refusing) throw new RefusedError("Missing Access")
+    if (discord.down) throw discord.down.error
+  }
   const build = () =>
     new RacersWatch({
       reader,
@@ -90,9 +96,11 @@ function harness(
       graceDays: 7,
       baseUrl: "https://acsm.example",
       post: async (content, ping) => {
+        await refuse()
         posts.push({ content, ping })
       },
       notify: async (content) => {
+        await refuse()
         told.push(content)
       },
       log: () => {},
@@ -109,6 +117,7 @@ function harness(
     links,
     posts,
     told,
+    discord,
     finish: () => {
       september.Events = [
         raceEvent({ CompletedTime: "2026-09-24T05:00:00Z" }),
@@ -228,6 +237,46 @@ describe("RacersWatch", () => {
     await h.watch.tick(at(8))
     expect(h.holders.has(CAL)).toBe(true)
   })
+
+  it("looks after the role while Discord refuses its posts, and takes none until the admins are warned", async () => {
+    const h = harness({ october: ["a"] })
+    const DEE = "444444444444444444"
+    h.links.set(DEE, new Set(["d"]))
+    h.open()
+    await h.watch.tick(at(-1))
+    h.discord.refusing = true
+    h.finish()
+    h.signUp("d")
+    await h.watch.tick(at(0))
+    expect(h.holders.has(DEE)).toBe(true)
+    await h.watch.tick(at(6))
+    await h.watch.tick(at(8))
+    expect(h.holders.has(CAL)).toBe(true)
+    h.discord.refusing = false
+    await h.watch.tick(at(8.1))
+    expect(h.told).toEqual([expect.stringMatching(/I'll take <@&\d+> from <@222\d+> <@333\d+>/)])
+    await h.watch.tick(at(8.9))
+    expect(h.holders.has(CAL)).toBe(true)
+    await h.watch.tick(at(9.1))
+    expect(h.holders.has(CAL)).toBe(false)
+  })
+
+  it.each([
+    ["an error", new Error("other side closed")],
+    ["nothing at all", undefined],
+  ])(
+    "still gives the role when a post fails with %s, then fails the tick for the watchdog",
+    async (_, error) => {
+      const h = harness()
+      const DEE = "444444444444444444"
+      h.links.set(DEE, new Set(["d"]))
+      h.open()
+      h.signUp("d")
+      h.discord.down = { error }
+      await expect(h.watch.tick(at(-2))).rejects.toBe(error)
+      expect(h.holders.has(DEE)).toBe(true)
+    },
+  )
 
   it("takes the role after a restart without reading the finished season again", async () => {
     const h = harness({

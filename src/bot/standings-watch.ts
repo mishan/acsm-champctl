@@ -64,7 +64,10 @@ export class StandingsWatch {
   }
 
   /** Ticks until the returned function is called; never two at once. */
-  start(everyMs = 2 * MINUTE, report?: (ok: boolean) => void): () => Promise<void> {
+  start(
+    everyMs = 2 * MINUTE,
+    report?: (ok: boolean, error?: unknown) => void,
+  ): () => Promise<void> {
     let timer: NodeJS.Timeout | undefined
     let ticking = Promise.resolve()
     const loop = () => {
@@ -73,7 +76,7 @@ export class StandingsWatch {
           () => report?.(true),
           (e: unknown) => {
             this.#o.log(`standings: ${message(e)}`)
-            report?.(false)
+            report?.(false, e)
           },
         )
         .then(() => {

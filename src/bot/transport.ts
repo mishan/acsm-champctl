@@ -139,6 +139,17 @@ export class BotError extends Error {
 }
 
 /**
+ * Discord refusing the bot a channel: a permission someone has to grant, which
+ * no amount of restarting the bot will.
+ */
+export class RefusedError extends BotError {
+  constructor(message: string) {
+    super(message)
+    this.name = "RefusedError"
+  }
+}
+
+/**
  * Keeps what it was asked to post. Used by the tests, and by `--dry-run`.
  *
  * A dry run being the same class the tests assert against is deliberate: it

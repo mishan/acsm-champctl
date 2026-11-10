@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import { SqliteRestartStore, Watchdog } from "../src/bot/health.js"
+import { RefusedError } from "../src/bot/transport.js"
 
 const MINUTE = 60_000
 
@@ -16,6 +17,17 @@ describe("Watchdog", () => {
     expect(dog.stale()).toBeUndefined()
     now += MINUTE
     expect(dog.stale()).toMatch(/^The quali call has had no good tick for 31 minutes/)
+  })
+
+  it.each([
+    ["Discord refusing it a channel", new RefusedError("Missing Access"), undefined],
+    ["anything else", new Error("timed out"), /^The Racers watch/],
+  ])("on a loop failing for %s, gives up accordingly", (_, error, stale) => {
+    let now = 0
+    const dog = new Watchdog(() => now)
+    const report = dog.watch("The Racers watch", 15 * MINUTE)
+    for (now = 15 * MINUTE; now <= 90 * MINUTE; now += 15 * MINUTE) report(false, error)
+    expect(dog.stale()).toEqual(stale && expect.stringMatching(stale))
   })
 
   it("keeps a working loop, and gives a slow one three of its intervals", () => {

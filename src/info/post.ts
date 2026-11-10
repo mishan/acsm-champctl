@@ -53,7 +53,10 @@ export class ChampionshipInfo {
   }
 
   /** Ticks until the returned function is called; never two at once. */
-  start(everyMs = 15 * MINUTE, report?: (ok: boolean) => void): () => Promise<void> {
+  start(
+    everyMs = 15 * MINUTE,
+    report?: (ok: boolean, error?: unknown) => void,
+  ): () => Promise<void> {
     let stopped = false
     let timer: NodeJS.Timeout | undefined
     let ticking = Promise.resolve()
@@ -63,7 +66,7 @@ export class ChampionshipInfo {
           () => report?.(true),
           (e: unknown) => {
             this.#o.log(`info: ${asMessage(e)}`)
-            report?.(false)
+            report?.(false, e)
           },
         )
         .then(() => {
