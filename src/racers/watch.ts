@@ -90,7 +90,7 @@ export class RacersWatch {
   #told = ""
   #stopped = false
   /** A post that failed this tick other than by Discord's refusal, raised once the rest is done. */
-  #unsent: unknown
+  #unsent: { error: unknown } | undefined
 
   constructor(options: RacersWatchOptions) {
     this.#o = options
@@ -134,11 +134,16 @@ export class RacersWatch {
   }
 
   async tick(now: Date): Promise<void> {
-    this.#unsent = undefined
-    await this.#tick(now)
+    let unsent: { error: unknown } | undefined
+    try {
+      await this.#tick(now)
+    } finally {
+      unsent = this.#unsent
+      this.#unsent = undefined
+    }
     // A refusal is a permission to grant; anything else, a broken connection
     // say, is the watchdog's to restart for.
-    if (this.#unsent !== undefined) throw this.#unsent
+    if (unsent) throw unsent.error
   }
 
   async #tick(now: Date): Promise<void> {
@@ -262,7 +267,7 @@ export class RacersWatch {
       () => true,
       (e: unknown) => {
         this.#o.log(`racers: couldn't post in the Racers' channel: ${asMessage(e)}`)
-        if (!(e instanceof RefusedError)) this.#unsent ??= e
+        if (!(e instanceof RefusedError)) this.#unsent ??= { error: e }
         return false
       },
     )
@@ -274,7 +279,7 @@ export class RacersWatch {
     for (const { content } of mentioning(head, users, ` ${tail}`)) {
       await this.#o.notify(content).catch((e: unknown) => {
         this.#o.log(`racers: couldn't tell the admins: ${asMessage(e)}`)
-        if (!(e instanceof RefusedError)) this.#unsent ??= e
+        if (!(e instanceof RefusedError)) this.#unsent ??= { error: e }
         told = false
       })
     }

@@ -151,13 +151,17 @@ export class GatewayTransport implements DiscordTransport {
   }
 
   async post(message: DiscordMessage): Promise<void> {
-    const channel = await this.#client.channels.fetch(message.channelId).catch(() => null)
+    let hidden = false
+    const channel = await this.#client.channels.fetch(message.channelId).catch((e: unknown) => {
+      hidden = refusal(e)
+      return null
+    })
     // Where the id came from is the caller's to say. This named
     // discord.adminChannelId whatever was posting, so a wrong announce channel
     // sent the operator to check the one setting that was right.
     const source = message.source ?? "the channel id"
     if (!channel) {
-      throw new BotError(
+      throw new (hidden ? RefusedError : BotError)(
         `No Discord channel ${message.channelId}. Check ${source}, and that the bot has been ` +
           `invited to that server and can see the channel.`,
       )

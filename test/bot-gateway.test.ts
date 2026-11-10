@@ -433,6 +433,30 @@ describe("GatewayTransport.post", () => {
     await expect(post).rejects.not.toThrow(/gridmom/)
   })
 
+  it.each([
+    [{ code: 50001, message: "Missing Access" }, true],
+    [new Error("timed out"), false],
+  ])(
+    "says whether Discord refused the bot a channel it couldn't look up (%o)",
+    async (lookup, refused) => {
+      const client = {
+        channels: { fetch: () => Promise.reject(lookup) },
+        on() {
+          return this
+        },
+      } as unknown as Client
+      const post = GatewayTransport.wrapping(client).post({
+        channelId: "444444444444444444",
+        content: "hi",
+        source: announceSource,
+      })
+      await expect(post).rejects.toThrow(
+        /No Discord channel 444444444444444444\. Check discord\.announceChannelId/,
+      )
+      expect((await post.catch((e: unknown) => e)) instanceof RefusedError).toBe(refused)
+    },
+  )
+
   it("passes on a post failing with no error at all", async () => {
     const channel = { isSendable: () => true, type: 0, send: () => Promise.reject(null) }
     const post = GatewayTransport.wrapping(clientFinding(channel)).post({

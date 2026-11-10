@@ -80,10 +80,10 @@ function harness(
   }
   const posts: { content: string; ping: { users?: string[]; roles?: string[] } }[] = []
   const told: string[] = []
-  const discord = { refusing: false, down: false }
+  const discord = { refusing: false, down: false as false | { error: unknown } }
   const refuse = async () => {
     if (discord.refusing) throw new RefusedError("Missing Access")
-    if (discord.down) throw new Error("other side closed")
+    if (discord.down) throw discord.down.error
   }
   const build = () =>
     new RacersWatch({
@@ -261,16 +261,22 @@ describe("RacersWatch", () => {
     expect(h.holders.has(CAL)).toBe(false)
   })
 
-  it("still gives the role when a post fails otherwise, then fails the tick for the watchdog", async () => {
-    const h = harness()
-    const DEE = "444444444444444444"
-    h.links.set(DEE, new Set(["d"]))
-    h.open()
-    h.signUp("d")
-    h.discord.down = true
-    await expect(h.watch.tick(at(-2))).rejects.toThrow("other side closed")
-    expect(h.holders.has(DEE)).toBe(true)
-  })
+  it.each([
+    ["an error", new Error("other side closed")],
+    ["nothing at all", undefined],
+  ])(
+    "still gives the role when a post fails with %s, then fails the tick for the watchdog",
+    async (_, error) => {
+      const h = harness()
+      const DEE = "444444444444444444"
+      h.links.set(DEE, new Set(["d"]))
+      h.open()
+      h.signUp("d")
+      h.discord.down = { error }
+      await expect(h.watch.tick(at(-2))).rejects.toBe(error)
+      expect(h.holders.has(DEE)).toBe(true)
+    },
+  )
 
   it("takes the role after a restart without reading the finished season again", async () => {
     const h = harness({
