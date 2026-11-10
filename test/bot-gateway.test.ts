@@ -748,6 +748,8 @@ describe("GatewayTransport roles", () => {
   })
 })
 
+const refusedAccess = () => Object.assign(new Error("Missing Access"), { code: 50001 })
+
 describe("GatewayTransport embeds", () => {
   it("says a deleted message is gone, so it's posted again, and passes other failures on", async () => {
     let code = 10008
@@ -771,6 +773,31 @@ describe("GatewayTransport embeds", () => {
     await expect(t.editEmbed("c", "m", embed)).rejects.toBeInstanceOf(RefusedError)
     code = 50035
     await expect(t.editEmbed("c", "m", embed)).rejects.not.toBeInstanceOf(RefusedError)
+  })
+
+  it.each([
+    ["looking up the channel", { channels: { fetch: () => Promise.reject(refusedAccess()) } }],
+    [
+      "checking the message is there",
+      {
+        channels: {
+          fetch: async () => ({
+            isTextBased: () => true,
+            messages: { fetch: () => Promise.reject(refusedAccess()) },
+          }),
+        },
+      },
+    ],
+  ])("says Discord refused the info message %s", async (_, client) => {
+    const t = GatewayTransport.wrapping(client as unknown as Client)
+    await expect(t.messageExists("c", "m")).rejects.toBeInstanceOf(RefusedError)
+  })
+
+  it("passes on a lookup that fails for another reason", async () => {
+    const timedOut = new Error("timed out")
+    const client = { channels: { fetch: () => Promise.reject(timedOut) } }
+    const t = GatewayTransport.wrapping(client as unknown as Client)
+    await expect(t.messageExists("c", "m")).rejects.toBe(timedOut)
   })
 
   it("says Discord refused a new embed, for the watchdog to tell apart", async () => {

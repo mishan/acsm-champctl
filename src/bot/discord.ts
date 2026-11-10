@@ -536,9 +536,16 @@ export class GatewayTransport implements DiscordTransport {
     }
   }
 
+  /** A channel, with Discord refusing the bot it told apart from the lookup failing. */
+  async #channel(channelId: string) {
+    return this.#client.channels.fetch(channelId).catch((e: unknown) => {
+      throw refusal(e) ? new RefusedError(message(e)) : e
+    })
+  }
+
   /** An embed, mentioning nobody; its message id. */
   async postEmbed(channelId: string, embed: InfoEmbed): Promise<string> {
-    const channel = await this.#client.channels.fetch(channelId)
+    const channel = await this.#channel(channelId)
     if (!channel?.isSendable()) throw new BotError(`${channelId} isn't a channel I can post in.`)
     try {
       return (await channel.send({ ...toEmbed(embed), allowedMentions: { parse: [] } })).id
@@ -549,7 +556,7 @@ export class GatewayTransport implements DiscordTransport {
 
   /** Replaces one of the bot's embeds; false when the message is gone. */
   async editEmbed(channelId: string, messageId: string, embed: InfoEmbed): Promise<boolean> {
-    const channel = await this.#client.channels.fetch(channelId)
+    const channel = await this.#channel(channelId)
     if (!channel?.isTextBased()) throw new BotError(`${channelId} isn't a text channel I can see.`)
     try {
       // Without `attachments: []` an edit keeps the old picture beside the new.
@@ -562,14 +569,14 @@ export class GatewayTransport implements DiscordTransport {
   }
 
   async messageExists(channelId: string, messageId: string): Promise<boolean> {
-    const channel = await this.#client.channels.fetch(channelId)
+    const channel = await this.#channel(channelId)
     if (!channel?.isTextBased()) throw new BotError(`${channelId} isn't a text channel I can see.`)
     try {
       await channel.messages.fetch({ message: messageId, force: true })
       return true
     } catch (e) {
       if ((e as { code?: unknown }).code === RESTJSONErrorCodes.UnknownMessage) return false
-      throw e
+      throw refusal(e) ? new RefusedError(message(e)) : e
     }
   }
 
