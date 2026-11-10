@@ -769,7 +769,7 @@ describe("GatewayTransport embeds", () => {
     const embed = { title: "T", description: "", fields: [], footer: "" }
     expect(await t.editEmbed("c", "m", embed)).toBe(false)
     code = 50013
-    await expect(t.editEmbed("c", "m", embed)).rejects.toThrow(/nope/)
+    await expect(t.editEmbed("c", "m", embed)).rejects.toThrow(/^nope in Discord channel c:/)
     await expect(t.editEmbed("c", "m", embed)).rejects.toBeInstanceOf(RefusedError)
     code = 50035
     await expect(t.editEmbed("c", "m", embed)).rejects.not.toBeInstanceOf(RefusedError)
@@ -790,7 +790,9 @@ describe("GatewayTransport embeds", () => {
     ],
   ])("says Discord refused the info message %s", async (_, client) => {
     const t = GatewayTransport.wrapping(client as unknown as Client)
-    await expect(t.messageExists("c", "m")).rejects.toBeInstanceOf(RefusedError)
+    const refused = t.messageExists("c", "m")
+    await expect(refused).rejects.toBeInstanceOf(RefusedError)
+    await expect(refused).rejects.toThrow(/^Missing Access in Discord channel c:/)
   })
 
   it("passes on a lookup that fails for another reason", async () => {
@@ -806,9 +808,9 @@ describe("GatewayTransport embeds", () => {
     }
     const client = { channels: { fetch: async () => ({ isSendable: () => true, send }) } }
     const t = GatewayTransport.wrapping(client as unknown as Client)
-    await expect(
-      t.postEmbed("c", { title: "T", description: "", fields: [], footer: "" }),
-    ).rejects.toBeInstanceOf(RefusedError)
+    const posted = t.postEmbed("c", { title: "T", description: "", fields: [], footer: "" })
+    await expect(posted).rejects.toBeInstanceOf(RefusedError)
+    await expect(posted).rejects.toThrow(/^Missing Access in Discord channel c:/)
   })
 
   it("says how far an upload got when the connection drops", async () => {

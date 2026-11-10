@@ -539,7 +539,7 @@ export class GatewayTransport implements DiscordTransport {
   /** A channel, with Discord refusing the bot it told apart from the lookup failing. */
   async #channel(channelId: string) {
     return this.#client.channels.fetch(channelId).catch((e: unknown) => {
-      throw refusal(e) ? new RefusedError(message(e)) : e
+      throw refusal(e) ? refusedIn(channelId, e) : e
     })
   }
 
@@ -550,7 +550,7 @@ export class GatewayTransport implements DiscordTransport {
     try {
       return (await channel.send({ ...toEmbed(embed), allowedMentions: { parse: [] } })).id
     } catch (e) {
-      throw refusal(e) ? new RefusedError(message(e)) : new BotError(message(e))
+      throw refusal(e) ? refusedIn(channelId, e) : new BotError(message(e))
     }
   }
 
@@ -564,7 +564,7 @@ export class GatewayTransport implements DiscordTransport {
       return true
     } catch (e) {
       if ((e as { code?: unknown }).code === RESTJSONErrorCodes.UnknownMessage) return false
-      throw refusal(e) ? new RefusedError(message(e)) : new BotError(message(e))
+      throw refusal(e) ? refusedIn(channelId, e) : new BotError(message(e))
     }
   }
 
@@ -576,7 +576,7 @@ export class GatewayTransport implements DiscordTransport {
       return true
     } catch (e) {
       if ((e as { code?: unknown }).code === RESTJSONErrorCodes.UnknownMessage) return false
-      throw refusal(e) ? new RefusedError(message(e)) : e
+      throw refusal(e) ? refusedIn(channelId, e) : e
     }
   }
 
@@ -788,6 +788,13 @@ function commandLine(interaction: ChatInputCommandInteraction): string {
 function firstLine(text: string): string {
   const line = text.split("\n").find((l) => l.trim()) ?? ""
   return line.length > 160 ? `${line.slice(0, 159)}…` : line
+}
+
+/** Discord's refusal, which names no channel, with the one it was. */
+function refusedIn(channelId: string, e: unknown): RefusedError {
+  return new RefusedError(
+    `${message(e)} in Discord channel ${channelId}: the bot needs to see it and post in it.`,
+  )
 }
 
 /** Discord refusing the bot, rather than the request failing. */
