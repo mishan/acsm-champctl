@@ -705,16 +705,20 @@ describe("reading the member's roles", () => {
 })
 
 describe("GatewayTransport roles", () => {
-  it("lists a role's holders across pages, bots aside", async () => {
-    const member = (id: string, roles: string[], bot = false) => ({ user: { id, bot }, roles })
+  it("lists a role's holders across pages, bots aside, by the name the server shows", async () => {
+    const member = (id: string, roles: string[], bot = false, nick?: string) => ({
+      user: { id, bot, username: `user${id}`, ...(id === "3" ? { global_name: "Three" } : {}) },
+      roles,
+      ...(nick ? { nick } : {}),
+    })
     const asked: string[] = []
     const pages = [
       [
         ...Array.from({ length: 998 }, (_, i) => member(`${i + 10}`, [])),
-        member("1", ["r"]),
+        member("1", ["r"], false, "Uno"),
         member("2", ["r"], true),
       ],
-      [member("3", ["r", "x"]), member("4", ["x"])],
+      [member("3", ["r", "x"]), member("4", ["x"]), member("5", ["r"])],
     ]
     const client = {
       rest: {
@@ -725,7 +729,13 @@ describe("GatewayTransport roles", () => {
       },
     }
     const t = GatewayTransport.wrapping(client as unknown as Client)
-    expect(await t.roleHolders("g", "r")).toEqual(["1", "3"])
+    expect(await t.roleHolders("g", "r")).toEqual(
+      new Map([
+        ["1", "Uno"],
+        ["3", "Three"],
+        ["5", "user5"],
+      ]),
+    )
     expect(asked).toEqual(["0", "2"])
   })
 
