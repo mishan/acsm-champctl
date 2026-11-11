@@ -144,9 +144,18 @@ interface Harness {
 }
 
 const open: FastifyInstance[] = []
+const temps: string[] = []
+
+/** A folder of its own, removed once the test and its servers are done. */
+function tempDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "champctl-web-"))
+  temps.push(dir)
+  return dir
+}
 
 afterEach(async () => {
   await Promise.all(open.splice(0).map((a) => a.close()))
+  await Promise.all(temps.splice(0).map((d) => rm(d, { recursive: true, force: true })))
 })
 
 /**
@@ -236,8 +245,7 @@ function harness(options: HarnessOptions = {}): Harness {
   }
 
   const app = buildServer({
-    liveriesStore:
-      options.liveriesStore ?? join(mkdtempSync(join(tmpdir(), "champctl-web-")), "liveries.db"),
+    liveriesStore: options.liveriesStore ?? join(tempDir(), "liveries.db"),
     profile: {
       ...testProfile(),
       ...options.profile,
@@ -2317,8 +2325,7 @@ describe("adding the league's spectator cars", () => {
     })
 
   async function store() {
-    const dir = await mkdtemp(join(tmpdir(), "champctl-web-"))
-    return join(dir, "liveries.db")
+    return join(tempDir(), "liveries.db")
   }
 
   it("previews only the profile's missing cars, then adds them on confirm", async () => {
@@ -2553,7 +2560,7 @@ describe("adding the league's spectator cars", () => {
 
   it("still shows the championship when the livery queue can't be read, and says so", async () => {
     // A directory where the database should be: it can't be opened.
-    const liveriesStore = await mkdtemp(join(tmpdir(), "champctl-web-"))
+    const liveriesStore = tempDir()
     const h = harness({ liveriesStore })
     await h.login()
     const res = await h.app.inject({
