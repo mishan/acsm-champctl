@@ -82,8 +82,12 @@ function startedFrom(file: string): number {
  */
 const seen = new Map<string, { mtimeMs: number; listing: ReplayListing }>()
 
+/** A draft report's evidence is for its reporter alone until they open it as an incident. */
+const published = async (dir: string, ending: string): Promise<string[]> =>
+  (await listRecordings(dir, ending)).filter((f) => !basename(f).startsWith("draft-"))
+
 export async function listReplays(dir: string): Promise<ReplayListing[]> {
-  const files = await listRecordings(dir, ".acreplay")
+  const files = await published(dir, ".acreplay")
   const out: ReplayListing[] = []
   for (const file of files) {
     const path = join(dir, file)
@@ -182,10 +186,7 @@ export function registerReplays(app: FastifyInstance, dir: string, timeZone: str
     // name alone is also found in its round: links posted before rounds have
     // no folder, and each name starts with its own millisecond timestamp.
     // An incident's overhead video too, for when Discord won't take its upload.
-    const files = [
-      ...(await listRecordings(dir, ".acreplay")),
-      ...(await listRecordings(dir, ".mp4")),
-    ]
+    const files = [...(await published(dir, ".acreplay")), ...(await published(dir, ".mp4"))]
     const file = files.includes(asked)
       ? asked
       : asked.includes("/")

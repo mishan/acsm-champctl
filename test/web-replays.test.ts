@@ -166,6 +166,19 @@ describe("/replays", () => {
     expect(video.body).toBe("mp4")
   })
 
+  it("neither lists nor serves a draft report's evidence", async () => {
+    const week = "2026-10-12-interlagos-1975"
+    await recorded(`${week}/draft-7`, "Race", 30)
+    await writeFile(join(dir, week, "draft-7.mp4"), "mp4")
+    expect(await listReplays(dir)).toEqual([])
+    for (const url of [
+      `/replays/${week}/draft-7.acreplay`,
+      `/replays/${week}/draft-7.mp4`,
+      "/replays/draft-7.mp4",
+    ])
+      expect((await app.inject({ url })).statusCode).toBe(404)
+  })
+
   it("numbers the races on a night with two", async () => {
     const round = "2026-10-12-interlagos-1975"
     await recorded(`${round}/2026-10-15T03-24-29-113Z-interlagos-1975-race`, "Race", 1500)

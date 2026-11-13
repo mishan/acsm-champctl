@@ -13,7 +13,7 @@ import { DatabaseSync } from "node:sqlite"
 
 import { migrate, type Migration, openForReading, restrictToOwner } from "../sqlite.js"
 
-const MIGRATIONS: Migration[] = [
+export const INCIDENT_MIGRATIONS: Migration[] = [
   {
     name: "incidents: initial schema",
     up: (db) => {
@@ -49,6 +49,34 @@ const MIGRATIONS: Migration[] = [
   },
 ]
 
+/**
+ * A component of their own, so the version an older champctl checks for
+ * `incidents` doesn't move: rolling back leaves this table unread, not the
+ * database refused.
+ */
+const DRAFT_MIGRATIONS: Migration[] = [
+  {
+    name: "incident drafts: initial schema",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS incident_drafts (
+          id                INTEGER PRIMARY KEY AUTOINCREMENT,
+          made_at           TEXT NOT NULL,
+          reporter_discord  TEXT NOT NULL,
+          reporter          TEXT NOT NULL,
+          other             TEXT NOT NULL,
+          journal           TEXT NOT NULL,
+          at_ms             INTEGER NOT NULL,
+          collision_index   INTEGER,
+          description       TEXT NOT NULL,
+          channel_id        TEXT UNIQUE,
+          number            INTEGER
+        ) STRICT;
+      `)
+    },
+  },
+]
+
 export interface IncidentFiling {
   reporterDiscord: string
   /** Entrant names, as on the entry list. */
@@ -61,6 +89,15 @@ export interface IncidentFiling {
   atMs: number
   collisionIndex?: number
   description: string
+}
+
+/** A report only its reporter has seen, until they open it as an incident or withdraw it. */
+export interface Draft extends Omit<IncidentFiling, "otherDiscord"> {
+  id: number
+  madeAt: string
+  channelId?: string
+  /** The incident it's being opened as, once opening has begun. */
+  number?: number
 }
 
 export interface Incident extends IncidentFiling {
@@ -113,6 +150,34 @@ const fromRow = (r: Row): Incident => ({
   ...(r.poll_ends_at ? { pollEndsAt: r.poll_ends_at } : {}),
 })
 
+interface DraftRow {
+  id: number
+  made_at: string
+  reporter_discord: string
+  reporter: string
+  other: string
+  journal: string
+  at_ms: number
+  collision_index: number | null
+  description: string
+  channel_id: string | null
+  number: number | null
+}
+
+const fromDraftRow = (r: DraftRow): Draft => ({
+  id: r.id,
+  madeAt: r.made_at,
+  reporterDiscord: r.reporter_discord,
+  reporter: r.reporter,
+  other: r.other,
+  journal: r.journal,
+  atMs: r.at_ms,
+  ...(r.collision_index === null ? {} : { collisionIndex: r.collision_index }),
+  description: r.description,
+  ...(r.channel_id ? { channelId: r.channel_id } : {}),
+  ...(r.number === null ? {} : { number: r.number }),
+})
+
 export class SqliteIncidentStore {
   readonly #db: DatabaseSync
 
@@ -122,7 +187,7 @@ export class SqliteIncidentStore {
 
   /** For reading alongside the process that writes it: see `openForReading`. */
   static openForReading(path: string): SqliteIncidentStore {
-    return new SqliteIncidentStore(openForReading(path, "incidents", MIGRATIONS))
+    return new SqliteIncidentStore(openForReading(path, "incidents", INCIDENT_MIGRATIONS))
   }
 
   static async open(path: string): Promise<SqliteIncidentStore> {
@@ -130,7 +195,8 @@ export class SqliteIncidentStore {
     const db = new DatabaseSync(path)
     db.exec("PRAGMA journal_mode = WAL")
     db.exec("PRAGMA busy_timeout = 5000")
-    migrate(db, "incidents", MIGRATIONS)
+    migrate(db, "incidents", INCIDENT_MIGRATIONS)
+    migrate(db, "incident drafts", DRAFT_MIGRATIONS)
     if (path !== ":memory:") await restrictToOwner(path)
     return new SqliteIncidentStore(db)
   }
@@ -212,14 +278,127 @@ export class SqliteIncidentStore {
     return r && fromRow(r)
   }
 
-  /** Reports a driver filed that haven't been decided, and that got a channel. */
+  /** A driver's drafts, and the reports they filed that got a channel and haven't been decided. */
   openCount(reporterDiscord: string): number {
     const r = this.#db
       .prepare(
-        "SELECT count(*) AS n FROM incidents WHERE reporter_discord = ? AND decision IS NULL AND channel_id IS NOT NULL",
+        `SELECT (SELECT count(*) FROM incidents WHERE reporter_discord = ? AND decision IS NULL
+           AND channel_id IS NOT NULL) + (SELECT count(*) FROM incident_drafts WHERE reporter_discord = ?) AS n`,
       )
-      .get(reporterDiscord) as { n: number }
+      .get(reporterDiscord, reporterDiscord) as { n: number }
     return r.n
+  }
+
+  draft(f: Omit<IncidentFiling, "otherDiscord">, at: Date): Draft {
+    const r = this.#db
+      .prepare(
+        `INSERT INTO incident_drafts (made_at, reporter_discord, reporter, other, journal, at_ms,
+           collision_index, description)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+      )
+      .get(
+        at.toISOString(),
+        f.reporterDiscord,
+        f.reporter,
+        f.other,
+        f.journal,
+        Math.round(f.atMs),
+        f.collisionIndex ?? null,
+        f.description,
+      ) as unknown as DraftRow
+    return fromDraftRow(r)
+  }
+
+  setDraftChannel(id: number, channelId: string): void {
+    this.#db.prepare("UPDATE incident_drafts SET channel_id = ? WHERE id = ?").run(channelId, id)
+  }
+
+  draftById(id: number): Draft | undefined {
+    const r = this.#db.prepare("SELECT * FROM incident_drafts WHERE id = ?").get(id) as
+      | DraftRow
+      | undefined
+    return r && fromDraftRow(r)
+  }
+
+  /** A driver's draft of this moment, as `existing` finds a report of it. */
+  draftOf(reporterDiscord: string, journal: string, atMs: number): Draft | undefined {
+    const r = this.#db
+      .prepare(
+        `SELECT * FROM incident_drafts WHERE reporter_discord = ? AND journal = ?
+         AND abs(at_ms - ?) < 5000 ORDER BY id LIMIT 1`,
+      )
+      .get(reporterDiscord, journal, Math.round(atMs)) as DraftRow | undefined
+    return r && fromDraftRow(r)
+  }
+
+  /**
+   * Drafts made before `before`. One with a number was being opened when
+   * something stopped it, and its channel may already be public: it's to be
+   * opened, not withdrawn.
+   */
+  staleDrafts(before: Date): Draft[] {
+    const rows = this.#db
+      .prepare("SELECT * FROM incident_drafts WHERE made_at < ? ORDER BY id")
+      .all(before.toISOString()) as unknown as DraftRow[]
+    return rows.map(fromDraftRow)
+  }
+
+  /**
+   * The incident a draft is being opened as: numbered on the first try, and
+   * the same number on every retry, so a channel opened before a crash isn't
+   * filed twice. The other driver's claim is as it is now.
+   */
+  reserve(id: number, otherDiscord: string | undefined, at: Date): Incident | undefined {
+    return this.#transaction(() => {
+      const d = this.draftById(id)
+      if (!d) return undefined
+      if (d.number !== undefined) {
+        this.#db
+          .prepare("UPDATE incidents SET other_discord = ? WHERE number = ?")
+          .run(otherDiscord ?? null, d.number)
+        const r = this.#db.prepare("SELECT * FROM incidents WHERE number = ?").get(d.number)
+        if (!r)
+          throw new Error(`Draft ${id} was being opened as incident #${d.number}, which is gone.`)
+        return fromRow(r as unknown as Row)
+      }
+      const { id: _, madeAt: __, channelId: ___, ...filing } = d
+      const incident = this.file({ ...filing, ...(otherDiscord ? { otherDiscord } : {}) }, at)
+      this.#db
+        .prepare("UPDATE incident_drafts SET number = ? WHERE id = ?")
+        .run(incident.number, id)
+      return incident
+    })
+  }
+
+  /** The draft's channel is its incident's now, and the draft is gone; false if it wasn't reserved. */
+  opened(id: number): boolean {
+    return this.#transaction(() => {
+      const d = this.draftById(id)
+      if (d?.number === undefined || !d.channelId) return false
+      this.#db.prepare("DELETE FROM incident_drafts WHERE id = ?").run(id)
+      this.setChannel(d.number, d.channelId)
+      return true
+    })
+  }
+
+  /** False for a draft being opened: its number is taken, and its channel may be public. */
+  withdraw(id: number): boolean {
+    return (
+      this.#db.prepare("DELETE FROM incident_drafts WHERE id = ? AND number IS NULL").run(id)
+        .changes > 0
+    )
+  }
+
+  #transaction<T>(f: () => T): T {
+    this.#db.exec("BEGIN IMMEDIATE")
+    try {
+      const out = f()
+      this.#db.exec("COMMIT")
+      return out
+    } catch (e) {
+      this.#db.exec("ROLLBACK")
+      throw e
+    }
   }
 
   decide(number: number, decision: string, by: string, at: Date): void {
