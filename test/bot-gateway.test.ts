@@ -30,7 +30,7 @@ import { Agent, getGlobalDispatcher, setGlobalDispatcher } from "undici"
 import { describe, expect, it, vi } from "vitest"
 
 import { GatewayTransport, restOptions, toSlashCommand } from "../src/bot/discord.js"
-import { type CommandRouter, RefusedError } from "../src/bot/transport.js"
+import { type ButtonPress, type CommandRouter, RefusedError } from "../src/bot/transport.js"
 
 interface Sent {
   channelId: string
@@ -263,6 +263,106 @@ describe("GatewayTransport incident channels", () => {
   })
 })
 
+describe("GatewayTransport draft channels", () => {
+  const CAN = [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.ReadMessageHistory,
+    PermissionFlagsBits.AttachFiles,
+  ]
+  /** The draft's channel: hidden from @everyone, open to its reporter and the bot. */
+  const draft = (edit: (o: unknown) => Promise<unknown>) => ({
+    type: ChannelType.GuildText,
+    permissionOverwrites: {
+      cache: new Map(
+        (
+          [
+            ["g", 0, 0n, PermissionFlagsBits.ViewChannel],
+            ["ana", 1, 3n, 0n],
+            ["bot", 1, 7n, 0n],
+          ] as const
+        ).map(([id, type, allow, deny]) => [
+          id,
+          { id, type, allow: { bitfield: allow }, deny: { bitfield: deny } },
+        ]),
+      ),
+    },
+    edit,
+  })
+
+  it("opens a draft's channel in one edit: renamed, and the roles and users let in beside who's there", async () => {
+    const edits: unknown[] = []
+    const client = {
+      user: { id: "bot" },
+      channels: { fetch: async () => draft(async (e) => edits.push(e)) },
+    }
+    await GatewayTransport.wrapping(client as unknown as Client).openChannel(
+      "c",
+      "incident-4-ana-bo",
+      ["stewards", "racers"],
+      ["ana", "bo"],
+    )
+    expect(edits).toEqual([
+      {
+        name: "incident-4-ana-bo",
+        permissionOverwrites: [
+          { id: "g", type: 0, allow: 0n, deny: PermissionFlagsBits.ViewChannel },
+          { id: "ana", type: 1, allow: 3n, deny: 0n },
+          { id: "bot", type: 1, allow: 7n, deny: 0n },
+          { id: "stewards", type: 0, allow: CAN },
+          { id: "racers", type: 0, allow: CAN },
+          { id: "bo", type: 1, allow: CAN },
+        ],
+      },
+    ])
+  })
+
+  it("tells the reporter to try again rather than wait on Discord without end", async () => {
+    vi.useFakeTimers()
+    try {
+      const client = {
+        user: { id: "bot" },
+        channels: { fetch: async () => draft(() => new Promise(() => {})) },
+      }
+      const opening = GatewayTransport.wrapping(client as unknown as Client).openChannel(
+        "c",
+        "incident-4",
+        [],
+        [],
+      )
+      const failed = expect(opening).rejects.toThrow(/holding back changes to this channel/)
+      await vi.advanceTimersByTimeAsync(60_000)
+      await failed
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("deletes a channel, and counts one already gone as deleted", async () => {
+    const deleted: string[] = []
+    const answers = new Map<string, unknown>([
+      ["/channels/gone", Object.assign(new Error("Unknown Channel"), { code: 10003 })],
+      ["/channels/refused", Object.assign(new Error("Missing Access"), { code: 50001 })],
+    ])
+    // A channel discord.js still has cached, deleted by hand since: only Discord knows.
+    const client = {
+      channels: { fetch: async (id: string) => ({ id, delete: async () => deleted.push(id) }) },
+      rest: {
+        delete: async (route: string) => {
+          const refused = answers.get(route)
+          if (refused) throw refused
+          deleted.push(route)
+        },
+      },
+    }
+    const transport = GatewayTransport.wrapping(client as unknown as Client)
+    await transport.removeChannel("c")
+    await transport.removeChannel("gone")
+    await expect(transport.removeChannel("refused")).rejects.toThrow(/Missing Access/)
+    expect(deleted).toEqual(["/channels/c"])
+  })
+})
+
 describe("GatewayTransport incident votes", () => {
   it("lets every role it's given into a new channel", async () => {
     let made: { permissionOverwrites: { id: string; allow?: unknown }[] } | undefined
@@ -363,6 +463,29 @@ describe("GatewayTransport.post", () => {
     expect(payload).toMatchObject({ content: "**October**", allowedMentions: { parse: [] } })
     expect(payload.files[0]?.name).toBe("October-podium.png")
     expect([...payload.files[0]!.attachment]).toEqual([...data])
+  })
+
+  it("puts a message's buttons in one row under it", async () => {
+    const { client, sent } = fakeClient()
+    await GatewayTransport.wrapping(client).post({
+      channelId: "444444444444444444",
+      content: "Open it?",
+      buttons: [
+        { id: "incident:open:3", label: "Open incident", style: "primary" },
+        { id: "incident:withdraw:3", label: "Withdraw", style: "danger" },
+      ],
+    })
+    expect(sent[0]?.payload).toMatchObject({
+      components: [
+        {
+          type: 1,
+          components: [
+            { type: 2, style: 1, label: "Open incident", custom_id: "incident:open:3" },
+            { type: 2, style: 4, label: "Withdraw", custom_id: "incident:withdraw:3" },
+          ],
+        },
+      ],
+    })
   })
 
   it("pings the users and roles a message names, and still nobody else", async () => {
@@ -582,6 +705,101 @@ describe("GatewayTransport.listen", () => {
     expect(out).toMatch(
       /\/livery claim from misha: couldn't acknowledge it \(Unknown interaction\)/,
     )
+  })
+})
+
+describe("GatewayTransport button presses", () => {
+  function fakePress() {
+    const calls: { deferred: boolean; edited?: unknown; followed?: unknown } = { deferred: false }
+    return {
+      calls,
+      interaction: {
+        isAutocomplete: () => false,
+        isChatInputCommand: () => false,
+        isButton: () => true,
+        customId: "incident:open:3",
+        user: { id: "111111111111111111", username: "misha" },
+        channelId: "222222222222222222",
+        guildId: "333333333333333333",
+        member: { roles: ["444444444444444444"] },
+        deferUpdate: async () => {
+          calls.deferred = true
+        },
+        editReply: async (opts: unknown) => {
+          calls.edited = opts
+        },
+        followUp: async (opts: unknown) => {
+          calls.followed = opts
+        },
+      },
+    }
+  }
+
+  const press = async (
+    pressed: NonNullable<CommandRouter["press"]>,
+    o: { clearFails?: boolean } = {},
+  ) => {
+    const { client, handlers } = fakeClient()
+    GatewayTransport.wrapping(client).listen({
+      handle: async () => ({ content: "" }),
+      press: pressed,
+    })
+    const p = fakePress()
+    if (o.clearFails) {
+      p.interaction.editReply = async (opts: unknown) => {
+        p.calls.edited = opts
+        throw new Error("Unknown Message")
+      }
+    }
+    const quiet = vi.spyOn(process.stderr, "write").mockImplementation(() => true)
+    const said = vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    try {
+      await handlers.get(Events.InteractionCreate)?.(p.interaction)
+      await new Promise((r) => setImmediate(r))
+    } finally {
+      quiet.mockRestore()
+      said.mockRestore()
+    }
+    return p.calls
+  }
+
+  it("hands the router who pressed what, where, and answers them alone", async () => {
+    let got: ButtonPress | undefined
+    const calls = await press(async (p) => {
+      got = p
+      return { content: "Opened as incident #4." }
+    })
+    expect(got).toEqual({
+      customId: "incident:open:3",
+      userId: "111111111111111111",
+      channelId: "222222222222222222",
+      guildId: "333333333333333333",
+      roleIds: ["444444444444444444"],
+    })
+    expect(calls.deferred).toBe(true)
+    expect(calls.edited).toBeUndefined()
+    expect(calls.followed).toEqual({
+      content: "Opened as incident #4.",
+      flags: MessageFlags.Ephemeral,
+    })
+  })
+
+  it("takes the buttons off their message when the router says they're done, after saying so", async () => {
+    const calls = await press(async () => ({ content: "Withdrawn.", clearButtons: true }), {
+      clearFails: true,
+    })
+    expect(calls.edited).toEqual({ components: [] })
+    expect(calls.followed).toMatchObject({ content: "Withdrawn." })
+  })
+
+  it("tells whoever pressed that something went wrong at its end", async () => {
+    const calls = await press(async () => {
+      throw new Error("database is locked")
+    })
+    expect(calls.followed).toMatchObject({
+      content: expect.stringMatching(/^Something went wrong at my end/),
+      flags: MessageFlags.Ephemeral,
+    })
   })
 })
 
