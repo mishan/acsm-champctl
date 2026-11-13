@@ -30,6 +30,31 @@ export interface DiscordMessage {
   pings?: readonly string[]
   /** Roles it may notify, by id: the Racers, asked to an incident's vote. */
   pingRoles?: readonly string[]
+  /** One row of them, under the message: a draft report's Open and Withdraw. */
+  buttons?: readonly Button[]
+}
+
+export interface Button {
+  /** What the router is handed when it's pressed. Kept by Discord, so it outlives a restart. */
+  id: string
+  label: string
+  style: "primary" | "danger"
+}
+
+/** A button pressed, as champctl sees it, like `SlashCommand`. */
+export interface ButtonPress {
+  customId: string
+  userId: string
+  guildId?: string
+  channelId: string
+  roleIds: readonly string[]
+}
+
+export interface PressReply {
+  /** Said to whoever pressed, and nobody else. */
+  content: string
+  /** The buttons have done their job: they come off the message. */
+  clearButtons?: boolean
 }
 
 export interface DiscordFile {
@@ -117,6 +142,11 @@ export interface CommandRouter {
    * so far in `command.options`. Discord waits three seconds for them.
    */
   autocomplete?(command: SlashCommand, focused: string): Promise<{ name: string; value: string }[]>
+  /**
+   * A button pressed. Its buttons stay on until this returns, and a press
+   * shows nothing while it runs, so the same one may well come twice.
+   */
+  press?(press: ButtonPress): Promise<PressReply>
 }
 
 /**

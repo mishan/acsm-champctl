@@ -30,9 +30,12 @@ import { createRequire } from "node:module"
 import {
   type ApplicationCommandDataResolvable,
   type AutocompleteInteraction,
+  type ButtonInteraction,
+  ButtonStyle,
   ChannelType,
   type ChatInputCommandInteraction,
   Client,
+  ComponentType,
   Events,
   GatewayIntentBits,
   MessageFlags,
@@ -49,6 +52,7 @@ import type { CommandDefinition } from "./commands.js"
 import {
   BotError,
   RefusedError,
+  type ButtonPress,
   type CommandRouter,
   type DiscordMessage,
   type DiscordTransport,
@@ -57,8 +61,16 @@ import {
   type VoiceMove,
 } from "./transport.js"
 
-/** How long closing a channel may wait on Discord before the steward is told to try again. */
+/** How long changing a channel may wait on Discord before whoever asked is told to try again. */
 const LOCK_TIMEOUT_MS = 60_000
+
+/** What a driver or a role let into an incident's channel may do there. */
+const MEMBER_CAN = [
+  PermissionFlagsBits.ViewChannel,
+  PermissionFlagsBits.SendMessages,
+  PermissionFlagsBits.ReadMessageHistory,
+  PermissionFlagsBits.AttachFiles,
+]
 
 export interface GatewayOptions {
   token: string
@@ -206,6 +218,21 @@ export class GatewayTransport implements DiscordTransport {
             })),
           }
         : {}),
+      ...(message.buttons?.length
+        ? {
+            components: [
+              {
+                type: ComponentType.ActionRow,
+                components: message.buttons.map((b) => ({
+                  type: ComponentType.Button,
+                  style: b.style === "danger" ? ButtonStyle.Danger : ButtonStyle.Primary,
+                  label: b.label,
+                  custom_id: b.id,
+                })),
+              },
+            ],
+          }
+        : {}),
     })
     await sending.catch(refused)
   }
@@ -268,8 +295,11 @@ export class GatewayTransport implements DiscordTransport {
         void this.#suggest(interaction, router)
         return
       }
-      if (!interaction.isChatInputCommand()) return
-      void this.#dispatch(interaction, router, options.adminChannelId)
+      if (interaction.isChatInputCommand()) {
+        void this.#dispatch(interaction, router, options.adminChannelId)
+        return
+      }
+      if (interaction.isButton() && router.press) void this.#press(interaction, router.press)
     })
   }
 
@@ -310,12 +340,6 @@ export class GatewayTransport implements DiscordTransport {
     o: { parentId: string; name: string; roleIds: readonly string[]; userIds: readonly string[] },
   ): Promise<string> {
     const guild = await this.#client.guilds.fetch(guildId)
-    const can = [
-      PermissionFlagsBits.ViewChannel,
-      PermissionFlagsBits.SendMessages,
-      PermissionFlagsBits.ReadMessageHistory,
-      PermissionFlagsBits.AttachFiles,
-    ]
     const me = this.#client.user?.id
     const channel = await guild.channels
       .create({
@@ -324,15 +348,15 @@ export class GatewayTransport implements DiscordTransport {
         parent: o.parentId,
         permissionOverwrites: [
           { id: guildId, type: OverwriteType.Role, deny: [PermissionFlagsBits.ViewChannel] },
-          ...o.roleIds.map((id) => ({ id, type: OverwriteType.Role, allow: can })),
-          ...o.userIds.map((id) => ({ id, type: OverwriteType.Member, allow: can })),
+          ...o.roleIds.map((id) => ({ id, type: OverwriteType.Role, allow: MEMBER_CAN })),
+          ...o.userIds.map((id) => ({ id, type: OverwriteType.Member, allow: MEMBER_CAN })),
           // Polls are the bot's alone: drivers and voters vote, they don't start them.
           ...(me
             ? [
                 {
                   id: me,
                   type: OverwriteType.Member,
-                  allow: [...can, PermissionFlagsBits.SendPolls],
+                  allow: [...MEMBER_CAN, PermissionFlagsBits.SendPolls],
                 },
               ]
             : []),
@@ -426,27 +450,14 @@ export class GatewayTransport implements DiscordTransport {
     // One edit, not one per overwrite and another to rename: Discord limits
     // permission changes to a couple at a time, and the bot waited out its
     // limit without a word while a steward watched "thinking…".
-    let timer: NodeJS.Timeout | undefined
-    const held = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () =>
-          reject(
-            new BotError(
-              "Discord is holding back changes to this channel. Try again in a few minutes.",
-            ),
-          ),
-        LOCK_TIMEOUT_MS,
-      )
-    })
     try {
-      await Promise.race([
+      await held(
         channel.edit({
           name,
           permissionOverwrites: overwrites,
           ...(closedCategoryId ? { parent: closedCategoryId, lockPermissions: false } : {}),
         }),
-        held,
-      ])
+      )
     } catch (e) {
       if (e instanceof BotError) throw e
       throw new BotError(
@@ -455,9 +466,62 @@ export class GatewayTransport implements DiscordTransport {
             ? "Discord allows 50 channels in a category: move or delete old ones."
             : "Check discord.incidents.closedCategoryId, and that the bot can see that category."),
       )
-    } finally {
-      clearTimeout(timer)
     }
+  }
+
+  /**
+   * Lets `roleIds` and `userIds` into a channel only some could see, and
+   * renames it: a draft report becoming its incident. One edit, as in
+   * `lockChannel`, and for the same reason.
+   */
+  async openChannel(
+    channelId: string,
+    name: string,
+    roleIds: readonly string[],
+    userIds: readonly string[],
+  ): Promise<void> {
+    const channel = await this.#client.channels.fetch(channelId, { force: true })
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      throw new BotError(`${channelId} isn't a text channel I can see.`)
+    }
+    const there = [...channel.permissionOverwrites.cache.values()]
+    const added = (ids: readonly string[], type: OverwriteType) =>
+      ids
+        .filter((id) => !there.some((o) => o.id === id))
+        .map((id) => ({ id, type, allow: MEMBER_CAN }))
+    try {
+      await held(
+        channel.edit({
+          name,
+          permissionOverwrites: [
+            ...there.map((o) => ({
+              id: o.id,
+              type: o.type,
+              allow: o.allow.bitfield,
+              deny: o.deny.bitfield,
+            })),
+            ...added(roleIds, OverwriteType.Role),
+            ...added(userIds, OverwriteType.Member),
+          ],
+        }),
+      )
+    } catch (e) {
+      if (e instanceof BotError) throw e
+      throw new BotError(
+        `Couldn't open the incident's channel: ${message(e)}. The bot needs Manage Channels and Manage Roles.`,
+      )
+    }
+  }
+
+  /**
+   * Deletes a channel. One that's already gone, deleted by hand, is done too.
+   * Over REST, not through the cache: with no intents a cached channel can be
+   * one Discord deleted long ago.
+   */
+  async removeChannel(channelId: string): Promise<void> {
+    await this.#client.rest.delete(Routes.channel(channelId)).catch((e: unknown) => {
+      if ((e as { code?: unknown }).code !== RESTJSONErrorCodes.UnknownChannel) throw e
+    })
   }
 
   async #dispatch(
@@ -503,6 +567,44 @@ export class GatewayTransport implements DiscordTransport {
         .editReply({
           content:
             "Something went wrong at my end rather than with anything you did. Tell an admin.",
+        })
+        .catch(() => {})
+    }
+  }
+
+  /**
+   * A button pressed. Acknowledged as an update to its message, so the reply
+   * comes as a follow-up only the presser sees, and the buttons can come off
+   * the message they're on.
+   */
+  async #press(
+    interaction: ButtonInteraction,
+    press: NonNullable<CommandRouter["press"]>,
+  ): Promise<void> {
+    const line = `${new Date().toISOString()} button ${interaction.customId} from ${interaction.user.username}`
+    try {
+      await interaction.deferUpdate()
+    } catch (e) {
+      process.stderr.write(`${line}: couldn't acknowledge it (${message(e)})\n`)
+      return
+    }
+    try {
+      const reply = await press(toButtonPress(interaction))
+      process.stdout.write(`${line}: ${firstLine(reply.content)}\n`)
+      await interaction.followUp({ content: reply.content, flags: MessageFlags.Ephemeral })
+      // After the reply: what the press did is done, whatever happens to its message.
+      if (reply.clearButtons) {
+        await interaction.editReply({ components: [] }).catch((e: unknown) => {
+          process.stderr.write(`${line}: couldn't take the buttons off (${message(e)})\n`)
+        })
+      }
+    } catch (e) {
+      process.stderr.write(`${line} failed: ${message(e)}\n`)
+      await interaction
+        .followUp({
+          content:
+            "Something went wrong at my end rather than with anything you did. Tell an admin.",
+          flags: MessageFlags.Ephemeral,
         })
         .catch(() => {})
     }
@@ -755,6 +857,37 @@ function stringOptions(
       options[option.name] = String(option.value)
   }
   return options
+}
+
+function toButtonPress(interaction: ButtonInteraction): ButtonPress {
+  return {
+    customId: interaction.customId,
+    userId: interaction.user.id,
+    ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
+    channelId: interaction.channelId,
+    roleIds: memberRoleIds(interaction.member),
+  }
+}
+
+/** `p`, or a BotError once Discord has held a channel change back for LOCK_TIMEOUT_MS. */
+async function held<T>(p: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const waited = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new BotError(
+            "Discord is holding back changes to this channel. Try again in a few minutes.",
+          ),
+        ),
+      LOCK_TIMEOUT_MS,
+    )
+  })
+  try {
+    return await Promise.race([p, waited])
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /**
