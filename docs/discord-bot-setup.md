@@ -385,15 +385,27 @@ report an incident with `/incident report`:
 A driver has to have claimed their name with `/racer claim` first: that's how
 the bot knows which car was theirs, and who the other driver is in Discord.
 
-Each report gets its own channel in a category, which only the stewards, the
-two drivers and the bot can see. The bot posts the report, what the recording
-shows about the moment (the speeds, the gap, any track skips nearby), an
-overhead video of both cars, and a link to a replay clip to watch in the game.
-For a contact the recording caught, it adds a suggested call where one of its
-rules fits, and a drawing of the approach.
+Each report starts as a draft: a channel in the category, `draft-3-ana-bo`,
+that only the reporter and the bot can see. The bot posts the report, what the
+recording shows about the moment (the speeds, the gap, any track skips
+nearby) and an overhead video of both cars. For a contact the recording
+caught, it adds a suggested call where one of its rules fits, and a drawing of
+the approach. Last come two buttons:
 
-A driver can have three reports open at once; the stewards deciding one makes
-room for another.
+- **Open incident** numbers it, renames the channel `incident-12-ana-bo`, lets
+  the stewards and the other driver in, mentions the other driver, and links a
+  replay clip to watch in the game. From here it's an incident.
+- **Withdraw** deletes the channel and the draft's clip and video. Nobody else
+  saw it.
+
+To correct a draft, the reporter reports the same moment again: the new draft
+replaces the old one. A draft nobody opens is withdrawn after 24 hours. Until a
+draft is opened, `/replays` neither lists nor serves its clip or video.
+Members with Administrator, or Manage Channels on the category, see every
+channel whatever its permissions say, drafts included.
+
+A driver can have three reports open at once, drafts included; the stewards
+deciding one makes room for another.
 
 A steward closes it with `/incident decide`, in that channel. The decision is
 recorded and posted, both drivers are mentioned, and the channel goes
@@ -403,8 +415,8 @@ stewards and both drivers. Nothing is written to ACSM: any penalty is
 applied by hand.
 
 A league can decide by vote instead. With `vote`, its `roleId` role (the
-league's racers, say) is let into every incident channel to read, discuss and
-vote, and mentioned in its first post. Unless the role is set to let anyone
+league's racers, say) is let into every incident channel as it's opened, to
+read, discuss and vote, and mentioned when it is. Unless the role is set to let anyone
 mention it, that takes **Mention @everyone, @here, and All Roles** on the bot's
 server role; without it the mention shows but notifies nobody. After the
 evidence, GridMom posts a Discord poll, "who was at fault?", with each driver
