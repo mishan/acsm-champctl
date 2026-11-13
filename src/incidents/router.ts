@@ -517,11 +517,11 @@ export class IncidentRouter {
       return { content: "Only the driver who reported it can do that." }
     }
     if (this.#drafting.has(draft.id)) return { content: "I'm still on it. Give it a minute." }
-    this.#drafting.add(draft.id)
     const opening = m[1] === "open"
     if (!opening && draft.number !== undefined) {
       return { content: "It's being opened already. Press Open incident to finish it." }
     }
+    this.#drafting.add(draft.id)
     try {
       if (opening) return await this.#open(draft)
       await this.#withdraw(draft)
@@ -543,16 +543,19 @@ export class IncidentRouter {
   async sweepDrafts(): Promise<void> {
     const now = (this.#o.now ?? (() => new Date()))()
     const before = new Date(now.getTime() - DRAFT_HOURS * 3600_000)
-    for (const draft of this.#o.store.staleDrafts(before)) {
-      if (this.#drafting.has(draft.id)) continue
-      this.#drafting.add(draft.id)
+    for (const { id } of this.#o.store.staleDrafts(before)) {
+      if (this.#drafting.has(id)) continue
+      // As it is now: the reporter may have opened it while an earlier one was swept.
+      const draft = this.#o.store.draftById(id)
+      if (!draft) continue
+      this.#drafting.add(id)
       try {
         if (draft.number === undefined) await this.#withdraw(draft)
         else await this.#open(draft)
       } catch (e) {
-        this.#o.log?.(`draft ${draft.id}: sweeping it: ${message(e)}`)
+        this.#o.log?.(`draft ${id}: sweeping it: ${message(e)}`)
       } finally {
-        this.#drafting.delete(draft.id)
+        this.#drafting.delete(id)
       }
     }
   }

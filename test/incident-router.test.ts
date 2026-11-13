@@ -47,6 +47,8 @@ let channels: {
 let failGather: boolean
 let failCreate: boolean
 let failOpen: boolean
+/** How long deleting a channel takes Discord. */
+let removeMs: number
 let failLock: boolean
 /** Server Manager can't be reached. */
 let failRead: boolean
@@ -102,6 +104,7 @@ beforeEach(async () => {
   failGather = false
   failCreate = false
   failOpen = false
+  removeMs = 0
   failLock = false
   failRead = false
   failFirstPost = false
@@ -165,6 +168,7 @@ function router(
       channels.opened.push([id, name, roles, users])
     },
     remove: async (id) => {
+      await new Promise((r) => setTimeout(r, removeMs))
       channels.removed.push(id)
     },
     post: async (id, content, files, pings, pingRoles, buttons) => {
@@ -547,6 +551,24 @@ describe("/incident report", () => {
       "It's being opened already. Press Open incident to finish it.",
     )
     expect(channels.removed).toEqual([])
+    failOpen = false
+    expect((await press(r, "open")).content).toMatch(/^Opened as incident #1\./)
+  })
+
+  it("doesn't withdraw a draft the reporter opened while the sweep was busy with another", async () => {
+    const DAY = 24 * 3600_000
+    const made = new Date()
+    const at = (ms: number) => router(undefined, { now: () => new Date(made.getTime() + ms) })
+    const r = at(DAY + 60_000)
+    await at(0).handle(command(BO, "report", { race: journal, what: "c:0", description: "x" }))
+    await at(0).handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    removeMs = 60
+    const sweeping = r.sweepDrafts()
+    // Bo's draft is first; Ana opens hers while Discord deletes his.
+    await new Promise((res) => setTimeout(res, 5))
+    expect((await press(r, "open")).content).toMatch(/^Opened as incident #1\./)
+    await sweeping
+    expect(channels.removed).toEqual(["chan-1"])
   })
 
   it("links the overhead video when opened, if it didn't upload to the draft", async () => {
