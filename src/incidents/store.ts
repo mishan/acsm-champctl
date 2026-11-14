@@ -65,12 +65,14 @@ const DRAFT_MIGRATIONS: Migration[] = [
           reporter_discord  TEXT NOT NULL,
           reporter          TEXT NOT NULL,
           other             TEXT NOT NULL,
+          other_discord     TEXT,
           journal           TEXT NOT NULL,
           at_ms             INTEGER NOT NULL,
           collision_index   INTEGER,
           description       TEXT NOT NULL,
           channel_id        TEXT UNIQUE,
-          number            INTEGER
+          number            INTEGER,
+          video_link        INTEGER NOT NULL DEFAULT 0
         ) STRICT;
       `)
     },
@@ -92,12 +94,14 @@ export interface IncidentFiling {
 }
 
 /** A report only its reporter has seen, until they open it as an incident or withdraw it. */
-export interface Draft extends Omit<IncidentFiling, "otherDiscord"> {
+export interface Draft extends IncidentFiling {
   id: number
   madeAt: string
   channelId?: string
   /** The incident it's being opened as, once opening has begun. */
   number?: number
+  /** Its video didn't upload to the draft, so opening it links it. */
+  videoLink?: true
 }
 
 export interface Incident extends IncidentFiling {
@@ -156,12 +160,14 @@ interface DraftRow {
   reporter_discord: string
   reporter: string
   other: string
+  other_discord: string | null
   journal: string
   at_ms: number
   collision_index: number | null
   description: string
   channel_id: string | null
   number: number | null
+  video_link: number
 }
 
 const fromDraftRow = (r: DraftRow): Draft => ({
@@ -170,12 +176,14 @@ const fromDraftRow = (r: DraftRow): Draft => ({
   reporterDiscord: r.reporter_discord,
   reporter: r.reporter,
   other: r.other,
+  ...(r.other_discord ? { otherDiscord: r.other_discord } : {}),
   journal: r.journal,
   atMs: r.at_ms,
   ...(r.collision_index === null ? {} : { collisionIndex: r.collision_index }),
   description: r.description,
   ...(r.channel_id ? { channelId: r.channel_id } : {}),
   ...(r.number === null ? {} : { number: r.number }),
+  ...(r.video_link ? { videoLink: true as const } : {}),
 })
 
 export class SqliteIncidentStore {
@@ -289,24 +297,29 @@ export class SqliteIncidentStore {
     return r.n
   }
 
-  draft(f: Omit<IncidentFiling, "otherDiscord">, at: Date): Draft {
+  draft(f: IncidentFiling, at: Date): Draft {
     const r = this.#db
       .prepare(
-        `INSERT INTO incident_drafts (made_at, reporter_discord, reporter, other, journal, at_ms,
-           collision_index, description)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+        `INSERT INTO incident_drafts (made_at, reporter_discord, reporter, other, other_discord,
+           journal, at_ms, collision_index, description)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
       )
       .get(
         at.toISOString(),
         f.reporterDiscord,
         f.reporter,
         f.other,
+        f.otherDiscord ?? null,
         f.journal,
         Math.round(f.atMs),
         f.collisionIndex ?? null,
         f.description,
       ) as unknown as DraftRow
     return fromDraftRow(r)
+  }
+
+  linkVideo(id: number): void {
+    this.#db.prepare("UPDATE incident_drafts SET video_link = 1 WHERE id = ?").run(id)
   }
 
   setDraftChannel(id: number, channelId: string): void {
@@ -332,13 +345,13 @@ export class SqliteIncidentStore {
   }
 
   /**
-   * Drafts made before `before`. One with a number was being opened when
-   * something stopped it, and its channel may already be public: it's to be
-   * opened, not withdrawn.
+   * Drafts made before `before`, and any with a number, whatever its age: it
+   * was being opened when something stopped it, and its channel may already be
+   * public. It's to be opened, not withdrawn.
    */
   staleDrafts(before: Date): Draft[] {
     const rows = this.#db
-      .prepare("SELECT * FROM incident_drafts WHERE made_at < ? ORDER BY id")
+      .prepare("SELECT * FROM incident_drafts WHERE number IS NOT NULL OR made_at < ? ORDER BY id")
       .all(before.toISOString()) as unknown as DraftRow[]
     return rows.map(fromDraftRow)
   }
@@ -346,23 +359,20 @@ export class SqliteIncidentStore {
   /**
    * The incident a draft is being opened as: numbered on the first try, and
    * the same number on every retry, so a channel opened before a crash isn't
-   * filed twice. The other driver's claim is as it is now.
+   * filed twice.
    */
-  reserve(id: number, otherDiscord: string | undefined, at: Date): Incident | undefined {
+  reserve(id: number, at: Date): Incident | undefined {
     return this.#transaction(() => {
       const d = this.draftById(id)
       if (!d) return undefined
       if (d.number !== undefined) {
-        this.#db
-          .prepare("UPDATE incidents SET other_discord = ? WHERE number = ?")
-          .run(otherDiscord ?? null, d.number)
         const r = this.#db.prepare("SELECT * FROM incidents WHERE number = ?").get(d.number)
         if (!r)
           throw new Error(`Draft ${id} was being opened as incident #${d.number}, which is gone.`)
         return fromRow(r as unknown as Row)
       }
       const { id: _, madeAt: __, channelId: ___, ...filing } = d
-      const incident = this.file({ ...filing, ...(otherDiscord ? { otherDiscord } : {}) }, at)
+      const incident = this.file(filing, at)
       this.#db
         .prepare("UPDATE incident_drafts SET number = ? WHERE id = ?")
         .run(incident.number, id)

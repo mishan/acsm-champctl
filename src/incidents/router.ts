@@ -11,13 +11,20 @@
  * a recording made before the recorder kept GUIDs.
  */
 
-import { readFile } from "node:fs/promises"
-import { basename, dirname, join } from "node:path"
+import { readFile, rename, rm, stat } from "node:fs/promises"
+import { dirname, join } from "node:path"
 
 import type { AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { classes, normGuid, slots } from "../acsm/view.js"
-import type { CommandReply, DiscordFile, SlashCommand } from "../bot/transport.js"
+import type {
+  Button,
+  ButtonPress,
+  CommandReply,
+  DiscordFile,
+  PressReply,
+  SlashCommand,
+} from "../bot/transport.js"
 import type { DriverClaim } from "../liveries/claims.js"
 import { type Evidence, type EvidenceRequest, gatherEvidence } from "../spectator/evidence.js"
 import { raceNumbers } from "../spectator/rounds.js"
@@ -31,12 +38,15 @@ import {
   sessionType,
   whereAt,
 } from "./journals.js"
-import type { Incident, SqliteIncidentStore } from "./store.js"
+import type { Draft, Incident, SqliteIncidentStore } from "./store.js"
 
-/** Where a report is discussed: a channel the stewards and both drivers can see. */
+/**
+ * Where a report is discussed: first a channel only its reporter can see, a
+ * draft, then the stewards and both drivers.
+ */
 export interface IncidentChannels {
-  /** A new private channel for the stewards and these Discord users; its id. */
-  create(name: string, userIds: readonly string[]): Promise<string>
+  /** A new private channel for these roles and Discord users; its id. */
+  create(name: string, userIds: readonly string[], roleIds: readonly string[]): Promise<string>
   /** `pings` and `pingRoles` are who it may notify; nobody else is, whatever the text says. */
   post(
     channelId: string,
@@ -44,7 +54,17 @@ export interface IncidentChannels {
     files?: readonly DiscordFile[],
     pings?: readonly string[],
     pingRoles?: readonly string[],
+    buttons?: readonly Button[],
   ): Promise<void>
+  /** Lets these roles and users in too, renamed `name`. */
+  open(
+    channelId: string,
+    name: string,
+    roleIds: readonly string[],
+    userIds: readonly string[],
+  ): Promise<void>
+  /** Deletes it; one already gone is done. */
+  remove(channelId: string): Promise<void>
   /** Nobody but the bot can post in it any more; everyone who could see it still can. Renamed `name`. */
   lock(channelId: string, name: string): Promise<void>
   /** A Discord poll, one choice each, open `hours`; its message id. */
@@ -110,6 +130,9 @@ const MAX_OPEN = 3
 const ENTRY_LIST_TTL_MS = 60_000
 /** Discord's limit for one message. */
 const MESSAGE_LIMIT = 2000
+/** A draft nobody opens is withdrawn this long after it was made. */
+const DRAFT_HOURS = 24
+const DRAFT_BUTTON = /^incident:(open|withdraw):(\d+)$/
 
 export class IncidentRouter {
   readonly #o: IncidentRouterOptions
@@ -117,6 +140,8 @@ export class IncidentRouter {
   readonly #filing = new Set<string>()
   /** Channels a decision is going out in: two stewards at once shouldn't both decide. */
   readonly #deciding = new Set<string>()
+  /** Drafts being opened or withdrawn: a press, a second press, a report again and the sweep. */
+  readonly #drafting = new Set<number>()
   #entryList: { at: number; value: Promise<Championship | undefined> } | undefined
   /** Renders run one at a time; a race night's reports can wait their turn. */
   #rendering: Promise<unknown> = Promise.resolve()
@@ -287,18 +312,14 @@ export class IncidentRouter {
         content: `You've already reported that as incident #${already.number}${already.channelId ? `: <#${already.channelId}>` : ""}.`,
       }
     }
-    if (this.#o.store.openCount(command.userId) >= MAX_OPEN) {
-      return {
-        content: `You have ${MAX_OPEN} reports the stewards haven't decided yet. Once they have, report this one.`,
-      }
-    }
-    // Claimed with no await since the check above, so a second tap can't slip between them.
+    // Claimed with no await since the check above, so a second tap can't slip
+    // between them, nor replace a draft its first is still making.
     if (this.#filing.has(command.userId)) {
       return { content: "I'm still filing your last report. Give it a minute." }
     }
     this.#filing.add(command.userId)
     try {
-      return await this.#file(
+      return await this.#replaceAndDraft(
         command,
         who.championshipId,
         championship,
@@ -316,7 +337,60 @@ export class IncidentRouter {
     }
   }
 
-  async #file(
+  async #replaceAndDraft(
+    command: SlashCommand,
+    championshipId: string,
+    championship: Championship,
+    reporter: string,
+    index: JournalIndex,
+    me: JournalCar,
+    other: JournalCar,
+    atMs: number,
+    collisionIndex: number | undefined,
+    description: string,
+    now: Date,
+  ): Promise<CommandReply> {
+    const draft = this.#o.store.draftOf(command.userId, index.file, atMs)
+    if (draft) {
+      // Being opened: its number is taken, and its channel may be public already.
+      if (draft.number !== undefined || this.#drafting.has(draft.id)) {
+        return {
+          content: `You're already opening that one${draft.channelId ? `: <#${draft.channelId}>` : ""}.`,
+        }
+      }
+      // Reporting it again is how a draft is corrected: this one replaces it.
+      this.#drafting.add(draft.id)
+      try {
+        await this.#withdraw(draft)
+      } catch (e) {
+        this.#o.log?.(`draft ${draft.id}: ${message(e)}`)
+        return { content: `I couldn't replace your draft of that. Tell an admin: ${message(e)}` }
+      } finally {
+        this.#drafting.delete(draft.id)
+      }
+    }
+    if (this.#o.store.openCount(command.userId) >= MAX_OPEN) {
+      return {
+        content: `You have ${MAX_OPEN} reports the stewards haven't decided yet. Once they have, report this one.`,
+      }
+    }
+    return this.#draft(
+      command,
+      championshipId,
+      championship,
+      reporter,
+      index,
+      me,
+      other,
+      atMs,
+      collisionIndex,
+      description,
+      now,
+    )
+  }
+
+  /** The report as only its reporter sees it, with the evidence and the buttons to open or withdraw it. */
+  async #draft(
     command: SlashCommand,
     championshipId: string,
     championship: Championship,
@@ -336,7 +410,7 @@ export class IncidentRouter {
       ? await this.#o.claims.forEntrant(championshipId, entrant)
       : undefined
 
-    const incident = this.#o.store.file(
+    const draft = this.#o.store.draft(
       {
         reporterDiscord: command.userId,
         reporter,
@@ -351,34 +425,31 @@ export class IncidentRouter {
     )
     let channelId: string
     try {
-      channelId = await this.#o.channels.create(channelName(incident), [
-        command.userId,
-        ...(otherClaim ? [otherClaim.discordUserId] : []),
-      ])
-      this.#o.store.setChannel(incident.number, channelId)
+      channelId = await this.#o.channels.create(
+        channelName({ number: draft.id, reporter, other: otherEntrant }, "draft"),
+        [command.userId],
+        [],
+      )
+      this.#o.store.setDraftChannel(draft.id, channelId)
     } catch (e) {
-      this.#o.log?.(`incident #${incident.number}: ${message(e)}`)
+      this.#o.store.withdraw(draft.id)
+      this.#o.log?.(`draft ${draft.id}: ${message(e)}`)
       return { content: `I couldn't open a channel for the report. Tell an admin: ${message(e)}` }
     }
 
-    // The channel's there now, and the evidence is worth posting whatever happens to this.
     try {
       const session = `${await this.#sessionLabel(index)} at ${index.session.track}`
       const otherWho = otherClaim ? `<@${otherClaim.discordUserId}>` : `**${otherEntrant}**`
+      // Mentioning the reporter, so they find it however their reply went.
       await this.#o.channels.post(
         channelId,
-        `**Incident #${incident.number}**: <@${command.userId}> reports ${otherWho}. ${session}, ` +
-          `${clock(atMs)} into the session.\n> ${description.replace(/\n/g, "\n> ")}` +
-          (otherClaim
-            ? ""
-            : `\n\n${otherEntrant} hasn't claimed their name with \`/racer claim\`, so they can't see this channel yet.`) +
-          (this.#o.vote ? `\n\n<@&${this.#o.vote.roleId}>: your vote decides this one.` : ""),
+        `**Report** by <@${command.userId}> of ${otherWho}. ${session}, ${clock(atMs)} into the ` +
+          `session.\n> ${description.replace(/\n/g, "\n> ")}`,
         [],
-        otherClaim ? [otherClaim.discordUserId] : [],
-        this.#o.vote ? [this.#o.vote.roleId] : [],
+        [command.userId],
       )
     } catch (e) {
-      this.#o.log?.(`incident #${incident.number}: ${message(e)}`)
+      this.#o.log?.(`draft ${draft.id}: ${message(e)}`)
     }
 
     try {
@@ -388,7 +459,7 @@ export class IncidentRouter {
         acRoot: this.#o.acRoot,
         // Beside the session, in its round's folder.
         outDir: join(this.#o.recordings, dirname(index.file)),
-        stem: `incident-${incident.number}`,
+        stem: draftStem(draft.id),
         carIds: [me.carId, other.carId],
         atMs,
         ...(collisionIndex === undefined ? {} : { collisionIndex }),
@@ -396,13 +467,176 @@ export class IncidentRouter {
       const run = this.#rendering.then(() => gather(request))
       this.#rendering = run.catch(() => undefined)
       const evidence = await run
-      await this.#postEvidence(channelId, evidence, dirname(index.file))
+      if (!(await this.#postEvidence(channelId, evidence))) this.#o.store.linkVideo(draft.id)
     } catch (e) {
-      this.#o.log?.(`incident #${incident.number}: ${message(e)}`)
+      this.#o.log?.(`draft ${draft.id}: ${message(e)}`)
+      await this.#o.channels
+        .post(
+          channelId,
+          `I couldn't gather the recording's evidence for this one: ${message(e)}. The stewards can still look at the replay.`,
+        )
+        .catch(() => {})
+    }
+
+    try {
       await this.#o.channels.post(
         channelId,
-        `I couldn't gather the recording's evidence for this one: ${message(e)}. The stewards can still look at the replay.`,
+        `Only you can see this so far. Check the facts and the evidence, then open it as an ` +
+          `incident for the stewards, ${otherEntrant}${this.#o.vote ? " and the Racers" : ""} ` +
+          `to see, or withdraw it. Left alone, it's withdrawn in ${DRAFT_HOURS} hours.`,
+        [],
+        [],
+        [],
+        [
+          { id: `incident:open:${draft.id}`, label: "Open incident", style: "primary" },
+          { id: `incident:withdraw:${draft.id}`, label: "Withdraw", style: "danger" },
+        ],
       )
+    } catch (e) {
+      // Reporting the same moment again replaces it; left alone, it's swept.
+      this.#o.log?.(`draft ${draft.id}: posting its buttons: ${message(e)}`)
+    }
+
+    return {
+      content: `Here's your draft: <#${channelId}>. Nobody else can see it until you open it there.`,
+    }
+  }
+
+  /** Open incident or Withdraw, pressed on a draft. */
+  async press(p: ButtonPress): Promise<PressReply> {
+    const m = DRAFT_BUTTON.exec(p.customId)
+    if (!m) return { content: "I don't know that button." }
+    const draft = this.#o.store.draftById(Number(m[2]))
+    if (!draft) {
+      return {
+        content: "That draft is gone: it was opened, withdrawn, or left a day.",
+        clearButtons: true,
+      }
+    }
+    if (draft.reporterDiscord !== p.userId) {
+      return { content: "Only the driver who reported it can do that." }
+    }
+    if (this.#drafting.has(draft.id)) return { content: "I'm still on it. Give it a minute." }
+    const opening = m[1] === "open"
+    if (!opening && draft.number !== undefined) {
+      return { content: "It's being opened already. Press Open incident to finish it." }
+    }
+    this.#drafting.add(draft.id)
+    try {
+      if (opening) return await this.#open(draft)
+      await this.#withdraw(draft)
+      return { content: "Withdrawn. Nobody else saw it." }
+    } catch (e) {
+      this.#o.log?.(`draft ${draft.id}: ${message(e)}`)
+      return {
+        content: `I couldn't ${opening ? "open" : "withdraw"} it: ${message(e)}. Try again in a few minutes, or tell an admin.`,
+      }
+    } finally {
+      this.#drafting.delete(draft.id)
+    }
+  }
+
+  /**
+   * Withdraws drafts nobody acted on in a day, and finishes opening any that
+   * something stopped partway. Run every few minutes.
+   */
+  async sweepDrafts(): Promise<void> {
+    const now = (this.#o.now ?? (() => new Date()))()
+    const before = new Date(now.getTime() - DRAFT_HOURS * 3600_000)
+    for (const { id } of this.#o.store.staleDrafts(before)) {
+      if (this.#drafting.has(id)) continue
+      // As it is now: the reporter may have opened it while an earlier one was swept.
+      const draft = this.#o.store.draftById(id)
+      if (!draft) continue
+      this.#drafting.add(id)
+      try {
+        if (draft.number === undefined) await this.#withdraw(draft)
+        else await this.#open(draft)
+      } catch (e) {
+        this.#o.log?.(`draft ${id}: sweeping it: ${message(e)}`)
+      } finally {
+        this.#drafting.delete(id)
+      }
+    }
+  }
+
+  async #withdraw(draft: Draft): Promise<void> {
+    if (draft.channelId) await this.#o.channels.remove(draft.channelId)
+    const dir = join(this.#o.recordings, dirname(draft.journal))
+    for (const ext of EVIDENCE) await rm(join(dir, `${draftStem(draft.id)}${ext}`), { force: true })
+    this.#o.store.withdraw(draft.id)
+  }
+
+  /** The draft as an incident: numbered, its channel opened up, then called to as today's are. */
+  async #open(draft: Draft): Promise<PressReply> {
+    const now = (this.#o.now ?? (() => new Date()))()
+    const incident = draft.channelId ? this.#o.store.reserve(draft.id, now) : undefined
+    if (!incident || !draft.channelId) {
+      return {
+        content: "That draft is gone: it was opened, withdrawn, or left a day.",
+        clearButtons: true,
+      }
+    }
+    const channelId = draft.channelId
+    await this.#o.channels.open(channelId, channelName(incident), this.#roles(), [
+      draft.reporterDiscord,
+      ...(incident.otherDiscord ? [incident.otherDiscord] : []),
+    ])
+    // Before it's recorded as open, so a retry after a crash still finds them to rename.
+    const round = dirname(draft.journal)
+    const dir = join(this.#o.recordings, round)
+    const there = new Set<string>()
+    for (const ext of EVIDENCE) {
+      const file = `incident-${incident.number}${ext}`
+      await rename(join(dir, `${draftStem(draft.id)}${ext}`), join(dir, file)).then(
+        () => there.add(file),
+        async (e: unknown) => {
+          if ((e as { code?: unknown }).code !== "ENOENT") throw e
+          // Renamed by an open a crash cut short.
+          if (
+            await stat(join(dir, file)).then(
+              () => true,
+              () => false,
+            )
+          )
+            there.add(file)
+        },
+      )
+    }
+    this.#o.store.opened(draft.id)
+    // From here a crash leaves an incident nobody's been called to: the
+    // stewards see it in their category, and can decide it by hand.
+
+    try {
+      const otherWho = incident.otherDiscord
+        ? `<@${incident.otherDiscord}>`
+        : `**${incident.other}**`
+      await this.#o.channels.post(
+        channelId,
+        `**Incident #${incident.number}**: <@${incident.reporterDiscord}> reports ${otherWho}, as above.` +
+          (incident.otherDiscord
+            ? ""
+            : `\n\n${incident.other} hasn't claimed their name with \`/racer claim\`, so they can't see this channel yet.`) +
+          (this.#o.vote ? `\n\n<@&${this.#o.vote.roleId}>: your vote decides this one.` : ""),
+        [],
+        incident.otherDiscord ? [incident.otherDiscord] : [],
+        this.#o.vote ? [this.#o.vote.roleId] : [],
+      )
+      const clip = `incident-${incident.number}.acreplay`
+      if (there.has(clip)) {
+        const link = this.#replayLink(round, clip) || `\`${clip}\` on the replays page`
+        await this.#o.channels.post(channelId, `A replay clip to watch in the game: ${link}`)
+      }
+      const video = `incident-${incident.number}.mp4`
+      const videoLink = draft.videoLink && there.has(video) && this.#replayLink(round, video)
+      if (videoLink) {
+        await this.#o.channels.post(
+          channelId,
+          `The overhead video didn't upload to Discord: ${videoLink}`,
+        )
+      }
+    } catch (e) {
+      this.#o.log?.(`incident #${incident.number}: ${message(e)}`)
     }
 
     // After the evidence, so whoever votes has seen it.
@@ -421,18 +655,33 @@ export class IncidentRouter {
         )
       } catch (e) {
         this.#o.log?.(`incident #${incident.number}: ${message(e)}`)
-        await this.#o.channels.post(
-          channelId,
-          `I couldn't start the vote on this one: ${message(e)}. The stewards will decide it.`,
-        )
+        await this.#o.channels
+          .post(
+            channelId,
+            `I couldn't start the vote on this one: ${message(e)}. The stewards will decide it.`,
+          )
+          .catch(() => {})
       }
     }
 
     return {
       content: this.#o.vote
-        ? `Filed as incident #${incident.number}: <#${channelId}>. The Racers vote on it there.`
-        : `Filed as incident #${incident.number}: <#${channelId}>. The stewards will look at it there.`,
+        ? `Opened as incident #${incident.number}. The Racers vote on it here.`
+        : `Opened as incident #${incident.number}. The stewards will look at it here.`,
+      clearButtons: true,
     }
+  }
+
+  /** Who an incident's channel is for, beside its drivers. */
+  #roles(): string[] {
+    return [this.#o.stewardRoleId, ...(this.#o.vote ? [this.#o.vote.roleId] : [])]
+  }
+
+  #replayLink(round: string, file: string): string | undefined {
+    return (
+      this.#o.replayUrl &&
+      `${this.#o.replayUrl.replace(/\/+$/, "")}/${(round === "." ? [file] : [round, file]).map(encodeURIComponent).join("/")}`
+    )
   }
 
   /**
@@ -492,7 +741,11 @@ export class IncidentRouter {
     }
   }
 
-  async #postEvidence(channelId: string, e: Evidence, round: string): Promise<void> {
+  /**
+   * A draft's evidence, unlinked: /replays keeps it to itself until it's
+   * opened. False when the video didn't upload, for opening it to link instead.
+   */
+  async #postEvidence(channelId: string, e: Evidence): Promise<boolean> {
     for (const part of chunks([
       "**What the recording shows**",
       ...e.summary.map((s) => `- ${s}`),
@@ -517,11 +770,6 @@ export class IncidentRouter {
           : [],
       )
     }
-    const url = (file: string) =>
-      this.#o.replayUrl &&
-      `${this.#o.replayUrl.replace(/\/+$/, "")}/${(round === "." ? [file] : [round, file]).map(encodeURIComponent).join("/")}`
-    const link = url(e.clip) ?? `\`${e.clip}\` on the replays page`
-    await this.#o.channels.post(channelId, `A replay clip to watch in the game: ${link}`)
     // On its own, last: an upload Discord is slow to take mustn't cost the
     // channel the rest, or be reported as evidence that couldn't be gathered.
     const data = await readFile(e.video)
@@ -544,19 +792,20 @@ export class IncidentRouter {
     }
     // Discord sometimes drops an upload partway ("other side closed"), which REST
     // doesn't retry; a timeout it already has, and the video may have landed.
-    await upload()
+    return upload()
       .catch((err) =>
         err instanceof Error && err.name === "AbortError" ? Promise.reject(err) : upload(),
       )
-      .catch(async (err) => {
-        const there = url(basename(e.video))
-        await this.#o.channels.post(
-          channelId,
-          there
-            ? `From above (it didn't upload: ${message(err)}): ${there}`
-            : `The overhead video didn't upload (${message(err)}). The replay clip shows the same stretch.`,
-        )
-      })
+      .then(
+        () => true,
+        async (err) => {
+          await this.#o.channels.post(
+            channelId,
+            `The overhead video didn't upload (${message(err)}). It'll be linked here when you open the report.`,
+          )
+          return false
+        },
+      )
   }
 
   async #decide(command: SlashCommand): Promise<CommandReply> {
@@ -795,7 +1044,10 @@ function entrantFor(c: Championship, car: JournalCar): string | undefined {
 const sameName = (a: string, b: string): boolean =>
   a.normalize("NFC").trim().toLowerCase() === b.normalize("NFC").trim().toLowerCase()
 
-function channelName(i: Incident, state: "incident" | "closed" = "incident"): string {
+function channelName(
+  i: Pick<Incident, "number" | "reporter" | "other">,
+  state: "incident" | "closed" | "draft" = "incident",
+): string {
   const slug = (s: string) =>
     s
       .toLowerCase()
@@ -803,6 +1055,10 @@ function channelName(i: Incident, state: "incident" | "closed" = "incident"): st
       .replace(/^-|-$/g, "")
   return `${state}-${i.number}-${slug(i.reporter)}-${slug(i.other)}`.slice(0, 100)
 }
+
+/** A draft's evidence files, named apart from any incident's and kept off /replays by that name. */
+const draftStem = (id: number): string => `draft-${id}`
+const EVIDENCE = [".acreplay", ".mp4"]
 
 /** The vote's answers, in order: one driver, the other, neither. Discord caps each at 55 characters. */
 function voteAnswers(i: Incident): string[] {

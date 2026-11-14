@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
-import type { SlashCommand } from "../src/bot/transport.js"
+import type { Button, SlashCommand } from "../src/bot/transport.js"
 import { indexJournal } from "../src/incidents/journals.js"
 import {
   type IncidentChannels,
@@ -34,14 +34,21 @@ let journal: string
 let stamp: string
 let store: SqliteIncidentStore
 let channels: {
-  created: [string, readonly string[]][]
+  created: [string, readonly string[], readonly string[]][]
   posts: [string, string, number][]
+  /** Each post's buttons, beside it in `posts`. */
+  buttons: (readonly Button[])[]
+  opened: [string, string, readonly string[], readonly string[]][]
+  removed: string[]
   pinged: (readonly string[])[]
   pingedRoles: (readonly string[])[]
   locked: [string, string][]
 }
 let failGather: boolean
 let failCreate: boolean
+let failOpen: boolean
+/** How long deleting a channel takes Discord. */
+let removeMs: number
 let failLock: boolean
 /** Server Manager can't be reached. */
 let failRead: boolean
@@ -84,9 +91,20 @@ beforeEach(async () => {
   journal = stamp
   await writeFile(join(dir, "video.mp4"), "mp4")
   store = await SqliteIncidentStore.open(":memory:")
-  channels = { created: [], posts: [], pinged: [], pingedRoles: [], locked: [] }
+  channels = {
+    created: [],
+    posts: [],
+    buttons: [],
+    opened: [],
+    removed: [],
+    pinged: [],
+    pingedRoles: [],
+    locked: [],
+  }
   failGather = false
   failCreate = false
+  failOpen = false
+  removeMs = 0
   failLock = false
   failRead = false
   failFirstPost = false
@@ -136,19 +154,30 @@ function router(
     claimedAt: "",
   })
   const ch: IncidentChannels = {
-    create: async (name, users) => {
+    create: async (name, users, roles) => {
       if (failCreate) throw new Error("Missing Permissions")
       // As long as Discord takes, so a second tap arrives while the first is waiting.
       await new Promise((r) => setTimeout(r, 20))
-      channels.created.push([name, users])
+      channels.created.push([name, users, roles])
       return `chan-${channels.created.length}`
     },
-    post: async (id, content, files, pings, pingRoles) => {
-      if (failFirstPost && content.startsWith("**Incident")) throw new Error("Unknown Channel")
+    open: async (id, name, roles, users) => {
+      // As long as Discord takes, so a second press arrives while the first is waiting.
+      await new Promise((r) => setTimeout(r, 20))
+      if (failOpen) throw new Error("Discord is holding back changes to this channel")
+      channels.opened.push([id, name, roles, users])
+    },
+    remove: async (id) => {
+      await new Promise((r) => setTimeout(r, removeMs))
+      channels.removed.push(id)
+    },
+    post: async (id, content, files, pings, pingRoles, buttons) => {
+      if (failFirstPost && content.startsWith("**Report")) throw new Error("Unknown Channel")
       if (content === "From above:") videoTries++
       if (failVideo > 0 && content === "From above:" && failVideo--)
         throw Object.assign(new Error(videoError), { name: videoErrorName })
       channels.posts.push([id, content, files?.length ?? 0])
+      channels.buttons.push(buttons ?? [])
       channels.pinged.push(pings ?? [])
       channels.pingedRoles.push(pingRoles ?? [])
     },
@@ -202,6 +231,8 @@ function router(
       await new Promise((r) => setTimeout(r, 20))
       rendering--
       if (failGather) throw new Error("no racing line")
+      for (const ext of [".acreplay", ".mp4"])
+        await writeFile(join(q.outDir, `${q.stem}${ext}`), "")
       return {
         summary: [`at ${q.atMs}`],
         call: ["Suggested call: unclear", "None of the rules clearly applies."],
@@ -251,6 +282,25 @@ async function contact(records: JournalRecord[], round = ""): Promise<string> {
   for (const r of records) w.write(r)
   await w.close()
   return key
+}
+
+/** The newest draft's button, pressed by `user`. */
+const press = (r: IncidentRouter, action: "open" | "withdraw", user = ANA) => {
+  const id = channels.buttons.findLast((b) => b.length)?.[0]?.id.split(":")[2]
+  return r.press({
+    customId: `incident:${action}:${id}`,
+    userId: user,
+    channelId: "chan-1",
+    roleIds: [],
+  })
+}
+
+/** A report of the first contact, opened as an incident. */
+const filed = async (r: IncidentRouter, options: Record<string, string> = {}, user = ANA) => {
+  await r.handle(
+    command(user, "report", { race: journal, what: "c:0", description: "x", ...options }),
+  )
+  return press(r, "open", user)
 }
 
 const command = (
@@ -372,31 +422,212 @@ describe("/incident report", () => {
     expect(channels.created).toEqual([])
   })
 
-  it("opens a channel for both drivers with the report and the evidence", async () => {
+  it("shows the report and the evidence to the reporter alone, as a draft", async () => {
     const reply = await router().handle(
       command(ANA, "report", { race: journal, what: "c:0", description: "Bo turned in on me" }),
     )
     expect(reply.content).toBe(
-      "Filed as incident #1: <#chan-1>. The stewards will look at it there.",
+      "Here's your draft: <#chan-1>. Nobody else can see it until you open it there.",
     )
-    // The other driver is told they've been reported; the reporter knows.
-    expect(channels.pinged[0]).toEqual([BO])
-    expect(channels.created).toEqual([["incident-1-ana-bo", [ANA, BO]]])
-    expect(channels.posts[0]![1]).toMatch(
-      new RegExp(
-        `^\\*\\*Incident #1\\*\\*: <@${ANA}> reports <@${BO}>\\. Race at loop, 0:05 into the session\\.\\n> Bo turned in on me$`,
-      ),
+    expect(channels.created).toEqual([["draft-1-ana-bo", [ANA], []]])
+    // Mentioning only the reporter, who may not have seen the reply.
+    expect(channels.posts[0]![1]).toBe(
+      `**Report** by <@${ANA}> of <@${BO}>. Race at loop, 0:05 into the session.\n> Bo turned in on me`,
     )
-    // The facts, the call with its drawing, then the video with the clip's link.
+    expect(channels.pinged.flat()).toEqual([ANA])
+    // The facts, the call with its drawing, the video; the clip unlinked, then the buttons.
     expect(channels.posts.slice(1).map(([, text, files]) => [text.split("\n")[0], files])).toEqual([
       ["**What the recording shows**", 0],
       ["**Suggested call: unclear**", 1],
-      [
-        "A replay clip to watch in the game: https://champctl.example/replays/incident-1.acreplay",
-        0,
-      ],
       ["From above:", 1],
+      [expect.stringMatching(/^Only you can see this so far\./), 0],
     ])
+    expect(channels.buttons.at(-1)!.map((b) => b.id)).toEqual([
+      "incident:open:1",
+      "incident:withdraw:1",
+    ])
+    expect(await readdir(dir)).toEqual(expect.arrayContaining(["draft-1.acreplay", "draft-1.mp4"]))
+    expect([store.list(), polls]).toEqual([[], []])
+  })
+
+  it("opens a draft as an incident for the stewards and both drivers", async () => {
+    const reply = await filed(router())
+    expect(reply).toEqual({
+      content: "Opened as incident #1. The stewards will look at it here.",
+      clearButtons: true,
+    })
+    expect(channels.opened).toEqual([["chan-1", "incident-1-ana-bo", [STEWARDS], [ANA, BO]]])
+    // The other driver is told they've been reported, and the clip is linked now it's public.
+    const after = channels.posts.findIndex(([, t]) => t.startsWith("**Incident"))
+    expect(channels.posts.slice(after).map(([, t]) => t)).toEqual([
+      `**Incident #1**: <@${ANA}> reports <@${BO}>, as above.`,
+      "A replay clip to watch in the game: https://champctl.example/replays/incident-1.acreplay",
+    ])
+    expect(channels.pinged[after]).toEqual([BO])
+    const files = await readdir(dir)
+    expect(files).toEqual(expect.arrayContaining(["incident-1.acreplay", "incident-1.mp4"]))
+    expect(files.filter((f) => f.startsWith("draft-"))).toEqual([])
+    expect(store.byChannel("chan-1")?.number).toBe(1)
+  })
+
+  it("lets only the reporter open or withdraw their draft", async () => {
+    const r = router()
+    await r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    for (const action of ["open", "withdraw"] as const) {
+      expect((await press(r, action, BO)).content).toBe(
+        "Only the driver who reported it can do that.",
+      )
+    }
+    expect([channels.opened, channels.removed]).toEqual([[], []])
+  })
+
+  it("opens one incident when the reporter presses twice, or withdraws as it opens", async () => {
+    const r = router()
+    await r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    const replies = await Promise.all([press(r, "open"), press(r, "open"), press(r, "withdraw")])
+    expect(replies.map((x) => x.content)).toEqual([
+      expect.stringMatching(/^Opened as incident #1/),
+      "I'm still on it. Give it a minute.",
+      "I'm still on it. Give it a minute.",
+    ])
+    expect((await press(r, "open")).content).toMatch(/^That draft is gone/)
+    expect([channels.opened.length, channels.removed, store.list().length]).toEqual([1, [], 1])
+  })
+
+  it("opens a draft as the same incident when it couldn't be opened the first time", async () => {
+    const r = router()
+    await r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    failOpen = true
+    expect((await press(r, "open")).content).toMatch(
+      /^I couldn't open it: Discord is holding back changes to this channel\. Try again/,
+    )
+    failOpen = false
+    expect((await press(r, "open")).content).toMatch(/^Opened as incident #1\./)
+    expect(store.list().map((i) => i.number)).toEqual([1])
+  })
+
+  it("withdraws a draft: its channel, its evidence and itself", async () => {
+    const r = router()
+    await r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    expect((await press(r, "withdraw")).content).toBe("Withdrawn. Nobody else saw it.")
+    expect(channels.removed).toEqual(["chan-1"])
+    expect((await readdir(dir)).filter((f) => f.startsWith("draft-"))).toEqual([])
+    expect(store.openCount(ANA)).toBe(0)
+    expect((await press(r, "open")).content).toMatch(/^That draft is gone/)
+  })
+
+  it("replaces a draft when the same moment is reported again", async () => {
+    const r = router()
+    await r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    const again = await r.handle(
+      command(ANA, "report", { race: journal, what: "c:0", description: "Better words" }),
+    )
+    expect(again.content).toMatch(/^Here's your draft: <#chan-2>/)
+    expect(channels.removed).toEqual(["chan-1"])
+    expect(store.openCount(ANA)).toBe(1)
+  })
+
+  it("keeps the first draft when the same moment is reported again before it's made", async () => {
+    const r = router()
+    const report = () =>
+      r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    const first = report()
+    // Into the first's channel and render, after its draft is written.
+    await new Promise((r) => setTimeout(r, 30))
+    const replies = await Promise.all([first, report()])
+    expect(replies.map((x) => x.content)).toEqual([
+      expect.stringMatching(/^Here's your draft: <#chan-1>/),
+      "I'm still filing your last report. Give it a minute.",
+    ])
+    expect([channels.removed, store.openCount(ANA)]).toEqual([[], 1])
+  })
+
+  it("won't withdraw a draft whose opening has begun, whose channel may be public", async () => {
+    const r = router()
+    await r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    failOpen = true
+    await press(r, "open")
+    expect((await press(r, "withdraw")).content).toBe(
+      "It's being opened already. Press Open incident to finish it.",
+    )
+    expect(channels.removed).toEqual([])
+    failOpen = false
+    expect((await press(r, "open")).content).toMatch(/^Opened as incident #1\./)
+  })
+
+  it("doesn't withdraw a draft the reporter opened while the sweep was busy with another", async () => {
+    const DAY = 24 * 3600_000
+    const made = new Date()
+    const at = (ms: number) => router(undefined, { now: () => new Date(made.getTime() + ms) })
+    const r = at(DAY + 60_000)
+    await at(0).handle(command(BO, "report", { race: journal, what: "c:0", description: "x" }))
+    await at(0).handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    removeMs = 60
+    const sweeping = r.sweepDrafts()
+    // Bo's draft is first; Ana opens hers while Discord deletes his.
+    await new Promise((res) => setTimeout(res, 5))
+    expect((await press(r, "open")).content).toMatch(/^Opened as incident #1\./)
+    await sweeping
+    expect(channels.removed).toEqual(["chan-1"])
+  })
+
+  it("links the overhead video when opened, if it didn't upload to the draft", async () => {
+    failVideo = Number.POSITIVE_INFINITY
+    await filed(router())
+    expect(channels.posts.at(-1)![1]).toBe(
+      "The overhead video didn't upload to Discord: https://champctl.example/replays/incident-1.mp4",
+    )
+  })
+
+  it.each([
+    [
+      "with no replays page",
+      { replayUrl: "" },
+      false,
+      ["`incident-1.acreplay` on the replays page"],
+    ],
+    ["when there's no clip", {}, true, []],
+  ])("names the clip as best it can %s", async (_, extra, noEvidence, says) => {
+    failGather = noEvidence
+    await filed(router(undefined, extra))
+    const after = channels.posts.findIndex(([, t]) => t.startsWith("**Incident"))
+    expect(
+      channels.posts
+        .slice(after + 1)
+        .map(([, t]) => t.replace(/^A replay clip to watch in the game: /, "")),
+    ).toEqual(says)
+  })
+
+  it("leaves a draft alone that's being opened when the moment is reported again", async () => {
+    const r = router()
+    await r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    failOpen = true
+    await press(r, "open")
+    const again = await r.handle(
+      command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
+    )
+    expect(again.content).toBe("You're already opening that one: <#chan-1>.")
+    expect(channels.removed).toEqual([])
+  })
+
+  it("finishes opening a draft something stopped, and withdraws one left a day", async () => {
+    const DAY = 24 * 3600_000
+    const made = new Date()
+    const at = (ms: number) => router(undefined, { now: () => new Date(made.getTime() + ms) })
+    await at(0).handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    failOpen = true
+    await press(at(0), "open")
+    failOpen = false
+    await at(0).handle(command(BO, "report", { race: journal, what: "c:0", description: "x" }))
+    // One that was being opened is finished on the next sweep: its channel may be public.
+    await at(5 * 60_000).sweepDrafts()
+    expect(channels.opened.map(([id, name]) => [id, name])).toEqual([
+      ["chan-1", "incident-1-ana-bo"],
+    ])
+    await at(DAY - 60_000).sweepDrafts()
+    expect(channels.removed).toEqual([])
+    await at(DAY + 60_000).sweepDrafts()
+    expect(channels.removed).toEqual(["chan-2"])
   })
 
   it("tries the video's upload again when Discord drops it once", async () => {
@@ -405,26 +636,22 @@ describe("/incident report", () => {
     await router(undefined, { log: (l) => logged.push(l) }).handle(
       command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
     )
-    expect(channels.posts.at(-1)?.slice(1)).toEqual(["From above:", 1])
+    expect(channels.posts.at(-2)?.slice(1)).toEqual(["From above:", 1])
     expect(logged.filter((l) => l.startsWith("overhead video"))).toEqual([
       expect.stringMatching(/: other side closed \(0 KB, [\d.]+ s\)$/),
       expect.stringMatching(/: uploaded \(0 KB, [\d.]+ s\)$/),
     ])
   })
 
-  it("keeps the rest of the evidence when the video won't upload, and links the video instead", async () => {
+  it("keeps the rest of the evidence when the video won't upload, without linking a draft's", async () => {
     // REST has already retried a timeout, and the video may have landed: no second go.
     failVideo = Number.POSITIVE_INFINITY
     videoError = "This operation was aborted"
     videoErrorName = "AbortError"
-    const reply = await router().handle(
-      command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
+    await router().handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    expect(channels.posts.at(-2)![1]).toBe(
+      "The overhead video didn't upload (This operation was aborted). It'll be linked here when you open the report.",
     )
-    expect(reply.content).toMatch(/^Filed as incident #1/)
-    expect(channels.posts.slice(-2).map(([, t]) => t)).toEqual([
-      "A replay clip to watch in the game: https://champctl.example/replays/incident-1.acreplay",
-      "From above (it didn't upload: This operation was aborted): https://champctl.example/replays/video.mp4",
-    ])
     expect(videoTries).toBe(1)
   })
 
@@ -449,8 +676,8 @@ describe("/incident report", () => {
         { ...car(2, "Dee"), at: 8000 },
         { ...hit, at },
       ])
-      await router().handle(command(ANA, "report", { race: key, what: "c:0", description: "x" }))
-      expect(channels.created).toEqual([[name, [ANA, other]]])
+      await filed(router(), { race: key })
+      expect(channels.opened).toEqual([["chan-1", name, [STEWARDS], [ANA, other]]])
     },
   )
 
@@ -471,8 +698,8 @@ describe("/incident report", () => {
   it("doesn't take the other driver by name when their car's GUID says it's someone else", async () => {
     // A guest calling themselves Bo: the real Bo isn't added to the channel or pinged.
     const key = await contact([car(1, "Ana"), car(2, "Bo", "76561198000000099"), hit])
-    await router().handle(command(ANA, "report", { race: key, what: "c:0", description: "x" }))
-    expect(channels.created).toEqual([["incident-1-ana-bo", [ANA]]])
+    await filed(router(), { race: key })
+    expect(channels.opened).toEqual([["chan-1", "incident-1-ana-bo", [STEWARDS], [ANA]]])
   })
 
   it("refuses a session older than the list offers, typed in by hand", async () => {
@@ -533,7 +760,7 @@ describe("/incident report", () => {
     const reply = await router().handle(
       command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
     )
-    expect(reply.content).toMatch(/^Filed as incident #1: <#chan-1>/)
+    expect(reply.content).toMatch(/^Here's your draft: <#chan-1>/)
     expect(channels.posts.map(([, text]) => text.split("\n")[0])).toContain(
       "**What the recording shows**",
     )
@@ -549,7 +776,7 @@ describe("/incident report", () => {
 
   it.each([
     ["the stewards haven't decided", true, /You have 3 reports the stewards haven't decided yet/],
-    ["only counting ones that got a channel", false, /^Filed as incident #4/],
+    ["only counting ones that got a channel", false, /^Here's your draft/],
   ])("holds a driver's reports at three %s", async (_, opened, says) => {
     for (const atMs of [0, 6000, 11000]) {
       const i = store.file(
@@ -571,12 +798,23 @@ describe("/incident report", () => {
     expect(reply.content).toMatch(says)
   })
 
-  it("says so when the other driver hasn't claimed their name, and leaves them out", async () => {
-    await router({ [ANA]: "Ana" }).handle(
+  it("counts drafts toward the three", async () => {
+    for (const atMs of [0, 6000, 11000]) {
+      const filing = { reporterDiscord: ANA, reporter: "Ana", other: "Cy", description: "x" }
+      store.draft({ ...filing, journal: "elsewhere", atMs }, new Date())
+    }
+    const reply = await router().handle(
       command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
     )
-    expect(channels.created).toEqual([["incident-1-ana-bo", [ANA]]])
-    expect(channels.posts[0]![1]).toMatch(/Bo hasn't claimed their name/)
+    expect(reply.content).toMatch(/You have 3 reports/)
+  })
+
+  it("says so when the other driver hasn't claimed their name, and leaves them out", async () => {
+    await filed(router({ [ANA]: "Ana" }))
+    expect(channels.opened).toEqual([["chan-1", "incident-1-ana-bo", [STEWARDS], [ANA]]])
+    expect(channels.posts.find(([, t]) => t.startsWith("**Incident"))![1]).toMatch(
+      /Bo hasn't claimed their name/,
+    )
   })
 
   it("takes something else with the other driver and the time", async () => {
@@ -589,7 +827,7 @@ describe("/incident report", () => {
         description: "x",
       }),
     )
-    expect(channels.created[0]![0]).toBe("incident-1-ana-cy")
+    expect(channels.created[0]![0]).toBe("draft-1-ana-cy")
     expect(channels.posts.find(([, t]) => t.startsWith("**What"))![1]).toMatch(/at 2500/)
   })
 
@@ -607,8 +845,8 @@ describe("/incident report", () => {
         description: "x",
       }),
     )
-    expect(reply.content).toMatch(/^Filed as incident #1/)
-    expect(channels.created[0]![0]).toBe("incident-1-ana-cy")
+    expect(reply.content).toMatch(/^Here's your draft/)
+    expect(channels.created[0]![0]).toBe("draft-1-ana-cy")
   })
 
   it.each([
@@ -640,7 +878,7 @@ describe("/incident report", () => {
 
   it("doesn't open a second channel for the same report", async () => {
     const r = router()
-    await r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    await filed(r)
     const again = await r.handle(
       command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
     )
@@ -661,40 +899,42 @@ describe("/incident report", () => {
     const again = await r.handle(
       command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
     )
-    expect(again.content).toMatch(/^Filed as incident #2: <#chan-1>/)
+    expect(again.content).toMatch(/^Here's your draft: <#chan-1>/)
   })
 
   it("puts a report's evidence in its session's round folder, and links it there", async () => {
     const round = "2026-10-13-loop"
     const key = await contact([car(1, "Ana"), car(2, "Bo"), hit], round)
-    await router().handle(command(ANA, "report", { race: key, what: "c:0", description: "x" }))
+    await filed(router(), { race: key })
     expect(gatheredInto).toBe(join(dir, round))
-    expect(channels.posts.at(-2)![1]).toBe(
+    expect(await readdir(join(dir, round))).toEqual(expect.arrayContaining(["incident-1.mp4"]))
+    expect(channels.posts.at(-1)![1]).toBe(
       `A replay clip to watch in the game: https://champctl.example/replays/${round}/incident-1.acreplay`,
     )
   })
 
-  it("files the report and says so in the channel when the evidence can't be gathered", async () => {
+  it("makes the draft and says so in the channel when the evidence can't be gathered", async () => {
     failGather = true
     const reply = await router().handle(
       command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
     )
-    expect(reply.content).toMatch(/^Filed as incident #1/)
-    expect(channels.posts.at(-1)![1]).toMatch(
+    expect(reply.content).toMatch(/^Here's your draft/)
+    expect(channels.buttons.at(-1)).toHaveLength(2)
+    expect(channels.posts.at(-2)![1]).toMatch(
       /couldn't gather the recording's evidence for this one: no racing line/,
     )
   })
 })
 
 describe("/incident decide", () => {
-  const filed = async () => {
+  const opened = async () => {
     const r = router()
-    await r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+    await filed(r)
     return r
   }
 
   it("is for the incident's own channel, and for stewards", async () => {
-    const r = await filed()
+    const r = await opened()
     expect(
       (await r.handle(command("s", "decide", { outcome: "x" }, { roleIds: [STEWARDS] }))).content,
     ).toMatch(/in the incident's own channel/)
@@ -705,7 +945,7 @@ describe("/incident decide", () => {
   })
 
   it("records the decision, tells both drivers, and makes the channel read-only, once", async () => {
-    const r = await filed()
+    const r = await opened()
     const steward = { channelId: "chan-1", roleIds: [STEWARDS] }
     const reply = await r.handle(command("s", "decide", { outcome: "Racing incident" }, steward))
     expect(reply.content).toMatch(/^Recorded/)
@@ -720,7 +960,7 @@ describe("/incident decide", () => {
   })
 
   it("is made once when two stewards decide at the same time", async () => {
-    const r = await filed()
+    const r = await opened()
     const steward = (id: string) => ({ channelId: "chan-1", roleIds: [STEWARDS], userId: id })
     await Promise.all([
       r.handle(command("s1", "decide", { outcome: "Racing incident" }, steward("s1"))),
@@ -730,7 +970,7 @@ describe("/incident decide", () => {
   })
 
   it("can be made again when the channel couldn't be locked", async () => {
-    const r = await filed()
+    const r = await opened()
     const steward = { channelId: "chan-1", roleIds: [STEWARDS] }
     failLock = true
     await expect(r.handle(command("s", "decide", { outcome: "x" }, steward))).rejects.toThrow()
@@ -779,8 +1019,7 @@ describe("deciding by vote", () => {
   const FILED = new Date("2026-10-15T05:00:00Z")
   const voting = (now = FILED) =>
     router(undefined, { vote: { hours: 48, roleId: RACERS }, now: () => now })
-  const report = (r: IncidentRouter) =>
-    r.handle(command(ANA, "report", { race: journal, what: "c:0", description: "x" }))
+  const report = (r: IncidentRouter) => filed(r)
   const hoursIn = (hours: number) => new Date(FILED.getTime() + hours * 3600_000)
 
   it("asks the channel who was at fault, after the evidence", async () => {
@@ -793,10 +1032,13 @@ describe("deciding by vote", () => {
         hours: 48,
       },
     ])
-    expect(channels.posts.at(-1)![1]).toBe("From above:")
-    expect(reply.content).toMatch(/The Racers vote on it there\.$/)
-    expect(channels.posts[0]![1]).toMatch(/\n\n<@&5{18}>: your vote decides this one\.$/)
-    expect(channels.pingedRoles[0]).toEqual([RACERS])
+    expect(reply.content).toBe("Opened as incident #1. The Racers vote on it here.")
+    expect(channels.opened[0]![2]).toEqual([STEWARDS, RACERS])
+    const header = channels.posts.findIndex(([, t]) => t.startsWith("**Incident"))
+    expect(channels.posts[header]![1]).toMatch(/\n\n<@&5{18}>: your vote decides this one\.$/)
+    expect(channels.pingedRoles[header]).toEqual([RACERS])
+    // Nobody but the reporter is called before it's opened.
+    expect(channels.pingedRoles.slice(0, header).flat()).toEqual([])
   })
 
   it.each([

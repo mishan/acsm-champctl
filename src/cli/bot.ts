@@ -1071,17 +1071,14 @@ async function serve(args: Args): Promise<number> {
             timeZone: profile.schedule.timezone,
             log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
             channels: {
-              create: (name, userIds) =>
+              create: (name, userIds, roleIds) =>
                 transport.createPrivateChannel(guildId, {
                   parentId: incidentSettings.categoryId,
                   name,
-                  roleIds: [
-                    incidentSettings.stewardRoleId,
-                    ...(incidentSettings.vote ? [incidentSettings.vote.roleId] : []),
-                  ],
+                  roleIds,
                   userIds,
                 }),
-              post: (channelId, content, files, pings, pingRoles) =>
+              post: (channelId, content, files, pings, pingRoles, buttons) =>
                 transport.post({
                   channelId,
                   content,
@@ -1089,7 +1086,11 @@ async function serve(args: Args): Promise<number> {
                   ...(files?.length ? { files } : {}),
                   ...(pings?.length ? { pings } : {}),
                   ...(pingRoles?.length ? { pingRoles } : {}),
+                  ...(buttons?.length ? { buttons } : {}),
                 }),
+              open: (channelId, name, roleIds, userIds) =>
+                transport.openChannel(channelId, name, roleIds, userIds),
+              remove: (channelId) => transport.removeChannel(channelId),
               lock: (channelId, name) =>
                 transport.lockChannel(channelId, name, incidentSettings.closedCategoryId),
               poll: (channelId, question, answers, hours) =>
@@ -1102,10 +1103,16 @@ async function serve(args: Args): Promise<number> {
     if (incidents) {
       void incidents.warm()
       process.stderr.write("Answering /incident.\n")
-      if (incidentSettings?.vote) {
-        // Every five minutes: a closed vote waits that long at most to be counted.
-        const timer = setInterval(() => void incidents.settlePolls(), 5 * 60_000)
-        stopPolls = async () => clearInterval(timer)
+      // Every five minutes: a closed vote waits that long at most to be counted,
+      // and a draft left a day that long to be withdrawn.
+      const vote = Boolean(incidentSettings?.vote)
+      const timer = setInterval(() => {
+        void incidents.sweepDrafts()
+        if (vote) void incidents.settlePolls()
+      }, 5 * 60_000)
+      stopPolls = async () => clearInterval(timer)
+      void incidents.sweepDrafts()
+      if (vote) {
         void incidents.settlePolls()
         process.stderr.write("Counting incident votes when they close.\n")
       }
@@ -1208,6 +1215,10 @@ async function serve(args: Args): Promise<number> {
               : c.name === "season" && season
                 ? season.handle(c)
                 : router.handle(c),
+        press: (p) =>
+          incidents
+            ? incidents.press(p)
+            : Promise.resolve({ content: "I don't know that button." }),
         autocomplete: (c, focused) =>
           c.name === "incident" && incidents
             ? incidents.autocomplete(c, focused)

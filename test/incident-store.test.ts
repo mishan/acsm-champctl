@@ -25,12 +25,11 @@ const filing = {
 describe("incident drafts", () => {
   it("are numbered once, however often opening is tried, and become the incident", async () => {
     const store = await SqliteIncidentStore.open(":memory:")
-    const d = store.draft(filing, AT)
+    const d = store.draft({ ...filing, otherDiscord: "200" }, AT)
     store.setDraftChannel(d.id, "c1")
-    const first = store.reserve(d.id, undefined, AT)
-    const again = store.reserve(d.id, "200", AT)
+    const first = store.reserve(d.id, AT)
+    const again = store.reserve(d.id, AT)
     expect(again?.number).toBe(first?.number)
-    expect(again?.otherDiscord).toBe("200")
     expect(store.list()).toEqual([])
 
     expect(store.withdraw(d.id)).toBe(false)
@@ -50,11 +49,11 @@ describe("incident drafts", () => {
     expect(store.draftOf("100", filing.journal, 60_000)).toBeUndefined()
   })
 
-  it("go stale after a day, being opened or not", async () => {
+  it("go stale after a day, or at once when being opened", async () => {
     const store = await SqliteIncidentStore.open(":memory:")
     const old = store.draft(filing, new Date(AT.getTime() - 25 * 3600_000))
-    const opening = store.draft({ ...filing, atMs: 0 }, new Date(AT.getTime() - 25 * 3600_000))
-    store.reserve(opening.id, undefined, AT)
+    const opening = store.draft({ ...filing, atMs: 0 }, AT)
+    store.reserve(opening.id, AT)
     store.draft({ ...filing, atMs: 9000 }, new Date(AT.getTime() - 23 * 3600_000))
     expect(store.staleDrafts(new Date(AT.getTime() - 24 * 3600_000)).map((d) => d.id)).toEqual([
       old.id,
@@ -69,7 +68,7 @@ describe("incident drafts", () => {
     store.draft({ ...filing, reporterDiscord: "101" }, AT)
     expect(store.openCount("100")).toBe(2)
     store.setDraftChannel(d.id, "c1")
-    store.reserve(d.id, undefined, AT)
+    store.reserve(d.id, AT)
     expect(store.openCount("100")).toBe(2)
     store.opened(d.id)
     expect(store.openCount("100")).toBe(2)
