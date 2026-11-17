@@ -187,7 +187,7 @@ export const api = {
   /**
    * Cars and tracks installed on the manager, for the fields that ask for one.
    *
-   * Held server-side for an hour, and here for the page's life: it is every
+   * Held server-side for a week, and here for the page's life: it is every
    * car on the manager, and three screens want it, so moving between a
    * championship and its rounds downloaded it again on every step. A failed
    * read isn't kept, so the next screen tries again.
@@ -197,6 +197,13 @@ export const api = {
       installed = undefined
       throw e
     })),
+
+  /** Reads what's installed again now, and says what changed; the next screen gets the new list. */
+  refreshContent: async (): Promise<{ said: string }> => {
+    const answer = await request<{ said: string }>("/content/refresh", { method: "POST" })
+    installed = undefined
+    return answer
+  },
 
   championship: (id: string): Promise<ChampionshipResponse> =>
     request(`/championships/${encodeURIComponent(id)}`),

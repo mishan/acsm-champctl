@@ -272,10 +272,13 @@ export const SEASON_COMMAND: CommandDefinition = {
   ],
 }
 
-/** `/championship info` (docs/discord-bot-setup.md, step 16): refreshes the info message. */
+/**
+ * `/championship info` (docs/discord-bot-setup.md, step 16) refreshes the info
+ * message; `/championship content` reads what's installed again.
+ */
 export const INFO_COMMAND: CommandDefinition = {
   name: "championship",
-  description: "The championship info message in the announcements channel",
+  description: "The championship info message, and what's installed on the server",
   dmPermission: false,
   options: [
     {
@@ -291,6 +294,12 @@ export const INFO_COMMAND: CommandDefinition = {
           max_length: 200,
         },
       ],
+    },
+    {
+      name: "content",
+      description: "Admins: read Server Manager's installed cars and tracks again now",
+      type: 1,
+      options: [],
     },
   ],
 }

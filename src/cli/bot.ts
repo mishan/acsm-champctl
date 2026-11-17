@@ -24,6 +24,7 @@ import { AcsmNotJsonError, asMessage, HttpAcsmReader, type AcsmReader } from "..
 import type { Championship } from "../acsm/types.js"
 import { announce, NothingToAnnounce, RoundRefused, type Announcement } from "../bot/announce.js"
 import { INCIDENT_COMMAND, INFO_COMMAND, LIVERY_COMMANDS, SEASON_COMMAND } from "../bot/commands.js"
+import { contentCommand } from "../bot/content.js"
 import { GatewayTransport } from "../bot/discord.js"
 import { type FinishedChampionships, SqliteFinishedStore } from "../bot/finished.js"
 import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
@@ -1235,13 +1236,15 @@ async function serve(args: Args): Promise<number> {
     transport.listen(
       {
         handle: (c) =>
-          c.name === "championship" && info
-            ? info.handle(c)
-            : c.name === "incident" && incidents
-              ? incidents.handle(c)
-              : c.name === "season" && season
-                ? season.handle(c)
-                : router.handle(c),
+          c.name === "championship" && c.subcommand === "content" && infoSettings
+            ? contentCommand(c, { cache: installed, adminRoleId: infoSettings.adminRoleId })
+            : c.name === "championship" && info
+              ? info.handle(c)
+              : c.name === "incident" && incidents
+                ? incidents.handle(c)
+                : c.name === "season" && season
+                  ? season.handle(c)
+                  : router.handle(c),
         press: (p) =>
           incidents
             ? incidents.press(p)

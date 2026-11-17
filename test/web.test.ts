@@ -2042,6 +2042,32 @@ describe("what content is installed", () => {
     const res = await h.app.inject({ method: "GET", url: "/api/content" })
     expect(res.statusCode).toBe(401)
   })
+
+  it("reads it again when asked, for someone logged in, and says what changed", async () => {
+    let reads = 0
+    const h = harness({
+      content: new ContentCache<InstalledContent>({
+        load: async () => ({
+          cars: [
+            { id: "ks_c7r", name: "Corvette C7R" },
+            ...(reads++ ? [{ id: "c8r", name: "C8.R" }] : []),
+          ],
+          tracks: [],
+        }),
+      }),
+    })
+    const refresh = (cookie?: string) =>
+      h.app.inject({
+        method: "POST",
+        url: "/api/content/refresh",
+        headers: cookie ? { cookie } : {},
+      })
+    expect((await refresh()).statusCode).toBe(401)
+    await h.login()
+    await h.app.inject({ method: "GET", url: "/api/content", headers: { cookie: h.cookie() } })
+    const res = await refresh(h.cookie())
+    expect(res.json()).toEqual({ said: "Server Manager's cars changed: added C8.R." })
+  })
 })
 
 describe("creating the championship", () => {

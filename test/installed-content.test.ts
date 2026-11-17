@@ -6,6 +6,7 @@ import {
   changes,
   reconcileDaily,
   reconcileDue,
+  refreshContent,
   unbelievable,
 } from "../src/acsm/installed-content.js"
 
@@ -89,5 +90,37 @@ describe("reading what's installed again each day", () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe("an operator's refresh", () => {
+  const cache = (...reads: (() => InstalledContent)[]) =>
+    new ContentCache<InstalledContent>({ load: async () => reads.shift()!() })
+
+  it("says what changed, or that nothing did", async () => {
+    const c = cache(
+      () => list(2),
+      () => list(3),
+      () => list(3),
+    )
+    await c.get()
+    expect(await refreshContent(c)).toBe("Server Manager's cars changed: added Car 2.")
+    expect(await refreshContent(c)).toBe(
+      "Nothing changed: Server Manager has the 3 cars and 2 tracks champctl had.",
+    )
+  })
+
+  it("says the list is unchanged when Server Manager can't be read", async () => {
+    const c = cache(
+      () => list(2),
+      () => {
+        throw new Error("fetch failed")
+      },
+    )
+    await c.get()
+    await expect(refreshContent(c)).rejects.toThrow(
+      "I couldn't read Server Manager (fetch failed). The list of what's installed is unchanged.",
+    )
+    expect((await c.get()).cars).toHaveLength(2)
   })
 })

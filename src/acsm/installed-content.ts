@@ -110,6 +110,27 @@ export function unbelievable(
   return undefined
 }
 
+/**
+ * An operator's "read it again now": the same reconcile as the daily one, with
+ * what's held served until it's in, so a refresh nobody needed costs a few
+ * seconds of reading and nothing else. Says what changed, for them.
+ */
+export async function refreshContent(cache: ContentCache): Promise<string> {
+  let read: Awaited<ReturnType<ContentCache["reconcile"]>>
+  try {
+    read = await cache.reconcile()
+  } catch (e) {
+    throw new Error(
+      `I couldn't read Server Manager (${(e as Error).message}). The list of what's installed is unchanged.`,
+    )
+  }
+  const { before, after } = read
+  return (
+    (before && changes(before, after)) ??
+    `Nothing changed: Server Manager has the ${after.cars.length} cars and ${after.tracks.length} tracks champctl had.`
+  )
+}
+
 /** What changed between two reads of what's installed, by id; undefined if nothing. */
 export function changes(before: InstalledContent, after: InstalledContent): string | undefined {
   const said: string[] = []
