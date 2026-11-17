@@ -220,9 +220,25 @@ export class SeasonRouter {
 
     const typed = (command.options["item"] ?? "").trim()
     const link = command.options["link"]?.trim()
+    const t = typed.toLowerCase()
+    // Typed rather than picked, as the list lets a driver do: part of only one
+    // car's or track's name is that one.
+    const partial = installed.filter(
+      (i) => t && (i.name.toLowerCase().includes(t) || i.id.includes(t)),
+    )
     const found =
       installed.find((i) => i.id === typed) ??
-      installed.find((i) => i.name.toLowerCase() === typed.toLowerCase())
+      installed.find((i) => i.name.toLowerCase() === t) ??
+      (partial.length === 1 ? partial[0] : undefined)
+    if (!found && partial.length > 1) {
+      const names = partial.map((i) => i.name)
+      return {
+        content:
+          names.length > 5
+            ? `**${typed}** is in the names of ${names.length} ${many}. Pick one from the list.`
+            : `**${typed}** could be ${names.slice(0, -1).join(", ")} or ${names.at(-1)}. Pick one from the list.`,
+      }
+    }
     let nomination: Nomination
     if (found) {
       nomination = { item: found.id, label: found.name, nominatedBy: command.userId }

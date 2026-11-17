@@ -153,6 +153,26 @@ describe("/season", () => {
     expect((await nominate("ana", "McLaren 650S GT3")).content).toMatch(/^Nominated/)
   })
 
+  it("takes part of an installed car's name, typed rather than picked, when it's only that car's", async () => {
+    const r = router()
+    await start(r)
+    const nominate = (item: string) => r.handle(command("ana", "nominate", { item }))
+    expect((await nominate("gt3")).content).toBe(
+      "**gt3** could be Porsche 911 GT3 R, Ferrari 488 GT3 or McLaren 650S GT3. Pick one from the list.",
+    )
+    content = async () => ({
+      cars: [...CARS, ...[1, 2, 3].map((n) => ({ id: `gt3_${n}`, name: `GT3 ${n}` }))],
+      tracks: TRACKS,
+    })
+    // A new router: the one above has the list read already.
+    expect((await router().handle(command("ana", "nominate", { item: "gt3" }))).content).toBe(
+      "**gt3** is in the names of 6 cars. Pick one from the list.",
+    )
+    expect((await nominate("488")).content).toBe(
+      "Nominated **Ferrari 488 GT3**. You can nominate 1 more.",
+    )
+  })
+
   it("offers installed cars not yet nominated, and your own nominations to withdraw", async () => {
     const r = router()
     await start(r)
