@@ -69,7 +69,12 @@ export interface ContentCacheOptions<T = InstalledContent> {
    * is then a failure, and what's held stays.
    */
   believe?: (next: T, held: T | undefined) => string | undefined
+  /** What was held, and what replaced it: a read, or a newer copy in the store. */
+  onChange?: (before: T, after: T) => void
 }
+
+/** How often a held copy looks for a newer one another process stored. */
+const LOOK_MS = 60_000
 
 export class ContentCache<T = InstalledContent> {
   readonly #load: (() => Promise<T>) | undefined
@@ -77,7 +82,9 @@ export class ContentCache<T = InstalledContent> {
   readonly #ttlMs: number
   readonly #now: () => number
   readonly #believe: ContentCacheOptions<T>["believe"]
+  readonly #onChange: ContentCacheOptions<T>["onChange"]
   #held: { at: number; value: T } | undefined
+  #looked = Number.NEGATIVE_INFINITY
   #inFlight: Promise<T> | undefined
 
   constructor(options: ContentCacheOptions<T> = {}) {
@@ -86,6 +93,7 @@ export class ContentCache<T = InstalledContent> {
     this.#ttlMs = options.ttlMs ?? DEFAULT_TTL_MS
     this.#now = options.now ?? Date.now
     this.#believe = options.believe
+    this.#onChange = options.onChange
   }
 
   async get(load?: () => Promise<T>): Promise<T> {
@@ -115,7 +123,25 @@ export class ContentCache<T = InstalledContent> {
   peek(): T | undefined {
     const held = this.#held
     if (!held || this.#now() - held.at >= this.#ttlMs) void this.#refresh().catch(() => undefined)
+    else if (this.#store && this.#now() - this.#looked >= LOOK_MS) void this.#look()
     return held?.value
+  }
+
+  /** When what's held was read from Server Manager, by whichever process read it. */
+  readAt(): number | undefined {
+    return this.#held?.at
+  }
+
+  /**
+   * Reads again though what's held is fresh, as the daily reconcile and an
+   * operator's refresh do: what's held is served until the new read is in.
+   */
+  async reconcile(): Promise<{ before: T | undefined; after: T }> {
+    // Until nothing's in flight, then started with no await between: a read a
+    // peek started meanwhile might only take the stored copy, and this would join it.
+    while (this.#inFlight) await this.#inFlight.catch(() => undefined)
+    const before = this.#held?.value
+    return { before, after: await this.#refresh(undefined, true) }
   }
 
   /**
@@ -134,6 +160,7 @@ export class ContentCache<T = InstalledContent> {
    */
   async warm(): Promise<void> {
     try {
+      this.#looked = this.#now()
       const stored = await this.#store?.read()
       if (stored && !this.#held) this.#held = stored
     } catch {
@@ -142,7 +169,8 @@ export class ContentCache<T = InstalledContent> {
     void this.#refresh().catch(() => undefined)
   }
 
-  #refresh(load?: () => Promise<T>): Promise<T> {
+  /** `force`: a new read, though another process stored a fresh one. */
+  #refresh(load?: () => Promise<T>, force = false): Promise<T> {
     const read = load ?? this.#load
     if (!read) {
       // A cache with no way to fill itself, asked to fill itself. That is a
@@ -161,7 +189,7 @@ export class ContentCache<T = InstalledContent> {
         const why = this.#believe?.(value, this.#held?.value)
         if (why) throw new Error(`Not taking this read of Server Manager: ${why}.`)
         const entry = { at: this.#now(), value }
-        this.#held = entry
+        this.#hold(entry)
         // Best effort, and after the value is already held: a store that
         // cannot be written costs the *next* restart its head start, and
         // failing the request over it would cost this one its answer.
@@ -170,7 +198,7 @@ export class ContentCache<T = InstalledContent> {
       })
     // Taken from the store, a read keeps the time it was made.
     this.#inFlight ??= (
-      this.#store ? this.#fromStore().then((s) => (s === undefined ? take() : s)) : take()
+      this.#store && !force ? this.#fromStore().then((s) => (s === undefined ? take() : s)) : take()
     ).finally(() => {
       this.#inFlight = undefined
     })
@@ -185,7 +213,20 @@ export class ContentCache<T = InstalledContent> {
   async #fromStore(): Promise<T | undefined> {
     const stored = await this.#store?.read().catch(() => undefined)
     if (!stored || this.#now() - stored.at >= this.#ttlMs) return undefined
-    if (!this.#held || stored.at > this.#held.at) this.#held = stored
-    return this.#held.value
+    if (!this.#held || stored.at > this.#held.at) this.#hold(stored)
+    return this.#held?.value
+  }
+
+  /** A newer copy in the store, if another process has made one since. */
+  async #look(): Promise<void> {
+    this.#looked = this.#now()
+    const stored = await this.#store?.read().catch(() => undefined)
+    if (stored && this.#held && stored.at > this.#held.at) this.#hold(stored)
+  }
+
+  #hold(entry: { at: number; value: T }): void {
+    const before = this.#held?.value
+    this.#held = entry
+    if (before !== undefined && before !== entry.value) this.#onChange?.(before, entry.value)
   }
 }

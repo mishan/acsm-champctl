@@ -4,6 +4,8 @@
  * bot share, so one of them reading it a week is enough for both.
  */
 
+import { DateTime } from "luxon"
+
 import { HttpAcsmReader } from "./client.js"
 import type { InstalledContent } from "./content.js"
 import type { KeptStore } from "./content-store.js"
@@ -18,6 +20,8 @@ export interface InstalledContentOptions {
   unthrottled?: boolean
   userAgent?: string
   log?: (line: string) => void
+  /** What changed in what's installed, said in a sentence or two, whenever it does. */
+  onChange?: (said: string) => void
 }
 
 /** A league installs a car every few months; a week-old list is as good as a new one. */
@@ -75,6 +79,10 @@ export function installedContent(o: InstalledContentOptions): ContentCache {
     // the screen. `--no-cache` opts out of this too, which is what that flag
     // means.
     ...(o.cache ? { store: contentStore(o.cache, o.baseUrl) } : {}),
+    onChange: (before, after) => {
+      const said = changes(before, after)
+      if (said) o.onChange?.(said)
+    },
     believe: (next, held) => {
       const why = unbelievable(next, held)
       if (why) o.log?.(`Kept the list of what's installed: ${why}.`)
@@ -100,4 +108,71 @@ export function unbelievable(
     }
   }
   return undefined
+}
+
+/** What changed between two reads of what's installed, by id; undefined if nothing. */
+export function changes(before: InstalledContent, after: InstalledContent): string | undefined {
+  const said: string[] = []
+  for (const kind of ["cars", "tracks"] as const) {
+    const was = new Map(before[kind].map((i) => [i.id, i.name]))
+    const now = new Map(after[kind].map((i) => [i.id, i.name]))
+    const parts = [
+      list(
+        "added",
+        [...now].filter(([id]) => !was.has(id)).map(([, n]) => n),
+      ),
+      list(
+        "removed",
+        [...was].filter(([id]) => !now.has(id)).map(([, n]) => n),
+      ),
+      list(
+        "renamed",
+        [...now].flatMap(([id, n]) => {
+          const old = was.get(id)
+          return old !== undefined && old !== n ? [`${old} to ${n}`] : []
+        }),
+      ),
+    ].filter((p) => p !== undefined)
+    if (parts.length) said.push(`Server Manager's ${kind} changed: ${parts.join("; ")}.`)
+  }
+  return said.length ? said.join("\n") : undefined
+}
+
+const list = (what: string, names: string[]): string | undefined =>
+  names.length ? `${what} ${names.join(", ")}` : undefined
+
+/** The hour of the day the list is read again, in the league's time zone: after the 04:41 backup. */
+const RECONCILE_HOUR = 5
+
+/**
+ * Reads what's installed again once a day, behind what's held. Checked every
+ * five minutes, so a restart or a clock change can't skip a day; tried once a
+ * day whether or not the read is taken, so a manager that's down, or a read
+ * `unbelievable` refuses, isn't asked again all day.
+ */
+export function reconcileDaily(
+  cache: ContentCache,
+  timeZone: string,
+  warn: (line: string) => void,
+): () => void {
+  let tried: number | undefined
+  const timer = setInterval(() => {
+    const now = new Date()
+    if (!reconcileDue(Math.max(cache.readAt() ?? 0, tried ?? 0), now, timeZone)) return
+    tried = now.getTime()
+    void cache.reconcile().catch((e: unknown) => {
+      warn(`The daily read of what's installed failed: ${(e as Error).message}`)
+    })
+  }, 5 * 60_000)
+  // Not what keeps the process up: a failed start still exits.
+  timer.unref()
+  return () => clearInterval(timer)
+}
+
+/** Whether the daily read is due: it's past today's hour and the list was read before it. */
+export function reconcileDue(readAt: number | undefined, now: Date, timeZone: string): boolean {
+  const today = DateTime.fromJSDate(now, { zone: timeZone })
+    .set({ hour: RECONCILE_HOUR, minute: 0, second: 0, millisecond: 0 })
+    .toMillis()
+  return now.getTime() >= today && (readAt === undefined || readAt < today)
 }

@@ -27,7 +27,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { HttpAcsmReader } from "../acsm/client.js"
 import { CACHE_FILE, SqliteCache } from "../acsm/cache.js"
 import { loadProfile } from "../profile/load.js"
-import { installedContent } from "../acsm/installed-content.js"
+import { installedContent, reconcileDaily } from "../acsm/installed-content.js"
 import { buildServer } from "../web/server.js"
 import { defaultProfile, loadPits, runCli, UsageError } from "./args.js"
 
@@ -281,6 +281,7 @@ async function main(argv: readonly string[]): Promise<number> {
     unthrottled: args.unthrottledReads,
     ...(cache ? { cache } : {}),
     log: (line) => app?.log.info(line),
+    onChange: (said) => app?.log.info(said),
   })
 
   // Everything after the cache is open runs inside try/finally, because the
@@ -321,9 +322,15 @@ async function main(argv: readonly string[]): Promise<number> {
     // arrives — and so a stored index from the last run is in hand rather than
     // being fetched while somebody waits on a dropdown.
     await content.warm()
+    // The daily read behind what's held, which catches a car installed in
+    // Server Manager directly. The bot finds it in the shared cache.
+    const stopReconciling = reconcileDaily(content, profile.schedule.timezone, (line) =>
+      app?.log.warn(line),
+    )
 
     await app.listen({ port: args.port, host: args.host })
     await shutdownSignal()
+    stopReconciling()
     return 0
   } finally {
     // Fastify stops accepting and drains in-flight requests. A push that is

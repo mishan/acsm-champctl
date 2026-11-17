@@ -1046,8 +1046,23 @@ async function serve(args: Args): Promise<number> {
       userAgent: BOT_USER_AGENT,
       ...(contentCache ? { cache: contentCache } : {}),
       log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
+      // champctl web's daily read, or the bot's own, found to have changed something.
+      onChange: (said) => {
+        process.stderr.write(`${new Date().toISOString()} ${said}\n`)
+        const channelId = profile.discord?.botLogChannelId
+        if (!channelId) return
+        void transport
+          .post({ channelId, content: said, source: "discord.botLogChannelId in the profile" })
+          .catch((e: unknown) => {
+            process.stderr.write(`Couldn't post a content change: ${(e as Error).message}\n`)
+          })
+      },
     })
     void installed.warm()
+    // Every minute, for a newer copy champctl web read, so its changes are
+    // posted then rather than whenever someone next nominates. A change made
+    // while the bot was down is taken at its start without a post.
+    setInterval(() => installed.peek(), 60_000).unref()
     const livery = profile.discord.livery
     const router = new LiveryRouter({
       reader,

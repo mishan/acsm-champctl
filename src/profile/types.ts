@@ -126,6 +126,12 @@ export interface DiscordSettings {
    */
   adminChannelId?: string
   /**
+   * Where GridMom says what it did on its own that nobody needs to act on,
+   * such as Server Manager's installed cars changing: kept apart from the
+   * admin channel, which is for what does need someone.
+   */
+  botLogChannelId?: string
+  /**
    * Channel announcements and standings go into. The league's channel, not the
    * admins' — this is the one drivers read.
    *
