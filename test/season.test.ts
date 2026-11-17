@@ -171,6 +171,24 @@ describe("/season", () => {
     expect((await nominate("488")).content).toBe(
       "Nominated **Ferrari 488 GT3**. You can nominate 1 more.",
     )
+    // By part of its folder name too, however it's capitalized, as the list offers it.
+    content = () => ({ cars: [{ id: "ACME_proto", name: "Prototype" }], tracks: TRACKS })
+    expect((await nominate("acme")).content).toBe("Nominated **Prototype**. That's your 2.")
+  })
+
+  it("nominates a new mod by its link, though its name is part of one installed", async () => {
+    const r = router()
+    await start(r)
+    const reply = await r.handle(
+      command("ana", "nominate", {
+        item: "Ferrari 488",
+        link: "https://mods.example/488-challenge",
+      }),
+    )
+    expect(reply.content).toBe("Nominated **Ferrari 488**. You can nominate 1 more.")
+    expect(store.nominations(store.current()!.id, "cars")[0]?.link).toBe(
+      "https://mods.example/488-challenge",
+    )
   })
 
   it("offers installed cars not yet nominated, and your own nominations to withdraw", async () => {

@@ -223,10 +223,13 @@ export class SeasonRouter {
     const link = command.options["link"]?.trim()
     const t = typed.toLowerCase()
     // Typed rather than picked, as the list lets a driver do: part of only one
-    // car's or track's name is that one.
-    const partial = installed.filter(
-      (i) => t && (i.name.toLowerCase().includes(t) || i.id.includes(t)),
-    )
+    // car's or track's name is that one. Not with a link, which names a mod
+    // that isn't installed.
+    const partial = link
+      ? []
+      : installed.filter(
+          (i) => t && (i.name.toLowerCase().includes(t) || i.id.toLowerCase().includes(t)),
+        )
     const found =
       installed.find((i) => i.id === typed) ??
       installed.find((i) => i.name.toLowerCase() === t) ??

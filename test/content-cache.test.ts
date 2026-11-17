@@ -202,6 +202,26 @@ describe("holding the content index", () => {
     })
   })
 
+  it("reads again after an hour unless told otherwise, and not before", async () => {
+    let clock = 0
+    let reads = 0
+    // As the layouts index is: no lifetime given, and nothing to read until it's asked.
+    const cache = new ContentCache<null>({ now: () => clock, load: async () => (reads++, null) })
+    await cache.get()
+    clock = 59 * 60_000
+    await cache.get()
+    expect(reads).toBe(1)
+    clock = 61 * 60_000
+    await cache.get()
+    await vi.waitFor(() => expect(reads).toBe(2))
+    await new Promise((r) => setImmediate(r))
+    // The same answer again is still a new read: it isn't asked for again until the next hour.
+    clock = 62 * 60_000
+    await cache.get()
+    await new Promise((r) => setImmediate(r))
+    expect(reads).toBe(2)
+  })
+
   it("keeps what it holds when a new read is one it shouldn't believe", async () => {
     let clock = 0
     let reads = 0

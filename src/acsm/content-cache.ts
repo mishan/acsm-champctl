@@ -35,8 +35,7 @@
 
 import type { InstalledContent } from "./content.js"
 
-/** A league installs a car every few months; a week-old list is as good as a new one. */
-const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const DEFAULT_TTL_MS = 60 * 60 * 1000
 
 /**
  * Somewhere to keep the index across restarts.
@@ -157,9 +156,8 @@ export class ContentCache<T = InstalledContent> {
     // it is two full walks of `/cars` — which is more requests than the
     // limiter allows in its window, so the second person waits out the first
     // one's rate limiting rather than on their own answer.
-    this.#inFlight ??= (this.#store ? this.#fromStore().then((s) => s ?? read()) : read())
-      .then(async (value) => {
-        if (this.#held?.value === value) return value
+    const take = () =>
+      read().then(async (value) => {
         const why = this.#believe?.(value, this.#held?.value)
         if (why) throw new Error(`Not taking this read of Server Manager: ${why}.`)
         const entry = { at: this.#now(), value }
@@ -170,9 +168,12 @@ export class ContentCache<T = InstalledContent> {
         await this.#store?.write(entry).catch(() => undefined)
         return value
       })
-      .finally(() => {
-        this.#inFlight = undefined
-      })
+    // Taken from the store, a read keeps the time it was made.
+    this.#inFlight ??= (
+      this.#store ? this.#fromStore().then((s) => (s === undefined ? take() : s)) : take()
+    ).finally(() => {
+      this.#inFlight = undefined
+    })
 
     return this.#inFlight
   }

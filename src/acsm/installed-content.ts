@@ -20,6 +20,9 @@ export interface InstalledContentOptions {
   log?: (line: string) => void
 }
 
+/** A league installs a car every few months; a week-old list is as good as a new one. */
+const HELD_MS = 7 * 24 * 60 * 60 * 1000
+
 export function installedContent(o: InstalledContentOptions): ContentCache {
   /**
    * A reader of its own, at its own pace.
@@ -52,6 +55,7 @@ export function installedContent(o: InstalledContentOptions): ContentCache {
   })
 
   return new ContentCache({
+    ttlMs: HELD_MS,
     load: async () => {
       // Timed and logged, because how long this takes is a property of the
       // league's manager — how many cars they have installed, how far away it
