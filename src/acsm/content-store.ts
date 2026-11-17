@@ -17,7 +17,7 @@
  * start; failing a request over it would cost a screen.
  */
 
-import type { InstalledContent, InstalledItem } from "../acsm/types.js"
+import type { InstalledContent, InstalledItem } from "./types.js"
 import type { ContentStore } from "./content-cache.js"
 
 /** Anything that can hold a string past the response TTL. `SqliteCache` does. */

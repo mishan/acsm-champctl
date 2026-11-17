@@ -16,7 +16,8 @@ let polls: { content: string; answers: readonly string[]; hours: number; oneVote
 let results: { finalized: boolean; counts: number[] }
 let ended: string[]
 let failPosts: boolean
-let content: () => Promise<{ cars: typeof CARS; tracks: typeof TRACKS }>
+/** What the router is handed as held; undefined before the first read is in. */
+let content: () => { cars: typeof CARS; tracks: typeof TRACKS } | undefined
 let pollPosted: Promise<void>
 
 beforeEach(async () => {
@@ -27,7 +28,7 @@ beforeEach(async () => {
   results = { finalized: true, counts: [] }
   ended = []
   failPosts = false
-  content = async () => ({ cars: CARS, tracks: TRACKS })
+  content = () => ({ cars: CARS, tracks: TRACKS })
   pollPosted = Promise.resolve()
 })
 afterEach(() => store.close())
@@ -160,12 +161,11 @@ describe("/season", () => {
     expect((await nominate("gt3")).content).toBe(
       "**gt3** could be Porsche 911 GT3 R, Ferrari 488 GT3 or McLaren 650S GT3. Pick one from the list.",
     )
-    content = async () => ({
+    content = () => ({
       cars: [...CARS, ...[1, 2, 3].map((n) => ({ id: `gt3_${n}`, name: `GT3 ${n}` }))],
       tracks: TRACKS,
     })
-    // A new router: the one above has the list read already.
-    expect((await router().handle(command("ana", "nominate", { item: "gt3" }))).content).toBe(
+    expect((await r.handle(command("ana", "nominate", { item: "gt3" }))).content).toBe(
       "**gt3** is in the names of 6 cars. Pick one from the list.",
     )
     expect((await nominate("488")).content).toBe(
@@ -347,16 +347,17 @@ describe("/season", () => {
     ])
   })
 
-  it("refuses a nomination when it can't read what's installed, rather than call it a mod", async () => {
+  it("refuses a nomination before it has what's installed, rather than call it a mod", async () => {
     const r = router()
     await start(r)
-    content = async () => {
-      throw new Error("ACSM is down")
-    }
+    content = () => undefined
     const reply = await r.handle(
       command("ana", "nominate", { item: "ks_ferrari_488_gt3", link: "https://mods.example/f" }),
     )
-    expect(reply.content).toMatch(/couldn't read the cars installed/)
+    expect(reply.content).toBe(
+      "I'm still reading the cars installed on the server. Try again in a minute.",
+    )
+    expect(await r.autocomplete(command("ana", "nominate", { item: "f" }), "item")).toEqual([])
     expect(store.nominations(store.current()!.id, "cars")).toEqual([])
   })
 

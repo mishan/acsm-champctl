@@ -15,11 +15,11 @@
  * screen hung the list of championships next to it. Three things follow, and
  * all three are about never making a person wait on this:
  *
- * - It is held for an hour. Content changes when an admin installs a car,
+ * - It is held for a week. Content changes when an admin installs a car,
  *   which happens between seasons rather than between page loads.
  * - Once stale it is *still served*, and refreshed behind whoever asked.
- *   Waiting for the refresh would put the whole cost back on somebody once an
- *   hour at random.
+ *   Waiting for the refresh would put the whole cost back on somebody once a
+ *   week at random.
  * - `warm()` starts the first read at boot, so the one load that genuinely has
  *   nothing to serve happens while nobody is looking at it.
  *
@@ -33,9 +33,10 @@
  * boot re-reads; `warm()` is what keeps that off the first click either way.
  */
 
-import type { InstalledContent } from "../acsm/content.js"
+import type { InstalledContent } from "./content.js"
 
-const DEFAULT_TTL_MS = 60 * 60 * 1000
+/** A league installs a car every few months; a week-old list is as good as a new one. */
+const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
  * Somewhere to keep the index across restarts.
@@ -88,12 +89,23 @@ export class ContentCache<T = InstalledContent> {
     // Stale is served, and refreshed behind whoever asked.
     //
     // Waiting for the refresh would put the whole cost back on a person, once
-    // an hour, at random — and an hour-old list of installed cars is wrong
-    // only if somebody installed one in the last hour. The first load has
+    // a week, at random — and a week-old list of installed cars is wrong
+    // only if somebody installed one in the last week. The first load has
     // nothing to serve and does have to wait; `warm()` is how that stops
     // landing on a person.
     const refresh = this.#refresh(load)
     return held ? held.value : refresh
+  }
+
+  /**
+   * What's held, stale or not, without waiting: for a person's request, which
+   * must never sit through a read. Starts one when there's nothing, or nothing
+   * fresh.
+   */
+  peek(): T | undefined {
+    const held = this.#held
+    if (!held || this.#now() - held.at >= this.#ttlMs) void this.#refresh().catch(() => undefined)
+    return held?.value
   }
 
   /**
@@ -134,8 +146,9 @@ export class ContentCache<T = InstalledContent> {
     // it is two full walks of `/cars` — which is more requests than the
     // limiter allows in its window, so the second person waits out the first
     // one's rate limiting rather than on their own answer.
-    this.#inFlight ??= read()
+    this.#inFlight ??= (this.#store ? this.#fromStore().then((s) => s ?? read()) : read())
       .then(async (value) => {
+        if (this.#held?.value === value) return value
         const entry = { at: this.#now(), value }
         this.#held = entry
         // Best effort, and after the value is already held: a store that
@@ -149,5 +162,16 @@ export class ContentCache<T = InstalledContent> {
       })
 
     return this.#inFlight
+  }
+
+  /**
+   * A fresh read another process sharing the store made: champctl web and the
+   * bot each hold the list, and one of them reading it a week is enough.
+   */
+  async #fromStore(): Promise<T | undefined> {
+    const stored = await this.#store?.read().catch(() => undefined)
+    if (!stored || this.#now() - stored.at >= this.#ttlMs) return undefined
+    if (!this.#held || stored.at > this.#held.at) this.#held = stored
+    return this.#held.value
   }
 }

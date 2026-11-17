@@ -31,7 +31,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest 
 import type { AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { AcsmAuthError, AcsmSession } from "../acsm/session.js"
-import { ContentCache } from "./content-cache.js"
+import { ContentCache } from "../acsm/content-cache.js"
 import { readTrackLayouts, type TrackLayouts } from "./layouts.js"
 import { classes, events, raceSetupCars } from "../acsm/view.js"
 import { importChampionship } from "../acsm/write.js"

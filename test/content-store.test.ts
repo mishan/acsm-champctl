@@ -10,7 +10,7 @@
 import { describe, expect, it } from "vitest"
 
 import { SqliteCache } from "../src/acsm/cache.js"
-import { contentStore, type KeptStore } from "../src/web/content-store.js"
+import { contentStore, type KeptStore } from "../src/acsm/content-store.js"
 
 const INDEX = {
   at: 0,
