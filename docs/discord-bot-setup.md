@@ -556,6 +556,13 @@ refresh it now with `/championship info`. Give that a message's link as
 `replace` and GridMom deletes that message once its own is up, which is how
 an info message someone posted by hand gets taken over.
 
+`/championship content`, for the same `adminRoleId`, reads Server Manager's
+installed cars and tracks again now and says what changed, as the "Re-read
+installed cars and tracks" button on champctl web's home screen does. champctl
+reads them again every day anyway; this is for a car installed in Server
+Manager directly that's wanted before then. The list in use stays until the new
+one is in, so pressing it needlessly costs a few seconds of reading.
+
 ```json
 "info": {
   "channelId": "790738391469654038",

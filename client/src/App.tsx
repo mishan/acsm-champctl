@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 
 import { api, isAuthFailure, type Config, type SessionState } from "./api"
 import { ChampionshipList } from "./components/ChampionshipList"
+import { RefreshContent } from "./components/RefreshContent"
 import { SignUps } from "./components/SignUps"
 import { applyTheme, rememberTheme } from "./theme"
 import { EventEditor } from "./components/EventEditor"
@@ -93,6 +94,7 @@ export function App(): React.JSX.Element {
               >
                 New championship
               </button>
+              <RefreshContent onAuthLost={onAuthLost} />
             </div>
             <ChampionshipList
               onOpen={(id) => navigate({ name: "championship", id })}

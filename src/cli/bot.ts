@@ -24,12 +24,13 @@ import { AcsmNotJsonError, asMessage, HttpAcsmReader, type AcsmReader } from "..
 import type { Championship } from "../acsm/types.js"
 import { announce, NothingToAnnounce, RoundRefused, type Announcement } from "../bot/announce.js"
 import { INCIDENT_COMMAND, INFO_COMMAND, LIVERY_COMMANDS, SEASON_COMMAND } from "../bot/commands.js"
+import { contentCommand } from "../bot/content.js"
 import { GatewayTransport } from "../bot/discord.js"
 import { type FinishedChampionships, SqliteFinishedStore } from "../bot/finished.js"
 import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
 import { AcsmAccessAlarm } from "../bot/acsm-access.js"
 import { carsetUrl } from "../bot/livery.js"
-import { nightlyMessages, standingsMessage } from "../bot/message.js"
+import { nightlyMessages, splitMessage, standingsMessage } from "../bot/message.js"
 import { QualiCall } from "../bot/quali-call.js"
 import { SqliteRestartStore, Watchdog } from "../bot/health.js"
 import { type PostedRounds, StandingsWatch } from "../bot/standings-watch.js"
@@ -1046,8 +1047,29 @@ async function serve(args: Args): Promise<number> {
       userAgent: BOT_USER_AGENT,
       ...(contentCache ? { cache: contentCache } : {}),
       log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
+      // champctl web's daily read, or the bot's own, found to have changed something.
+      onChange: (said) => {
+        process.stderr.write(`${new Date().toISOString()} ${said}\n`)
+        const channelId = profile.discord?.botLogChannelId
+        if (!channelId) return
+        void (async () => {
+          for (const content of splitMessage(said)) {
+            await transport.post({
+              channelId,
+              content,
+              source: "discord.botLogChannelId in the profile",
+            })
+          }
+        })().catch((e: unknown) => {
+          process.stderr.write(`Couldn't post a content change: ${(e as Error).message}\n`)
+        })
+      },
     })
     void installed.warm()
+    // Every minute, for a newer copy champctl web read, so its changes are
+    // posted then rather than whenever someone next nominates. A change made
+    // while the bot was down is taken at its start without a post.
+    setInterval(() => installed.peek(), 60_000).unref()
     const livery = profile.discord.livery
     const router = new LiveryRouter({
       reader,
@@ -1220,13 +1242,15 @@ async function serve(args: Args): Promise<number> {
     transport.listen(
       {
         handle: (c) =>
-          c.name === "championship" && info
-            ? info.handle(c)
-            : c.name === "incident" && incidents
-              ? incidents.handle(c)
-              : c.name === "season" && season
-                ? season.handle(c)
-                : router.handle(c),
+          c.name === "championship" && c.subcommand === "content" && infoSettings
+            ? contentCommand(c, { cache: installed, adminRoleId: infoSettings.adminRoleId })
+            : c.name === "championship" && info
+              ? info.handle(c)
+              : c.name === "incident" && incidents
+                ? incidents.handle(c)
+                : c.name === "season" && season
+                  ? season.handle(c)
+                  : router.handle(c),
         press: (p) =>
           incidents
             ? incidents.press(p)

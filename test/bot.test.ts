@@ -744,8 +744,8 @@ describe("the profile's Discord settings", () => {
     expect(() => withDiscord({ adminChannelId: "#admin" })).toThrow(/17 to 20 digits/)
   })
 
-  it("checks the trophy room's id like the others", () => {
-    expect(() => withDiscord({ trophyChannelId: "#trophy-room" })).toThrow(/trophyChannelId/)
+  it.each(["trophyChannelId", "botLogChannelId"])("checks %s like the others", (key) => {
+    expect(() => withDiscord({ [key]: "#somewhere" })).toThrow(new RegExp(key))
   })
 
   it.each([

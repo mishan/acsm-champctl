@@ -32,6 +32,7 @@ import type { AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { AcsmAuthError, AcsmSession } from "../acsm/session.js"
 import { ContentCache } from "../acsm/content-cache.js"
+import { refreshContent } from "../acsm/installed-content.js"
 import { readTrackLayouts, type TrackLayouts } from "./layouts.js"
 import { classes, events, raceSetupCars } from "../acsm/view.js"
 import { importChampionship } from "../acsm/write.js"
@@ -713,6 +714,16 @@ export function apiRoutes(ctx: ApiContext): FastifyPluginAsync {
       const s = requireSession(ctx, req)
       const [content, layouts] = await Promise.all([ctx.content.get(), layoutsFor(s, req)])
       return { ...content, layouts }
+    })
+
+    /** Reads what's installed again now, behind what's held; says what changed. */
+    app.post("/content/refresh", async (req): Promise<{ said: string }> => {
+      requireSession(ctx, req)
+      try {
+        return { said: await refreshContent(ctx.content) }
+      } catch (e) {
+        throw new ApiError(502, "content-unread", (e as Error).message)
+      }
     })
 
     /**

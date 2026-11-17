@@ -143,6 +143,89 @@ describe("holding the content index", () => {
     await vi.waitFor(() => expect(cache.peek()?.cars[0]?.id).toBe("a"))
   })
 
+  it("reconciles: reads again though what it holds is fresh, and says what it had", async () => {
+    let reads = 0
+    let release: (() => void) | undefined
+    const changed: [string, string][] = []
+    const cache = new ContentCache({
+      load: async () => {
+        reads++
+        if (reads > 1) await new Promise<void>((r) => (release = r))
+        return content(String(reads))
+      },
+      onChange: (before, after) => changed.push([before.cars[0]!.id, after.cars[0]!.id]),
+    })
+    await cache.get()
+    const reconciling = cache.reconcile()
+    await vi.waitFor(() => expect(release).toBeDefined())
+    release?.()
+    const { before, after } = await reconciling
+    expect([before?.cars[0]?.id, after.cars[0]?.id]).toEqual(["1", "2"])
+    expect(changed).toEqual([["1", "2"]])
+  })
+
+  it("reconciles from Server Manager though a stale peek starts a read as it begins", async () => {
+    let clock = 0
+    let reads = 0
+    const cache = new ContentCache({
+      ttlMs: 1000,
+      now: () => clock,
+      // Always fresh: a read that took it would never ask Server Manager.
+      store: {
+        read: async () => ({ at: clock, value: content("stored") }),
+        write: async () => undefined,
+      },
+      load: async () => (reads++, content("read")),
+    })
+    await cache.get()
+    clock = 2000
+    const reconciling = cache.reconcile()
+    cache.peek()
+    expect((await reconciling).after.cars[0]?.id).toBe("read")
+    expect(reads).toBe(1)
+  })
+
+  it("reconciles from Server Manager, not from a fresh copy in the store", async () => {
+    let reads = 0
+    const cache = new ContentCache({
+      store: {
+        read: async () => ({ at: Date.now(), value: content("stored") }),
+        write: async () => undefined,
+      },
+      load: async () => (reads++, content("read")),
+    })
+    expect((await cache.get()).cars[0]?.id).toBe("stored")
+    expect((await cache.reconcile()).after.cars[0]?.id).toBe("read")
+    expect(reads).toBe(1)
+  })
+
+  it("takes a newer copy another process stored, looking at most once a minute", async () => {
+    let clock = 0
+    let stored: { at: number; value: InstalledContent } | undefined = { at: 0, value: content("a") }
+    let looks = 0
+    const changed: string[] = []
+    const cache = new ContentCache({
+      now: () => clock,
+      store: {
+        read: async () => (looks++, stored),
+        write: async () => undefined,
+      },
+      load: async () => content("never"),
+      onChange: (_, after) => changed.push(after.cars[0]!.id),
+    })
+    await cache.warm()
+    await new Promise((r) => setImmediate(r))
+    const before = looks
+    stored = { at: 1000, value: content("b") }
+    clock = 30_000
+    cache.peek()
+    expect(looks).toBe(before)
+    clock = 61_000
+    cache.peek()
+    await vi.waitFor(() => expect(cache.peek()?.cars[0]?.id).toBe("b"))
+    expect(changed).toEqual(["b"])
+  })
+
   describe("across a restart", () => {
     /**
      * The point of persisting it. Re-walking `/cars` on every boot is minutes
