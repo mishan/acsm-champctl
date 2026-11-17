@@ -12,7 +12,7 @@
 import { describe, expect, it, vi } from "vitest"
 
 import type { InstalledContent } from "../src/acsm/content.js"
-import { ContentCache } from "../src/web/content-cache.js"
+import { ContentCache } from "../src/acsm/content-cache.js"
 
 const content = (id: string): InstalledContent => ({
   cars: [{ id, name: id }],
@@ -100,6 +100,49 @@ describe("holding the content index", () => {
     })
   })
 
+  it("takes another process's fresh read from the store rather than reading again", async () => {
+    // champctl web and the bot share one store: one reading is enough for both.
+    let clock = 0
+    let stored: { at: number; value: InstalledContent } | undefined
+    const store = {
+      read: async () => stored,
+      write: async (e: typeof stored) => {
+        stored = e
+      },
+    }
+    const reads: string[] = []
+    const cache = (who: string) =>
+      new ContentCache({
+        ttlMs: 1000,
+        now: () => clock,
+        store,
+        load: async () => {
+          reads.push(who)
+          return content(who)
+        },
+      })
+    const web = cache("web")
+    const bot = cache("bot")
+    await bot.get()
+    clock = 1500
+    await web.get()
+    clock = 2100
+    // The bot's own copy is stale; the store's, from the web a moment ago, isn't.
+    await bot.get()
+    await vi.waitFor(async () => expect((await bot.get()).cars[0]?.id).toBe("web"))
+    expect(reads).toEqual(["bot", "web"])
+  })
+
+  it("peeks without ever waiting on a read, and starts one when it has nothing", async () => {
+    let release: (() => void) | undefined
+    const cache = new ContentCache({
+      load: () => new Promise<InstalledContent>((r) => (release = () => r(content("a")))),
+    })
+    expect(cache.peek()).toBeUndefined()
+    release?.()
+    await vi.waitFor(() => expect(cache.peek()?.cars[0]?.id).toBe("a"))
+  })
+
   describe("across a restart", () => {
     /**
      * The point of persisting it. Re-walking `/cars` on every boot is minutes
@@ -157,6 +200,43 @@ describe("holding the content index", () => {
 
       await expect(cache.warm()).resolves.toBeUndefined()
     })
+  })
+
+  it("reads again after an hour unless told otherwise, and not before", async () => {
+    let clock = 0
+    let reads = 0
+    // As the layouts index is: no lifetime given, and nothing to read until it's asked.
+    const cache = new ContentCache<null>({ now: () => clock, load: async () => (reads++, null) })
+    await cache.get()
+    clock = 59 * 60_000
+    await cache.get()
+    expect(reads).toBe(1)
+    clock = 61 * 60_000
+    await cache.get()
+    await vi.waitFor(() => expect(reads).toBe(2))
+    await new Promise((r) => setImmediate(r))
+    // The same answer again is still a new read: it isn't asked for again until the next hour.
+    clock = 62 * 60_000
+    await cache.get()
+    await new Promise((r) => setImmediate(r))
+    expect(reads).toBe(2)
+  })
+
+  it("keeps what it holds when a new read is one it shouldn't believe", async () => {
+    let clock = 0
+    let reads = 0
+    const cache = new ContentCache({
+      ttlMs: 1000,
+      now: () => clock,
+      load: async () => (++reads === 1 ? content("a") : { cars: [], tracks: [] }),
+      believe: (next) => (next.cars.length ? undefined : "no cars"),
+    })
+    await cache.get()
+    clock = 1001
+    await cache.get()
+    await vi.waitFor(() => expect(reads).toBe(2))
+    await new Promise((r) => setImmediate(r))
+    expect((await cache.get()).cars[0]?.id).toBe("a")
   })
 
   /**

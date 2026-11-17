@@ -27,9 +27,9 @@ import { SqliteCache } from "../src/acsm/cache.js"
 import { AcsmError, type AcsmReader, HttpAcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import { IMPORT_PATH } from "../src/acsm/paths.js"
 import { AcsmSession } from "../src/acsm/session.js"
-import type { Championship, ChampionshipEvent } from "../src/acsm/types.js"
+import type { Championship, ChampionshipEvent, InstalledContent } from "../src/acsm/types.js"
 import type { FinalizePlan } from "../src/finalize/plan.js"
-import { ContentCache } from "../src/web/content-cache.js"
+import { ContentCache } from "../src/acsm/content-cache.js"
 import { PlanStore } from "../src/web/plans.js"
 import { SqliteSubmissionQueue } from "../src/liveries/queue.js"
 import type { LeagueProfile } from "../src/profile/types.js"
@@ -1734,7 +1734,9 @@ describe("previewing a new championship", () => {
   ])("names the class for %s", async (_, cars, picked, over, name) => {
     const h = harness({
       ...over,
-      content: new ContentCache({ load: async () => ({ cars: await cars(), tracks: [] }) }),
+      content: new ContentCache<InstalledContent>({
+        load: async () => ({ cars: await cars(), tracks: [] }),
+      }),
     })
     await h.login()
     const planned = await planChampionship(h, { name: "September 2026", cars: picked })

@@ -19,6 +19,7 @@ import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { CACHE_FILE, SqliteCache } from "../acsm/cache.js"
+import { installedContent } from "../acsm/installed-content.js"
 import { AcsmNotJsonError, asMessage, HttpAcsmReader, type AcsmReader } from "../acsm/client.js"
 import type { Championship } from "../acsm/types.js"
 import { announce, NothingToAnnounce, RoundRefused, type Announcement } from "../bot/announce.js"
@@ -985,6 +986,9 @@ async function serve(args: Args): Promise<number> {
   const infoSettings = profile.discord.info
   const infoStore = infoSettings ? await SqliteInfoStore.open(storePath) : undefined
   const restarts = await SqliteRestartStore.open(storePath)
+  const contentCache = args.cache
+    ? await SqliteCache.open({ path: resolve(process.cwd(), CACHE_FILE) })
+    : undefined
   const wait = restarts.waitMs()
   if (wait > 0) {
     process.stderr.write(`Gave up last time; waiting ${wait / 60_000} min before starting.\n`)
@@ -1036,6 +1040,14 @@ async function serve(args: Args): Promise<number> {
       userAgent: BOT_USER_AGENT,
       fetch: access.fetch(globalThis.fetch.bind(globalThis)),
     })
+    // The same held list champctl web reads, through the cache file both keep.
+    const installed = installedContent({
+      baseUrl,
+      userAgent: BOT_USER_AGENT,
+      ...(contentCache ? { cache: contentCache } : {}),
+      log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
+    })
+    void installed.warm()
     const livery = profile.discord.livery
     const router = new LiveryRouter({
       reader,
@@ -1124,7 +1136,7 @@ async function serve(args: Args): Promise<number> {
             store: seasonStore,
             adminRoleId: seasonSettings.adminRoleId,
             voterRoleId: seasonSettings.voterRoleId,
-            content: () => reader.listContent(),
+            content: () => installed.peek(),
             log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
             channel: {
               post: (content, pingRoles) =>
@@ -1406,6 +1418,7 @@ async function serve(args: Args): Promise<number> {
     racersStore?.close()
     infoStore?.close()
     restarts.close()
+    contentCache?.close()
     trophies.close()
     finished.close()
     tokens.close()

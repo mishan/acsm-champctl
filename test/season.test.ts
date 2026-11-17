@@ -16,7 +16,8 @@ let polls: { content: string; answers: readonly string[]; hours: number; oneVote
 let results: { finalized: boolean; counts: number[] }
 let ended: string[]
 let failPosts: boolean
-let content: () => Promise<{ cars: typeof CARS; tracks: typeof TRACKS }>
+/** What the router is handed as held; undefined before the first read is in. */
+let content: () => { cars: typeof CARS; tracks: typeof TRACKS } | undefined
 let pollPosted: Promise<void>
 
 beforeEach(async () => {
@@ -27,7 +28,7 @@ beforeEach(async () => {
   results = { finalized: true, counts: [] }
   ended = []
   failPosts = false
-  content = async () => ({ cars: CARS, tracks: TRACKS })
+  content = () => ({ cars: CARS, tracks: TRACKS })
   pollPosted = Promise.resolve()
 })
 afterEach(() => store.close())
@@ -151,6 +152,43 @@ describe("/season", () => {
       "Withdrawn: **Audi R8 LMS**.",
     )
     expect((await nominate("ana", "McLaren 650S GT3")).content).toMatch(/^Nominated/)
+  })
+
+  it("takes part of an installed car's name, typed rather than picked, when it's only that car's", async () => {
+    const r = router()
+    await start(r)
+    const nominate = (item: string) => r.handle(command("ana", "nominate", { item }))
+    expect((await nominate("gt3")).content).toBe(
+      "**gt3** could be Porsche 911 GT3 R, Ferrari 488 GT3 or McLaren 650S GT3. Pick one from the list.",
+    )
+    content = () => ({
+      cars: [...CARS, ...[1, 2, 3].map((n) => ({ id: `gt3_${n}`, name: `GT3 ${n}` }))],
+      tracks: TRACKS,
+    })
+    expect((await r.handle(command("ana", "nominate", { item: "gt3" }))).content).toBe(
+      "**gt3** is in the names of 6 cars. Pick one from the list.",
+    )
+    expect((await nominate("488")).content).toBe(
+      "Nominated **Ferrari 488 GT3**. You can nominate 1 more.",
+    )
+    // By part of its folder name too, however it's capitalized, as the list offers it.
+    content = () => ({ cars: [{ id: "ACME_proto", name: "Prototype" }], tracks: TRACKS })
+    expect((await nominate("acme")).content).toBe("Nominated **Prototype**. That's your 2.")
+  })
+
+  it("nominates a new mod by its link, though its name is part of one installed", async () => {
+    const r = router()
+    await start(r)
+    const reply = await r.handle(
+      command("ana", "nominate", {
+        item: "Ferrari 488",
+        link: "https://mods.example/488-challenge",
+      }),
+    )
+    expect(reply.content).toBe("Nominated **Ferrari 488**. You can nominate 1 more.")
+    expect(store.nominations(store.current()!.id, "cars")[0]?.link).toBe(
+      "https://mods.example/488-challenge",
+    )
   })
 
   it("offers installed cars not yet nominated, and your own nominations to withdraw", async () => {
@@ -327,16 +365,17 @@ describe("/season", () => {
     ])
   })
 
-  it("refuses a nomination when it can't read what's installed, rather than call it a mod", async () => {
+  it("refuses a nomination before it has what's installed, rather than call it a mod", async () => {
     const r = router()
     await start(r)
-    content = async () => {
-      throw new Error("ACSM is down")
-    }
+    content = () => undefined
     const reply = await r.handle(
       command("ana", "nominate", { item: "ks_ferrari_488_gt3", link: "https://mods.example/f" }),
     )
-    expect(reply.content).toMatch(/couldn't read the cars installed/)
+    expect(reply.content).toBe(
+      "I'm still reading the cars installed on the server. Try again in a minute.",
+    )
+    expect(await r.autocomplete(command("ana", "nominate", { item: "f" }), "item")).toEqual([])
     expect(store.nominations(store.current()!.id, "cars")).toEqual([])
   })
 

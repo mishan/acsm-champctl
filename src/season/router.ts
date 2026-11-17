@@ -5,7 +5,7 @@
  * through; a tie at the cut is left to the admins.
  */
 
-import type { InstalledContent, InstalledItem } from "../acsm/types.js"
+import type { InstalledContent } from "../acsm/types.js"
 import type { CommandReply, SlashCommand } from "../bot/transport.js"
 import type { Kind, Nomination, SeasonVote, SqliteSeasonStore } from "./store.js"
 
@@ -41,8 +41,12 @@ export interface SeasonRouterOptions {
   /** Who nominates and votes: the Racers. */
   voterRoleId: string
   channel: SeasonChannel
-  /** What's installed on the server, to nominate from. */
-  content: () => Promise<InstalledContent>
+  /**
+   * What's installed on the server, to nominate from, as held: nothing a
+   * person is waiting on reads it from Server Manager. Undefined until the
+   * first read is in.
+   */
+  content: () => InstalledContent | undefined
   now?: () => Date
   log?: (line: string) => void
 }
@@ -62,7 +66,6 @@ const clip = (s: string, n = 100) => (s.length > n ? `${s.slice(0, n - 1)}…` :
 
 export class SeasonRouter {
   readonly #o: SeasonRouterOptions
-  #content: { at: number; value: Promise<InstalledContent> } | undefined
   #advancing: Promise<void> | undefined
 
   constructor(options: SeasonRouterOptions) {
@@ -107,7 +110,7 @@ export class SeasonRouter {
         .slice(0, 25)
     }
     const taken = new Set(nominated.map((n) => n.item))
-    return (await this.#installed(kind).catch(() => []))
+    return (this.#o.content()?.[kind] ?? [])
       .filter((i) => !taken.has(i.id))
       .map((i) => ({ name: clip(i.name), value: i.id }))
       .filter(matches)
@@ -196,15 +199,13 @@ export class SeasonRouter {
     const kind = v && nominating(v, this.#now())
     if (!v || !kind) return { content: "Nominations aren't open right now." }
     const { one, many } = NOUN[kind]
-    let installed: InstalledItem[]
-    try {
-      installed = await this.#installed(kind)
-    } catch {
+    const installed = this.#o.content()?.[kind]
+    if (!installed) {
       return {
-        content: `I couldn't read the ${many} installed on the server. Try again in a minute.`,
+        content: `I'm still reading the ${many} installed on the server. Try again in a minute.`,
       }
     }
-    // Counted after the wait above, so two nominations at once can't both pass.
+    // Counted with no await before the nomination is stored, so two at once can't both pass.
     const nominated = this.#o.store.nominations(v.id, kind)
     const mine = nominated.filter((n) => n.nominatedBy === command.userId)
     if (mine.length >= NOMINATIONS_EACH) {
@@ -220,9 +221,28 @@ export class SeasonRouter {
 
     const typed = (command.options["item"] ?? "").trim()
     const link = command.options["link"]?.trim()
+    const t = typed.toLowerCase()
+    // Typed rather than picked, as the list lets a driver do: part of only one
+    // car's or track's name is that one. Not with a link, which names a mod
+    // that isn't installed.
+    const partial = link
+      ? []
+      : installed.filter(
+          (i) => t && (i.name.toLowerCase().includes(t) || i.id.toLowerCase().includes(t)),
+        )
     const found =
       installed.find((i) => i.id === typed) ??
-      installed.find((i) => i.name.toLowerCase() === typed.toLowerCase())
+      installed.find((i) => i.name.toLowerCase() === t) ??
+      (partial.length === 1 ? partial[0] : undefined)
+    if (!found && partial.length > 1) {
+      const names = partial.map((i) => i.name)
+      return {
+        content:
+          names.length > 5
+            ? `**${typed}** is in the names of ${names.length} ${many}. Pick one from the list.`
+            : `**${typed}** could be ${names.slice(0, -1).join(", ")} or ${names.at(-1)}. Pick one from the list.`,
+      }
+    }
     let nomination: Nomination
     if (found) {
       nomination = { item: found.id, label: found.name, nominatedBy: command.userId }
@@ -397,19 +417,6 @@ export class SeasonRouter {
         .map((c) => c.label),
       tied: tiedAtCut ? counts.filter((c) => c.votes === cut).map((c) => c.label) : [],
     }
-  }
-
-  /** Installed cars or tracks, read once every ten minutes: the listing is ACSM's slowest read. */
-  async #installed(kind: Kind): Promise<InstalledItem[]> {
-    const now = Date.now()
-    if (!this.#content || now - this.#content.at > 10 * 60_000) {
-      this.#content = { at: now, value: this.#o.content() }
-    }
-    const c = await this.#content.value.catch((e: unknown) => {
-      this.#content = undefined
-      throw e
-    })
-    return c[kind]
   }
 }
 
