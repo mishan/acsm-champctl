@@ -202,6 +202,23 @@ describe("holding the content index", () => {
     })
   })
 
+  it("keeps what it holds when a new read is one it shouldn't believe", async () => {
+    let clock = 0
+    let reads = 0
+    const cache = new ContentCache({
+      ttlMs: 1000,
+      now: () => clock,
+      load: async () => (++reads === 1 ? content("a") : { cars: [], tracks: [] }),
+      believe: (next) => (next.cars.length ? undefined : "no cars"),
+    })
+    await cache.get()
+    clock = 1001
+    await cache.get()
+    await vi.waitFor(() => expect(reads).toBe(2))
+    await new Promise((r) => setImmediate(r))
+    expect((await cache.get()).cars[0]?.id).toBe("a")
+  })
+
   /**
    * A failed read must not be remembered as an answer, or a manager that was
    * briefly down leaves the screen with an empty car list for an hour — and a

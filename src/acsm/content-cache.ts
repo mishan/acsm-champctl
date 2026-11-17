@@ -65,6 +65,11 @@ export interface ContentCacheOptions<T = InstalledContent> {
   store?: ContentStore<T>
   ttlMs?: number
   now?: () => number
+  /**
+   * Why a new read shouldn't replace what's held, if it shouldn't: the read
+   * is then a failure, and what's held stays.
+   */
+  believe?: (next: T, held: T | undefined) => string | undefined
 }
 
 export class ContentCache<T = InstalledContent> {
@@ -72,6 +77,7 @@ export class ContentCache<T = InstalledContent> {
   readonly #store: ContentStore<T> | undefined
   readonly #ttlMs: number
   readonly #now: () => number
+  readonly #believe: ContentCacheOptions<T>["believe"]
   #held: { at: number; value: T } | undefined
   #inFlight: Promise<T> | undefined
 
@@ -80,6 +86,7 @@ export class ContentCache<T = InstalledContent> {
     this.#store = options.store
     this.#ttlMs = options.ttlMs ?? DEFAULT_TTL_MS
     this.#now = options.now ?? Date.now
+    this.#believe = options.believe
   }
 
   async get(load?: () => Promise<T>): Promise<T> {
@@ -94,7 +101,11 @@ export class ContentCache<T = InstalledContent> {
     // nothing to serve and does have to wait; `warm()` is how that stops
     // landing on a person.
     const refresh = this.#refresh(load)
-    return held ? held.value : refresh
+    if (!held) return refresh
+    // Nobody awaits a refresh behind what's held, and a rejection nobody
+    // handles ends the process.
+    refresh.catch(() => undefined)
+    return held.value
   }
 
   /**
@@ -149,6 +160,8 @@ export class ContentCache<T = InstalledContent> {
     this.#inFlight ??= (this.#store ? this.#fromStore().then((s) => s ?? read()) : read())
       .then(async (value) => {
         if (this.#held?.value === value) return value
+        const why = this.#believe?.(value, this.#held?.value)
+        if (why) throw new Error(`Not taking this read of Server Manager: ${why}.`)
         const entry = { at: this.#now(), value }
         this.#held = entry
         // Best effort, and after the value is already held: a store that

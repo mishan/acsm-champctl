@@ -5,6 +5,7 @@
  */
 
 import { HttpAcsmReader } from "./client.js"
+import type { InstalledContent } from "./content.js"
 import type { KeptStore } from "./content-store.js"
 import { ContentCache } from "./content-cache.js"
 import { contentStore } from "./content-store.js"
@@ -70,5 +71,29 @@ export function installedContent(o: InstalledContentOptions): ContentCache {
     // the screen. `--no-cache` opts out of this too, which is what that flag
     // means.
     ...(o.cache ? { store: contentStore(o.cache, o.baseUrl) } : {}),
+    believe: (next, held) => {
+      const why = unbelievable(next, held)
+      if (why) o.log?.(`Kept the list of what's installed: ${why}.`)
+      return why
+    },
   })
+}
+
+/**
+ * Why a new read of what's installed looks like a failed one, if it does. A
+ * listing Server Manager fails to serve reads as an empty one, and taken, it
+ * would leave every picker empty for a week; nobody uninstalls half a league's
+ * cars between two reads.
+ */
+export function unbelievable(
+  next: InstalledContent,
+  held: InstalledContent | undefined,
+): string | undefined {
+  for (const kind of ["cars", "tracks"] as const) {
+    const was = held?.[kind].length ?? 0
+    if (was && next[kind].length < was / 2) {
+      return `it has ${next[kind].length} ${kind}, where there were ${was}`
+    }
+  }
+  return undefined
 }
