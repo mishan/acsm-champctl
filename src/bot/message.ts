@@ -236,3 +236,27 @@ function render(subject: string, findings: readonly Finding[], opts: MessageOpti
     { subject, minSeverity: opts.minSeverity ?? DEFAULT_MIN_SEVERITY },
   )
 }
+
+/**
+ * A message too long for Discord in parts that fit, split where a name, a
+ * clause or a line ends. Discord refuses one over its limit outright, so a
+ * long one unsplit is one that never arrives.
+ */
+export function splitMessage(text: string, limit = MESSAGE_LIMIT): string[] {
+  const out: string[] = []
+  let part = ""
+  for (const piece of text.split(/(?<=, |; |\n)/)) {
+    if (part && part.length + piece.length > limit) {
+      out.push(part)
+      part = ""
+    }
+    part += piece
+    // Nowhere to split: cut, keeping the rest for the next part.
+    while (part.length > limit) {
+      out.push(part.slice(0, limit))
+      part = part.slice(limit)
+    }
+  }
+  if (part) out.push(part)
+  return out
+}

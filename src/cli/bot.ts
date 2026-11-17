@@ -30,7 +30,7 @@ import { type FinishedChampionships, SqliteFinishedStore } from "../bot/finished
 import { LiveryRouter, liveryRouterSettings } from "../bot/livery-router.js"
 import { AcsmAccessAlarm } from "../bot/acsm-access.js"
 import { carsetUrl } from "../bot/livery.js"
-import { nightlyMessages, standingsMessage } from "../bot/message.js"
+import { nightlyMessages, splitMessage, standingsMessage } from "../bot/message.js"
 import { QualiCall } from "../bot/quali-call.js"
 import { SqliteRestartStore, Watchdog } from "../bot/health.js"
 import { type PostedRounds, StandingsWatch } from "../bot/standings-watch.js"
@@ -1052,11 +1052,17 @@ async function serve(args: Args): Promise<number> {
         process.stderr.write(`${new Date().toISOString()} ${said}\n`)
         const channelId = profile.discord?.botLogChannelId
         if (!channelId) return
-        void transport
-          .post({ channelId, content: said, source: "discord.botLogChannelId in the profile" })
-          .catch((e: unknown) => {
-            process.stderr.write(`Couldn't post a content change: ${(e as Error).message}\n`)
-          })
+        void (async () => {
+          for (const content of splitMessage(said)) {
+            await transport.post({
+              channelId,
+              content,
+              source: "discord.botLogChannelId in the profile",
+            })
+          }
+        })().catch((e: unknown) => {
+          process.stderr.write(`Couldn't post a content change: ${(e as Error).message}\n`)
+        })
       },
     })
     void installed.warm()
