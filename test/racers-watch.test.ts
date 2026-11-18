@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { Championship } from "../src/acsm/types.js"
@@ -8,7 +8,8 @@ import { type RacerRole, RacersWatch } from "../src/racers/watch.js"
 import { championship, championshipClass, driver, entryList, raceEvent } from "./support/build.js"
 
 const ROLE = "555555555555555555"
-const DAY = 86_400_000
+const MINUTE = 60_000
+const DAY = 1440 * MINUTE
 const ENDS = Date.parse("2026-10-01T05:00:00Z")
 const at = (days: number) => new Date(ENDS + days * DAY)
 
@@ -380,6 +381,26 @@ describe("RacersWatch", () => {
     h.finish()
     await expect(h.watch.tick(at(30))).rejects.toThrow(/timed out/)
     expect(h.holders.size).toBe(3)
+  })
+
+  it("tells the admins only once the check has failed four times in a row", async () => {
+    const o = { failRead: true }
+    const h = harness(o)
+    vi.useFakeTimers({ now: at(-1) })
+    try {
+      const stop = h.watch.start(MINUTE)
+      await vi.advanceTimersByTimeAsync(2 * MINUTE)
+      o.failRead = false
+      await vi.advanceTimersByTimeAsync(MINUTE)
+      o.failRead = true
+      await vi.advanceTimersByTimeAsync(3 * MINUTE)
+      expect(h.told).toEqual([])
+      await vi.advanceTimersByTimeAsync(MINUTE)
+      expect(h.told).toEqual(["I couldn't look after the Racers role: timed out"])
+      await stop()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("pings only the people each reminder names", async () => {

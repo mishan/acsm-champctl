@@ -957,6 +957,23 @@ describe("GatewayTransport roles", () => {
     expect(asked).toEqual(["0", "2"])
   })
 
+  it("points to the Server Members intent only when Discord refuses the list", async () => {
+    let failure: Error = refusedAccess()
+    const client = {
+      rest: {
+        get: async () => {
+          throw failure
+        },
+      },
+    }
+    const t = GatewayTransport.wrapping(client as unknown as Client)
+    await expect(t.roleHolders("g", "r")).rejects.toThrow(/Server Members intent/)
+    failure = new Error("Connect Timeout Error")
+    await expect(t.roleHolders("g", "r")).rejects.toThrow(
+      /^Couldn't list the server's members: Connect Timeout Error\.$/,
+    )
+  })
+
   it("gives nothing to someone who has left the server, and says why anything else failed", async () => {
     const client = {
       rest: {
