@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import { type AcsmReader, StaticAcsmReader } from "../src/acsm/client.js"
 import type { Championship } from "../src/acsm/types.js"
@@ -8,7 +8,8 @@ import { type RacerRole, RacersWatch } from "../src/racers/watch.js"
 import { championship, championshipClass, driver, entryList, raceEvent } from "./support/build.js"
 
 const ROLE = "555555555555555555"
-const DAY = 86_400_000
+const MINUTE = 60_000
+const DAY = 1440 * MINUTE
 const ENDS = Date.parse("2026-10-01T05:00:00Z")
 const at = (days: number) => new Date(ENDS + days * DAY)
 
@@ -380,6 +381,50 @@ describe("RacersWatch", () => {
     h.finish()
     await expect(h.watch.tick(at(30))).rejects.toThrow(/timed out/)
     expect(h.holders.size).toBe(3)
+  })
+
+  it("tells the admins once the check has failed for an hour, across a restart", async () => {
+    const o = { failRead: false }
+    const h = harness(o)
+    vi.useFakeTimers({ now: at(-1) })
+    try {
+      let stop = h.watch.start(15 * MINUTE)
+      await vi.advanceTimersByTimeAsync(MINUTE)
+      o.failRead = true
+      await vi.advanceTimersByTimeAsync(30 * MINUTE)
+      await stop()
+      h.restart()
+      stop = h.watch.start(15 * MINUTE)
+      await vi.advanceTimersByTimeAsync(15 * MINUTE)
+      expect(h.told).toEqual([])
+      await vi.advanceTimersByTimeAsync(15 * MINUTE)
+      expect(h.told).toEqual(["I couldn't look after the Racers role: timed out"])
+      await stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("doesn't tell of one failure on a first start, or after the bot was down", async () => {
+    const o = { failRead: true }
+    const h = harness(o)
+    vi.useFakeTimers({ now: at(-1) })
+    try {
+      let stop = h.watch.start(15 * MINUTE)
+      await vi.advanceTimersByTimeAsync(MINUTE)
+      o.failRead = false
+      await vi.advanceTimersByTimeAsync(15 * MINUTE)
+      await stop()
+      vi.advanceTimersByTime(3 * 60 * MINUTE)
+      o.failRead = true
+      h.restart()
+      stop = h.watch.start(15 * MINUTE)
+      await vi.advanceTimersByTimeAsync(MINUTE)
+      expect(h.told).toEqual([])
+      await stop()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("pings only the people each reminder names", async () => {

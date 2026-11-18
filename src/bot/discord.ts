@@ -625,8 +625,10 @@ export class GatewayTransport implements DiscordTransport {
         })
         .catch((e: unknown) => {
           throw new BotError(
-            `Couldn't list the server's members: ${message(e)}. Turn on the Server Members ` +
-              "intent under Bot in the Discord Developer Portal.",
+            `Couldn't list the server's members: ${message(e)}.` +
+              (refusal(e)
+                ? " Turn on the Server Members intent under Bot in the Discord Developer Portal."
+                : ""),
           )
         })) as APIGuildMember[]
       for (const m of page) {
