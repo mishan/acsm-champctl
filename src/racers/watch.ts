@@ -49,12 +49,12 @@ const REMIND = 3 * DAY
  */
 const STALE = 42 * DAY
 /**
- * How long without a good check before the admins hear of it. A blip on the
- * way to ACSM or Discord fails one check, and the next gets through. Longer
- * than the watchdog's 45 minutes, so the last good check is kept in the store
- * to outlast the restart.
+ * How long checks must keep failing before the admins hear of it: the fourth
+ * failure in a row at the usual pace. A blip on the way to ACSM or Discord
+ * fails one check, and the next gets through. The watchdog restarts the bot
+ * sooner than this, so when the failures began is kept in the store.
  */
-const QUIET = 60 * MINUTE
+const QUIET = 45 * MINUTE
 
 export interface RacerRole {
   /** Who holds the role, bots aside, each with the name the server shows. */
@@ -136,8 +136,13 @@ export class RacersWatch {
           report?.(false, e)
           const why = asMessage(e)
           this.#o.log(`racers: ${why}`)
-          const checked = this.#o.marks.get("checked")?.getTime() ?? 0
-          if (Date.now() - checked < QUIET || why === this.#told) return
+          const marks = this.#o.marks
+          const failing = marks.get("failing")
+          const checked = marks.get("checked")
+          // A good check since the last failure, or none recorded: this failure starts a new run.
+          if (!failing || (checked && checked > failing)) marks.set("failing", new Date())
+          const since = marks.get("failing")?.getTime() ?? Date.now()
+          if (Date.now() - since < QUIET || why === this.#told) return
           this.#told = why
           await this.#o.notify(`I couldn't look after the Racers role: ${why}`).catch(() => {})
         })

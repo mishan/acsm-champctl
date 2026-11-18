@@ -405,6 +405,28 @@ describe("RacersWatch", () => {
     }
   })
 
+  it("doesn't tell of one failure on a first start, or after the bot was down", async () => {
+    const o = { failRead: true }
+    const h = harness(o)
+    vi.useFakeTimers({ now: at(-1) })
+    try {
+      let stop = h.watch.start(15 * MINUTE)
+      await vi.advanceTimersByTimeAsync(MINUTE)
+      o.failRead = false
+      await vi.advanceTimersByTimeAsync(15 * MINUTE)
+      await stop()
+      vi.advanceTimersByTime(3 * 60 * MINUTE)
+      o.failRead = true
+      h.restart()
+      stop = h.watch.start(15 * MINUTE)
+      await vi.advanceTimersByTimeAsync(MINUTE)
+      expect(h.told).toEqual([])
+      await stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("pings only the people each reminder names", async () => {
     const h = harness()
     for (let i = 0; i < 150; i++) h.holders.add(String(10n ** 17n + BigInt(i)))
