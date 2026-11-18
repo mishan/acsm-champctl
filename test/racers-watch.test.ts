@@ -383,19 +383,21 @@ describe("RacersWatch", () => {
     expect(h.holders.size).toBe(3)
   })
 
-  it("tells the admins only once the check has failed four times in a row", async () => {
-    const o = { failRead: true }
+  it("tells the admins once the check has failed for an hour, across a restart", async () => {
+    const o = { failRead: false }
     const h = harness(o)
     vi.useFakeTimers({ now: at(-1) })
     try {
-      const stop = h.watch.start(MINUTE)
-      await vi.advanceTimersByTimeAsync(2 * MINUTE)
-      o.failRead = false
+      let stop = h.watch.start(15 * MINUTE)
       await vi.advanceTimersByTimeAsync(MINUTE)
       o.failRead = true
-      await vi.advanceTimersByTimeAsync(3 * MINUTE)
+      await vi.advanceTimersByTimeAsync(30 * MINUTE)
+      await stop()
+      h.restart()
+      stop = h.watch.start(15 * MINUTE)
+      await vi.advanceTimersByTimeAsync(15 * MINUTE)
       expect(h.told).toEqual([])
-      await vi.advanceTimersByTimeAsync(MINUTE)
+      await vi.advanceTimersByTimeAsync(15 * MINUTE)
       expect(h.told).toEqual(["I couldn't look after the Racers role: timed out"])
       await stop()
     } finally {

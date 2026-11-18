@@ -49,11 +49,12 @@ const REMIND = 3 * DAY
  */
 const STALE = 42 * DAY
 /**
- * Failed checks in a row before the admins hear of it: an hour at the usual
- * pace. A blip on the way to ACSM or Discord fails one check, and the next
- * gets through.
+ * How long without a good check before the admins hear of it. A blip on the
+ * way to ACSM or Discord fails one check, and the next gets through. Longer
+ * than the watchdog's 45 minutes, so the last good check is kept in the store
+ * to outlast the restart.
  */
-const QUIET_FAILURES = 4
+const QUIET = 60 * MINUTE
 
 export interface RacerRole {
   /** Who holds the role, bots aside, each with the name the server shows. */
@@ -105,7 +106,6 @@ export class RacersWatch {
   readonly #gone = new Set<string>()
   /** The last failure the admins were told about, so each tick doesn't repeat it. */
   #told = ""
-  #failures = 0
   #stopped = false
   /** A post that failed this tick other than by Discord's refusal, raised once the rest is done. */
   #unsent: { error: unknown } | undefined
@@ -129,14 +129,15 @@ export class RacersWatch {
       ticking = this.tick(new Date())
         .then(() => {
           this.#told = ""
-          this.#failures = 0
+          this.#o.marks.set("checked", new Date())
           report?.(true)
         })
         .catch(async (e: unknown) => {
           report?.(false, e)
           const why = asMessage(e)
           this.#o.log(`racers: ${why}`)
-          if (++this.#failures < QUIET_FAILURES || why === this.#told) return
+          const checked = this.#o.marks.get("checked")?.getTime() ?? 0
+          if (Date.now() - checked < QUIET || why === this.#told) return
           this.#told = why
           await this.#o.notify(`I couldn't look after the Racers role: ${why}`).catch(() => {})
         })
