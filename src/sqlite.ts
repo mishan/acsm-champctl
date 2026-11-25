@@ -86,23 +86,28 @@ export function migrate(
       .get(component) as { version: number } | undefined
     return Number(row?.version ?? 0)
   }
-  const at = versionNow()
-
-  if (at > migrations.length) {
-    throw new Error(
-      `The ${component} tables in this database are at schema version ${at} and this champctl ` +
-        `only knows ${migrations.length}. It was written by a newer version — upgrade champctl ` +
-        `rather than letting this one write to it.`,
-    )
+  const refuseNewer = (at: number) => {
+    if (at > migrations.length) {
+      throw new Error(
+        `The ${component} tables in this database are at schema version ${at} and this champctl ` +
+          `only knows ${migrations.length}. It was written by a newer version — upgrade champctl ` +
+          `rather than letting this one write to it.`,
+      )
+    }
   }
+  const at = versionNow()
+  refuseNewer(at)
 
   for (let i = at; i < migrations.length; i += 1) {
     const step = migrations[i] as Migration
     db.exec("BEGIN IMMEDIATE")
     // Processes sharing a file start together after a deploy: another may
-    // have run this step between the read above and this lock.
-    if (versionNow() > i) {
-      db.exec("COMMIT")
+    // have run this step, or a newer champctl more, between the read above
+    // and this lock.
+    const locked = versionNow()
+    if (locked > i) {
+      db.exec("ROLLBACK")
+      refuseNewer(locked)
       continue
     }
     try {

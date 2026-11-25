@@ -239,6 +239,27 @@ describe("lap store migrations", () => {
     second.close()
   })
 
+  it("refuses a newer champctl's schema committed in that same gap", async () => {
+    const path = join(dir, "store.db")
+    const first = new DatabaseSync(path)
+    const second = new DatabaseSync(path)
+    migrate(first, "laps", LAP_MIGRATIONS.slice(0, 1))
+    const newer = [...LAP_MIGRATIONS, { name: "laps: from a newer champctl", up: () => {} }]
+    let raced = false
+    const steps = new Proxy(LAP_MIGRATIONS, {
+      get(target, key, receiver) {
+        if (key === "length" && !raced) {
+          raced = true
+          migrate(first, "laps", newer)
+        }
+        return Reflect.get(target, key, receiver)
+      },
+    })
+    expect(() => migrate(second, "laps", steps)).toThrow(/written by a newer version/)
+    first.close()
+    second.close()
+  })
+
   it("refuses a row to write that has no count", async () => {
     const s = await open()
     const { laps: _, ...uncounted } = round
