@@ -1,8 +1,8 @@
 # Race lap count from practice
 
-Each race's lap count, worked out from that week's practice. The plan is for the
-bot to propose it on race day and track staff to apply it with a button; so far,
-`gridmom laps` works out the count and prints it. The rule is the league's
+Each race's lap count, worked out from that week's practice. `gridmom laps`
+works out the count and prints it; `champctl-laps` is to set it on race day
+(see [Setting it on race day](#setting-it-on-race-day)). The rule is the league's
 own:
 
 ```
@@ -49,11 +49,36 @@ is the league's to change, not champctl's to second-guess.
 
 The round's own while it is still timed (`Race.Time` with `Laps` 0, which is
 what the 1x40 and 2x20 presets write), otherwise the profile's
-`lapCount.raceMinutes`. Staff will be able to change it on the proposal itself.
+`lapCount.raceMinutes`. A championship's own minutes, set in champctl web, are to
+override it.
 
 Measured on 2026-11-04 against Lime Rock: 13 practice sessions, 270 valid laps
 from 11 drivers, fastest 54.694 s. 20 minutes gives 22 laps, the count set by hand
 that week.
+
+## Setting it on race day
+
+Being built; this records the design. `champctl-laps`, a service with the drain's
+Server Manager login, sets the count at `lapCount.proposeAt` (09:00) league time
+on race day, once. The bot posts what it did: the count to the Racers' channel,
+every outcome to the bot log.
+
+- **Only a placeholder is replaced.** champctl records each round's laps when it
+  first sees the round (`lap_baseline`). On race day, laps that differ were set
+  by someone and are left alone, and so is a round first seen that morning:
+  champctl never guesses which number is the placeholder.
+- **Practice up to 09:00 counts,** even when the service catches up later in the
+  day, so a late start can't change the count.
+- **Only the lap count is written,** through the same event-form save as
+  champctl web, then read back. The livery drain's lease is taken first: a lap
+  change inside a drain pass reads to the drain as drift and halts it.
+- **Each round and night is decided once,** in one insert (`lap_proposal`). A row
+  being written has a holder and a lease, so a writer that dies lets go and the
+  next one reads the round to see how far it got.
+- **A wrong password stops the logins** until a restart, as the drain does:
+  retrying is what gets an IP banned.
+
+The first race day runs as a dry run, deciding and logging without the save.
 
 ## Later
 

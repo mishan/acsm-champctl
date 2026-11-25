@@ -80,10 +80,13 @@ export function migrate(
   migrations: readonly Migration[],
 ): void {
   db.exec(VERSIONS)
-  const row = db
-    .prepare("SELECT version FROM champctl_schema WHERE component = ?")
-    .get(component) as { version: number } | undefined
-  const at = Number(row?.version ?? 0)
+  const versionNow = () => {
+    const row = db
+      .prepare("SELECT version FROM champctl_schema WHERE component = ?")
+      .get(component) as { version: number } | undefined
+    return Number(row?.version ?? 0)
+  }
+  const at = versionNow()
 
   if (at > migrations.length) {
     throw new Error(
@@ -96,6 +99,12 @@ export function migrate(
   for (let i = at; i < migrations.length; i += 1) {
     const step = migrations[i] as Migration
     db.exec("BEGIN IMMEDIATE")
+    // Processes sharing a file start together after a deploy: another may
+    // have run this step between the read above and this lock.
+    if (versionNow() > i) {
+      db.exec("COMMIT")
+      continue
+    }
     try {
       step.up(db)
       db.prepare(
