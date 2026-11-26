@@ -169,7 +169,7 @@ export class ContentFiles {
     }
     if ((meta.heldUntil ?? 0) > this.#now()) return
     if (!(await this.#spend(mirror))) {
-      this.#hold(path, `the ${this.#o.perHour ?? PER_HOUR} requests an hour are spent`)
+      await this.#hold(path, `the ${this.#o.perHour ?? PER_HOUR} requests an hour are spent`)
       return
     }
     const mirrored = await readPlain(join(mirror, path))

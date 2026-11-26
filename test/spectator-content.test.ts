@@ -185,6 +185,8 @@ describe("ContentFiles", () => {
     c = await open({ perHour: 3 })
     for (const p of paths.slice(2)) await readTwice(c, p)
     expect(requests).toHaveLength(3)
+    const held = JSON.parse(await readFile(join(mirror, ".meta", `${paths[4]}.json`), "utf8"))
+    expect(held.heldUntil, "held before the fetch is done").toBeGreaterThan(clock)
     clock += 3600_000
     await readTwice(c, paths[4] ?? "")
     expect(requests).toHaveLength(4)
