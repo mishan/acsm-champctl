@@ -32,6 +32,8 @@ import { AcsmAccessAlarm } from "../bot/acsm-access.js"
 import { carsetUrl } from "../bot/livery.js"
 import { nightlyMessages, splitMessage, standingsMessage } from "../bot/message.js"
 import { QualiCall } from "../bot/quali-call.js"
+import { RecorderAlertPoster } from "../bot/recorder-alerts.js"
+import { SqliteRecorderAlerts } from "../spectator/alerts.js"
 import { SqliteRestartStore, Watchdog } from "../bot/health.js"
 import { type PostedRounds, StandingsWatch } from "../bot/standings-watch.js"
 import { findingsAtOrAbove, nightly, type NightlyEntry } from "../bot/nightly.js"
@@ -987,6 +989,7 @@ async function serve(args: Args): Promise<number> {
   const infoSettings = profile.discord.info
   const infoStore = infoSettings ? await SqliteInfoStore.open(storePath) : undefined
   const restarts = await SqliteRestartStore.open(storePath)
+  const recorderAlerts = await SqliteRecorderAlerts.open(storePath)
   const contentCache = args.cache
     ? await SqliteCache.open({ path: resolve(process.cwd(), CACHE_FILE) })
     : undefined
@@ -1004,6 +1007,7 @@ async function serve(args: Args): Promise<number> {
   let stopPolls = async () => {}
   let stopRacers = async () => {}
   let stopInfo = async () => {}
+  let stopRecorderAlerts = async () => {}
 
   try {
     if (!(transport instanceof GatewayTransport)) {
@@ -1410,6 +1414,23 @@ async function serve(args: Args): Promise<number> {
       )
     }
 
+    const botLog = profile.discord.botLogChannelId
+    stopRecorderAlerts = new RecorderAlertPoster({
+      alerts: recorderAlerts,
+      ...(botLog
+        ? {
+            post: async (content: string) => {
+              await transport.post({
+                channelId: botLog,
+                content,
+                source: "discord.botLogChannelId in the profile",
+              })
+            },
+          }
+        : {}),
+      log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
+    }).start(60_000, watchdog.watch("The recorder alerts", 60_000))
+
     const why = await new Promise<string | undefined>((done) => {
       const stop = () => done(undefined)
       process.once("SIGINT", stop)
@@ -1438,6 +1459,7 @@ async function serve(args: Args): Promise<number> {
     await stopPolls()
     await stopRacers()
     await stopInfo()
+    await stopRecorderAlerts()
     await transport.close()
     liveries.close()
     incidentStore?.close()
@@ -1445,6 +1467,7 @@ async function serve(args: Args): Promise<number> {
     racersStore?.close()
     infoStore?.close()
     restarts.close()
+    recorderAlerts.close()
     contentCache?.close()
     trophies.close()
     finished.close()

@@ -118,10 +118,14 @@ without either, since a committed channel id is a channel every fork posts into.
 ```
 
 `botLogChannelId` is where GridMom says what it did on its own that nobody has
-to act on: for now, Server Manager's installed cars or tracks changing.
-champctl web reads them again every day at 05:00 league time, behind the list
-it holds, and the bot posts what was added, removed or renamed. Without it,
-that goes to the bot's log only.
+to act on: Server Manager's installed cars or tracks changing. champctl web
+reads them again every day at 05:00 league time, behind the list it holds, and
+the bot posts what was added, removed or renamed. Without it, that goes to the
+bot's log only.
+
+The race recorder's alerts go there too: when the game server has answered its
+joins for 30 minutes without one holding, with the reason, again each day it
+stays that way, and once when it records again.
 
 The bot's optional features — `incidents`, `season`, `racers`, `info`, standings after a round —
 have their own keys under `discord`, each described with its step in
