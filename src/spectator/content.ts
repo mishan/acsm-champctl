@@ -237,7 +237,7 @@ export class ContentFiles {
   }
 }
 
-/** A regular file's bytes, or undefined; never through a link someone left in a root. */
+/** A regular file's bytes, or undefined; a link left in place of the file isn't followed. */
 async function readPlain(path: string): Promise<Uint8Array | undefined> {
   const s = await lstat(path).catch(() => undefined)
   if (!s?.isFile()) return undefined

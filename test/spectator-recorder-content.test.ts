@@ -18,6 +18,7 @@ let http: Server
 let base: string
 let served: Set<string>
 let requests: string[]
+let content: ContentFiles | undefined
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "recorder-content-"))
@@ -37,6 +38,8 @@ beforeEach(async () => {
   base = `http://127.0.0.1:${(http.address() as { port: number }).port}`
 })
 afterEach(async () => {
+  await content?.idle()
+  content = undefined
   await server.close()
   await new Promise<void>((r) => http.close(() => r()))
   await rm(dir, { recursive: true, force: true })
@@ -48,7 +51,7 @@ async function recorder(extra: Partial<RecorderOptions> = {}): Promise<{
   said: string[]
 }> {
   const said: string[] = []
-  const content = await ContentFiles.open({
+  const files = await ContentFiles.open({
     handRoot: hand,
     mirrorRoot: join(dir, "mirror"),
     acsmBase: base,
@@ -68,14 +71,15 @@ async function recorder(extra: Partial<RecorderOptions> = {}): Promise<{
       },
       pose: () => ({ pos: [0, 1000, 0], rot: [0, 0, 0], vel: [0, 0, 0] }),
     },
-    content,
+    content: files,
     outDir: dir,
     retryMs: { min: 20, max: 20 },
     settleMs: 50,
     log: (m) => said.push(m),
     ...extra,
   })
-  return { rec, content, said }
+  content = files
+  return { rec, content: files, said }
 }
 
 const settle = (ms = 150): Promise<void> => new Promise((r) => setTimeout(r, ms))

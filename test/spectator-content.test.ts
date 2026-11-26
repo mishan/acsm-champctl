@@ -24,6 +24,7 @@ let base: string
 let files: Record<string, Served>
 let requests: { path: string; headers: IncomingHttpHeaders }[]
 let clock: number
+let opened: ContentFiles[]
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "content-"))
@@ -32,6 +33,7 @@ beforeEach(async () => {
   await mkdir(hand)
   files = {}
   requests = []
+  opened = []
   clock = Date.parse("2026-11-26T00:00:00Z")
   http = createServer((req, res) => {
     requests.push({ path: req.url ?? "", headers: req.headers })
@@ -55,6 +57,7 @@ beforeEach(async () => {
   base = `http://127.0.0.1:${(http.address() as { port: number }).port}`
 })
 afterEach(async () => {
+  for (const c of opened) await c.idle()
   await new Promise<void>((r) => http.close(() => r()))
   await rm(dir, { recursive: true, force: true })
 })
@@ -69,14 +72,16 @@ async function put(root: string, path: string, body: string): Promise<void> {
   await writeFile(join(root, path), body)
 }
 
-function open(o: Partial<ContentFilesOptions> = {}): Promise<ContentFiles> {
-  return ContentFiles.open({
+async function open(o: Partial<ContentFilesOptions> = {}): Promise<ContentFiles> {
+  const c = await ContentFiles.open({
     handRoot: hand,
     mirrorRoot: mirror,
     acsmBase: base,
     now: () => clock,
     ...o,
   })
+  opened.push(c)
+  return c
 }
 
 /** Reads, waits for anything that read queued, then reads again. */
