@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url"
 
 import type { ReplaySummary } from "acreplay"
 import { postToWebhook, replayMessage } from "../spectator/announce.js"
+import { SqliteRecorderAlerts } from "../spectator/alerts.js"
 import { analyzeIncident, trackForJournal } from "../spectator/analysis.js"
 import { ContentFiles } from "../spectator/content.js"
 import { findTrackSkips } from "../spectator/cuts.js"
@@ -452,6 +453,21 @@ const log = (m: string): void => {
   process.stderr.write(`${new Date().toISOString()} ${m}\n`)
 }
 
+/** The shared database's alerts, for the bot to post; recording goes on without them. */
+async function openAlerts(log: (m: string) => void): Promise<{ alerts?: SqliteRecorderAlerts }> {
+  const path = process.env["CHAMPCTL_STORE"]
+  if (!path) {
+    log("CHAMPCTL_STORE isn't set, so nobody will be told if the recorder can't join")
+    return {}
+  }
+  try {
+    return { alerts: await SqliteRecorderAlerts.open(path) }
+  } catch (e) {
+    log(`alerts are off: couldn't open ${path}: ${e instanceof Error ? e.message : String(e)}`)
+    return {}
+  }
+}
+
 async function main(argv: readonly string[]): Promise<number> {
   const args = parseArgs(argv)
   if (args.command === "help") {
@@ -641,6 +657,7 @@ async function main(argv: readonly string[]): Promise<number> {
           }),
         }
       : {}),
+    ...(await openAlerts(log)),
     outDir: args.out,
     rounds: { timeZone, ...(await lastRound(args.out).then((last) => (last ? { last } : {}))) },
     ...(args.replay

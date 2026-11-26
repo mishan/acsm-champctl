@@ -163,6 +163,8 @@ services:
       - --replay-url
       - ${CHAMPCTL_REPLAY_URL:-}
     environment:
+      # For alerts the bot posts when the recorder can't join.
+      CHAMPCTL_STORE: /var/lib/champctl/data/liveries/liveries.db
       CHAMPCTL_REPLAY_WEBHOOK: ${CHAMPCTL_REPLAY_WEBHOOK:-}
       CHAMPCTL_SPECTATOR_PASSWORD: ${CHAMPCTL_SPECTATOR_PASSWORD:-}
     volumes:

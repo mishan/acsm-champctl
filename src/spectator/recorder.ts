@@ -14,6 +14,7 @@ import { JournalWriter, type JournalRecord } from "./journal.js"
 import { PluginListener, type PluginListenerOptions } from "ac-spectator"
 import type { HandshakeOk, ServerPacket } from "ac-spectator"
 import { RaceControlFeed, type RaceControlOptions, type RaceControlUpdate } from "acsm-race-control"
+import type { RecorderAlerts } from "./alerts.js"
 import { type ContentFiles, racingLine } from "./content.js"
 import { localDate, placeOf, type Round, roundFor, slug } from "./rounds.js"
 
@@ -41,12 +42,26 @@ export interface RecorderOptions {
    * server rejects every couple of seconds, forever.
    */
   settleMs?: number
+  /** Where to say the recorder can't join, for the bot to post. */
+  alerts?: RecorderAlerts
+  /** How long no join may hold before that's said. */
+  alertAfterMs?: number
 }
 
 const RETRY = { min: 2_000, max: 30_000 }
 const SETTLE_MS = 30_000
 /** The KickCar reason for a checksum mismatch. */
 const CHECKSUM_KICK = 3
+const ALERT_AFTER_MS = 30 * 60_000
+/**
+ * The client's words for a join the server answered: there's a server, and
+ * the recorder can't get on it. Anything else, from a refused connection to
+ * a dropped one, is what a server that isn't running looks like off-season.
+ * Worded as ac-spectator 0.2.0 words them; the tests run the real client
+ * through the checksum one.
+ */
+const ANSWERED =
+  /^the server (refused the join|asked for updates|never acknowledged|wants a checksum)|^the files option failed/
 
 export class Recorder {
   readonly #opts: RecorderOptions
@@ -65,6 +80,9 @@ export class Recorder {
   #retryTimer: NodeJS.Timeout | undefined
   #retryMs: number
   #settleTimer: NodeJS.Timeout | undefined
+  /** Since the recorder started, or its last join that held ended. */
+  #unheldSince = Date.now()
+  #holding = false
   /** The latest session change, which the next journal begins with. */
   #nextSession: { name: string; type: number; index: number } | undefined
   #round: Round | undefined
@@ -122,6 +140,7 @@ export class Recorder {
     // A missing data.acd is sent as zeros and kicked for, which says nothing
     // about the files this join did have.
     let missed = false
+    let held = false
     const client = new SpectatorClient({
       ...this.#opts.client,
       ...(content
@@ -138,6 +157,10 @@ export class Recorder {
       onPacket: (p, at) => this.#onPacket(p, at),
       onClose: (reason, detail) => {
         clearTimeout(this.#settleTimer)
+        if (held) {
+          this.#holding = false
+          this.#unheldSince = Date.now()
+        } else this.#failed(reason, detail.kick !== undefined)
         if (detail.kick === CHECKSUM_KICK && !missed) content?.mismatched(used)
         this.#log(`left the server: ${reason}`)
         void this.#endJournal(reason).then(() => this.#retry())
@@ -150,6 +173,13 @@ export class Recorder {
         client.close()
         return
       }
+      // On the settle timer, which this client's close clears: a store that
+      // refused once mustn't leave a week of good recording reported as failing.
+      const resolve = () => {
+        if (client.closed || this.#client !== client) return
+        if (!this.#tell(() => this.#opts.alerts?.resolve("join", new Date())))
+          this.#settleTimer = setTimeout(resolve, this.#opts.settleMs ?? SETTLE_MS)
+      }
       this.#settleTimer = setTimeout(() => {
         // A kick read before connect() resolved has already closed this
         // client, ahead of the timer it would have cleared. Not reproducible
@@ -157,6 +187,9 @@ export class Recorder {
         if (client.closed || this.#client !== client) return
         this.#retryMs = (this.#opts.retryMs ?? RETRY).min
         content?.joined()
+        held = true
+        this.#holding = true
+        resolve()
       }, this.#opts.settleMs ?? SETTLE_MS)
       this.#log(`joined ${session.track} as car ${session.carId}, ${session.currentSession.name}`)
       // Not checksummed, so nothing else asks for it: incident analysis needs it.
@@ -165,6 +198,34 @@ export class Recorder {
     } catch (e) {
       // onClose has already scheduled the retry.
       this.#log(`could not join: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  /** A join that never held has ended. */
+  #failed(reason: string, kicked: boolean): void {
+    if (this.#stopped || this.#holding) return
+    // Only time the server was there counts: an off-season spell isn't owed an alert.
+    if (!kicked && !ANSWERED.test(reason)) {
+      this.#unheldSince = Date.now()
+      return
+    }
+    const ms = Date.now() - this.#unheldSince
+    if (ms < (this.#opts.alertAfterMs ?? ALERT_AFTER_MS)) return
+    const minutes = Math.round(ms / 60_000)
+    const message =
+      `The recorder hasn't been able to join the game server for ${minutes} minute${minutes === 1 ? "" : "s"}: ` +
+      `${reason}. Nothing is being recorded.`
+    this.#tell(() => this.#opts.alerts?.raise("join", message, new Date()))
+  }
+
+  /** Alerts are for people; a store that won't take one mustn't stop the recording. */
+  #tell(write: () => void): boolean {
+    try {
+      write()
+      return true
+    } catch (e) {
+      this.#log(`couldn't store an alert: ${e instanceof Error ? e.message : String(e)}`)
+      return false
     }
   }
 

@@ -210,6 +210,11 @@ place of the two plugin flags.
   model, which a game client loads and the recorder doesn't.
 - Each session's journal is kept; a replay is written next to it when the
   session ends, its wheels placed from `--ac-root`'s car data.
+- With `CHAMPCTL_STORE` set to the bot's database, a recorder the server has
+  answered for 30 minutes without letting a join hold (a kick, a refusal, a
+  file it can't checksum) leaves an alert there, and the bot posts it to
+  `discord.botLogChannelId`. A server that's down or never answers, as
+  off-season, raises none; nor does a recorder pointed at the wrong address.
 - Recordings go in a folder per round, such as `2026-10-13-interlagos-1975`,
   dated by the league profile's time zone the day its track first appeared.
   A round is a track's practice-server sessions and then the championship
