@@ -22,6 +22,7 @@ import { callName } from "./rules.js"
 export interface RecordingToolOptions {
   journals: string
   acRoot: string
+  acContent?: string
   rules?: string
   thresholds?: Partial<IncidentThresholds>
 }
@@ -145,7 +146,7 @@ export function recordingTools(o: RecordingToolOptions): McpTool[] {
       const { packet, suggestion, track } = await analyzeIncident(
         await journal(args["session"]),
         index,
-        o.acRoot,
+        o,
         o.thresholds,
       )
       const call = `Suggested call from the rules engine: ${callName(suggestion.call, packet)}${suggestion.rule ? ` (rule: ${suggestion.rule})` : ""}\n${suggestion.reasons.map((r) => `- ${r}`).join("\n")}`
@@ -158,7 +159,7 @@ export function recordingTools(o: RecordingToolOptions): McpTool[] {
     },
     async list_track_skips(args) {
       const path = await journal(args["session"])
-      const skips = await findTrackSkips(path, await trackForJournal(path, o.acRoot))
+      const skips = await findTrackSkips(path, await trackForJournal(path, o))
       const clock = (s: number) =>
         `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`
       const lines = skips.map(

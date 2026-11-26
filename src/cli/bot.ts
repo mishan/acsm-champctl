@@ -1086,6 +1086,9 @@ async function serve(args: Args): Promise<number> {
         ? new IncidentRouter({
             recordings,
             acRoot,
+            ...(process.env["CHAMPCTL_AC_CONTENT"]
+              ? { acContent: process.env["CHAMPCTL_AC_CONTENT"] }
+              : {}),
             ...(process.env["CHAMPCTL_REPLAY_URL"]
               ? { replayUrl: process.env["CHAMPCTL_REPLAY_URL"] }
               : {}),
