@@ -9,7 +9,10 @@ export interface RecorderAlertSource {
 
 export interface RecorderAlertPosterOptions {
   alerts: RecorderAlertSource
-  /** Absent when no channel is set: each alert is then marked told unposted. */
+  /**
+   * Absent when no channel is set: nothing is marked told, so an alert still
+   * open when one is set is posted then.
+   */
   post?: (content: string) => Promise<void>
   log: (line: string) => void
 }
@@ -30,9 +33,11 @@ export class RecorderAlertPoster {
    * channel Discord won't take is no reason for the watchdog to restart the bot.
    */
   async tick(now: Date): Promise<void> {
+    const post = this.#o.post
+    if (!post) return
     for (const a of this.#o.alerts.due(now)) {
       try {
-        await this.#o.post?.(a.kind === "open" ? a.message : RESOLVED)
+        await post(a.kind === "open" ? a.message : RESOLVED)
       } catch (e) {
         this.#o.log(`couldn't post a recorder alert: ${e instanceof Error ? e.message : String(e)}`)
         continue

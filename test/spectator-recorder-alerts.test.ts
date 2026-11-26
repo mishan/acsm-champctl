@@ -153,6 +153,23 @@ describe("Recorder alerts", () => {
     await rec.stop()
   })
 
+  it("tries the resolution again while the join holds, if the store refused it", async () => {
+    let refuse = 2
+    const flaky: RecorderAlerts = {
+      raise: () => {},
+      resolve: (key) => {
+        if (refuse-- > 0) throw new Error("database is locked")
+        said.resolved.push(key)
+      },
+    }
+    const rec = recorder(server.port, { alerts: flaky })
+    await rec.start()
+    await server.joins(1)
+    await wait(250)
+    await rec.stop()
+    expect(said.resolved).toEqual(["join"])
+  })
+
   it("resolves it once a join holds, and counts afresh after that join ends", async () => {
     const rec = recorder(server.port)
     await rec.start()

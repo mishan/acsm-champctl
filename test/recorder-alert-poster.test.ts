@@ -38,11 +38,22 @@ describe("RecorderAlertPoster", () => {
     ])
   })
 
-  it("marks alerts told with nowhere to post them", async () => {
+  it("keeps alerts for a channel set later, and owes no word of one nobody saw", async () => {
     const { alerts, poster } = await setup()
-    alerts.raise("join", "can't join", at(0))
+    alerts.raise("open", "still can't join", at(0))
+    alerts.raise("over", "couldn't join", at(0))
     await poster.tick(at(0))
-    expect(alerts.due(at(1))).toEqual([])
+    alerts.resolve("over", at(1))
+    const posted: string[] = []
+    const withChannel = new RecorderAlertPoster({
+      alerts,
+      post: async (c) => {
+        posted.push(c)
+      },
+      log: () => {},
+    })
+    await withChannel.tick(at(2))
+    expect(posted).toEqual(["still can't join"])
   })
 
   it("tries a post Discord refused again on the next tick, and the tick still counts", async () => {

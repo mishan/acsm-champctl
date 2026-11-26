@@ -173,6 +173,13 @@ export class Recorder {
         client.close()
         return
       }
+      // On the settle timer, which this client's close clears: a store that
+      // refused once mustn't leave a week of good recording reported as failing.
+      const resolve = () => {
+        if (client.closed || this.#client !== client) return
+        if (!this.#tell(() => this.#opts.alerts?.resolve("join", new Date())))
+          this.#settleTimer = setTimeout(resolve, this.#opts.settleMs ?? SETTLE_MS)
+      }
       this.#settleTimer = setTimeout(() => {
         // A kick read before connect() resolved has already closed this
         // client, ahead of the timer it would have cleared. Not reproducible
@@ -182,7 +189,7 @@ export class Recorder {
         content?.joined()
         held = true
         this.#holding = true
-        this.#tell(() => this.#opts.alerts?.resolve("join", new Date()))
+        resolve()
       }, this.#opts.settleMs ?? SETTLE_MS)
       this.#log(`joined ${session.track} as car ${session.carId}, ${session.currentSession.name}`)
       // Not checksummed, so nothing else asks for it: incident analysis needs it.
@@ -212,11 +219,13 @@ export class Recorder {
   }
 
   /** Alerts are for people; a store that won't take one mustn't stop the recording. */
-  #tell(write: () => void): void {
+  #tell(write: () => void): boolean {
     try {
       write()
+      return true
     } catch (e) {
       this.#log(`couldn't store an alert: ${e instanceof Error ? e.message : String(e)}`)
+      return false
     }
   }
 
