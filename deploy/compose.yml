@@ -145,6 +145,10 @@ services:
       - ${CHAMPCTL_RECORDER_SERVER:-}
       - --ac-root
       - /var/lib/champctl-ac
+      # Files the server checksums that the copy above lacks, fetched from
+      # Server Manager (the --race-control address) as tracks are installed.
+      - --ac-content
+      - /var/lib/champctl/ac-content
       - --car
       - ${CHAMPCTL_RECORDER_CAR:-}
       - --guid

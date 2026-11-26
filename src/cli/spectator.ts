@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url"
 import type { ReplaySummary } from "acreplay"
 import { postToWebhook, replayMessage } from "../spectator/announce.js"
 import { analyzeIncident, trackForJournal } from "../spectator/analysis.js"
+import { ContentFiles } from "../spectator/content.js"
 import { findTrackSkips } from "../spectator/cuts.js"
 import { ffmpegSink, loadClip, writeVideo } from "../spectator/video.js"
 import { incidentBrief } from "../spectator/brief.js"
@@ -55,6 +56,9 @@ Record options:
   --ac-root <dir>            copies of the league's AC files, laid out as in
                              an install: what the server checksums, and each
                              car's data (docs/spectator.md says which)
+  --ac-content <dir>         where to keep car and track files fetched from
+                             Server Manager, at the --race-control address,
+                             when the server checksums one --ac-root lacks
   --car <model>              the model of the slot to take
   --guid <steam64>           the GUID to join with
   --name <name>              driver name others see (default: Race Recorder)
@@ -134,6 +138,7 @@ type Args =
       host: string
       port: number
       acRoot: string
+      acContent?: string
       car: string
       guid: string
       name: string
@@ -378,6 +383,7 @@ export function parseArgs(argv: readonly string[]): Args {
         `--replay-url must be where the replays page is, such as https://champctl.example.org/replays, not ${JSON.stringify(replayUrl)}.`,
       )
     }
+    const acContent = take("--ac-content") || undefined
     const raceControl = take("--race-control") || undefined
     if (raceControl !== undefined) {
       // Both would report every collision twice.
@@ -395,6 +401,7 @@ export function parseArgs(argv: readonly string[]): Args {
       command,
       ...server,
       acRoot: need("--ac-root"),
+      ...(acContent ? { acContent } : {}),
       car: need("--car"),
       guid,
       name: take("--name") ?? "Race Recorder",
@@ -624,6 +631,16 @@ async function main(argv: readonly string[]): Promise<number> {
     },
     ...(args.plugin ? { plugin: { ...args.plugin, realtimeIntervalMs: 100 } } : {}),
     ...(args.raceControl ? { raceControl: { url: args.raceControl } } : {}),
+    ...(args.acContent
+      ? {
+          content: await ContentFiles.open({
+            handRoot: args.acRoot,
+            mirrorRoot: args.acContent,
+            ...(args.raceControl ? { acsmBase: new URL(args.raceControl).origin } : {}),
+            log,
+          }),
+        }
+      : {}),
     outDir: args.out,
     rounds: { timeZone, ...(await lastRound(args.out).then((last) => (last ? { last } : {}))) },
     ...(args.replay

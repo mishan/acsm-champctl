@@ -14,10 +14,13 @@ import { JournalWriter, type JournalRecord } from "./journal.js"
 import { PluginListener, type PluginListenerOptions } from "ac-spectator"
 import type { HandshakeOk, ServerPacket } from "ac-spectator"
 import { RaceControlFeed, type RaceControlOptions, type RaceControlUpdate } from "acsm-race-control"
+import type { ContentFiles } from "./content.js"
 import { localDate, placeOf, type Round, roundFor, slug } from "./rounds.js"
 
 export interface RecorderOptions {
-  client: Omit<SpectatorOptions, "onPacket" | "onClose" | "now">
+  client: Omit<SpectatorOptions, "onPacket" | "onClose" | "now" | "files">
+  /** Where checksummed files come from when the AC root lacks them. */
+  content?: ContentFiles
   /** Omit to record without collisions or spline positions. */
   plugin?: Omit<PluginListenerOptions, "onEvent" | "onError" | "now">
   /** Collisions from ACSM's live timing instead, where nobody can set up the plugin. */
@@ -32,9 +35,18 @@ export interface RecorderOptions {
   onJournal?: (path: string) => void
   log?: (message: string) => void
   retryMs?: { min: number; max: number }
+  /**
+   * How long a join must last to count: a checksum kick comes after
+   * `connect()` resolves, so counting from there would retry a file the
+   * server rejects every couple of seconds, forever.
+   */
+  settleMs?: number
 }
 
 const RETRY = { min: 2_000, max: 30_000 }
+const SETTLE_MS = 30_000
+/** The KickCar reason for a checksum mismatch. */
+const CHECKSUM_KICK = 3
 
 export class Recorder {
   readonly #opts: RecorderOptions
@@ -52,6 +64,7 @@ export class Recorder {
   #stopped = false
   #retryTimer: NodeJS.Timeout | undefined
   #retryMs: number
+  #settleTimer: NodeJS.Timeout | undefined
   /** The latest session change, which the next journal begins with. */
   #nextSession: { name: string; type: number; index: number } | undefined
   #round: Round | undefined
@@ -91,6 +104,7 @@ export class Recorder {
   async stop(): Promise<void> {
     this.#stopped = true
     clearTimeout(this.#retryTimer)
+    clearTimeout(this.#settleTimer)
     // Ended first: closing the client ends it too, with the client's reason.
     const ended = this.#endJournal("recorder stopped")
     this.#client?.close()
@@ -102,11 +116,24 @@ export class Recorder {
 
   async #join(): Promise<void> {
     if (this.#stopped) return
+    const content = this.#opts.content
+    // Every file this join answered from, so a checksum kick can name them.
+    const used: string[] = []
     const client = new SpectatorClient({
       ...this.#opts.client,
+      ...(content
+        ? {
+            files: (path: string) => {
+              used.push(path)
+              return content.read(path)
+            },
+          }
+        : {}),
       now: this.now,
       onPacket: (p, at) => this.#onPacket(p, at),
-      onClose: (reason) => {
+      onClose: (reason, detail) => {
+        clearTimeout(this.#settleTimer)
+        if (detail.kick === CHECKSUM_KICK) content?.mismatched(used)
         this.#log(`left the server: ${reason}`)
         void this.#endJournal(reason).then(() => this.#retry())
       },
@@ -118,7 +145,14 @@ export class Recorder {
         client.close()
         return
       }
-      this.#retryMs = (this.#opts.retryMs ?? RETRY).min
+      this.#settleTimer = setTimeout(() => {
+        // A kick read before connect() resolved has already closed this
+        // client, ahead of the timer it would have cleared. Not reproducible
+        // with the fake server, which only kicks once the join is complete.
+        if (client.closed || this.#client !== client) return
+        this.#retryMs = (this.#opts.retryMs ?? RETRY).min
+        content?.joined()
+      }, this.#opts.settleMs ?? SETTLE_MS)
       this.#log(`joined ${session.track} as car ${session.carId}, ${session.currentSession.name}`)
       this.#beginJournal(session, client)
     } catch (e) {

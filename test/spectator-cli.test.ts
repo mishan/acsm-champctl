@@ -45,6 +45,13 @@ describe("champctl-spectator parseArgs", () => {
     })
   })
 
+  it("reads where fetched car and track files go", () => {
+    expect(parseArgs([...record, "--ac-content", "/mirror"])).toMatchObject({
+      acContent: "/mirror",
+    })
+    expect(parseArgs([...record, "--ac-content", ""])).not.toHaveProperty("acContent")
+  })
+
   it.each([
     ["no server", record.filter((_, i) => i !== 1 && i !== 2), /needs --server/],
     [
