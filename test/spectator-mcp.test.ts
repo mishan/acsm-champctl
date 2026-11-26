@@ -5,7 +5,7 @@ import { PassThrough } from "node:stream"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { JournalWriter } from "../src/spectator/journal.js"
-import { serveMcp } from "../src/spectator/mcp.js"
+import { type McpOptions, serveMcp } from "../src/spectator/mcp.js"
 import { fastLane, loop } from "./support/synthetic-track.js"
 
 let dir: string
@@ -90,12 +90,15 @@ interface Reply {
   error?: { code: number }
 }
 
-async function session(requests: object[]): Promise<Map<unknown, Reply>> {
+async function session(
+  requests: object[],
+  o: Partial<McpOptions> = {},
+): Promise<Map<unknown, Reply>> {
   const input = new PassThrough()
   const output = new PassThrough()
   const lines: string[] = []
   output.on("data", (c: Buffer) => lines.push(...c.toString().split("\n").filter(Boolean)))
-  const done = serveMcp({ journals: join(dir, "journals"), acRoot, input, output })
+  const done = serveMcp({ journals: join(dir, "journals"), acRoot, input, output, ...o })
   for (const r of requests) input.write(`${JSON.stringify({ jsonrpc: "2.0", ...r })}\n`)
   input.end()
   await done
@@ -154,6 +157,14 @@ describe("serveMcp", () => {
   it("says when nobody in a session gained from a cut", async () => {
     // Two cars side by side down a straight: on track throughout.
     const r = await session([call(1, "list_track_skips", { session: SESSION })])
+    expect(r.get(1)?.result?.content[0]?.text).toBe("Nobody gained a second or more off the track.")
+  })
+
+  it("finds a racing line only the recorder's mirror has", async () => {
+    const r = await session([call(1, "list_track_skips", { session: SESSION })], {
+      acRoot: join(dir, "nothing"),
+      acContent: acRoot,
+    })
     expect(r.get(1)?.result?.content[0]?.text).toBe("Nobody gained a second or more off the track.")
   })
 

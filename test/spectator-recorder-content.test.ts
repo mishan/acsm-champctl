@@ -11,6 +11,7 @@ import { type FakeAcServer, fakeAcRoot, fakeAcServer } from "./support/fake-ac-s
 const MODELS = "content/tracks/imola/models.ini"
 const SURFACES = "content/tracks/imola/data/surfaces.ini"
 const ACD = "content/cars/ks_mazda_mx5_cup/data.acd"
+const LINE = "content/tracks/imola/ai/fast_lane.ai"
 
 let dir: string
 let hand: string
@@ -102,6 +103,24 @@ describe("Recorder content", () => {
     expect(said.join("\n")).toMatch(/could not join: .*models\.ini/)
     expect(said.join("\n")).toMatch(/joined imola/)
     expect(requests).toContain(MODELS)
+  })
+
+  it.each([
+    ["fetches the racing line of a track it joins", false, 1],
+    ["leaves a racing line the hand copy has", true, 0],
+  ])("%s", async (_, inHand, asked) => {
+    if (inHand) {
+      await mkdir(join(hand, "content/tracks/imola/ai"), { recursive: true })
+      await writeFile(join(hand, LINE), "x")
+    }
+    served.add(LINE)
+    const { rec, content } = await recorder()
+    await rec.start()
+    await server.joins(1)
+    await settle()
+    await content.idle()
+    await rec.stop()
+    expect(requests.filter((p) => p === LINE)).toHaveLength(asked)
   })
 
   it("asks for fresh copies of the files a join used, after a checksum kick", async () => {

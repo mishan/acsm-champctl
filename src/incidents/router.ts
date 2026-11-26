@@ -86,6 +86,7 @@ export interface IncidentChannels {
 export interface IncidentRouterOptions {
   recordings: string
   acRoot: string
+  acContent?: string
   /** This deployment's /replays, for the clip's link. */
   replayUrl?: string
   /** The championship whose claims say who a driver is. */
@@ -457,6 +458,7 @@ export class IncidentRouter {
       const request: EvidenceRequest = {
         journal: join(this.#o.recordings, index.file),
         acRoot: this.#o.acRoot,
+        ...(this.#o.acContent ? { acContent: this.#o.acContent } : {}),
         // Beside the session, in its round's folder.
         outDir: join(this.#o.recordings, dirname(index.file)),
         stem: draftStem(draft.id),

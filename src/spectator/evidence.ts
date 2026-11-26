@@ -22,6 +22,8 @@ export interface EvidenceRequest {
   journal: string
   /** For the racing line and the cars' wheel data. */
   acRoot: string
+  /** The recorder's copies from Server Manager, looked in first for the racing line. */
+  acContent?: string
   /** Where the video and the replay clip are written. */
   outDir: string
   /** File names start with this, e.g. "incident-12". */
@@ -62,7 +64,7 @@ const CONTACT_NEAR_MS = 10_000
 const SKIP_NEAR_MS = 60_000
 
 export async function gatherEvidence(q: EvidenceRequest): Promise<Evidence> {
-  const track = await trackForJournal(q.journal, q.acRoot)
+  const track = await trackForJournal(q.journal, q)
   const summary: string[] = []
   let call: string[] | undefined
   let drawing: Buffer | undefined
@@ -70,7 +72,7 @@ export async function gatherEvidence(q: EvidenceRequest): Promise<Evidence> {
     const { packet, suggestion } = await analyzeIncident(
       q.journal,
       q.collisionIndex,
-      q.acRoot,
+      q,
       q.thresholds,
     )
     summary.push(...packet.facts)

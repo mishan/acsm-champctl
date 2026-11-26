@@ -48,11 +48,21 @@ physics data to place its wheels in replays, and each track's racing line to
 analyze incidents. So it needs copies of some AC files, laid out as they are in
 an AC install, under the folder you pass as `--ac-root`.
 
-**Nobody can fetch these for you.** ACSM doesn't serve car or track files, even
-to an admin, and the machine champctl runs on is usually not the game server.
-Whoever runs champctl copies them in, from an AC install that has the league's
-content (any driver's will do: Content Manager installs the same files the
-server checksums), or from the game server if its owner will copy them.
+**Most of them fetch themselves.** Server Manager serves its install's
+`content/` folder at `/content/`, so a recorder given `--ac-content <dir>` and
+`--race-control` fetches a track or car file the server checksums and
+`--ac-root` lacks, and the racing line of each track it joins, into that folder.
+It asks for at most 30 files an hour. The bot and `champctl-mcp` look for a
+racing line there first when `CHAMPCTL_AC_CONTENT` names it; the deployment's
+compose file sets all of this up. `champctl-spectator`'s own analysis commands
+read `--ac-root` only, so point that at the folder to use a fetched line.
+
+What it can't fetch is `system/data/surfaces.ini`, and the `data.acd` of cars
+other than its own, which replays use for wheel positions. Whoever runs
+champctl copies those in, from an AC install that has the league's content (any
+driver's will do: Content Manager installs the same files the server
+checksums), or from the game server if its owner will copy them. The table
+below is the whole list, for a recorder without `--ac-content`.
 
 ### What to copy
 
@@ -64,7 +74,7 @@ server checksums), or from the game server if its owner will copy them.
 | any `content/tracks/<track>/*.kn5` the server lists | joining, only if the server has them | same |
 | `content/cars/<recorder's car>/data.acd` | joining, if the server has one | the server kicks the recorder: see below |
 | `content/cars/<model>/data.acd`, or its `data/` folder | wheel positions in replays | that car is drawn with a Nissan R32's wheels, and the log names it |
-| `content/tracks/<track>/[<layout>/]ai/fast_lane.ai` | incident analysis | `incident` refuses, naming the path it looked for |
+| `content/tracks/<track>/[<layout>/]ai/fast_lane.ai` | incident analysis | `incident` refuses, naming the track and where it looked |
 
 Every track the league races, every car on its grids. A car's `data.acd` is a
 few hundred KB, so even a few hundred cars is around 100 MB.

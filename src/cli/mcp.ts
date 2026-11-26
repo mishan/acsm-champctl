@@ -67,6 +67,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   const stores = openStores(flags.get("--store") ?? defaultStorePath())
   const recordings = flags.get("--recordings") ?? process.env["CHAMPCTL_RECORDINGS"]
   const acRoot = flags.get("--ac-root") ?? process.env["CHAMPCTL_AC_ROOT"]
+  const acContent = process.env["CHAMPCTL_AC_CONTENT"]
   const options = {
     reader: new HttpAcsmReader({ baseUrl }),
     profile,
@@ -85,7 +86,9 @@ export async function main(argv: readonly string[]): Promise<number> {
       tools: [
         ...championshipTools(options),
         ...storeTools(options),
-        ...(recordings && acRoot ? recordingTools({ journals: recordings, acRoot }) : []),
+        ...(recordings && acRoot
+          ? recordingTools({ journals: recordings, acRoot, ...(acContent ? { acContent } : {}) })
+          : []),
       ],
     })
   } finally {

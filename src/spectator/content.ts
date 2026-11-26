@@ -15,7 +15,7 @@
  */
 
 import { lstat, mkdir, open as openFile, readdir, readFile, rename, rm } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { dirname, join, posix } from "node:path"
 
 export interface ContentFilesOptions {
   /** The hand-copied AC root; read only. */
@@ -45,6 +45,11 @@ interface Meta {
   missingAt?: number
   /** Kept on disk, so a restart loop doesn't repeat a failing request. */
   heldUntil?: number
+}
+
+/** Where a track layout's racing line sits, under an AC root. */
+export function racingLine(track: string, layout: string): string {
+  return posix.join("content/tracks", track, layout, "ai/fast_lane.ai")
 }
 
 /**

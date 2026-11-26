@@ -15,7 +15,7 @@ import {
 import { SqliteIncidentStore } from "../src/incidents/store.js"
 import { type JournalRecord, JournalWriter } from "../src/spectator/journal.js"
 import type { DriverClaim } from "../src/liveries/claims.js"
-import type { Evidence } from "../src/spectator/evidence.js"
+import type { Evidence, EvidenceRequest } from "../src/spectator/evidence.js"
 import { parseFastLane, Track } from "ac-ai-line"
 import { championship, championshipClass, entryList } from "./support/build.js"
 import { writeScenario } from "./support/incident-scenario.js"
@@ -61,6 +61,7 @@ let videoErrorName: string
 let videoTries: number
 let reads: number
 let gatheredInto: string | undefined
+let gathered: EvidenceRequest | undefined
 /** Most evidence renders running at once. */
 let rendersAtOnce: number
 
@@ -226,6 +227,7 @@ function router(
     ...extra,
     gather: async (q): Promise<Evidence> => {
       gatheredInto = q.outDir
+      gathered = q
       rendering++
       rendersAtOnce = Math.max(rendersAtOnce, rendering)
       await new Promise((r) => setTimeout(r, 20))
@@ -900,6 +902,12 @@ describe("/incident report", () => {
       command(ANA, "report", { race: journal, what: "c:0", description: "x" }),
     )
     expect(again.content).toMatch(/^Here's your draft: <#chan-1>/)
+  })
+
+  it("looks for the racing line in the recorder's mirror too", async () => {
+    const key = await contact([car(1, "Ana"), car(2, "Bo"), hit])
+    await filed(router(undefined, { acContent: join(dir, "mirror") }), { race: key })
+    expect(gathered).toMatchObject({ acRoot: dir, acContent: join(dir, "mirror") })
   })
 
   it("puts a report's evidence in its session's round folder, and links it there", async () => {

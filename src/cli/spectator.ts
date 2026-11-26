@@ -471,7 +471,7 @@ async function main(argv: readonly string[]): Promise<number> {
   if (args.command === "video") {
     const window = `-${formatClock(args.fromMs).replace(":", "m")}s-${formatClock(args.toMs).replace(":", "m")}s`
     const out = args.out ?? args.journal.replace(/(\.ndjson)?(\.gz)?$/, `${window}.mp4`)
-    const track = await trackForJournal(args.journal, args.acRoot)
+    const track = await trackForJournal(args.journal, args)
     const options = { fromMs: args.fromMs, toMs: args.toMs, focus: args.focus }
     const clip = await loadClip(args.journal, track, options)
     const followed = clip.cars.filter((c) => c.focused).map((c) => c.driver)
@@ -500,7 +500,7 @@ async function main(argv: readonly string[]): Promise<number> {
   if (args.command === "cuts") {
     const skips = await findTrackSkips(
       args.journal,
-      await trackForJournal(args.journal, args.acRoot),
+      await trackForJournal(args.journal, args),
       args.minSavedS,
     )
     if (skips.length === 0)
@@ -536,7 +536,7 @@ async function main(argv: readonly string[]): Promise<number> {
     const { packet, suggestion, track } = await analyzeIncident(
       args.journal,
       args.index,
-      args.acRoot,
+      args,
       profile.incidentThresholds,
     )
     if (args.prompt) {

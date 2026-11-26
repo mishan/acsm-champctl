@@ -14,7 +14,7 @@ import { JournalWriter, type JournalRecord } from "./journal.js"
 import { PluginListener, type PluginListenerOptions } from "ac-spectator"
 import type { HandshakeOk, ServerPacket } from "ac-spectator"
 import { RaceControlFeed, type RaceControlOptions, type RaceControlUpdate } from "acsm-race-control"
-import type { ContentFiles } from "./content.js"
+import { type ContentFiles, racingLine } from "./content.js"
 import { localDate, placeOf, type Round, roundFor, slug } from "./rounds.js"
 
 export interface RecorderOptions {
@@ -159,6 +159,8 @@ export class Recorder {
         content?.joined()
       }, this.#opts.settleMs ?? SETTLE_MS)
       this.#log(`joined ${session.track} as car ${session.carId}, ${session.currentSession.name}`)
+      // Not checksummed, so nothing else asks for it: incident analysis needs it.
+      void content?.read(racingLine(session.track, session.trackConfig))
       this.#beginJournal(session, client)
     } catch (e) {
       // onClose has already scheduled the retry.

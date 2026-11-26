@@ -35,6 +35,9 @@ x-champctl: &champctl
     CHAMPCTL_RECORDINGS: /var/lib/champctl/recordings
     # Mounted where it's needed: the recorder, and the bot for /incident.
     CHAMPCTL_AC_ROOT: /var/lib/champctl-ac
+    # What the recorder fetched from Server Manager, which the copy above may
+    # lack: a racing line is looked for here first.
+    CHAMPCTL_AC_CONTENT: /var/lib/champctl/ac-content
     CHAMPCTL_REPLAY_URL: ${CHAMPCTL_REPLAY_URL:-}
   volumes:
     - champctl-data:/var/lib/champctl
