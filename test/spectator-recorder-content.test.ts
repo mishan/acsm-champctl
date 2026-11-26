@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http"
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -10,6 +10,7 @@ import { type FakeAcServer, fakeAcRoot, fakeAcServer } from "./support/fake-ac-s
 
 const MODELS = "content/tracks/imola/models.ini"
 const SURFACES = "content/tracks/imola/data/surfaces.ini"
+const ACD = "content/cars/ks_mazda_mx5_cup/data.acd"
 
 let dir: string
 let hand: string
@@ -104,6 +105,8 @@ describe("Recorder content", () => {
   })
 
   it("asks for fresh copies of the files a join used, after a checksum kick", async () => {
+    await mkdir(join(hand, "content/cars/ks_mazda_mx5_cup"), { recursive: true })
+    await writeFile(join(hand, ACD), "x")
     served.add(SURFACES).add(MODELS)
     const { rec, said } = await recorder()
     await rec.start()
@@ -114,6 +117,19 @@ describe("Recorder content", () => {
     await server.joins(2)
     await rec.stop()
     expect(requests).toEqual(expect.arrayContaining([SURFACES, MODELS]))
+  })
+
+  it("blames a missing file, not the ones it had, for a checksum kick", async () => {
+    served.add(SURFACES).add(MODELS).add(ACD)
+    const { rec, said } = await recorder()
+    await rec.start()
+    await server.joins(1)
+    await settle()
+    server.sendTcp(kick(said, 3))
+    await server.joins(2)
+    await rec.stop()
+    expect(requests, "the car's data.acd, sent as zeros").toContain(ACD)
+    expect(requests.filter((p) => p === SURFACES || p === MODELS)).toEqual([])
   })
 
   it("asks for nothing fresh after a kick for any other reason", async () => {

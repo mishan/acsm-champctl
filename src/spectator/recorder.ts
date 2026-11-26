@@ -119,13 +119,18 @@ export class Recorder {
     const content = this.#opts.content
     // Every file this join answered from, so a checksum kick can name them.
     const used: string[] = []
+    // A missing data.acd is sent as zeros and kicked for, which says nothing
+    // about the files this join did have.
+    let missed = false
     const client = new SpectatorClient({
       ...this.#opts.client,
       ...(content
         ? {
-            files: (path: string) => {
+            files: async (path: string) => {
               used.push(path)
-              return content.read(path)
+              const got = await content.read(path)
+              if (!got) missed = true
+              return got
             },
           }
         : {}),
@@ -133,7 +138,7 @@ export class Recorder {
       onPacket: (p, at) => this.#onPacket(p, at),
       onClose: (reason, detail) => {
         clearTimeout(this.#settleTimer)
-        if (detail.kick === CHECKSUM_KICK) content?.mismatched(used)
+        if (detail.kick === CHECKSUM_KICK && !missed) content?.mismatched(used)
         this.#log(`left the server: ${reason}`)
         void this.#endJournal(reason).then(() => this.#retry())
       },
