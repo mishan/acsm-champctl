@@ -1413,9 +1413,9 @@ async function serve(args: Args): Promise<number> {
               .then((missing) => previewWarning(name, missing))
               .catch((e: unknown) => {
                 process.stderr.write(`couldn't check ${name}'s skin previews: ${asMessage(e)}\n`)
-                return undefined
+                return []
               })
-            if (warning) await tellAdmins(warning)
+            for (const part of warning) await tellAdmins(part)
           }
           return resolved.warned
         },

@@ -21,6 +21,7 @@ import {
 } from "../src/bot/trophies.js"
 import { cardColor, NO_PREVIEW_COLOR, renderPodium, textColor } from "../src/bot/trophy-image.js"
 import { SqliteTrophyStore } from "../src/bot/trophy-store.js"
+import { MESSAGE_LIMIT } from "../src/bot/transport.js"
 import { championship, championshipClass, driver, entryList, raceEvent } from "./support/build.js"
 
 /**
@@ -201,6 +202,8 @@ describe("skins the podium would draw blank", () => {
           driver("ada", { Model: "car", Skin: "plain" }),
           driver("bo", { Model: "car", Skin: "plain" }),
           driver("cy", { Model: "car", Skin: "shiny" }),
+          // An empty seat left on a real car isn't anyone's card.
+          { Model: "car", Skin: "plain" },
           {},
         ]),
       }),
@@ -220,9 +223,9 @@ describe("skins the podium would draw blank", () => {
     }, c)
     expect(missing).toEqual([{ car: "car", skin: "plain", drivers: ["ada", "bo"] }])
     expect(read).toEqual(["car"])
-    expect(previewWarning("November", missing)).toBe(
+    expect(previewWarning("November", missing)).toEqual([
       "November: the plain skin for car (ada, bo) has no preview on the server, so its card on the podium would be blank. Uploading a preview.jpg for it before the last round fixes that.",
-    )
+    ])
   })
 
   it("says nothing when every skin a driver is set to has a preview", async () => {
@@ -230,9 +233,19 @@ describe("skins the podium would draw blank", () => {
       '/static/img/no-preview-car.png" data-skin',
       '/content/cars/car/skins/plain/preview.jpg" data-skin',
     )
-    expect(
-      previewWarning("November", await skinsWithoutPreview(async () => all, c)),
-    ).toBeUndefined()
+    expect(previewWarning("November", await skinsWithoutPreview(async () => all, c))).toEqual([])
+  })
+
+  it("splits a long warning into messages Discord takes", () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({
+      car: "car",
+      skin: `skin_${i}`,
+      drivers: [`driver ${i}`],
+    }))
+    const parts = previewWarning("November", many)
+    expect(parts.length).toBeGreaterThan(1)
+    for (const p of parts) expect(p.length).toBeLessThanOrEqual(MESSAGE_LIMIT)
+    expect(parts.join("\n")).toContain("skin_39")
   })
 })
 

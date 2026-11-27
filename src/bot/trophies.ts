@@ -12,9 +12,17 @@
 
 import type { AcsmReader } from "../acsm/client.js"
 import { ANY_CAR_MODEL, type Championship } from "../acsm/types.js"
-import { classes, eventHasResults, events, eventSession, isZeroTime, slots } from "../acsm/view.js"
+import {
+  classes,
+  eventHasResults,
+  events,
+  eventSession,
+  isUnclaimed,
+  isZeroTime,
+  slots,
+} from "../acsm/view.js"
 import { parseSkinsWithoutPreview } from "../liveries/coverage.js"
-import { headingText } from "./message.js"
+import { headingText, splitMessage } from "./message.js"
 import { type PodiumClass, parsePodium } from "./podium.js"
 import type { DiscordFile } from "./transport.js"
 import { ordinal, renderPodium } from "./trophy-image.js"
@@ -54,12 +62,16 @@ export async function skinsWithoutPreview(
   const byCar = new Map<string, Map<string, string[]>>()
   for (const cls of classes(c)) {
     for (const { entrant } of slots(cls.Entrants)) {
+      if (isUnclaimed(entrant)) continue
       const car = (entrant.Model ?? "").trim()
       const skin = (entrant.Skin ?? "").trim()
       if (!car || !skin || car === ANY_CAR_MODEL) continue
       const skins = byCar.get(car) ?? new Map<string, string[]>()
       byCar.set(car, skins)
-      skins.set(skin, [...(skins.get(skin) ?? []), entrant.Name?.trim() || skin])
+      skins.set(skin, [
+        ...(skins.get(skin) ?? []),
+        entrant.Name?.trim() || (entrant.GUID ?? "").trim(),
+      ])
     }
   }
   const missing: SkinWithoutPreview[] = []
@@ -70,19 +82,16 @@ export async function skinsWithoutPreview(
   return missing
 }
 
-/** For the admins, while there's still a round to fix it in; undefined when nothing is missing. */
-export function previewWarning(
-  name: string,
-  missing: readonly SkinWithoutPreview[],
-): string | undefined {
-  if (missing.length === 0) return undefined
-  return missing
+/** For the admins, while there's still a round to fix it in, as messages Discord takes. */
+export function previewWarning(name: string, missing: readonly SkinWithoutPreview[]): string[] {
+  const text = missing
     .map(
       (m) =>
         `${name}: the ${m.skin} skin for ${m.car} (${m.drivers.join(", ")}) has no preview on the server, ` +
         "so its card on the podium would be blank. Uploading a preview.jpg for it before the last round fixes that.",
     )
     .join("\n")
+  return text ? splitMessage(text) : []
 }
 
 /** How recently a championship has to have finished for the nightly job to post it. */
