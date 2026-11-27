@@ -32,6 +32,20 @@ export function racedCars(championship: Championship): string[] {
   return [...cars].sort()
 }
 
+/** What ACSM shows for a skin with no `preview.jpg` on the server. */
+export const NO_PREVIEW_IMAGE = "/static/img/no-preview-car.png"
+
+/** The skin folders a car page lists without a preview. */
+export function parseSkinsWithoutPreview(html: string): Set<string> {
+  const $ = cheerio.load(html)
+  return new Set(
+    $("img[data-skin]")
+      .toArray()
+      .filter((img) => $(img).attr("src") === NO_PREVIEW_IMAGE)
+      .map((img) => $(img).attr("data-skin") ?? ""),
+  )
+}
+
 /** The skin folders a car page lists. */
 export function parseCarSkins(html: string): string[] {
   const $ = cheerio.load(html)

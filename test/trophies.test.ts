@@ -13,13 +13,16 @@ import {
   postPodium,
   postPodiumIfRaced,
   postRecentPodiums,
+  previewWarning,
   seasonMonth,
+  skinsWithoutPreview,
   type TrophyDeps,
   type TrophyPost,
 } from "../src/bot/trophies.js"
 import { cardColor, NO_PREVIEW_COLOR, renderPodium, textColor } from "../src/bot/trophy-image.js"
 import { SqliteTrophyStore } from "../src/bot/trophy-store.js"
-import { championship, raceEvent } from "./support/build.js"
+import { MESSAGE_LIMIT } from "../src/bot/transport.js"
+import { championship, championshipClass, driver, entryList, raceEvent } from "./support/build.js"
 
 /**
  * A finished championship's page, shaped like BATL's manager renders it. A
@@ -190,6 +193,62 @@ describe("the month a championship is named by", () => {
   })
 })
 
+describe("skins the podium would draw blank", () => {
+  const c = championship({
+    Name: "November",
+    Classes: [
+      championshipClass({
+        Entrants: entryList([
+          driver("ada", { Model: "car", Skin: "plain" }),
+          driver("bo", { Model: "car", Skin: "plain" }),
+          driver("cy", { Model: "car", Skin: "shiny" }),
+          // An empty seat left on a real car isn't anyone's card.
+          { Model: "car", Skin: "plain" },
+          {},
+        ]),
+      }),
+    ],
+  })
+  // As ACSM renders /car/<model>: the large image up top carries no data-skin.
+  const page = `
+    <img class="img img-fluid car-image" id="hero-skin" src="/static/img/no-preview-car.png">
+    <img class="img img-fluid car-image" src="/static/img/no-preview-car.png" data-skin="plain">
+    <img class="img img-fluid car-image" src="/content/cars/car/skins/shiny/preview.jpg" data-skin="shiny">`
+
+  it("names each skin with no preview on the server, and who drives it, reading each car's page once", async () => {
+    const read: string[] = []
+    const missing = await skinsWithoutPreview(async (car) => {
+      read.push(car)
+      return page
+    }, c)
+    expect(missing).toEqual([{ car: "car", skin: "plain", drivers: ["ada", "bo"] }])
+    expect(read).toEqual(["car"])
+    expect(previewWarning("November", missing)).toEqual([
+      "November: the plain skin for car (ada, bo) has no preview on the server, so its card on the podium would be blank. Uploading a preview.jpg for it before the last round fixes that.",
+    ])
+  })
+
+  it("says nothing when every skin a driver is set to has a preview", async () => {
+    const all = page.replace(
+      '/static/img/no-preview-car.png" data-skin',
+      '/content/cars/car/skins/plain/preview.jpg" data-skin',
+    )
+    expect(previewWarning("November", await skinsWithoutPreview(async () => all, c))).toEqual([])
+  })
+
+  it("splits a long warning into messages Discord takes", () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({
+      car: "car",
+      skin: `skin_${i}`,
+      drivers: [`driver ${i}`],
+    }))
+    const parts = previewWarning("November", many)
+    expect(parts.length).toBeGreaterThan(1)
+    for (const p of parts) expect(p.length).toBeLessThanOrEqual(MESSAGE_LIMIT)
+    expect(parts.join("\n")).toContain("skin_39")
+  })
+})
+
 describe("posting podiums", () => {
   let dir = ""
   afterEach(async () => {
@@ -243,6 +302,27 @@ describe("posting podiums", () => {
     expect(posts[0]!.files[0]!.description).toBe(
       "October: 1st place ada, 2nd place bo, 3rd place cy",
     )
+  })
+
+  it("posts a podium whose winner has no skin preview, drawing an empty panel for it", async () => {
+    const placeholder = single.replace(
+      "/content/cars/car/skins/ada/preview.jpg",
+      "/static/img/no-preview-car.png",
+    )
+    const { deps, posts } = await setup([finished("a", "October", "2026-10-18T21:00:00Z")], {
+      a: placeholder,
+    })
+    const fetched: string[] = []
+    deps.fetchAsset = async (path) => {
+      fetched.push(path)
+      return undefined
+    }
+    await postRecentPodiums(deps, NOW)
+    expect(posts).toHaveLength(1)
+    expect(fetched).toEqual([
+      "/content/cars/car/skins/bo/preview.jpg",
+      "/content/cars/car/skins/cy/preview.jpg",
+    ])
   })
 
   it("leaves seasons that finished before this week alone", async () => {
