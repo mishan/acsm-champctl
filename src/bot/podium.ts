@@ -25,7 +25,7 @@
 
 import * as cheerio from "cheerio"
 
-const NO_PREVIEW = "/static/img/no-preview-car.png"
+import { NO_PREVIEW_IMAGE } from "../liveries/coverage.js"
 
 export interface PodiumPlace {
   /** 1-based, as ACSM numbered it. */
@@ -64,7 +64,7 @@ export function parsePodium(html: string): PodiumClass[] | "absent" | "unrecogni
   for (const card of rows.find(".entrant-car").toArray()) {
     const body = $(card).find(".card-body").first()
     const src = $(card).find("img").first().attr("src") ?? ""
-    const preview = src === NO_PREVIEW ? undefined : src
+    const preview = src === NO_PREVIEW_IMAGE ? undefined : src
     const driver = body.find("p small").first().text().trim()
     const className = body.children("small").first().text().trim()
     const place = /(\d+)(?:st|nd|rd|th) Place/.exec(body.text())

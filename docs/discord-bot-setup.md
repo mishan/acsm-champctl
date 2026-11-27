@@ -319,7 +319,9 @@ week count (`--days` changes that), so the first night doesn't post every
 season the league has run. `champctl-bot trophy <championship-id>` posts one
 on demand, whether or not it has been posted before. With `postStandingsWhenRaced`, `serve`
 posts the podium itself straight after the last round's standings, and the
-nightly run is only a backstop.
+nightly run is only a backstop. After each earlier round it tells `adminChannelId`
+about any skin a driver is set to that has no preview on the server: its card
+on the podium would be blank.
 
 ```sh
 champctl-bot trophy <championship-id> --dry-run --out podiums/

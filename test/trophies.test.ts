@@ -13,13 +13,15 @@ import {
   postPodium,
   postPodiumIfRaced,
   postRecentPodiums,
+  previewWarning,
   seasonMonth,
+  skinsWithoutPreview,
   type TrophyDeps,
   type TrophyPost,
 } from "../src/bot/trophies.js"
 import { cardColor, NO_PREVIEW_COLOR, renderPodium, textColor } from "../src/bot/trophy-image.js"
 import { SqliteTrophyStore } from "../src/bot/trophy-store.js"
-import { championship, raceEvent } from "./support/build.js"
+import { championship, championshipClass, driver, entryList, raceEvent } from "./support/build.js"
 
 /**
  * A finished championship's page, shaped like BATL's manager renders it. A
@@ -187,6 +189,50 @@ describe("the month a championship is named by", () => {
     expect(seasonMonth(new Date("2026-10-01T04:16:00Z"), "America/Los_Angeles")).toBe(
       "September 2026",
     )
+  })
+})
+
+describe("skins the podium would draw blank", () => {
+  const c = championship({
+    Name: "November",
+    Classes: [
+      championshipClass({
+        Entrants: entryList([
+          driver("ada", { Model: "car", Skin: "plain" }),
+          driver("bo", { Model: "car", Skin: "plain" }),
+          driver("cy", { Model: "car", Skin: "shiny" }),
+          {},
+        ]),
+      }),
+    ],
+  })
+  // As ACSM renders /car/<model>: the large image up top carries no data-skin.
+  const page = `
+    <img class="img img-fluid car-image" id="hero-skin" src="/static/img/no-preview-car.png">
+    <img class="img img-fluid car-image" src="/static/img/no-preview-car.png" data-skin="plain">
+    <img class="img img-fluid car-image" src="/content/cars/car/skins/shiny/preview.jpg" data-skin="shiny">`
+
+  it("names each skin with no preview on the server, and who drives it, reading each car's page once", async () => {
+    const read: string[] = []
+    const missing = await skinsWithoutPreview(async (car) => {
+      read.push(car)
+      return page
+    }, c)
+    expect(missing).toEqual([{ car: "car", skin: "plain", drivers: ["ada", "bo"] }])
+    expect(read).toEqual(["car"])
+    expect(previewWarning("November", missing)).toBe(
+      "November: the plain skin for car (ada, bo) has no preview on the server, so its card on the podium would be blank. Uploading a preview.jpg for it before the last round fixes that.",
+    )
+  })
+
+  it("says nothing when every skin a driver is set to has a preview", async () => {
+    const all = page.replace(
+      '/static/img/no-preview-car.png" data-skin',
+      '/content/cars/car/skins/plain/preview.jpg" data-skin',
+    )
+    expect(
+      previewWarning("November", await skinsWithoutPreview(async () => all, c)),
+    ).toBeUndefined()
   })
 })
 

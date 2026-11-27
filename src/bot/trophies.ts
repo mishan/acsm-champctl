@@ -11,8 +11,9 @@
  */
 
 import type { AcsmReader } from "../acsm/client.js"
-import type { Championship } from "../acsm/types.js"
-import { eventHasResults, events, eventSession, isZeroTime } from "../acsm/view.js"
+import { ANY_CAR_MODEL, type Championship } from "../acsm/types.js"
+import { classes, eventHasResults, events, eventSession, isZeroTime, slots } from "../acsm/view.js"
+import { parseSkinsWithoutPreview } from "../liveries/coverage.js"
 import { headingText } from "./message.js"
 import { type PodiumClass, parsePodium } from "./podium.js"
 import type { DiscordFile } from "./transport.js"
@@ -33,6 +34,55 @@ export interface TrophyDeps {
   timezone: string
   posted: (championshipId: string) => Set<string>
   record: (championshipId: string, className: string) => void
+}
+
+export interface SkinWithoutPreview {
+  car: string
+  skin: string
+  drivers: string[]
+}
+
+/**
+ * Skins the championship's drivers are set to that have no preview on the
+ * server. ACSM's podium shows its placeholder for those, so the trophy image
+ * would have a blank card. Each car's page is read once.
+ */
+export async function skinsWithoutPreview(
+  carPage: (car: string) => Promise<string>,
+  c: Championship,
+): Promise<SkinWithoutPreview[]> {
+  const byCar = new Map<string, Map<string, string[]>>()
+  for (const cls of classes(c)) {
+    for (const { entrant } of slots(cls.Entrants)) {
+      const car = (entrant.Model ?? "").trim()
+      const skin = (entrant.Skin ?? "").trim()
+      if (!car || !skin || car === ANY_CAR_MODEL) continue
+      const skins = byCar.get(car) ?? new Map<string, string[]>()
+      byCar.set(car, skins)
+      skins.set(skin, [...(skins.get(skin) ?? []), entrant.Name?.trim() || skin])
+    }
+  }
+  const missing: SkinWithoutPreview[] = []
+  for (const [car, skins] of byCar) {
+    const none = parseSkinsWithoutPreview(await carPage(car))
+    for (const [skin, drivers] of skins) if (none.has(skin)) missing.push({ car, skin, drivers })
+  }
+  return missing
+}
+
+/** For the admins, while there's still a round to fix it in; undefined when nothing is missing. */
+export function previewWarning(
+  name: string,
+  missing: readonly SkinWithoutPreview[],
+): string | undefined {
+  if (missing.length === 0) return undefined
+  return missing
+    .map(
+      (m) =>
+        `${name}: the ${m.skin} skin for ${m.car} (${m.drivers.join(", ")}) has no preview on the server, ` +
+        "so its card on the podium would be blank. Uploading a preview.jpg for it before the last round fixes that.",
+    )
+    .join("\n")
 }
 
 /** How recently a championship has to have finished for the nightly job to post it. */

@@ -50,6 +50,8 @@ import {
   finishedAt,
   postPodium,
   postPodiumIfRaced,
+  previewWarning,
+  skinsWithoutPreview,
   postRecentPodiums,
   type TrophyDeps,
   type TrophyOutcome,
@@ -1404,6 +1406,16 @@ async function serve(args: Args): Promise<number> {
               `${name} is over, but I couldn't post its podium: ${outcome.error}. ` +
                 `\`champctl-bot trophy ${id}\` posts it.`,
             )
+          }
+          // Asked after every round still to come, so a skin fixed in time stops being mentioned.
+          if (podiums && !outcome) {
+            const warning = await skinsWithoutPreview((car) => reader.carPage(car), championship)
+              .then((missing) => previewWarning(name, missing))
+              .catch((e: unknown) => {
+                process.stderr.write(`couldn't check ${name}'s skin previews: ${asMessage(e)}\n`)
+                return undefined
+              })
+            if (warning) await tellAdmins(warning)
           }
           return resolved.warned
         },
