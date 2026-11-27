@@ -148,7 +148,9 @@ async function podiumPost(
   cls: PodiumClass,
   finished: Date | undefined,
 ): Promise<TrophyPost> {
-  const previews = await Promise.all(cls.places.map((p) => deps.fetchAsset(p.preview)))
+  const previews = await Promise.all(
+    cls.places.map((p) => (p.preview ? deps.fetchAsset(p.preview) : undefined)),
+  )
   const png = await renderPodium(cls, previews)
   // As the league has been posting them by hand: "August 2026 - <name>".
   const title = [

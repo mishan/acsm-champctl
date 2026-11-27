@@ -25,12 +25,17 @@
 
 import * as cheerio from "cheerio"
 
+const NO_PREVIEW = "/static/img/no-preview-car.png"
+
 export interface PodiumPlace {
   /** 1-based, as ACSM numbered it. */
   place: number
   driver: string
-  /** Path of the car's skin preview on the manager, e.g. `/content/cars/…/preview.jpg`. */
-  preview: string
+  /**
+   * Path of the car's skin preview on the manager, e.g. `/content/cars/…/preview.jpg`.
+   * Absent where ACSM shows its placeholder, for a skin with no preview on the server.
+   */
+  preview?: string
 }
 
 export interface PodiumClass {
@@ -58,11 +63,14 @@ export function parsePodium(html: string): PodiumClass[] | "absent" | "unrecogni
   const classes: PodiumClass[] = []
   for (const card of rows.find(".entrant-car").toArray()) {
     const body = $(card).find(".card-body").first()
-    const preview = $(card).find("img").first().attr("src") ?? ""
+    const src = $(card).find("img").first().attr("src") ?? ""
+    const preview = src === NO_PREVIEW ? undefined : src
     const driver = body.find("p small").first().text().trim()
     const className = body.children("small").first().text().trim()
     const place = /(\d+)(?:st|nd|rd|th) Place/.exec(body.text())
-    if (!place || !driver || !preview.startsWith("/content/")) return "unrecognised"
+    if (!place || !driver || (preview !== undefined && !preview.startsWith("/content/"))) {
+      return "unrecognised"
+    }
 
     let cls = classes.find((c) => c.name === className)
     if (!cls) {
@@ -72,7 +80,7 @@ export function parsePodium(html: string): PodiumClass[] | "absent" | "unrecogni
       cls = { name: className, ...(color ? { color } : {}), places: [] }
       classes.push(cls)
     }
-    cls.places.push({ place: Number(place[1]), driver, preview })
+    cls.places.push({ place: Number(place[1]), driver, ...(preview ? { preview } : {}) })
   }
   if (classes.length === 0) return "unrecognised"
 

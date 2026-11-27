@@ -245,6 +245,27 @@ describe("posting podiums", () => {
     )
   })
 
+  it("posts a podium whose winner has no skin preview, drawing an empty panel for it", async () => {
+    const placeholder = single.replace(
+      "/content/cars/car/skins/ada/preview.jpg",
+      "/static/img/no-preview-car.png",
+    )
+    const { deps, posts } = await setup([finished("a", "October", "2026-10-18T21:00:00Z")], {
+      a: placeholder,
+    })
+    const fetched: string[] = []
+    deps.fetchAsset = async (path) => {
+      fetched.push(path)
+      return undefined
+    }
+    await postRecentPodiums(deps, NOW)
+    expect(posts).toHaveLength(1)
+    expect(fetched).toEqual([
+      "/content/cars/car/skins/bo/preview.jpg",
+      "/content/cars/car/skins/cy/preview.jpg",
+    ])
+  })
+
   it("leaves seasons that finished before this week alone", async () => {
     // The first night would otherwise post every season the league has run.
     const { deps, posts } = await setup([finished("old", "March", "2026-03-30T21:00:00Z")], {
